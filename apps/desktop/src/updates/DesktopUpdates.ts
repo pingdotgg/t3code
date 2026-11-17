@@ -64,6 +64,7 @@ const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
+const PAUSE_RUNS_FOR_UPDATE_TIMEOUT = Duration.seconds(35);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -852,6 +853,31 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const pauseRunsBeforeInstall = (instance: DesktopBackendPool.DesktopBackendInstance) =>
+    instance.pauseRunsForUpdate.pipe(
+      Effect.timeoutOption(PAUSE_RUNS_FOR_UPDATE_TIMEOUT),
+      Effect.flatMap((result) =>
+        Option.match(Option.flatten(result), {
+          onNone: () =>
+            logUpdaterWarning("backend did not confirm paused turns before update", {
+              instanceId: instance.id,
+              timedOut: Option.isNone(result),
+            }),
+          onSome: (pausedRuns) =>
+            logUpdaterInfo("paused running turns for update", {
+              instanceId: instance.id,
+              pausedRuns,
+            }),
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        logUpdaterWarning("pausing turns before update failed", {
+          instanceId: instance.id,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -902,6 +928,10 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
+          yield* Effect.forEach(runningInstances, pauseRunsBeforeInstall, {
+            concurrency: "unbounded",
+            discard: true,
+          });
           yield* Effect.all(
             [
               Effect.forEach(

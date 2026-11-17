@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { APP_NAME } from "@t3tools/shared/branding";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
 import { continuationStartRetryDelayMs } from "./RestartBackgroundNote.ts";
@@ -925,6 +926,100 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       ),
     );
     assert.isFalse(dispatched);
+  }),
+);
+
+it.effect("pauses a running turn for an update and resumes it exactly once", () =>
+  Effect.gen(function* () {
+    let projection = makeProjection();
+    const written: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
+    const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.sync(() => projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                written.push(...input.effects);
+                return [];
+              }),
+            commitCommand: (input) =>
+              Effect.sync(() => {
+                commits.push(input);
+                return { committed: true, cancelledEffectCount: 0 } as never;
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+
+    const turns = yield* recovery.prepareForUpdate;
+    assert.deepEqual(
+      turns.map((turn) => [turn.providerSessionId, turn.providerTurnId]),
+      [[sessionId, ProviderTurnId.make("turn:restart")]],
+    );
+    assert.deepEqual(
+      written.map((effect) => effect.request),
+      [
+        {
+          type: "provider-runtime.continue",
+          sourceRunId: runId,
+          processLossCount: 0,
+          reason: "update",
+        },
+      ],
+    );
+
+    yield* recovery.reconcile("shutdown", { forUpdate: true });
+    const events = commits.flatMap((commit) => commit.events);
+    const cut = events.find((event) => event.type === "run.updated");
+    assert.equal(cut?.type === "run.updated" ? cut.payload.status : undefined, "cancelled");
+    const notice = events.find(
+      (event) => event.type === "turn-item.updated" && event.payload.type === "system_notice",
+    );
+    assert.equal(
+      notice?.type === "turn-item.updated" ? notice.payload.title : undefined,
+      "Paused for update",
+    );
+
+    projection = { ...projection, runs: [{ ...projection.runs[0]!, status: "cancelled" }] };
+    const dispatches: Array<Extract<OrchestrationV2Command, { type: "message.dispatch" }>> = [];
+    const layerThreads = Layer.merge(
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.sync(() => projection),
+        recoverDelegatedTask: () => Effect.void,
+        dispatch: (command) =>
+          Effect.sync(() => {
+            if (command.type !== "message.dispatch") return {} as never;
+            dispatches.push(command);
+            projection = { ...projection, messages: [{ id: command.messageId } as never] };
+            return {} as never;
+          }),
+      }),
+      ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+    );
+    for (let restart = 0; restart < 2; restart += 1)
+      yield* continueRestartedRun({ threadId, sourceRunId: runId, reason: "update" }).pipe(
+        Effect.provide(layerThreads),
+      );
+    assert.lengthOf(dispatches, 1);
+    assert.match(
+      dispatches[0]!.text,
+      new RegExp(`^${APP_NAME} paused this turn to install an update`),
+    );
+    assert.equal(dispatches[0]!.notification?.summary, `${APP_NAME} updated and resumed this turn`);
   }),
 );
 

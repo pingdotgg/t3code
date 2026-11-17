@@ -1,3 +1,4 @@
+import { AuthEnvironmentMaintainScope, EnvironmentHttpApi } from "@t3tools/contracts";
 import { APP_NAME, CLI_COMMAND, LEGACY_CLI_COMMAND } from "@t3tools/shared/branding";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { powerShellOnly, shellCommandPath } from "@t3tools/shared/shell";
@@ -19,8 +20,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
 import * as BootService from "../service/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -41,13 +45,18 @@ import {
   compareExactServiceVersions,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_UNIT_ENV,
 } from "../service/serviceProtocol.ts";
 import { runStagedServicePreflight } from "../service/servicePreflight.ts";
 import { findNewestReleaseVersion } from "../service/npmRelease.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  readLiveServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
 import * as CliService from "./service.ts";
@@ -366,7 +375,10 @@ export const updateCommand = Command.make("update", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
+      const pause = pauseLiveServerRuns(config);
+      const pauseContext = yield* Effect.context<Effect.Services<typeof pause>>();
       return yield* runUpdate({
+        pauseLiveServerRuns: Effect.provideContext(pause, pauseContext),
         baseDir: config.baseDir,
         logsDir: config.logsDir,
         databasePath: config.dbPath,
@@ -387,6 +399,50 @@ export const updateCommand = Command.make("update", {
       );
     }),
   ),
+);
+
+const UPDATE_PAUSE_TIMEOUT = Duration.seconds(40);
+
+/** Paused turn count from the live server, or undefined when it is down, too old, or slow. */
+const pauseLiveServerRuns = Effect.fn("cli.update.pause_live_server_runs")(
+  function* (config: ServerConfig.ServerConfig["Service"]) {
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+    if (Option.isNone(runtimeState)) return undefined;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const issued = yield* Effect.acquireRelease(
+      environmentAuth.issueSession({
+        scopes: [AuthEnvironmentMaintainScope],
+        label: `${CLI_COMMAND} update`,
+        ttl: Duration.minutes(1),
+      }),
+      (session) =>
+        environmentAuth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
+    );
+    const client = yield* HttpApiClient.make(EnvironmentHttpApi, {
+      baseUrl: runtimeState.value.origin,
+    });
+    const result = yield* client.server.pauseForUpdate({
+      headers: { authorization: `Bearer ${issued.token}` },
+    });
+    return result.pausedRuns;
+  },
+  (effect, config) =>
+    effect.pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(
+          EnvironmentAuth.layerRuntime.pipe(Layer.provide(ServerConfig.layer(config))),
+          FetchHttpClient.layer,
+        ),
+      ),
+      Effect.timeoutOption(UPDATE_PAUSE_TIMEOUT),
+      Effect.map(Option.getOrUndefined),
+      Effect.catchCause((cause) =>
+        Effect.logDebug("Could not pause running turns before the update", cause).pipe(
+          Effect.as(undefined),
+        ),
+      ),
+    ),
 );
 
 const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(function* (input: {
@@ -433,6 +489,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 });
 
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
+  readonly pauseLiveServerRuns: Effect.Effect<number | undefined>;
   readonly baseDir: string;
   readonly logsDir: string;
   readonly databasePath: string;
@@ -650,6 +707,17 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // the target CLI, so stopping this process cannot interrupt the switch.
   let servicePlan: BootService.BootServicePlan | undefined;
   if (serviceInstalled && !serviceCurrent) {
+    // From inside the service, pausing would interrupt the turn running this update.
+    if (restartService && foreground === undefined && !environment[SERVICE_UNIT_ENV]) {
+      const pausedRuns = yield* input.pauseLiveServerRuns;
+      if (pausedRuns !== undefined && pausedRuns > 0) {
+        yield* Console.log(
+          pausedRuns === 1
+            ? "  Paused 1 running turn; it resumes after the restart."
+            : `  Paused ${pausedRuns} running turns; they resume after the restart.`,
+        );
+      }
+    }
     yield* Console.log(
       restartService
         ? "Restarting the background service..."

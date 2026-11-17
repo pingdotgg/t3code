@@ -31,6 +31,7 @@ function makeStubInstance(input: {
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
+    pauseRunsForUpdate: Effect.succeedNone,
   };
 }
 

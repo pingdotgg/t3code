@@ -927,6 +927,7 @@ describe("DesktopUpdates", () => {
           restartScheduled: false,
         })),
         waitForReady: () => Effect.succeed(true),
+        pauseRunsForUpdate: Effect.succeedNone,
       } satisfies DesktopBackendPool.DesktopBackendInstance;
     };
     const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
@@ -952,6 +953,77 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(starts, [wsl.id]);
         assert.isFalse((yield* primary.snapshot).desiredRunning);
         assert.isTrue((yield* wsl.snapshot).desiredRunning);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("pauses running backends' turns before stopping them, bounded per backend", () => {
+    const steps: string[] = [];
+    const confirmedPaused = Deferred.makeUnsafe<void>();
+    const silentPaused = Deferred.makeUnsafe<void>();
+    const makeInstance = (
+      id: DesktopBackendPool.BackendInstanceId,
+      desiredRunning: boolean,
+      pauseRunsForUpdate: Effect.Effect<Option.Option<number>>,
+    ) =>
+      ({
+        id,
+        label: Effect.succeed(id),
+        currentConfig: Effect.succeedNone,
+        start: Effect.void,
+        stop: () => Effect.sync(() => steps.push(`stop:${id}`)),
+        snapshot: Effect.succeed({
+          desiredRunning,
+          ready: desiredRunning,
+          activePid: Option.none(),
+          restartAttempt: 0,
+          restartScheduled: false,
+        }),
+        waitForReady: () => Effect.succeed(true),
+        pauseRunsForUpdate: Effect.sync(() => steps.push(`pause:${id}`)).pipe(
+          Effect.andThen(pauseRunsForUpdate),
+        ),
+      }) satisfies DesktopBackendPool.DesktopBackendInstance;
+    const confirming = makeInstance(
+      DesktopBackendPool.PRIMARY_INSTANCE_ID,
+      true,
+      Deferred.succeed(confirmedPaused, undefined).pipe(Effect.as(Option.some(2))),
+    );
+    const silent = makeInstance(
+      DesktopBackendPool.BackendInstanceId("wsl:default"),
+      true,
+      Deferred.succeed(silentPaused, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    const stopped = makeInstance(
+      DesktopBackendPool.BackendInstanceId("wsl:stopped"),
+      false,
+      Effect.die("a stopped backend has no turns to pause"),
+    );
+    const harness = makeHarness({ backendInstances: [confirming, silent, stopped] });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const install = yield* updates.install.pipe(Effect.forkScoped);
+        yield* Deferred.await(confirmedPaused);
+        yield* Deferred.await(silentPaused);
+        yield* TestClock.adjust(Duration.seconds(34));
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.isFalse(steps.some((step) => step.startsWith("stop:")));
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.isTrue((yield* Fiber.join(install)).accepted);
+        assert.sameMembers(steps.slice(0, 2), [`pause:${confirming.id}`, `pause:${silent.id}`]);
+        assert.sameMembers(steps.slice(2), [
+          `stop:${confirming.id}`,
+          `stop:${silent.id}`,
+          `stop:${stopped.id}`,
+        ]);
+        assert.equal(harness.quitAndInstalls(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

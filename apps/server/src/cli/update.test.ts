@@ -18,7 +18,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../service/bootService.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "../service/serviceProtocol.ts";
+import { SERVICE_LAUNCHER_PROTOCOL, SERVICE_UNIT_ENV } from "../service/serviceProtocol.ts";
 import {
   pinnedRuntimePaths,
   posixLauncherScript,
@@ -131,6 +131,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
     httpClient = HttpClient.make(() => Effect.die("unexpected release lookup")),
   ) =>
     runUpdate({
+      pauseLiveServerRuns: Effect.die("unexpected pause"),
       baseDir: "/unused",
       logsDir: "/unused",
       databasePath: "/unused",
@@ -628,6 +629,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       });
 
       const output = yield* runUpdate({
+        pauseLiveServerRuns: Effect.die("unexpected pause"),
         baseDir,
         logsDir: baseDir,
         databasePath: path.join(baseDir, "statev2.sqlite"),
@@ -668,6 +670,109 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.IsExecutable, true),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
+    ),
+  );
+});
+
+it.layer(NodeServices.layer)("t3 update pauses running turns", (it) => {
+  it.effect.each([
+    { name: "before restarting the service", environment: {}, pauses: 1 },
+    {
+      name: "except from inside the service it restarts",
+      environment: { [SERVICE_UNIT_ENV]: "t3code.service" },
+      pauses: 0,
+    },
+  ])("$name", (row) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-pause-" });
+      const version = packageJson.version;
+      const runtime = pinnedRuntimePaths(path, baseDir, version, "linux");
+      yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+      yield* fs.writeFileString(runtime.entryPath, "", { mode: 0o755 });
+      yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+      const unitPath = path.join(baseDir, "t3code.service");
+      const logPath = path.join(baseDir, "boot-service.log");
+      const events: Array<string> = [];
+      const service = Layer.mock(BootService.BootService, {
+        status: Effect.succeed<BootService.BootServiceStatus>({
+          supported: true,
+          installed: true,
+          current: false,
+          installedVersion: version,
+          installedBaseDir: baseDir,
+          problems: ["restart-pending"],
+          unitPath,
+          logPath,
+        }),
+        install: (options) =>
+          Effect.sync(() => {
+            events.push(`install start=${options?.start}`);
+            return { program: [runtime.entryPath], baseDir, unitPath, logPath };
+          }),
+      });
+      vi.spyOn(BootService, "layer").mockReturnValue(service);
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          unrelatedLsof.run(input).pipe(
+            Effect.map((result) =>
+              input.args?.includes("__service-preflight") === true
+                ? {
+                    ...result,
+                    stdout: JSON.stringify({
+                      status: "ready",
+                      version,
+                      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                    }),
+                  }
+                : result,
+            ),
+          ),
+      });
+
+      const output = yield* runUpdate({
+        pauseLiveServerRuns: Effect.sync(() => {
+          events.push("pause");
+          return 2;
+        }),
+        baseDir,
+        logsDir: baseDir,
+        databasePath: path.join(baseDir, "statev2.sqlite"),
+        serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+        channel: undefined,
+        requestedVersion: version,
+        allowDowngrade: false,
+        assumeYes: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: "", ...row.environment }),
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provide(
+          Layer.mergeAll(
+            service,
+            Layer.succeed(ProcessRunner.ProcessRunner, runner),
+            ManagedPolicy.layerTest(),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unexpected release lookup")),
+            ),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        events,
+        row.pauses === 1 ? ["pause", "install start=true"] : ["install start=true"],
+      );
+      assert.equal(
+        output.includes("Paused 2 running turns; they resume after the restart."),
+        row.pauses === 1,
+      );
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.IsExecutable, false),
     ),
   );
 });
@@ -810,6 +915,7 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
       });
 
       const exit = yield* runUpdate({
+        pauseLiveServerRuns: Effect.die("unexpected pause"),
         baseDir,
         logsDir: baseDir,
         databasePath,

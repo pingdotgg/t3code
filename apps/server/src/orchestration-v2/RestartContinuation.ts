@@ -39,6 +39,8 @@ import { APP_NAME } from "@t3tools/shared/branding";
 const CONTINUE_PROMPT =
   "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
+const UPDATE_PREFIX = `${APP_NAME} paused this turn to install an update and has restarted.`;
+
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
 
@@ -239,6 +241,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     readonly threadId: ThreadId;
     readonly sourceRunId: RunId;
     readonly processLossCount?: number;
+    readonly reason?: "update";
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -319,12 +322,14 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const continuePrompt =
+      input.reason === "update" ? `${UPDATE_PREFIX} ${CONTINUE_PROMPT}` : CONTINUE_PROMPT;
     const text =
       noteText === undefined
-        ? CONTINUE_PROMPT
+        ? continuePrompt
         : note.settled
           ? noteText
-          : `${noteText}\n\n${CONTINUE_PROMPT}`;
+          : `${noteText}\n\n${continuePrompt}`;
     yield* threads
       .dispatch({
         type: "message.dispatch",
@@ -337,7 +342,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           outcome: "updated",
           summary: note.settled
             ? `${APP_NAME} restarted and stopped background work`
-            : `${APP_NAME} restarted and resumed this turn`,
+            : input.reason === "update"
+              ? `${APP_NAME} updated and resumed this turn`
+              : `${APP_NAME} restarted and resumed this turn`,
           detail: text,
         },
         attachments: [],

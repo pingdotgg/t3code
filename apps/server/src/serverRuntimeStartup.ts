@@ -45,6 +45,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { UpdatePause } from "./updatePause.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -65,6 +66,8 @@ export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeS
   }
 }
 
+const UPDATE_PAUSE_TIMEOUT = "30 seconds";
+
 export class ServerRuntimeStartup extends Context.Service<
   ServerRuntimeStartup,
   {
@@ -73,8 +76,17 @@ export class ServerRuntimeStartup extends Context.Service<
     readonly enqueueCommand: <A, E>(
       effect: Effect.Effect<A, E>,
     ) => Effect.Effect<A, E | ServerRuntimeStartupError>;
+    readonly pauseRunsForUpdate: UpdatePause["Service"]["pauseRunsForUpdate"];
   }
 >()("t3/serverRuntimeStartup") {}
+
+export const layerUpdatePause = Layer.effect(
+  UpdatePause,
+  Effect.gen(function* () {
+    const { pauseRunsForUpdate } = yield* ServerRuntimeStartup;
+    return { pauseRunsForUpdate };
+  }),
+);
 
 interface QueuedCommand {
   readonly run: Effect.Effect<void, never>;
@@ -407,25 +419,52 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
   const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+  const pausedForUpdate = yield* Ref.make(false);
+  const shutdownError = (cause: string) =>
+    new ServerRuntimeStartupError({
+      mode: serverConfig.mode,
+      host: serverConfig.host ?? null,
+      port: serverConfig.port,
+      cause,
+    });
+  const stopEffectWorker = Effect.gen(function* () {
+    const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
+    if (workerFiber !== null) {
+      yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+    }
+  });
+  const pauseRunsForUpdate = yield* Effect.cached(
+    Effect.gen(function* () {
+      yield* Ref.set(pausedForUpdate, true);
+      yield* commandGate.failCommandReady(
+        shutdownError(`${APP_NAME} is pausing running turns to install an update.`),
+      );
+      yield* stopEffectWorker;
+      const turns = yield* providerRuntimeRecovery.prepareForUpdate.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not prepare running turns for an update", {
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as([])),
+        ),
+      );
+      yield* Effect.logInfo("Pausing running turns for an update", { turns: turns.length });
+      yield* providerSessions
+        .interruptForShutdown(turns)
+        .pipe(Effect.timeoutOption(UPDATE_PAUSE_TIMEOUT));
+      return { pausedRuns: turns.length };
+    }).pipe(Effect.withSpan("server.pauseRunsForUpdate")),
+  );
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
-      yield* commandGate.failCommandReady(
-        new ServerRuntimeStartupError({
-          mode: serverConfig.mode,
-          host: serverConfig.host ?? null,
-          port: serverConfig.port,
-          cause: "Server runtime is shutting down.",
-        }),
-      );
-      const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
-      if (workerFiber !== null) {
-        yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
-      }
+      yield* commandGate.failCommandReady(shutdownError("Server runtime is shutting down."));
+      yield* stopEffectWorker;
       yield* providerRuntimeRecovery.prepareForShutdown.pipe(
         Effect.ensuring(providerSessions.shutdown),
       );
-      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
+      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown", {
+        forUpdate: yield* Ref.get(pausedForUpdate),
+      });
       yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
     }).pipe(
       Effect.withSpan("server.shutdown"),
@@ -667,6 +706,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     awaitCommandReady: commandGate.awaitCommandReady,
     markHttpListening: Deferred.succeed(httpListening, undefined),
     enqueueCommand: commandGate.enqueueCommand,
+    pauseRunsForUpdate,
   } satisfies ServerRuntimeStartup["Service"];
 });
 

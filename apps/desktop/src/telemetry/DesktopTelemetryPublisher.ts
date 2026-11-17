@@ -353,6 +353,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       case "cancelDesktopUpdate":
         return Queue.offer(updateCancellationQueue, message).pipe(Effect.asVoid);
       case "serverReady":
+      case "runsPausedForUpdate":
         return Effect.void;
     }
   };

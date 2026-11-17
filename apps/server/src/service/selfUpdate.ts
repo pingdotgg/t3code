@@ -44,6 +44,7 @@ import {
 import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
 import { runStagedServicePreflight } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { UpdatePause } from "../updatePause.ts";
 import { isExactServiceVersion } from "./serviceProtocol.ts";
 
 export function resolveServerSelfUpdateCapability(input: {
@@ -139,6 +140,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
   const policy = yield* ManagedPolicy.ManagedPolicy;
   const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+  const updatePause = yield* UpdatePause;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -284,6 +286,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         ),
       );
 
+      // The launcher stops this server moments after accepting, so interrupts go out right away.
+      yield* updatePause.pauseRunsForUpdate.pipe(Effect.forkDetach);
       yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
         updateId,
         targetVersion,

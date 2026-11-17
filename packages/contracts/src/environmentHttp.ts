@@ -662,6 +662,16 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+export const ServerPauseForUpdateResult = Schema.Struct({ pausedRuns: Schema.Number });
+
+export class EnvironmentServerHttpApi extends HttpApiGroup.make("server").add(
+  HttpApiEndpoint.post("pauseForUpdate", "/api/server/pause-for-update", {
+    headers: OptionalBearerHeaders,
+    success: ServerPauseForUpdateResult,
+    error: EnvironmentScopeRequiredError,
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<EnvironmentVoiceBodyLimit>()(
   "EnvironmentVoiceBodyLimit",
   { error: EnvironmentRequestInvalidError },
@@ -887,6 +897,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentServerHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentWebhooksHttpApi)
