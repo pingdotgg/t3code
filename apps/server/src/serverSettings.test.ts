@@ -16,6 +16,7 @@ import {
   ServerSettings,
   ServerSettingsPatch,
   UsageLimitSourceId,
+  type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -1859,6 +1860,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        // A saved token goes only to the gateway it was saved for, however it is echoed.
+        const moved = (agentToken: SimlockDeviceHostConfig["agentToken"]) =>
+          serverSettings.updateSettings({
+            simlockDeviceHosts: [
+              {
+                ...echoed.simlockDeviceHosts[0]!,
+                gatewayUrl: "https://elsewhere.test",
+                agentToken,
+              },
+            ],
+          });
+        assert.equal((yield* moved(SECRET_REDACTED)).simlockDeviceHosts[0]?.agentToken, "");
+        yield* serverSettings.updateSettings({ simlockDeviceHosts: echoed.simlockDeviceHosts });
+        assert.equal((yield* moved(simlockReference)).simlockDeviceHosts[0]?.agentToken, "");
+        assert.equal(
+          (yield* moved("typed-token")).simlockDeviceHosts[0]?.agentToken,
+          "typed-token",
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 

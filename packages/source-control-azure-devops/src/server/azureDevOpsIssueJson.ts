@@ -219,7 +219,7 @@ export function workItemStates(
   return states.some((state) => state.name === item.state.name) ? states : [...states, item.state];
 }
 
-/** The `{ count, value }` page `wit/workitems` answers; a row this cannot place is skipped. */
+/** The `{ count, value }` page `wit/workitemsbatch` answers; a row this cannot place is skipped. */
 export function decodeWorkItemsJson(
   raw: string,
   closed: ClosedStates,
