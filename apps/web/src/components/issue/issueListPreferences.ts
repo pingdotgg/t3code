@@ -27,7 +27,7 @@ const DEFAULT_ISSUE_LIST_PREFERENCES = {
 const STORAGE_KEY = "t3.issues.preferences";
 
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
-const IssueListPreferencesSchema = Schema.Struct({
+export const IssueListPreferencesSchema = Schema.Struct({
   who: IssueInvolvement,
   status: IssueListState,
   host: Schema.optional(BoundedPreference),
