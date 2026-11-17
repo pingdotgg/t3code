@@ -39,7 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import {
   clearPersistedServerRuntimeState,
-  readPersistedServerRuntimeState,
+  readLiveServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -217,6 +217,7 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
         Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layer)),
       ),
     ),
+    // Built after acquireServerOwnership; layerCliConfig would contend with this process's own lock.
     Layer.provideMerge(SqlitePersistence.layerConfig),
   );
 
@@ -359,7 +360,7 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
     environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
     config: ServerConfig.ServerConfig["Service"],
   ) {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return Option.none<{ readonly origin: string }>();
     }
@@ -490,6 +491,20 @@ const projectAddCommand = Command.make("add", {
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
+        // Re-adding an archived project's folder restores it, matching the clients.
+        if (existingProject?.archivedAt != null) {
+          const title = Option.isSome(flags.title)
+            ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
+            : undefined;
+          yield* dispatch({
+            type: "project.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId: existingProject.id,
+            archived: false,
+            ...(title === undefined ? {} : { title }),
+          });
+          return `Unarchived project ${existingProject.id} (${title ?? existingProject.title}) at ${workspaceRoot}.`;
+        }
         if (existingProject) {
           return yield* new ProjectAlreadyExistsError({
             operation: "addProject",
