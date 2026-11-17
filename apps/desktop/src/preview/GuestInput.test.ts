@@ -42,6 +42,12 @@ describe("preview guest input", () => {
     await guest.send("Input.insertText", { text: "pairing-code" });
     expect(guest.webContents.insertText).toHaveBeenCalledWith("pairing-code");
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
+    await guest.send("Input.dispatchKeyEvent", { type: "keyDown", key: "A", text: "A" });
+    expect(guest.webContents.sendInputEvent.mock.calls).toEqual([
+      [{ type: "rawKeyDown", keyCode: "A", modifiers: [] }],
+      [{ type: "char", keyCode: "A", modifiers: [] }],
+    ]);
+    expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.dispatchKeyEvent", expect.anything());
   });
 
   it("stops the guest navigation without stopping its embedder", async () => {
@@ -266,10 +272,16 @@ describe("preview guest input", () => {
 
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
-    await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(
-      /cross-site frame/,
-    );
+    for (const method of [
+      "Input.insertText",
+      "Input.dispatchKeyEvent",
+      "Input.imeSetComposition",
+    ]) {
+      await expect(guest.send(method, { text: "secret" })).rejects.toThrow(/cross-site frame/);
+      expect(guest.sendCommand).not.toHaveBeenCalledWith(method, expect.anything());
+    }
     expect(guest.webContents.insertText).not.toHaveBeenCalled();
+    expect(guest.webContents.sendInputEvent).not.toHaveBeenCalled();
   });
 });
 

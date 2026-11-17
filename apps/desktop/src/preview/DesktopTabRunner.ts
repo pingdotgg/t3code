@@ -84,14 +84,12 @@ export class DesktopTabRunner {
   private readonly redact: <A>(value: A) => A;
   private readonly changed: (active: boolean) => void;
   private readonly pointer: PageOperations.PointerReporter;
-  private readonly focus: () => void;
   constructor(
     binding: DesktopTabBinding,
     connectionId: string,
     changed: (active: boolean) => void,
     redact: <A>(value: A) => A = (value) => value,
     pointer: PageOperations.PointerReporter = async () => {},
-    focus: () => void = () => {},
   ) {
     this.binding = binding;
     this.setting = binding.snapshot.viewport ?? { _tag: "fill" };
@@ -100,7 +98,6 @@ export class DesktopTabRunner {
     this.changed = changed;
     this.redact = redact;
     this.pointer = pointer;
-    this.focus = focus;
   }
 
   async attach(
@@ -125,6 +122,19 @@ export class DesktopTabRunner {
     });
     await Effect.runPromise(
       Effect.addFinalizer(() => Effect.sync(unsubscribe)).pipe(Scope.provide(this.scope)),
+    );
+    await Effect.runPromise(
+      Effect.acquireRelease(
+        Effect.promise(() =>
+          target.send("Emulation.setFocusEmulationEnabled", { enabled: true }, undefined),
+        ),
+        () =>
+          Effect.promise(() =>
+            target
+              .send("Emulation.setFocusEmulationEnabled", { enabled: false }, undefined)
+              .catch(() => undefined),
+          ),
+      ).pipe(Scope.provide(this.scope)),
     );
     const endpoint = await this.openEndpoint(target);
     // The manager retains the debugger between connections. Re-enabling Runtime
@@ -457,7 +467,6 @@ export class DesktopTabRunner {
           message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
           reason: "dialogPending",
         });
-      this.focus();
       await this.redactText(null);
       this.acting = true;
       this.report();

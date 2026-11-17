@@ -61,6 +61,7 @@ describe("desktop tab runner", () => {
   let reports: boolean[];
   let remembered: string[];
   let commands: string[];
+  let focusEmulation: boolean[];
   let stallScreenshot = false;
   let nativeCapture: ((scale: number) => Promise<string>) | undefined;
   let attachRunner: () => Promise<void>;
@@ -82,6 +83,7 @@ describe("desktop tab runner", () => {
     reports = [];
     remembered = [];
     commands = [];
+    focusEmulation = [];
     stallScreenshot = false;
     nativeCapture = undefined;
     screenshotStarted = undefined;
@@ -99,6 +101,8 @@ describe("desktop tab runner", () => {
         {
           send: (method, params) => {
             commands.push(method);
+            if (method === "Emulation.setFocusEmulationEnabled")
+              focusEmulation.push(params["enabled"] as boolean);
             if (stallScreenshot && method === "Page.captureScreenshot") {
               screenshotStarted?.();
               return new Promise(() => {});
@@ -151,6 +155,7 @@ describe("desktop tab runner", () => {
   });
 
   it("uses shared snapshot text, refs, and a screenshot of the attached page", async () => {
+    expect(focusEmulation).toEqual([true]);
     const result = await runner.respond(request("snapshot"));
     expect(result.ok).toBe(true);
     const snapshot = result.result as { accessibilityTree: string; screenshot: { data: string } };
@@ -166,10 +171,14 @@ describe("desktop tab runner", () => {
       true,
     );
     expect(await page.locator("#name").inputValue()).toBe("Fixture");
+    expect((await runner.respond(request("press", { key: "!" }))).ok).toBe(true);
+    expect(await page.locator("#name").inputValue()).toBe("Fixture!");
     expect(await runner.respond(request("evaluate", { expression: "1+1" }))).toMatchObject({
       ok: true,
       result: 2,
     });
+    await runner.close();
+    expect(focusEmulation).toEqual([true, false]);
   });
 
   it("captures snapshots through the native adapter when the guest's CDP capture stalls", async () => {

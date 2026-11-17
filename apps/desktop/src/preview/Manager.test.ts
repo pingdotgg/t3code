@@ -8,6 +8,7 @@ import type {
   PreviewAnnotationPayload,
   PreviewAnnotationRect,
 } from "@t3tools/contracts";
+import { EnvironmentId, PreviewTabId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { app, shell } from "electron";
@@ -32,6 +33,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { DesktopTabRunner } from "./DesktopTabRunner.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
@@ -2781,6 +2783,39 @@ describe("PreviewManager", () => {
         // A person clicking in the guest itself gives it a focused frame.
         Object.assign(contents, { focusedFrame: {} });
         expect(yield* openBlankLink).toBe(false);
+
+        yield* manager.closeTab("tab_1");
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        using _attach = vi.spyOn(DesktopTabRunner.prototype, "attach").mockResolvedValue(undefined);
+        yield* manager.connectTabHost({
+          runtimeTabId: "tab_1",
+          connectionId: "connection-1",
+          binding: {
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId: ThreadId.make("thread-1"),
+            tabId: PreviewTabId.make("server-tab-1"),
+            deviceName: "Desktop",
+            snapshot: {
+              threadId: ThreadId.make("thread-1"),
+              tabId: PreviewTabId.make("server-tab-1"),
+              runtime: "desktop",
+              navStatus: { _tag: "Idle" },
+              canGoBack: false,
+              canGoForward: false,
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          },
+        });
+        const openHostedLink = vi.mocked(contents.setWindowOpenHandler).mock.lastCall![0];
+        for (const focused of [false, true]) {
+          Object.assign(contents, { focusedFrame: focused ? {} : null });
+          openHostedLink({
+            url: "https://example.com/next",
+            disposition: "foreground-tab",
+          } as Electron.HandlerDetails);
+          expect(yield* Queue.take(openLinks)).toBe(!focused);
+        }
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 

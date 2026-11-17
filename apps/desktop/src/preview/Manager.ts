@@ -83,6 +83,7 @@ import {
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { sendPageCommand } from "./GuestInput.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
@@ -1770,7 +1771,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 // focus back after the agent's press, so a foreground tab would take it again.
                 background:
                   details.disposition === "background-tab" ||
-                  (wc.focusedFrame === null && browserHost.agentLedPage(wc)),
+                  (wc.focusedFrame === null &&
+                    (tabRunners.has(tabId) || browserHost.agentLedPage(wc))),
               }),
             );
             return { action: "deny" };
@@ -2768,16 +2770,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         },
         (value) => browserHost.redactForPage(wc, value),
         (point, phase) => runPromise(emitAgentPointer({ runtimeTabId: tabId, ...point, phase })),
-        () => wc.focus(),
       );
       tabRunners.set(tabId, runner);
       yield* attemptPromise({ operation: "connectTabHost", tabId }, () =>
         runner.attach(
           {
             send: (method, params, sessionId) =>
-              sessionId === undefined
-                ? control.debugger.sendCommand(method, params)
-                : control.debugger.sendCommand(method, params, sessionId),
+              sendPageCommand(wc, control.debugger, method, params, sessionId),
             // The tab host has one connection, which gets the page's screencast.
             receivesScreencast: () => true,
             ackScreencastFrame: (frameId) =>
