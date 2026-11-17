@@ -207,9 +207,10 @@ through your selected environment and use API billing. They share the API keys s
 voice, then use the preview to try it.
 
 **Local model** reads replies on your selected environment, so the text never leaves it.
-Download a model once from the same settings page. Supertonic 3 (330–360 MB) speaks 31
-languages and is fastest with a GPU. Pocket TTS (about 200 MB) speaks English and stays fast
-on machines without one. Like dictation models, they reuse a copy already in the Hugging Face
+Download a model once from the same settings page. Kokoro (about 220 MB) is the default, with
+natural English voices plus Spanish, French, Hindi, Italian, and Portuguese. Supertonic 3
+(330–360 MB) speaks 31 languages and is fastest with a GPU. Pocket TTS (about 200 MB) speaks
+English and stays fast on machines without one. Like dictation models, they reuse a copy already in the Hugging Face
 cache, and on web or desktop you can paste the path of a copy elsewhere and choose **Use
 existing**. Local models use the GPU through Metal on Apple silicon Macs and Vulkan on Windows
 and Linux, and run on macOS, Windows, and Linux with glibc 2.28 or newer.

@@ -1,5 +1,5 @@
 /** A release of github.com/pingdotgg/audio.cpp, whose `T3 release` workflow builds these libraries. */
-export const AUDIO_CPP_VERSION = "t3-2026.11.16";
+export const AUDIO_CPP_VERSION = "t3-2026.11.17";
 
 export type AudioCppRuntime = {
   readonly filename: string;
@@ -39,48 +39,56 @@ const runtime = (
 const RUNTIMES: Readonly<Record<string, AudioCppRuntime>> = {
   "darwin-arm64": runtime(
     "macos-arm64-metal.tar.gz",
-    15_050_495,
-    "81ee4b878e26c8c7b3eb12f6c50c94e2db3e77916e2eadb180957e97838271e2",
+    15_293_898,
+    "4f06e1d834e2e7a43fb9f257d561e946196a9e2459a8b4648cf36e24a0e5ac14",
     "libs/libaudiocpp.0.1.0.dylib",
     "metal",
   ),
   "darwin-x64": runtime(
     "macos-x64-cpu.tar.gz",
-    16_205_261,
-    "94465d3a325d776198821f7216a52caa6db1f4f11fb20b5490f2789f7e7e54a6",
+    16_460_460,
+    "02066f1ee9a7cad1a601d65cc6be3349ad570d9b9268c65e17b7cf88b706f10b",
     "libs/libaudiocpp.0.1.0.dylib",
     "cpu",
   ),
   "linux-x64": runtime(
     "linux-x64-vulkan.tar.gz",
-    46_480_819,
-    "d6774bc02102fa554db246e2dbf30c452cbec7dfe7d33844b89c399d758d8d01",
+    46_783_748,
+    "3b6ce18303f203eabc82997a2af14e6052f5aad2ea326e444973200a5fd908ca",
     "libs/libaudiocpp.so.0.1.0",
     "vulkan",
     "2.28",
   ),
   "linux-arm64": runtime(
     "linux-arm64-vulkan.tar.gz",
-    40_185_132,
-    "6b03aebe87eb85f433faf3a0cd4e54ed7d45dde2654cf98ae8ac0eebfa2163a3",
+    40_477_068,
+    "39c59b4ef06fe1ac8fd49fbdf14d3392515949d719ce1ebda5134a73a5c4fd10",
     "libs/libaudiocpp.so.0.1.0",
     "vulkan",
     "2.28",
   ),
   "win32-arm64": runtime(
     "windows-arm64-vulkan.zip",
-    34_518_475,
-    "576729077a80984c24a5b54c5ca237b388e5d0d8b90b394f8463314fd38b1bfc",
+    34_757_900,
+    "2e3692e2eab320d58056e38492d8fa2dc8e0de9699e156d783addae3c789c50c",
     "libs/audiocpp.dll",
     "vulkan",
   ),
   "win32-x64": runtime(
     "windows-x64-vulkan.zip",
-    34_389_747,
-    "91780513f8c374e4736c27850a988f4205526488388698e24eaa322682c16471",
+    34_618_677,
+    "25b3516d94d0f56b284689b3bf358b3f90e4f1a8ec8398c41ef5fa3806abbb1c",
     "libs/audiocpp.dll",
     "vulkan",
   ),
+};
+
+/** eSpeak-ng's phoneme tables and dictionaries for Kokoro; every library links eSpeak itself. */
+export const AUDIO_CPP_ESPEAK_DATA = {
+  filename: `audio-${AUDIO_CPP_VERSION}-espeak-ng-data.bin`,
+  url: `https://github.com/pingdotgg/audio.cpp/releases/download/${AUDIO_CPP_VERSION}/audio-${AUDIO_CPP_VERSION}-espeak-ng-data.bin`,
+  size: 18_383_744,
+  sha256: "59e581e5d0074112285592be38288da1e5e1f158b61ae236c99abbd6ed09e7c0",
 };
 
 export const audioCppRuntime = (platform: string, architecture: string) =>

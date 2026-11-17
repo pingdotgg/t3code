@@ -5,7 +5,12 @@ import {
   type SpeechSynthesisCatalog,
   type SpeechSynthesisRequest,
 } from "@t3tools/contracts";
-import { AUDIO_CPP_VERSION, audioCppRuntime, type AudioCppRuntime } from "@t3tools/audio-cpp";
+import {
+  AUDIO_CPP_ESPEAK_DATA,
+  AUDIO_CPP_VERSION,
+  audioCppRuntime,
+  type AudioCppRuntime,
+} from "@t3tools/audio-cpp";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -38,26 +43,87 @@ type LocalModel = {
   /** Whether the model honors the speed option; clients speed up playback for the rest. */
   readonly appliesSpeed: boolean;
   readonly voices: readonly LocalVoice[];
+  /** eSpeak-ng data the model phonemizes with, installed and removed with it. */
+  readonly espeakData?: SpeechModelStore.ModelFile;
 };
 
 const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
-const POCKET_REVISION = "7a103b33f04120535bdfe97b5f65b79d3c90d708";
+const GGUF_REVISION = "7a103b33f04120535bdfe97b5f65b79d3c90d708";
 // Named per model, since every Pocket TTS language ships voice files with the same names.
 const pocketVoice = (name: string, size: number, sha256: string): LocalVoice => ({
   id: name[0]!.toUpperCase() + name.slice(1),
   file: {
     id: AUDIO_CPP_GGUF,
-    revision: POCKET_REVISION,
+    revision: GGUF_REVISION,
     filename: `pocket-tts-english-${name}.safetensors`,
-    url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${POCKET_REVISION}/PocketTTS-GGUF/english/embeddings/${name}.safetensors`,
+    url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/PocketTTS-GGUF/english/embeddings/${name}.safetensors`,
     size,
     sha256,
   },
 });
 
-// Families that phonemize with eSpeak-ng (Kokoro, Kitten, Piper) need a GPL library that
-// upstream does not ship, so only self-contained models belong here.
+// Japanese and Chinese Kokoro voices need the multilingual package's dictionaries.
+const KOKORO_VOICES = [
+  ...[
+    "heart",
+    "alloy",
+    "aoede",
+    "bella",
+    "jessica",
+    "kore",
+    "nicole",
+    "nova",
+    "river",
+    "sarah",
+    "sky",
+  ].map((name) => `af_${name}`),
+  ...["adam", "echo", "eric", "fenrir", "liam", "michael", "onyx", "puck", "santa"].map(
+    (name) => `am_${name}`,
+  ),
+  "bf_alice",
+  "bf_emma",
+  "bf_isabella",
+  "bf_lily",
+  "bm_daniel",
+  "bm_fable",
+  "bm_george",
+  "bm_lewis",
+  "ef_dora",
+  "em_alex",
+  "em_santa",
+  "ff_siwis",
+  "hf_alpha",
+  "hf_beta",
+  "hm_omega",
+  "hm_psi",
+  "if_sara",
+  "im_nicola",
+  "pf_dora",
+  "pm_alex",
+  "pm_santa",
+];
+
+// The first model is the default, and each model's first voice is its default.
 const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
+  {
+    id: "kokoro-82m",
+    name: "Kokoro",
+    description: "Natural English voices, plus Spanish, French, Hindi, Italian, and Portuguese.",
+    file: {
+      id: AUDIO_CPP_GGUF,
+      revision: GGUF_REVISION,
+      filename: "Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
+      size: 189_550_976,
+      sha256: "9a4ca6176460cdc8c7845b804c0bbe85a4791ee3ffff568a3fdadbb708c63f47",
+    },
+    appliesSpeed: true,
+    voices: KOKORO_VOICES.map((id) => ({ id })),
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
   {
     id: "supertonic-3",
     name: "Supertonic 3",
@@ -78,7 +144,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     description: "English only. Small, and fast without a GPU.",
     file: {
       id: AUDIO_CPP_GGUF,
-      revision: POCKET_REVISION,
+      revision: GGUF_REVISION,
       filename: "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
       size: 127_867_968,
       sha256: "3f71cf6a51f93c2f2e554e98970a3f49fb9a98d0c64bed5a815e65be3d2ff588",
@@ -132,6 +198,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
 const modelFiles = (model: LocalModel) => [
   model.file,
   ...model.voices.flatMap((voice) => (voice.file ? [voice.file] : [])),
+  ...(model.espeakData ? [model.espeakData] : []),
 ];
 const totalSize = (files: readonly SpeechModelStore.ModelFile[]) =>
   files.reduce((size, file) => size + file.size, 0);
@@ -245,6 +312,8 @@ const make = Effect.gen(function* () {
     `audio-cpp-${AUDIO_CPP_VERSION}-${platform}-${architecture}`,
   );
   const libraryPath = runtime && path.join(runtimeDirectory, runtime.library);
+  // audio.cpp unpacks eSpeak's data package here on first use.
+  const espeakCache = path.join(config.stateDir, "speech", "cache");
   // Written last, so a directory without it is an interrupted extraction.
   const completeMarker = path.join(runtimeDirectory, ".t3-complete");
 
@@ -523,6 +592,10 @@ const make = Effect.gen(function* () {
           yield* Effect.forEach(modelFiles(model), (file) => store.remove(file)).pipe(
             Effect.mapError(installFailed),
           );
+          if (model.espeakData)
+            yield* fs
+              .remove(espeakCache, { recursive: true, force: true })
+              .pipe(Effect.mapError(installFailed));
           const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
             store.isReady(entry.file),
           );
@@ -558,7 +631,9 @@ const make = Effect.gen(function* () {
     const voice =
       definition.voices.find((entry) => entry.id === request.voice) ?? definition.voices[0]!;
     const voicePath = voice.file && (yield* store.installedPath(voice.file));
-    if (!modelPath || (voice.file && !voicePath)) return yield* failure("missing-model");
+    const espeakPath = definition.espeakData && (yield* store.installedPath(definition.espeakData));
+    if (!modelPath || (voice.file && !voicePath) || (definition.espeakData && !espeakPath))
+      return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
     // Interruptible, so a request abandoned while waiting stops waiting.
     yield* Effect.acquireRelease(
@@ -578,6 +653,9 @@ const make = Effect.gen(function* () {
             libraryPath,
             backend: runtime.backend,
             modelPath,
+            ...(espeakPath && {
+              env: { AUDIOCPP_ESPEAK_DATA: espeakPath, AUDIOCPP_ESPEAK_CACHE: espeakCache },
+            }),
             threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
             signal: lifetime.signal,
           }),

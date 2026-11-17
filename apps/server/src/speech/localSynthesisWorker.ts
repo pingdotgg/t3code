@@ -106,6 +106,8 @@ export async function loadLocalSynthesisModel(options: {
   /** Falls back to the CPU when the backend has no device here. */
   readonly backend: string;
   readonly modelPath: string;
+  /** Extra environment for the worker, such as where a model's eSpeak data lives. */
+  readonly env?: Readonly<Record<string, string>>;
   readonly threads: number;
   readonly signal: AbortSignal;
 }) {
@@ -113,7 +115,7 @@ export async function loadLocalSynthesisModel(options: {
   const child = NodeChildProcess.spawn(process.execPath, workerArgs(), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: "advanced",
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: { ...process.env, ...options.env, ELECTRON_RUN_AS_NODE: "1" },
   });
   let alive = true;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;

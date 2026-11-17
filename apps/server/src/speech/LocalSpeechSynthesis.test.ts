@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { AUDIO_CPP_VERSION, audioCppRuntime } from "@t3tools/audio-cpp";
+import { AUDIO_CPP_ESPEAK_DATA, AUDIO_CPP_VERSION, audioCppRuntime } from "@t3tools/audio-cpp";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
@@ -70,6 +70,7 @@ it.effect("counts only the files an install still needs in its download size", (
         const runtime = audioCppRuntime("darwin", "arm64")!.size;
         const { models } = yield* service.catalog;
         expect(models.map((model) => [model.id, model.install])).toEqual([
+          ["kokoro-82m", { state: "downloadable", size: runtime + AUDIO_CPP_ESPEAK_DATA.size }],
           ["supertonic-3", { state: "downloadable", size: runtime }],
           ["pocket-tts-english", { state: "downloadable", size: runtime + 6_194_424 }],
         ]);

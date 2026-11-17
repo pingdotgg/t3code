@@ -91,6 +91,14 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
     streamReset: lib.func("audiocpp_stream_reset", "int", [Session]),
     eventFree: lib.func("audiocpp_event_free", "void", [Event]),
     eventAsResult: lib.func("audiocpp_event_as_result", Result, [Event]),
+    namedAudioCount: lib.func("audiocpp_result_named_audio_count", "size_t", [Result]),
+    resultAudio: lib.func("audiocpp_result_audio", "int", [
+      Result,
+      out("void *"),
+      out("size_t"),
+      out("int"),
+      out("int"),
+    ]),
     namedAudio: lib.func("audiocpp_result_named_audio", "int", [
       Result,
       "size_t",
@@ -206,21 +214,16 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
                 return undefined;
               }
               try {
-                const id: [string] = [""];
                 const samples: [unknown] = [null];
                 const frames: [number | bigint] = [0];
                 const sampleRate: [number] = [0];
                 const channels: [number] = [0];
+                const result = native.eventAsResult(event[0]);
+                // Chunked families name each piece; families that generate in one pass do not.
                 check(
-                  native.namedAudio(
-                    native.eventAsResult(event[0]),
-                    0,
-                    id,
-                    samples,
-                    frames,
-                    sampleRate,
-                    channels,
-                  ),
+                  Number(native.namedAudioCount(result)) > 0
+                    ? native.namedAudio(result, 0, [""], samples, frames, sampleRate, channels)
+                    : native.resultAudio(result, samples, frames, sampleRate, channels),
                   "audio read",
                 );
                 const length = Number(frames[0]) * channels[0];
