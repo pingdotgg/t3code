@@ -34,11 +34,16 @@ function viewerFixture(supported: boolean) {
     },
   );
   vi.stubGlobal("EncodedVideoChunk", vi.fn());
+  const sockets: { onmessage: ((event: { data: ArrayBuffer }) => void) | null }[] = [];
   vi.stubGlobal(
     "WebSocket",
     class {
       static OPEN = 1;
       readyState = 0;
+      onmessage = null;
+      constructor() {
+        sockets.push(this);
+      }
       send() {}
       close() {}
     },
@@ -78,7 +83,7 @@ function viewerFixture(supported: boolean) {
       buttonBorder: "gray",
     },
   });
-  return { configured, requested, videoBodies };
+  return { configured, requested, sockets, videoBodies };
 }
 
 describe("native iOS simulator viewer", () => {
@@ -105,4 +110,24 @@ describe("native iOS simulator viewer", () => {
       }
     },
   );
+
+  it("draws a portrait screen wider than tall, such as an unfolded iPhone Duo, in a wide frame", async () => {
+    try {
+      const { sockets } = viewerFixture(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const json = new TextEncoder().encode(
+        JSON.stringify({ width: 720, height: 506, orientation: "portrait" }),
+      );
+      const packet = new Uint8Array(1 + json.length);
+      packet[0] = 0x82;
+      packet.set(json, 1);
+      sockets.at(-1)!.onmessage!({ data: packet.buffer });
+      const frame = document.querySelector("canvas")!.parentElement!;
+      expect(frame.style.width).toBe(`min(100cqw, ${(720 / 506) * 100}cqh)`);
+    } finally {
+      stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });

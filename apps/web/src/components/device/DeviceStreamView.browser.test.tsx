@@ -50,9 +50,9 @@ function setup() {
     },
   );
   return {
-    view: () => (
+    view: (props?: Parameters<typeof view>[0]) => (
       <RegistryContext.Provider value={registry}>
-        <div style={{ width: 400, height: 800 }}>{view()}</div>
+        <div style={{ width: 400, height: 800 }}>{view(props)}</div>
       </RegistryContext.Provider>
     ),
     [Symbol.dispose]() {
@@ -63,9 +63,9 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
-    async configure(inputUnavailable = false) {
+    async configure(inputUnavailable = false, size = { width: 400, height: 800 }) {
       const json = new TextEncoder().encode(
-        JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
+        JSON.stringify({ ...size, orientation: "portrait", inputUnavailable }),
       );
       const packet = new Uint8Array(1 + json.length);
       packet[0] = 0x82;
@@ -77,7 +77,7 @@ function setup() {
   };
 }
 
-function view() {
+function view(props: { deviceName?: string; serveSimOnly?: boolean } = {}) {
   return (
     <DeviceStreamView
       hostId="local"
@@ -86,8 +86,9 @@ function view() {
       platform="ios"
       visible
       allowPhoneView={false}
+      {...props}
       renderControls={(controls) => (
-        <output>
+        <output data-phone-unavailable={controls.phoneUnavailableReason ?? undefined}>
           {controls.handle?.inputConnected ? "Input connected" : "Input disconnected"}
         </output>
       )}
@@ -205,4 +206,26 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
   ]);
+});
+
+it("draws a screen wider than tall, such as an unfolded iPhone Duo panel, in a wide frame", async () => {
+  using input = setup();
+  await using screen = await render(input.view({ deviceName: "iPhone Duo" }), options);
+  await act(() => input.configure(false, { width: 720, height: 506 }));
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const frame = screen.container.querySelector("canvas")!.parentElement!.parentElement!;
+  await vi.waitFor(() => expect(frame.getBoundingClientRect().width).toBeGreaterThan(0));
+  const { width, height } = frame.getBoundingClientRect();
+  expect(width / height).toBeCloseTo(720 / 506, 1);
+});
+
+it("does not blame Device Hub when a Simlock iPhone Duo reports no hinge support", async () => {
+  using input = setup();
+  await using screen = await render(
+    input.view({ deviceName: "iPhone Duo", serveSimOnly: true }),
+    options,
+  );
+  const status = screen.getByText("Input disconnected", { exact: true });
+  await expect.element(status).toBeVisible();
+  expect(status.element().getAttribute("data-phone-unavailable")).not.toContain("Device Hub");
 });

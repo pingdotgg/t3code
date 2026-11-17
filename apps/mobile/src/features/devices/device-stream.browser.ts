@@ -99,7 +99,7 @@ export function start(configuration: DeviceStreamConfiguration) {
     const aspect = screen
       ? landscape
         ? Math.max(screen.width, screen.height) / Math.min(screen.width, screen.height)
-        : Math.min(screen.width, screen.height) / Math.max(screen.width, screen.height)
+        : screen.width / screen.height
       : 9 / 19.5;
     const rotation =
       platform === "ios" && screen && screen.width <= screen.height
