@@ -1,7 +1,9 @@
 import * as NodeZlib from "node:zlib";
 import { expect, it } from "@effect/vitest";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import { InferenceProxy } from "./InferenceProxy.ts";
 import * as InferenceHttp from "./http.ts";
@@ -70,6 +72,16 @@ it("streams an authorized request with a host key, then denies the revoked consu
                 : null,
             );
           },
+          routeCandidates: (key, hostId) => {
+            linkedHost = hostId;
+            return Effect.succeed(
+              active && key === "consumer"
+                ? [{ baseUrl: "http://127.0.0.1:43210", key: "private-host-key", models: [] }]
+                : null,
+            );
+          },
+          hasFallback: () => Effect.succeed(false),
+          recordRouteOutcome: () => Effect.void,
         }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
@@ -101,7 +113,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
     finish!();
     expect((await reader.read()).done).toBe(true);
     expect(closed).toBe(true);
-    const linked = await handler(request("linked/host/v1/messages?beta=true", "consumer"));
+    const linked = await handler(request("linked/codex/host/v1/messages?beta=true", "consumer"));
     expect(linkedHost).toBe("host");
     const linkedReader = linked.body!.getReader();
     expect(new TextDecoder().decode((await linkedReader.read()).value)).toBe("data: first\n\n");
@@ -119,7 +131,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
     expect(limited.headers.get("retry-after")).toBe("60");
     expect(await limited.text()).toBe("quota");
     const health = await handler(
-      new Request("http://t3.test/api/inference/linked/host/health", {
+      new Request("http://t3.test/api/inference/linked/codex/host/health", {
         headers: { authorization: "Bearer consumer" },
       }),
     );
@@ -139,6 +151,207 @@ it("streams an authorized request with a host key, then denies the revoked consu
       ).status,
     ).toBe(403);
     expect(upstreamCalls).toBe(4);
+  } finally {
+    await dispose();
+  }
+});
+
+it("tries another authorized host for the same model after an upstream auth failure", async () => {
+  const calls: string[] = [];
+  let primaryStatus = 403;
+  let backupStatus = 200;
+  const client = HttpClient.make((request) =>
+    Effect.sync(() => {
+      calls.push(request.url);
+      if (request.url.endsWith("/v1/messages"))
+        expect(request.headers["x-session-affinity"]).toBe("thread-fixture");
+      return HttpClientResponse.fromWeb(
+        request,
+        request.url.startsWith("http://primary.test") && primaryStatus !== 200
+          ? new Response(null, { status: primaryStatus })
+          : request.url.startsWith("http://backup.test") && backupStatus !== 200
+            ? new Response(null, { status: backupStatus })
+            : request.url.endsWith("/v1/models")
+              ? Response.json({
+                  object: "list",
+                  data: request.url.startsWith("http://primary.test")
+                    ? [
+                        { id: "claude-fable-5-2", owned_by: "primary" },
+                        { id: "claude-alpha", owned_by: "primary" },
+                      ]
+                    : [
+                        { id: "claude-fable-5-2", owned_by: "backup" },
+                        { id: "claude-beta", owned_by: "backup" },
+                      ],
+                })
+              : Response.json({ type: "message", model: "claude-fable-5-2" }),
+      );
+    }),
+  );
+  const { handler, dispose } = HttpRouter.toWebHandler(
+    InferenceHttp.layer.pipe(
+      Layer.provide(
+        Layer.mock(InferenceProxy)({
+          authorize: () => Effect.succeed({ baseUrl: "http://primary.test", key: "primary-key" }),
+          routeCandidates: () =>
+            Effect.succeed([
+              {
+                baseUrl: "http://primary.test",
+                key: "primary-key",
+                models: ["claude-fable-5-2", "claude-alpha"],
+                hostId: EnvironmentId.make("primary"),
+              },
+              {
+                baseUrl: "http://backup.test",
+                key: "backup-key",
+                models: ["claude-fable-5-2", "claude-beta"],
+                hostId: EnvironmentId.make("backup"),
+              },
+            ]),
+          hasFallback: () => Effect.succeed(true),
+          recordRouteOutcome: () => Effect.void,
+        }),
+      ),
+      Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
+    ),
+    { disableLogger: true },
+  );
+  try {
+    const body = JSON.stringify({ model: "claude-fable-5-2", messages: [] });
+    const response = await handler(
+      new Request("http://t3.test/api/inference/linked/claudeAgent/host/v1/messages", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer consumer",
+          "content-type": "application/json",
+          "x-session-id": "thread-fixture",
+          "x-session-affinity": "thread-fixture",
+        },
+        body,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ model: "claude-fable-5-2" });
+    expect(calls).toEqual(["http://primary.test/v1/messages", "http://backup.test/v1/messages"]);
+    const catalog = await handler(
+      new Request("http://t3.test/api/inference/linked/claudeAgent/host/v1/models", {
+        headers: { authorization: "Bearer consumer" },
+      }),
+    );
+    expect(catalog.status).toBe(200);
+    expect(await catalog.json()).toEqual({
+      object: "list",
+      data: [
+        { id: "claude-fable-5-2", owned_by: "backup" },
+        { id: "claude-beta", owned_by: "backup" },
+      ],
+    });
+    expect(calls.slice(2)).toEqual([
+      "http://primary.test/v1/models",
+      "http://backup.test/v1/models",
+    ]);
+    const send = () =>
+      handler(
+        new Request("http://t3.test/api/inference/linked/claudeAgent/host/v1/messages", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer consumer",
+            "content-type": "application/json",
+            "x-session-id": "thread-fixture",
+            "x-session-affinity": "thread-fixture",
+          },
+          body,
+        }),
+      );
+    const sticky = await send();
+    expect(sticky.status).toBe(200);
+    expect(calls.slice(4)).toEqual(["http://backup.test/v1/messages"]);
+    backupStatus = 429;
+    primaryStatus = 200;
+    const rebinding = await send();
+    expect(rebinding.status).toBe(200);
+    expect(calls.slice(5)).toEqual([
+      "http://backup.test/v1/messages",
+      "http://primary.test/v1/messages",
+    ]);
+    const rebound = await send();
+    expect(rebound.status).toBe(200);
+    expect(calls.slice(7)).toEqual(["http://primary.test/v1/messages"]);
+    backupStatus = 200;
+    const union = await handler(
+      new Request("http://t3.test/api/inference/linked/claudeAgent/host/v1/models", {
+        headers: { authorization: "Bearer consumer" },
+      }),
+    );
+    expect(union.status).toBe(200);
+    expect(await union.json()).toEqual({
+      object: "list",
+      data: [
+        { id: "claude-fable-5-2", owned_by: "primary" },
+        { id: "claude-alpha", owned_by: "primary" },
+        { id: "claude-beta", owned_by: "backup" },
+      ],
+    });
+    expect(calls.slice(8)).toEqual([
+      "http://primary.test/v1/models",
+      "http://backup.test/v1/models",
+    ]);
+  } finally {
+    await dispose();
+  }
+});
+
+it("streams an oversized chunked request once without losing its buffered prefix", async () => {
+  const calls: string[] = [];
+  let received = 0;
+  const client = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      calls.push(request.url);
+      if (request.body._tag !== "Stream") throw new Error("Expected a streaming request body");
+      received = yield* Stream.runFold(
+        request.body.stream.pipe(Stream.orDie),
+        () => 0,
+        (total, chunk) => total + chunk.byteLength,
+      );
+      return HttpClientResponse.fromWeb(request, new Response(null, { status: 403 }));
+    }),
+  );
+  const { handler, dispose } = HttpRouter.toWebHandler(
+    InferenceHttp.layer.pipe(
+      Layer.provide(
+        Layer.mock(InferenceProxy)({
+          routeCandidates: () =>
+            Effect.succeed([
+              { baseUrl: "http://primary.test", key: "primary-key", models: ["claude-fable-5-2"] },
+              { baseUrl: "http://backup.test", key: "backup-key", models: ["claude-fable-5-2"] },
+            ]),
+          hasFallback: () => Effect.succeed(true),
+          recordRouteOutcome: () => Effect.void,
+        }),
+      ),
+      Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
+    ),
+    { disableLogger: true },
+  );
+  const chunk = new Uint8Array(1024 * 1024);
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let index = 0; index < 9; index++) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+  try {
+    const response = await handler(
+      new Request("http://t3.test/api/inference/linked/claudeAgent/host/v1/messages", {
+        method: "POST",
+        headers: { authorization: "Bearer consumer", "content-type": "application/json" },
+        body,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+    );
+    expect(response.status).toBe(403);
+    expect(received).toBe(9 * 1024 * 1024);
+    expect(calls).toEqual(["http://primary.test/v1/messages"]);
   } finally {
     await dispose();
   }

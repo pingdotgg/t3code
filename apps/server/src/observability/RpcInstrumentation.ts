@@ -71,6 +71,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.inferenceManage]: "provider",
   [WS_METHODS.inferenceGrant]: "provider",
   [WS_METHODS.inferenceConnect]: "provider",
+  [WS_METHODS.inferenceRegisterFallback]: "provider",
   [WS_METHODS.providerAccountExport]: "provider",
   [WS_METHODS.providerAccountImport]: "provider",
   [WS_METHODS.providerAuthRespond]: "provider",
@@ -278,6 +279,7 @@ const RPC_METHODS_WITH_TRACING_DISABLED: ReadonlySet<string> = new Set([
   WS_METHODS.inferenceManage,
   WS_METHODS.inferenceGrant,
   WS_METHODS.inferenceConnect,
+  WS_METHODS.inferenceRegisterFallback,
   WS_METHODS.providerAccountExport,
   WS_METHODS.providerAccountImport,
 ]);

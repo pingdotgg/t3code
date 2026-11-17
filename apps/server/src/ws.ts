@@ -2848,6 +2848,7 @@ export const layerWsRpc = (
         [WS_METHODS.inferenceManage]: (input) => inference.manage(input),
         [WS_METHODS.inferenceGrant]: (input) => inference.grant(input),
         [WS_METHODS.inferenceConnect]: (input) => inference.connect(input),
+        [WS_METHODS.inferenceRegisterFallback]: (input) => inference.registerFallback(input),
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),

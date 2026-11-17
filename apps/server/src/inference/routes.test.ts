@@ -13,9 +13,10 @@ describe("inference routes", () => {
       "/v1/messages?beta=true",
     );
     expect(inferencePath("GET", "/api/inference/v1/models")).toBe("/v1/models");
-    expect(inferenceTarget("GET", "/api/inference/linked/host/health")).toEqual({
+    expect(inferenceTarget("GET", "/api/inference/linked/codex/host/health")).toEqual({
       path: "/health",
       environmentId: "host",
+      driver: "codex",
     });
     expect(inferencePath("POST", "/api/inference/health")).toBeNull();
     expect(inferencePath("POST", "/api/inference/v1/chat/completions")).toBe(
@@ -30,14 +31,21 @@ describe("inference routes", () => {
       expect(inferencePath("POST", "/api/inference" + path)).toBeNull();
     }
     expect(inferencePath("GET", "/api/inference/v1/messages")).toBeNull();
-    expect(inferenceTarget("POST", "/api/inference/linked/host/v1/responses")).toEqual({
+    expect(inferenceTarget("POST", "/api/inference/linked/codex/host/v1/responses")).toEqual({
       path: "/v1/responses",
       environmentId: "host",
+      driver: "codex",
+    });
+    expect(inferenceTarget("POST", "/api/inference/linked/claudeAgent/host/v1/messages")).toEqual({
+      path: "/v1/messages",
+      environmentId: "host",
+      driver: "claudeAgent",
     });
     expect(
       inferenceTarget("GET", "/api/inference/linked/host/v0/management/auth-files"),
     ).toBeNull();
     expect(inferenceTarget("POST", "/api/inference/linked/%ZZ/v1/messages")).toBeNull();
+    expect(inferenceTarget("POST", "/api/inference/linked/host/v1/messages")).toBeNull();
   });
 
   it("accepts private LAN addresses and HTTPS tailnet routes and confines local keys to loopback", () => {

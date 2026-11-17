@@ -229,7 +229,14 @@ it.effect(
             if (request.url.endsWith("/.well-known/t3/environment")) {
               expect(request.headers.authorization).toBeUndefined();
               return Effect.succeed(
-                HttpClientResponse.fromWeb(request, Response.json({ environmentId: peerId })),
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    environmentId: request.url.startsWith("https://fallback.example.ts.net/")
+                      ? EnvironmentId.make("other-host")
+                      : peerId,
+                  }),
+                ),
               );
             }
             if (!request.url.endsWith("/health"))
@@ -889,6 +896,19 @@ it.effect(
                 ?.config,
             ).toMatchObject({ inferenceBaseUrl: expect.stringContaining("192.168.1.12") });
             tailnetCatalogDown = false;
+            connectionDown = true;
+            tailnetCatalogDown = true;
+            yield* proxy.connect({
+              ...connect,
+              grant: issued,
+              connection: { url: "https://pool.example.ts.net" },
+            });
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({ inferenceBaseUrl: expect.stringContaining("192.168.1.12") });
+            connectionDown = false;
+            tailnetCatalogDown = false;
             const linkedGrant = { ...issued, baseUrl: "t3-environment:host", alternates: [] };
             expect(
               (yield* proxy.connect({ ...connect, grant: linkedGrant }).pipe(Effect.flip)).message,
@@ -899,10 +919,10 @@ it.effect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
             ).toMatchObject({
-              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/host"),
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
             });
             expect(activeCodexConfig).toMatchObject({
-              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/host"),
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
             });
             yield* proxy.bindRoutes(45678);
             expect(
@@ -910,10 +930,11 @@ it.effect(
                 ?.config,
             ).toMatchObject({
               inferenceBaseUrl: expect.stringContaining(
-                "127.0.0.1:45678/api/inference/linked/host",
+                "127.0.0.1:45678/api/inference/linked/codex/host",
               ),
             });
             expect(yield* proxy.authorize("wrong-key", hostId)).toBeNull();
+            expect(yield* proxy.authorize(issued.key, hostId, "claudeAgent")).toBeNull();
             expect(yield* proxy.authorize(issued.key, hostId)).toEqual({
               baseUrl: "http://127.0.0.1:23456/api/inference",
               key: issued.key,
@@ -959,13 +980,88 @@ it.effect(
                 .connect({
                   ...connect,
                   grant: issued,
-                  connection: { url: "http://127.0.0.1:23456" },
+                  connection: {
+                    url: "http://127.0.0.1:23456",
+                    ssh: {
+                      alias: "host",
+                      hostname: "host.local",
+                      username: "user",
+                      port: 22,
+                    },
+                  },
                 })
                 .pipe(Effect.flip)).message,
             ).toBe("SSH connection unavailable");
             connectionDown = false;
             const routes = (yield* proxy.status).routes;
             expect(routes).toHaveLength(1);
+            peerId = EnvironmentId.make("other-host");
+            connectionDown = true;
+            const primaryCatalog = catalog;
+            catalog = [
+              { id: "codex-auto-review", owned_by: "openai" },
+              { id: "fallback-only", owned_by: "openai" },
+            ];
+            yield* proxy.registerFallback({
+              ...connect,
+              grant: {
+                ...issued,
+                hostId: peerId,
+                baseUrl: "https://fallback.example.ts.net/api/inference",
+                alternates: [],
+              },
+            });
+            catalog = primaryCatalog;
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([peerId]);
+            connectionDown = false;
+            yield* TestClock.adjust("15 seconds");
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceHostId: hostId,
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
+            peerId = hostId;
+            yield* proxy.connect({ ...connect, grant: issued });
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+              inferenceModels: expect.arrayContaining(["codex-auto-review", "fallback-only"]),
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 403,
+            });
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
             peerId = EnvironmentId.make("other-host");
             yield* proxy.connect({
               ...connect,

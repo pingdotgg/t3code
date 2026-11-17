@@ -1,10 +1,10 @@
 import {
   EnvironmentId,
+  InferenceDriver,
   INFERENCE_HARNESSES,
   ProviderDriverKind,
   type CustomModelSetting,
   type SettingsSecretValue,
-  type InferenceDriver,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const PREFIX = "/api/inference";
+const isInferenceDriver = Schema.is(InferenceDriver);
 
 export function inferencePath(method: string, rawUrl: string): string | null {
   if (!rawUrl.startsWith(PREFIX)) return null;
@@ -32,12 +33,18 @@ export function inferencePath(method: string, rawUrl: string): string | null {
 }
 
 export function inferenceTarget(method: string, rawUrl: string) {
-  const linked = /^\/api\/inference\/linked\/([^/]+)(\/.*)$/.exec(rawUrl);
-  const path = inferencePath(method, linked ? PREFIX + linked[2] : rawUrl);
+  const linked = /^\/api\/inference\/linked\/([^/]+)\/([^/]+)(\/.*)$/.exec(rawUrl);
+  const driver = linked && isInferenceDriver(linked[1]) ? linked[1] : undefined;
+  if (rawUrl.startsWith(PREFIX + "/linked/") && !driver) return null;
+  const path = inferencePath(method, linked ? PREFIX + linked[3] : rawUrl);
   if (!path) return null;
   if (!linked) return { path, environmentId: undefined };
   try {
-    return { path, environmentId: EnvironmentId.make(decodeURIComponent(linked[1]!)) };
+    return {
+      path,
+      environmentId: EnvironmentId.make(decodeURIComponent(linked[2]!)),
+      driver,
+    };
   } catch {
     return null;
   }

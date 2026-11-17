@@ -54,6 +54,15 @@ The host receives the model request, including its prompt and tool results.
 The agent runs tools and stores files and thread history on its executing environment.
 Choosing another host in Settings changes the same provider. Local inference is labeled **Claude** or **Codex**.
 Choose the route again in Settings to refresh its model list after changing accounts.
+While a client is connected to the executing environment and other shared inference hosts,
+T3 discovers hosts that serve the same provider and saves them as fallback routes. If the
+selected host is unreachable, rejects authentication, or reaches a temporary limit, a new
+request can use another healthy host that serves the requested model. The agent and its
+workspace stay on the executing environment. Keep at least one client connected to each
+host when adding new fallback routes; saved routes remain available afterward.
+T3 keeps a thread on the host that successfully handles its request after a switch. Each
+host selects accounts independently, so a switch between hosts with multiple eligible
+accounts may use a different account even when the same login is present on both.
 
 Configure account pooling on the host. Turn on round-robin routing to distribute
 requests across eligible accounts, or leave it off to use the first available account.

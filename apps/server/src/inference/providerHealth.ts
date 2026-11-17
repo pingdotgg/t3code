@@ -18,9 +18,13 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
     capacity: 32,
     timeToLive: "15 seconds",
     lookup: Effect.fn("InferenceProviderHealth.probe")(
-      function* (input: { readonly route: InferenceProviderConfig; readonly key: string }) {
+      function* (input: {
+        readonly route: InferenceProviderConfig;
+        readonly key: string;
+        readonly driver: string;
+      }) {
         return yield* proxy
-          .routeHealth(input.route, input.key)
+          .routeHealth(input.route, input.key, input.driver)
           .pipe(Effect.map((health) => ({ health })));
       },
       Effect.timeout("5 seconds"),
@@ -39,7 +43,7 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
           ? route.inferenceKey
           : (yield* secrets.read([route.inferenceKey]))[0];
       const catalog = key
-        ? yield* Cache.get(catalogs, { route, key })
+        ? yield* Cache.get(catalogs, { route, key, driver: provider.driver })
         : { problem: "Inference host credential is unavailable." };
       const problem =
         "problem" in catalog
@@ -49,7 +53,12 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
             ? undefined
             : "Inference host has no available models for this provider.";
       return problem === undefined
-        ? provider
+        ? {
+            ...provider,
+            models: provider.models.filter(
+              (model) => "health" in catalog && catalog.health.models.includes(model.slug),
+            ),
+          }
         : {
             ...provider,
             availability: "unavailable" as const,

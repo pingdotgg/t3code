@@ -41,7 +41,13 @@ import {
   SshConnectionTarget,
   type NetworkStatus,
 } from "../connection/model.ts";
-import { createInferenceProxyAtoms } from "./inferenceProxy.ts";
+import {
+  createInferenceProxyAtoms,
+  inferenceFallbackKey,
+  inferenceFallbackRetryDelay,
+  planInferenceFallbacks,
+  type InferenceFleetEnvironment,
+} from "./inferenceProxy.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
 vi.mock("./session.ts", () => ({
@@ -112,9 +118,14 @@ describe("command permissions", () => {
     }),
   );
   it.effect.each([
-    { via: "the connected SSH host", ssh: true },
-    { via: "the grant when this client reaches the host over loopback", ssh: false },
-  ])("routes through $via without forwarding the client's bearer credential", ({ ssh }) =>
+    { via: "the connected SSH host", ssh: true, fallback: false },
+    {
+      via: "the grant when this client reaches the host over loopback",
+      ssh: false,
+      fallback: false,
+    },
+    { via: "a connected SSH fallback", ssh: true, fallback: true },
+  ])("routes through $via without forwarding the client's bearer credential", ({ ssh, fallback }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
       registry.mount(sessions(other));
@@ -145,6 +156,7 @@ describe("command permissions", () => {
         key: "scoped-inference-key",
       };
       let selected: InferenceRouteInput | undefined;
+      let selectedMethod: string | undefined;
       const host = {
         target,
         prepared: yield* SubscriptionRef.make(
@@ -177,6 +189,12 @@ describe("command permissions", () => {
               [WS_METHODS.inferenceConnect]: (input: InferenceRouteInput) =>
                 Effect.sync(() => {
                   selected = input;
+                  selectedMethod = WS_METHODS.inferenceConnect;
+                }),
+              [WS_METHODS.inferenceRegisterFallback]: (input: InferenceRouteInput) =>
+                Effect.sync(() => {
+                  selected = input;
+                  selectedMethod = WS_METHODS.inferenceRegisterFallback;
                 }),
             },
           } as unknown as RpcSession),
@@ -207,9 +225,13 @@ describe("command permissions", () => {
           host: { environmentId: env, label: "Host" },
           consumer: { environmentId: other, label: "Consumer" },
           driver: "codex",
+          fallback,
         }),
       );
       expect(result._tag).toBe("Success");
+      expect(selectedMethod).toBe(
+        fallback ? WS_METHODS.inferenceRegisterFallback : WS_METHODS.inferenceConnect,
+      );
       expect(selected).toEqual({
         grant: issued,
         driver: "codex",
@@ -218,6 +240,95 @@ describe("command permissions", () => {
       });
     }),
   );
+  it("discovers only connected sharing hosts for a routed provider on another host", () => {
+    const host: InferenceFleetEnvironment = {
+      environmentId: env,
+      label: "Studio",
+      connection: { phase: "connected" },
+      serverConfig: null,
+    };
+    const consumer: InferenceFleetEnvironment = {
+      environmentId: other,
+      label: "Spark",
+      connection: { phase: "connected" },
+      serverConfig: {
+        settings: {
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent",
+              config: {
+                inferenceEnabled: true,
+                inferenceHostId: EnvironmentId.make("m5"),
+                inferenceHostLabel: "M5",
+                inferenceBaseUrl: "http://192.168.0.55:3773/api/inference",
+                inferenceKey: "saved-key",
+                inferenceModels: ["claude-fable-5-2"],
+                inferenceHomePath: "/state/claude",
+              },
+            },
+          },
+        },
+      } as unknown as InferenceFleetEnvironment["serverConfig"],
+    };
+    const status = {
+      enabled: true,
+      sharing: true,
+      running: true,
+      version: "8.0.76",
+      problem: null,
+      accounts: [],
+      availableDrivers: ["claudeAgent"],
+      consumers: [],
+      routes: [],
+    } as const;
+    expect(planInferenceFallbacks(host, status, [consumer])).toEqual([
+      {
+        host: { environmentId: env, label: "Studio" },
+        consumer: { environmentId: other, label: "Spark" },
+        driver: "claudeAgent",
+        fallback: true,
+      },
+    ]);
+    expect(planInferenceFallbacks(host, { ...status, sharing: false }, [consumer])).toEqual([]);
+    expect(
+      planInferenceFallbacks({ ...host, connection: { phase: "offline" } }, status, [consumer]),
+    ).toEqual([]);
+    const original = inferenceFallbackKey(host, consumer, "claudeAgent", status);
+    const reroutedConsumer: InferenceFleetEnvironment = {
+      ...consumer,
+      serverConfig: {
+        settings: {
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent",
+              config: {
+                inferenceEnabled: true,
+                inferenceHostId: EnvironmentId.make("another-host"),
+                inferenceHostLabel: "Another host",
+                inferenceBaseUrl: "http://192.168.0.56:3773/api/inference",
+                inferenceKey: "saved-key",
+                inferenceModels: ["claude-fable-5-2"],
+                inferenceHomePath: "/state/claude",
+              },
+            },
+          },
+        },
+      } as unknown as InferenceFleetEnvironment["serverConfig"],
+    };
+    const rerouted = inferenceFallbackKey(host, reroutedConsumer, "claudeAgent", status);
+    expect(rerouted).not.toBe(original);
+    expect(
+      inferenceFallbackKey(host, consumer, "claudeAgent", {
+        ...status,
+        accounts: [
+          { name: "Claude", provider: "claudeAgent", status: "ready", availability: "available" },
+        ],
+      }),
+    ).not.toBe(original);
+    expect([1, 2, 3, 4, 5].map(inferenceFallbackRetryDelay)).toEqual([
+      60_000, 120_000, 240_000, 300_000, 300_000,
+    ]);
+  });
   it.effect("requires the destination orchestration grant to mutate project knowledge", () =>
     Effect.gen(function* () {
       const registry = yield* setup;

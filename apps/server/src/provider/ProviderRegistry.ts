@@ -265,8 +265,10 @@ const mergeProviderModels = (
   provider: ServerProvider,
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
+  authoritativeModels = false,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
-  const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
+  const shouldRetainMissingModels =
+    !authoritativeModels && shouldRetainMissingProviderModels(provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const retainablePreviousModels = previousModels.filter(
     (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
@@ -319,13 +321,19 @@ const carrySavedAntigravityAccount = (
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
+  authoritativeModels = false,
 ): ServerProvider => {
   if (!previousProvider) {
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  const models = mergeProviderModels(
+    nextProvider,
+    previousProvider.models,
+    nextProvider.models,
+    authoritativeModels,
+  );
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -592,6 +600,7 @@ export const layer = Layer.effect(
           concurrency: "unbounded",
         },
       );
+      const routedInstanceIds = new Set(yield* inferenceHealth.instanceIds);
       const [previousProviders, providers, providersToPersist] = yield* Ref.modify(
         providersRef,
         (previousProviders) => {
@@ -607,7 +616,11 @@ export const layer = Layer.effect(
               key,
               options?.replace === true
                 ? provider
-                : mergeProviderSnapshot(mergedProviders.get(key), provider),
+                : mergeProviderSnapshot(
+                    mergedProviders.get(key),
+                    provider,
+                    routedInstanceIds.has(key),
+                  ),
             );
           }
 

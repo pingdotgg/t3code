@@ -1132,6 +1132,7 @@ it.layer(
             checkedAt: "2026-06-10T00:00:00.000Z",
             models: [
               { slug: "claude-fixture", name: "Fixture", capabilities: null, isCustom: false },
+              { slug: "claude-offline", name: "Offline", capabilities: null, isCustom: false },
             ],
             supportsTextGeneration: true,
             textGenerationOperations: ["generateReviewGuide"],
@@ -1172,6 +1173,8 @@ it.layer(
               const providers = yield* registry.refresh();
               expect(providers[0]?.availability).toBe(status === 200 ? undefined : "unavailable");
               expect(providers[0]?.status).toBe(status === 200 ? "ready" : "error");
+              if (status === 200)
+                expect(providers[0]?.models.map((model) => model.slug)).toEqual(["claude-fixture"]);
             }
             poolAvailable = false;
             yield* TestClock.adjust("16 seconds");
@@ -1217,7 +1220,7 @@ it.layer(
                             inferenceHostLabel: "Host",
                             inferenceBaseUrl: "http://127.0.0.1:9876",
                             inferenceKey: "fixture-key",
-                            inferenceModels: ["claude-fixture"],
+                            inferenceModels: ["claude-fixture", "claude-offline"],
                             inferenceHomePath: "/fixture",
                           },
                         },
