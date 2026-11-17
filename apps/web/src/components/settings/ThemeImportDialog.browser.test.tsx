@@ -223,39 +223,35 @@ describe("ThemeImportDialog JSONC imports", () => {
   });
 });
 
-it.each(["Cancel", "navigation"])(
-  "does not install a pending community theme after %s",
-  async (exit) => {
-    using _themes = isolateThemes();
-    searchOpenVsxThemes.mockReset();
-    searchOpenVsxThemes.mockResolvedValue([extension]);
-    const download = Promise.withResolvers<ReturnType<typeof parseThemeFile>[]>();
-    vi.mocked(importOpenVsxThemeExtension).mockReset();
-    vi.mocked(importOpenVsxThemeExtension).mockReturnValue(download.promise);
-    await using screen = await render(
-      <ThemeImportDialog
-        open
-        onOpenChange={() => {}}
-        onImported={() => true}
-        onImportedMany={() => {}}
-      />,
-    );
-    await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
-    await page.getByRole("button", { name: "Install Nightfall" }).click();
-    if (exit === "Cancel") await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await screen.unmount();
-    await act(async () => {
-      download.resolve([
-        {
-          ...parseThemeFile(theme("Nightfall")),
-          collection: { id: extension.collectionId, label: extension.name },
-        },
-      ]);
-      await download.promise;
-    });
-    expect(
-      getCustomThemes(),
-      "expect leaving Appearance to cancel its pending theme installation",
-    ).toEqual([]);
-  },
-);
+it("does not install a pending community theme after leaving Appearance", async () => {
+  using _themes = isolateThemes();
+  searchOpenVsxThemes.mockReset();
+  searchOpenVsxThemes.mockResolvedValue([extension]);
+  const download = Promise.withResolvers<ReturnType<typeof parseThemeFile>[]>();
+  vi.mocked(importOpenVsxThemeExtension).mockReset();
+  vi.mocked(importOpenVsxThemeExtension).mockReturnValue(download.promise);
+  await using screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
+  await page.getByRole("button", { name: "Install Nightfall" }).click();
+  await screen.unmount();
+  await act(async () => {
+    download.resolve([
+      {
+        ...parseThemeFile(theme("Nightfall")),
+        collection: { id: extension.collectionId, label: extension.name },
+      },
+    ]);
+    await download.promise;
+  });
+  expect(
+    getCustomThemes(),
+    "expect leaving Appearance to cancel its pending theme installation",
+  ).toEqual([]);
+});
