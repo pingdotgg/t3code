@@ -399,6 +399,14 @@ function intersectRects(
   // Clamped into `right`, so a fully clipped rect stays on the clip's edge instead of beyond it.
   const x = Math.min(Math.max(left.x, right.x), right.x + right.width);
   const y = Math.min(Math.max(left.y, right.y), right.y + right.height);
+  // Fully outside has no pixels, so it must not read as a visible zero-width or zero-height line.
+  if (
+    left.x > right.x + right.width ||
+    left.x + left.width < right.x ||
+    left.y > right.y + right.height ||
+    left.y + left.height < right.y
+  )
+    return { x, y, width: 0, height: 0 };
   return {
     x,
     y,
@@ -1886,7 +1894,10 @@ function startAnnotation(
         toolbar.style.display = "none";
         hoverOutline.style.display = "none";
         const screenshotRect = unionRects([
-          ...elements.map((target) => target.rect),
+          // A target clipped out of its frame or detached by navigation has no pixels to crop.
+          ...elements
+            .map((target) => target.rect)
+            .filter((rect) => rect.width > 0 || rect.height > 0),
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
@@ -1959,6 +1970,10 @@ function startAnnotation(
       unlisten(frame, view);
       style.remove();
       frames.delete(frame);
+      // Elements of a navigated-away document are gone from the page; keep no ghost selection.
+      for (const target of Array.from(selected.values()))
+        if (target.element.ownerDocument === frame) removeSelected(target);
+      updateStatus();
     }
     for (const frame of current) {
       const view = frame.defaultView;
