@@ -86,12 +86,12 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
-  whenAst: KeybindingWhenNode | undefined,
+function isBindingEligible(
+  binding: ResolvedKeybindingRule,
   context: ShortcutMatchContext,
 ): boolean {
-  if (!whenAst) return true;
-  return evaluateWhenNode(whenAst, context);
+  if (binding.command.startsWith("list.") && !context.listFocus) return false;
+  return !binding.whenAst || evaluateWhenNode(binding.whenAst, context);
 }
 
 export function shortcutConflictKey(
@@ -142,7 +142,7 @@ export function effectiveShortcutsForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!isBindingEligible(binding, context)) continue;
 
     const shortcut = shortcutForContext(binding, context);
     const conflictKey = shortcutConflictKey(shortcut, platform);
@@ -205,9 +205,7 @@ export function resolveShortcutCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    // List commands act only inside a list, whatever their `when` says.
-    if (binding.command.startsWith("list.") && !context.listFocus) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!isBindingEligible(binding, context)) continue;
     if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
     return binding.command;
   }

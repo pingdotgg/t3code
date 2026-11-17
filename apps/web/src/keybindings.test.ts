@@ -677,15 +677,19 @@ describe("list navigation commands", () => {
     assert.strictEqual(resolveShortcutCommand(ctrlN(), rebound, { platform: "Linux" }), "chat.new");
   });
 
-  it("ignores a list rule with no when clause outside a list", () => {
+  it("ignores a list rule with no when clause outside a list in resolution and labels", () => {
     const keybindings = compileResolvedKeybindingsConfig([
-      ...DEFAULT_KEYBINDINGS,
+      { key: "ctrl+n", command: "chat.new" },
       { key: "ctrl+n", command: "list.next" },
     ]);
     assert.strictEqual(
       resolveShortcutCommand(ctrlN(), keybindings, { platform: "Linux" }),
       "chat.new",
     );
+    assert.strictEqual(shortcutLabelForCommand(keybindings, "chat.new", "Linux"), "Ctrl+N");
+    const listOptions = { platform: "Linux", context: { listFocus: true } };
+    assert.isNull(shortcutLabelForCommand(keybindings, "chat.new", listOptions));
+    assert.strictEqual(shortcutLabelForCommand(keybindings, "list.next", listOptions), "Ctrl+N");
   });
 
   it("derives list focus from the target, not from caller context", () => {
