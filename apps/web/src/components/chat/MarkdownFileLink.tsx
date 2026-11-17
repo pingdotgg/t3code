@@ -46,7 +46,7 @@ interface MarkdownFileLinkProps {
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
   resolveDragPath: () => Promise<string>;
-  resolvePanelPath: (panelPath: string) => string | Promise<string | null>;
+  resolvePanelPath: (panelPath: string) => string | Promise<string>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -364,10 +364,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                   kind: "surface",
                   threadRef: layoutDragThreadRef,
                   surface: fileSurface(panelPath, line ?? null, 0),
-                  resolve: async () => {
-                    const path = await resolvePanelPath(panelPath);
-                    return path === null ? null : fileSurface(path, line ?? null, 0);
-                  },
+                  resolve: async () =>
+                    fileSurface(await resolvePanelPath(panelPath), line ?? null, 0),
                 });
               }}
             >
