@@ -14,6 +14,7 @@ export const READ_ALOUD_LABELS = {
   openai: "OpenAI",
   xai: "Grok TTS",
   openrouter: "OpenRouter",
+  elevenlabs: "ElevenLabs",
 } as const;
 
 export const ReadAloudSettings = Schema.Struct({
@@ -25,9 +26,10 @@ export const ReadAloudSettings = Schema.Struct({
     "chatgpt",
     "xai",
     "openrouter",
+    "elevenlabs",
   ]).pipe(
     Schema.decodeTo(
-      Schema.Literals(["off", "system", "local", "openai", "xai", "openrouter"]),
+      Schema.Literals(["off", "system", "local", "openai", "xai", "openrouter", "elevenlabs"]),
       SchemaTransformation.transform({
         decode: (value) => (value === "chatgpt" ? ("off" as const) : value),
         encode: (value) => value,
@@ -95,6 +97,8 @@ export const SpeechSynthesisCatalog = Schema.Struct({
       name: Schema.String,
       description: Schema.optionalKey(Schema.String),
       voices: Schema.Array(Schema.String),
+      /** Display names for voices whose ids are opaque. */
+      voiceNames: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
       /** Present for models that run on the environment and must be downloaded first. */
       install: Schema.optionalKey(SpeechSynthesisModelInstall),
       /** Overrides the catalog's `speedAppliedByProvider` for this model. */

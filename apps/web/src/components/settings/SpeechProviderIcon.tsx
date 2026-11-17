@@ -1,4 +1,4 @@
-import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+import { elevenLabsIcon, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   CLOUD_SPEECH_LABELS,
   READ_ALOUD_LABELS,
@@ -20,6 +20,8 @@ export function SpeechProviderIcon({
   if (provider === "local") return <CpuIcon aria-hidden className="size-4 shrink-0" />;
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
+  if (provider === "elevenlabs")
+    return <ProviderPackageIcon icon={elevenLabsIcon} aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
       driverKind={ProviderDriverKind.make(provider === "xai" ? "grok" : "codex")}

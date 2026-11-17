@@ -25,7 +25,8 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { readAloudController } from "../../speech/readAloud";
-import { CheckIcon, DownloadIcon, XIcon } from "lucide-react";
+import { CheckIcon, DownloadIcon, StarIcon, XIcon } from "lucide-react";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -129,6 +130,7 @@ function LocalSpeechModel({
   prepared,
   model,
   selected,
+  recommended,
   refreshing,
   onSelect,
   onChanged,
@@ -136,6 +138,7 @@ function LocalSpeechModel({
   prepared: PreparedConnection;
   model: SpeechSynthesisCatalog["models"][number];
   selected: boolean;
+  recommended: boolean;
   /** A catalog request is in flight; polling waits for it rather than aborting it. */
   refreshing: boolean;
   onSelect: () => void;
@@ -181,7 +184,17 @@ function LocalSpeechModel({
       : Math.min(100, (install.downloaded / install.size) * 100);
   return (
     <SettingsRow
-      title={model.name}
+      title={
+        <span className="flex flex-wrap items-center gap-1.5">
+          {model.name}
+          {recommended && (
+            <Badge variant="outline">
+              <StarIcon className="mr-1 size-3" />
+              Recommended
+            </Badge>
+          )}
+        </span>
+      }
       description={
         <>
           {model.description}{" "}
@@ -396,12 +409,13 @@ export function ReadAloudSettingsSection() {
     );
     return () => abort.abort();
   }, [prepared, remote, settings.provider, catalogKey, catalogVersion]);
+  const modelEntry = catalog.models.find((entry) => entry.id === model);
   const voices =
     settings.provider === "system"
       ? systemVoices.map((voice) => ({ id: voice.voiceURI, name: voice.name }))
-      : (catalog.models.find((entry) => entry.id === model)?.voices ?? []).map((voice) => ({
+      : (modelEntry?.voices ?? []).map((voice) => ({
           id: voice,
-          name: voice,
+          name: modelEntry?.voiceNames?.[voice] ?? voice,
         }));
   const source = remote ? `${settings.provider}:${settings.environmentId}` : settings.provider;
   const selectedEnvironment = environments.find(
@@ -474,18 +488,20 @@ export function ReadAloudSettingsSection() {
                 {environments.map((environment) => (
                   <SelectGroup key={environment.environmentId}>
                     <SelectGroupLabel>Via {environment.label}</SelectGroupLabel>
-                    {(["local", "openai", "xai", "openrouter"] as const).map((provider) => (
-                      <SelectItem
-                        key={provider}
-                        value={`${provider}:${environment.environmentId}`}
-                        aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <SpeechProviderIcon provider={provider} />
-                          {READ_ALOUD_LABELS[provider]}
-                        </span>
-                      </SelectItem>
-                    ))}
+                    {(["local", "openai", "xai", "openrouter", "elevenlabs"] as const).map(
+                      (provider) => (
+                        <SelectItem
+                          key={provider}
+                          value={`${provider}:${environment.environmentId}`}
+                          aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <SpeechProviderIcon provider={provider} />
+                            {READ_ALOUD_LABELS[provider]}
+                          </span>
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectGroup>
                 ))}
                 {remote && !selectedEnvironment && (
@@ -513,6 +529,7 @@ export function ReadAloudSettingsSection() {
                 prepared={prepared}
                 model={entry}
                 selected={entry.id === model}
+                recommended={entry.id === catalog.defaultModel}
                 refreshing={catalogState.version !== catalogVersion}
                 onSelect={() => change({ model: entry.id, voice: "" })}
                 onChanged={refreshCatalog}

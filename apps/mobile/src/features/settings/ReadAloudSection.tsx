@@ -158,7 +158,10 @@ export function ReadAloudSection() {
   const voiceChoices =
     settings.provider === "system"
       ? voices.map((voice) => ({ id: voice.identifier, name: voice.name }))
-      : (selectedModel?.voices ?? []).map((voice) => ({ id: voice, name: voice }));
+      : (selectedModel?.voices ?? []).map((voice) => ({
+          id: voice,
+          name: selectedModel?.voiceNames?.[voice] ?? voice,
+        }));
   return (
     <>
       <ListSection
@@ -351,25 +354,27 @@ export function ReadAloudSection() {
                 </ListSection>
                 {environments.map((environment) => (
                   <ListSection key={environment.environmentId} title={`Via ${environment.label}`}>
-                    {(["local", "openai", "xai", "openrouter"] as const).map((provider) => (
-                      <ListChoiceRow
-                        key={provider}
-                        label={READ_ALOUD_LABELS[provider]}
-                        selected={
-                          settings.provider === provider &&
-                          settings.environmentId === environment.environmentId
-                        }
-                        onPress={() => {
-                          change({
-                            provider: provider as SpeechSynthesisProvider,
-                            environmentId: environment.environmentId,
-                            model: "",
-                            voice: "",
-                          });
-                          setSheet(null);
-                        }}
-                      />
-                    ))}
+                    {(["local", "openai", "xai", "openrouter", "elevenlabs"] as const).map(
+                      (provider) => (
+                        <ListChoiceRow
+                          key={provider}
+                          label={READ_ALOUD_LABELS[provider]}
+                          selected={
+                            settings.provider === provider &&
+                            settings.environmentId === environment.environmentId
+                          }
+                          onPress={() => {
+                            change({
+                              provider: provider as SpeechSynthesisProvider,
+                              environmentId: environment.environmentId,
+                              model: "",
+                              voice: "",
+                            });
+                            setSheet(null);
+                          }}
+                        />
+                      ),
+                    )}
                   </ListSection>
                 ))}
               </>
@@ -379,6 +384,9 @@ export function ReadAloudSection() {
                   <ListChoiceRow
                     key={model.id}
                     label={model.name}
+                    {...(model.install && model.id === catalog.defaultModel
+                      ? { description: "Recommended" }
+                      : {})}
                     selected={(settings.model || catalog.defaultModel) === model.id}
                     onPress={() => {
                       change({ model: model.id, voice: "" });

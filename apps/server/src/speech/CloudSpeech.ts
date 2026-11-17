@@ -89,11 +89,41 @@ const decodeOpenRouterSynthesisCatalog = Schema.decodeUnknownEffect(
   ),
 );
 
+const decodeElevenLabsModels = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        model_id: Schema.String,
+        name: Schema.optionalKey(Schema.String),
+        can_do_text_to_speech: Schema.optionalKey(Schema.Boolean),
+      }),
+    ),
+  ),
+);
+
+const decodeElevenLabsVoices = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      voices: Schema.Array(Schema.Struct({ voice_id: Schema.String, name: Schema.String })),
+    }),
+  ),
+);
+
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
+  elevenlabs: { url: "https://api.elevenlabs.io/v1/speech-to-text", model: "scribe_v3" },
 };
+const ELEVENLABS_API = "https://api.elevenlabs.io";
+const ELEVENLABS_DEFAULT_MODEL = "eleven_multilingual_v2";
+// George, a premade voice every account has, as in ElevenLabs' own examples.
+const ELEVENLABS_DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb";
+// ElevenLabs authenticates with its own header rather than a bearer token.
+const authorize = (provider: CloudSpeechProvider, key: string) =>
+  provider === "elevenlabs"
+    ? HttpClientRequest.setHeader("xi-api-key", key)
+    : HttpClientRequest.bearerToken(Redacted.make(key));
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
 const isApiKey = Schema.is(CloudSpeechApiKey);
@@ -196,6 +226,23 @@ function wave(samples: Float32Array) {
   return buffer;
 }
 
+function elevenLabsAudioBody(
+  audio: ArrayBuffer,
+  language: string,
+  options: SpeechTranscriptionOptions,
+) {
+  const form = new FormData();
+  form.set("model_id", endpoints.elevenlabs.model);
+  if (language !== "auto") form.set("language_code", language);
+  // Scribe accepts key terms of up to 50 characters and five words.
+  for (const { term } of options.speechCustomWords) {
+    if (term.length <= 50 && term.split(/\s+/).length <= 5) form.append("keyterms", term);
+  }
+  form.set("tag_audio_events", "false");
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
+}
+
 function audioBody(
   provider: "openai" | "xai",
   audio: ArrayBuffer,
@@ -280,10 +327,11 @@ export const layer = Layer.effect(
       return key;
     });
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, elevenlabs }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        elevenlabs: Boolean(elevenlabs),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -321,19 +369,58 @@ export const layer = Layer.effect(
     const loadSynthesisModels = Effect.fn("CloudSpeech.synthesisModels")(
       function* (provider: CloudSpeechProvider) {
         if (provider === "openai") return { models: openAiSpeechModels };
-        if (provider === "xai") {
-          const source = (yield* credentials).xai;
+        if (provider === "xai" || provider === "elevenlabs") {
+          const source = (yield* credentials)[provider];
           const key = yield* resolveKey(
             source,
             (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
           );
-          const current = (yield* credentials).xai;
+          const current = (yield* credentials)[provider];
           if (!source || !current || !sameCredential(source, current))
             return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
           const unavailable = (cause?: unknown) =>
             isSynthesisError(cause)
               ? cause
               : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
+          const get = Effect.fn("CloudSpeech.catalogRequest")(function* (url: string) {
+            const response = yield* execute(
+              HttpClientRequest.get(url).pipe(authorize(provider, key)),
+            ).pipe(Effect.mapError(unavailable));
+            if (response.status !== 200)
+              return yield* new SpeechSynthesisError({
+                provider,
+                reason: synthesisErrorReason(response.status),
+              });
+            return new TextDecoder().decode(
+              yield* readSynthesisBody(response, provider, 1024 * 1024),
+            );
+          });
+          if (provider === "elevenlabs") {
+            const [models, { voices }] = yield* Effect.all([
+              get(`${ELEVENLABS_API}/v1/models`).pipe(
+                Effect.flatMap(decodeElevenLabsModels),
+                Effect.mapError(unavailable),
+              ),
+              get(`${ELEVENLABS_API}/v2/voices?page_size=100`).pipe(
+                Effect.flatMap(decodeElevenLabsVoices),
+                Effect.mapError(unavailable),
+              ),
+            ]);
+            const voiceIds = voices.map((voice) => voice.voice_id);
+            const voiceNames = Object.fromEntries(
+              voices.map((voice) => [voice.voice_id, voice.name]),
+            );
+            return {
+              models: models
+                .filter((model) => model.can_do_text_to_speech !== false)
+                .map((model) => ({
+                  id: model.model_id,
+                  name: model.name || model.model_id,
+                  voices: voiceIds,
+                  voiceNames,
+                })),
+            };
+          }
           const response = yield* execute(
             HttpClientRequest.get("https://api.x.ai/v1/tts/voices").pipe(
               HttpClientRequest.bearerToken(Redacted.make(key)),
@@ -473,6 +560,31 @@ export const layer = Layer.effect(
         },
         errorReason: synthesisErrorReason,
       },
+      elevenlabs: {
+        catalog: {
+          defaultModel: ELEVENLABS_DEFAULT_MODEL,
+          apiKeyProvider: "elevenlabs",
+          supportsModelSelection: true,
+          supportsVoiceSelection: true,
+          // Eleven v4 has no speed setting, so players speed up every model alike.
+          speedAppliedByProvider: false,
+        },
+        models: loadSynthesisModels("elevenlabs"),
+        request: (input) =>
+          Effect.succeed(
+            HttpClientRequest.post(
+              `${ELEVENLABS_API}/v1/text-to-speech/${encodeURIComponent(
+                input.voice || ELEVENLABS_DEFAULT_VOICE,
+              )}/stream?output_format=mp3_44100_64`,
+            ).pipe(
+              HttpClientRequest.bodyJsonUnsafe({
+                text: input.text,
+                model_id: input.model || ELEVENLABS_DEFAULT_MODEL,
+              }),
+            ),
+          ),
+        errorReason: synthesisErrorReason,
+      },
     } satisfies Record<CloudSpeechProvider, SynthesisBackend>;
     const synthesisModels = Effect.fn("CloudSpeech.synthesisCatalog")(function* (
       provider: CloudSpeechProvider,
@@ -508,9 +620,9 @@ export const layer = Layer.effect(
         const current = (yield* credentials)[provider];
         if (!current || !source || !sameCredential(source, current))
           return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
-        const response = yield* execute(
-          synthesisRequest.pipe(HttpClientRequest.bearerToken(Redacted.make(key))),
-        ).pipe(Effect.mapError(unavailable));
+        const response = yield* execute(synthesisRequest.pipe(authorize(provider, key))).pipe(
+          Effect.mapError(unavailable),
+        );
         if (response.status < 200 || response.status >= 300)
           return yield* new SpeechSynthesisError({
             provider,
@@ -589,10 +701,12 @@ export const layer = Layer.effect(
         );
         const audio = wave(samples);
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
-          HttpClientRequest.bearerToken(Redacted.make(key)),
+          authorize(provider, key),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "elevenlabs"
+              ? elevenLabsAudioBody(audio, language, options)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.

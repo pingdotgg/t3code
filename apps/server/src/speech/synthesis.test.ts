@@ -97,6 +97,92 @@ it.each([
   },
 );
 
+it.effect("lists ElevenLabs voices by name and sends its key only in its own header", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async (url) =>
+      String(url).includes("/v2/voices")
+        ? Response.json({ voices: [{ voice_id: "voice-123", name: "Rachel" }] })
+        : String(url).endsWith("/v1/models")
+          ? Response.json([
+              {
+                model_id: "eleven_multilingual_v2",
+                name: "Multilingual v2",
+                can_do_text_to_speech: true,
+              },
+              {
+                model_id: "eleven_english_sts_v2",
+                name: "Speech to speech",
+                can_do_text_to_speech: false,
+              },
+            ])
+          : new Response(new Uint8Array([73, 68, 51, 1]), {
+              headers: { "content-type": "audio/mpeg" },
+            }),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* CloudSpeech.CloudSpeech;
+      const synthesize = (request: Parameters<typeof service.stream>[1]) =>
+        service.stream("elevenlabs", request).pipe(
+          Stream.runCollect,
+          Effect.map((chunks) => Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))),
+        );
+      const request = {
+        text: "Read this reply.",
+        model: "",
+        voice: "",
+        speed: 1.25,
+        language: "en",
+      };
+      expect(yield* Effect.flip(synthesize(request))).toMatchObject({ reason: "missing-key" });
+      expect(upstream).not.toHaveBeenCalled();
+      yield* service.setKey("elevenlabs", Redacted.make("speech-key"));
+      expect(yield* service.synthesisModels("elevenlabs")).toMatchObject({
+        apiKeyProvider: "elevenlabs",
+        defaultModel: "eleven_multilingual_v2",
+        speedAppliedByProvider: false,
+        models: [
+          {
+            id: "eleven_multilingual_v2",
+            name: "Multilingual v2",
+            voices: ["voice-123"],
+            voiceNames: { "voice-123": "Rachel" },
+          },
+        ],
+      });
+      expect([...(yield* synthesize(request))]).toEqual([73, 68, 51, 1]);
+      expect([
+        ...(yield* synthesize({ ...request, voice: "voice-123", model: "eleven_v3" })),
+      ]).toEqual([73, 68, 51, 1]);
+      for (const [url, init] of upstream.mock.calls) {
+        expect(String(url).startsWith("https://api.elevenlabs.io/")).toBe(true);
+        expect(new Headers(init?.headers).get("xi-api-key")).toBe("speech-key");
+        expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      }
+      const [defaultUrl, defaultInit] = upstream.mock.calls.at(-2)!;
+      expect(String(defaultUrl)).toBe(
+        "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream?output_format=mp3_44100_64",
+      );
+      expect(JSON.parse(String(defaultInit?.body))).toEqual({
+        text: "Read this reply.",
+        model_id: "eleven_multilingual_v2",
+      });
+      const [chosenUrl, chosenInit] = upstream.mock.calls.at(-1)!;
+      expect(String(chosenUrl)).toContain("/v1/text-to-speech/voice-123/stream");
+      expect(JSON.parse(String(chosenInit?.body)).model_id).toBe("eleven_v3");
+    }).pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+      Effect.provideService(FetchHttpClient.Fetch, upstream),
+    );
+  }),
+);
+
 it.effect.each(["openai", "xai", "openrouter"] as const)(
   "synthesizes with %s without leaking keys to another destination",
   (provider) =>
