@@ -88,7 +88,7 @@ function effectiveVariantParams(
   return params !== undefined && params.length > 0 ? params : defaultVariantParams(model);
 }
 
-export function cursorSdkMaxModeForParams(
+function cursorSdkMaxModeForParams(
   model: Pick<SDKModel, "variants">,
   params: ReadonlyArray<ModelParameterValue> | undefined,
 ): boolean {
@@ -137,31 +137,42 @@ export function cursorSdkModelOffersOptionalMaxMode(model: Pick<SDKModel, "varia
 
 export function cursorSdkModelSelection(
   modelSelection: ModelSelection,
-  sdkModels?: ReadonlyArray<Pick<SDKModel, "id" | "variants">>,
+  models: ReadonlyArray<ServerProviderModel> = [],
+  sdkModels: ReadonlyArray<Pick<SDKModel, "id" | "variants">> = [],
 ): CursorSdkModelSelection {
   const id = modelSelection.model === "auto" ? "default" : modelSelection.model;
-  const options = modelSelection.options ?? [];
-  const userRequestedMaxMode = options.some(
+  const selected = modelSelection.options ?? [];
+  const userRequestedMaxMode = selected.some(
     (option) => option.id === CURSOR_SDK_MAX_MODE_OPTION_ID && option.value === true,
   );
-  const sdkOptions = options.filter((option) => option.id !== CURSOR_SDK_MAX_MODE_OPTION_ID);
+  const explicit = selected.filter((option) => option.id !== CURSOR_SDK_MAX_MODE_OPTION_ID);
+  const descriptors =
+    models.find((model) => model.slug === modelSelection.model)?.capabilities?.optionDescriptors ??
+    [];
+  // Some Cursor plans reject runs that leave a catalog parameter unset; T3 keeps Fast off until picked.
+  const defaults = descriptors.flatMap((descriptor) => {
+    if (descriptor.id === CURSOR_SDK_MAX_MODE_OPTION_ID) return [];
+    if (explicit.some((option) => option.id === descriptor.id)) return [];
+    const value = descriptor.id === "fastMode" ? false : getProviderOptionCurrentValue(descriptor);
+    return value === undefined ? [] : [{ id: descriptor.id, value }];
+  });
+  const options = [...explicit, ...defaults];
   const params =
-    sdkOptions.length === 0
+    options.length === 0
       ? undefined
-      : sdkOptions.map((option): ModelParameterValue => ({
+      : options.map((option): ModelParameterValue => ({
           id: cursorSdkParameterId(option.id),
           value: String(option.value),
         }));
-  const catalogModel = sdkModels?.find((model) => model.id === id);
+  const catalogModel = sdkModels.find((model) => model.id === id);
   const forcedMaxMode =
     catalogModel !== undefined && cursorSdkMaxModeForParams(catalogModel, params);
   const optionalMaxMode =
     userRequestedMaxMode &&
     (catalogModel === undefined || cursorSdkParamsAdmitMaxMode(catalogModel, params));
-  const maxMode = forcedMaxMode || optionalMaxMode;
   return {
     id,
     ...(params === undefined ? {} : { params }),
-    ...(maxMode ? { maxMode: true } : {}),
+    ...(forcedMaxMode || optionalMaxMode ? { maxMode: true } : {}),
   };
 }

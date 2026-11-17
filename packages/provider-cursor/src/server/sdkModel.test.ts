@@ -1,195 +1,151 @@
-import { describe, expect, it } from "@effect/vitest";
+import type { SDKModel } from "@cursor/sdk";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import {
-  CURSOR_SDK_MAX_MODE_OPTION_ID,
-  cursorSdkMaxModeForParams,
-  cursorSdkModelOffersOptionalMaxMode,
-  cursorSdkModelSelection,
-} from "./sdkModel.ts";
+import { describe, expect, it } from "vite-plus/test";
 
-describe("cursorSdkModelSelection", () => {
-  const instanceId = ProviderInstanceId.make("cursor");
+import { cursorSdkModelOffersOptionalMaxMode, cursorSdkModelSelection } from "./sdkModel.ts";
+import { buildCursorDiscoveredModelsFromSdk } from "./status.ts";
 
-  it("sets maxMode when every matching catalog variant requires it", () => {
-    const selection = cursorSdkModelSelection(
+const instanceId = ProviderInstanceId.make("cursor");
+const models = buildCursorDiscoveredModelsFromSdk([
+  {
+    id: "grok-4.5",
+    displayName: "Grok 4.5",
+    parameters: [
       {
-        instanceId,
-        model: "claude-opus-4-8",
-        options: [{ id: "contextWindow", value: "1m" }],
+        id: "effort",
+        displayName: "Effort",
+        values: [{ value: "low" }, { value: "medium" }, { value: "high" }],
       },
-      [
-        {
-          id: "claude-opus-4-8",
-          variants: [
-            {
-              displayName: "1M",
-              isMaxMode: true,
-              params: [{ id: "context", value: "1m" }],
-            },
-          ],
-        },
-      ],
-    );
-    expect(selection).toEqual({
-      id: "claude-opus-4-8",
-      params: [{ id: "context", value: "1m" }],
-      maxMode: true,
-    });
-  });
-
-  it("omits maxMode when a matching variant can run without it", () => {
-    expect(
-      cursorSdkMaxModeForParams(
-        {
-          variants: [
-            {
-              displayName: "1M",
-              isMaxMode: true,
-              params: [{ id: "context", value: "1m" }],
-            },
-            {
-              displayName: "1M standard",
-              params: [{ id: "context", value: "1m" }],
-            },
-          ],
-        },
-        [{ id: "context", value: "1m" }],
-      ),
-    ).toBe(false);
-  });
-
-  it("sets maxMode from the composer option without forwarding it as an SDK param", () => {
-    const catalog = [
+      { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+    ],
+    variants: [
       {
-        id: "composer-2",
-        variants: [
-          {
-            displayName: "Composer",
-            isDefault: true,
-            params: [{ id: "fast", value: "false" }],
-          },
-          {
-            displayName: "Composer Max",
-            isMaxMode: true,
-            params: [{ id: "fast", value: "false" }],
-          },
-          {
-            displayName: "Composer Fast",
-            params: [{ id: "fast", value: "true" }],
-          },
+        displayName: "Grok 4.5 High Fast",
+        isDefault: true,
+        params: [
+          { id: "effort", value: "high" },
+          { id: "fast", value: "true" },
         ],
       },
-    ];
-    expect(
-      cursorSdkModelSelection(
-        {
-          instanceId,
-          model: "composer-2",
-          options: [
-            { id: "fastMode", value: false },
-            { id: CURSOR_SDK_MAX_MODE_OPTION_ID, value: true },
-          ],
-        },
-        catalog,
-      ),
-    ).toEqual({
-      id: "composer-2",
-      params: [{ id: "fast", value: "false" }],
-      maxMode: true,
+    ],
+  },
+]);
+
+describe("cursorSdkModelSelection", () => {
+  it.each([
+    {
+      name: "fills unset catalog parameters and keeps Fast off",
+      options: undefined,
+      params: [
+        { id: "effort", value: "high" },
+        { id: "fast", value: "false" },
+      ],
+    },
+    {
+      name: "keeps explicit options",
+      options: [
+        { id: "effort", value: "low" },
+        { id: "fastMode", value: true },
+      ],
+      params: [
+        { id: "effort", value: "low" },
+        { id: "fast", value: "true" },
+      ],
+    },
+  ])("$name", ({ options, params }) => {
+    const selection = cursorSdkModelSelection(
+      { instanceId, model: "grok-4.5", ...(options === undefined ? {} : { options }) },
+      models,
+    );
+    expect({
+      ...selection,
+      params: selection.params?.toSorted((a, b) => a.id.localeCompare(b.id)),
+    }).toEqual({
+      id: "grok-4.5",
+      params,
     });
-    expect(
-      cursorSdkModelSelection(
-        {
-          instanceId,
-          model: "composer-2",
-          options: [
-            { id: "fastMode", value: false },
-            { id: CURSOR_SDK_MAX_MODE_OPTION_ID, value: false },
-          ],
-        },
-        catalog,
-      ),
-    ).toEqual({
-      id: "composer-2",
-      params: [{ id: "fast", value: "false" }],
-    });
-    expect(
-      cursorSdkModelSelection(
-        {
-          instanceId,
-          model: "composer-2",
-          options: [
-            { id: "fastMode", value: true },
-            { id: CURSOR_SDK_MAX_MODE_OPTION_ID, value: true },
-          ],
-        },
-        catalog,
-      ),
-    ).toEqual({
-      id: "composer-2",
-      params: [{ id: "fast", value: "true" }],
-    });
-    expect(
-      cursorSdkModelSelection(
-        {
-          instanceId,
-          model: "composer-2",
-          options: [{ id: CURSOR_SDK_MAX_MODE_OPTION_ID, value: true }],
-        },
-        catalog,
-      ),
-    ).toEqual({
-      id: "composer-2",
-      maxMode: true,
+  });
+
+  it("sends no parameters for a model missing from the catalog", () => {
+    expect(cursorSdkModelSelection({ instanceId, model: "auto" }, models)).toEqual({
+      id: "default",
     });
   });
 });
 
-describe("cursorSdkModelOffersOptionalMaxMode", () => {
-  it("is true when the same params have both max and non-max variants", () => {
+describe("cursorSdkModelSelection Max Mode", () => {
+  const sdkModels = [
+    {
+      id: "composer-2",
+      displayName: "Composer 2",
+      parameters: [
+        { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+      ],
+      variants: [
+        { displayName: "Composer", isDefault: true, params: [{ id: "fast", value: "false" }] },
+        { displayName: "Composer Max", isMaxMode: true, params: [{ id: "fast", value: "false" }] },
+        { displayName: "Composer Fast", params: [{ id: "fast", value: "true" }] },
+      ],
+    },
+    {
+      id: "claude-opus-4-8",
+      displayName: "Claude Opus 4.8",
+      parameters: [{ id: "context", displayName: "Context", values: [{ value: "1m" }] }],
+      variants: [
+        {
+          displayName: "1M",
+          isDefault: true,
+          isMaxMode: true,
+          params: [{ id: "context", value: "1m" }],
+        },
+      ],
+    },
+  ] satisfies ReadonlyArray<SDKModel>;
+  const catalogModels = buildCursorDiscoveredModelsFromSdk(sdkModels);
+
+  it.each([
+    {
+      name: "leaves optional Max Mode off by default",
+      model: "composer-2",
+      options: undefined,
+      expected: { id: "composer-2", params: [{ id: "fast", value: "false" }] },
+    },
+    {
+      name: "turns on optional Max Mode without sending it as a parameter",
+      model: "composer-2",
+      options: [{ id: "maxMode", value: true }],
+      expected: { id: "composer-2", params: [{ id: "fast", value: "false" }], maxMode: true },
+    },
+    {
+      name: "drops Max Mode when no variant with the chosen parameters offers it",
+      model: "composer-2",
+      options: [
+        { id: "fastMode", value: true },
+        { id: "maxMode", value: true },
+      ],
+      expected: { id: "composer-2", params: [{ id: "fast", value: "true" }] },
+    },
+    {
+      name: "turns on Max Mode when every matching variant requires it",
+      model: "claude-opus-4-8",
+      options: undefined,
+      expected: {
+        id: "claude-opus-4-8",
+        params: [{ id: "context", value: "1m" }],
+        maxMode: true,
+      },
+    },
+  ])("$name", ({ model, options, expected }) => {
     expect(
-      cursorSdkModelOffersOptionalMaxMode({
-        variants: [
-          {
-            displayName: "Standard",
-            isDefault: true,
-            params: [{ id: "fast", value: "false" }],
-          },
-          {
-            displayName: "Max",
-            isMaxMode: true,
-            params: [{ id: "fast", value: "false" }],
-          },
-        ],
-      }),
-    ).toBe(true);
+      cursorSdkModelSelection(
+        { instanceId, model, ...(options === undefined ? {} : { options }) },
+        catalogModels,
+        sdkModels,
+      ),
+    ).toEqual(expected);
   });
 
-  it("is false when max mode is forced for every matching selection", () => {
-    expect(
-      cursorSdkModelOffersOptionalMaxMode({
-        variants: [
-          {
-            displayName: "1M",
-            isMaxMode: true,
-            params: [{ id: "context", value: "1m" }],
-          },
-        ],
-      }),
-    ).toBe(false);
-  });
-
-  it("is false when no variants use max mode", () => {
-    expect(
-      cursorSdkModelOffersOptionalMaxMode({
-        variants: [
-          {
-            displayName: "Default",
-            isDefault: true,
-            params: [{ id: "fast", value: "false" }],
-          },
-        ],
-      }),
-    ).toBe(false);
+  it("offers a Max Mode toggle only where it is optional", () => {
+    expect(sdkModels.map(cursorSdkModelOffersOptionalMaxMode)).toEqual([true, false]);
   });
 });

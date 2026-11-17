@@ -82,8 +82,7 @@ The model picker lists the models the agent reports. If the agent reports none, 
 your own model IDs under **Custom models** in the instance settings.
 
 Other settings the agent offers, such as reasoning effort or approval mode, appear in the
-composer's model picker, beside the model list, like they do for built-in providers. Agents with their own plan and
-build modes follow T3 Code's Plan and Build toggle. Models and options that change while an agent
+composer's model picker, beside the model list, like they do for built-in providers. Models and options that change while an agent
 is running update the picker without waiting for another provider probe.
 
 ## Commands and skills
@@ -99,9 +98,9 @@ backed by that native session. Importing the same agent session again returns th
 including when another client performs the import.
 
 The thread keeps the native session's title and last-update value as provider metadata without
-overwriting a title you set in T3 Code. Agents that report ACP context usage drive the composer's
-context meter and cumulative cost metadata. The meter is off by default; see
-[commands and skills](./composer.md#commands-and-skills) to enable it on web and desktop.
+overwriting a title you set in T3 Code. Agents that report ACP context usage drive the thread details
+context window and cumulative cost metadata. See
+[commands and skills](./composer.md#commands-and-skills) to show it on web and desktop.
 Text resources and links render as assistant output;
 binary resources, images, and audio that T3 Code cannot render yet appear as explicit placeholders
 instead of disappearing.
@@ -129,8 +128,8 @@ remain agent-specific.
 ## Checkpoints
 
 Checkpoint rollback restores your files as usual. ACP agents cannot rewind their own conversation,
-so the next turn after a rollback starts a fresh agent session that no longer remembers the
-conversation from before the checkpoint.
+so the next turn after a rollback starts a fresh agent session and T3 Code sends it the kept
+conversation, without the turns you rolled back.
 
 Registry instances are not used for T3's app-owned text generation, such as thread titles, commit
 messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
