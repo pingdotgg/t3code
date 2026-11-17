@@ -14,6 +14,9 @@ import {
   type OrchestrationV2TurnItem,
   type ThreadGuestMessage,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
 import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
@@ -193,10 +196,16 @@ export function unplacedGuestMessages(
 }
 
 /** "23h left" or "5m left", rounded down, for the guest page header. */
-export function formatGuestExpiry(expiresAt: string, nowMs: number): string {
+export function formatGuestExpiry(
+  expiresAt: string,
+  nowMs: number,
+  resolve: MessageResolver = m,
+): string {
   const minutes = Math.floor((Date.parse(expiresAt) - nowMs) / 60_000);
-  if (minutes <= 0) return "Expired";
-  return minutes >= 60 ? `${Math.floor(minutes / 60)}h left` : `${minutes}m left`;
+  if (minutes <= 0) return resolve(msg("Expired"));
+  return minutes >= 60
+    ? resolve(msg("{hours}h left", { hours: Math.floor(minutes / 60) }))
+    : resolve(msg("{minutes}m left", { minutes }));
 }
 
 /**
@@ -222,12 +231,15 @@ export const guestMediaUrl = (shareId: string, path: string) =>
  */
 export function guestFilesProblem(
   files: ReadonlyArray<Pick<File, "type" | "size">>,
+  resolve: MessageResolver = m,
 ): string | null {
   if (files.length > GUEST_MESSAGE_MAX_ATTACHMENTS) {
-    return `Attach up to ${GUEST_MESSAGE_MAX_ATTACHMENTS} files to a message.`;
+    return resolve(
+      msg("Attach up to {count} files to a message.", { count: GUEST_MESSAGE_MAX_ATTACHMENTS }),
+    );
   }
   if (files.reduce((total, file) => total + file.size, 0) > GUEST_MESSAGE_MAX_ATTACHMENT_BYTES) {
-    return "Attached files can total up to 10 MB per message.";
+    return resolve(msg("Attached files can total up to 10 MB per message."));
   }
   const unsupported = files.some(
     (file) =>
@@ -236,7 +248,7 @@ export function guestFilesProblem(
         !isProviderSendTurnSupportedImageMimeType(file.type)),
   );
   return unsupported
-    ? "This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP."
+    ? resolve(msg("This file cannot be attached. Images must be PNG, JPEG, GIF, or WebP."))
     : null;
 }
 

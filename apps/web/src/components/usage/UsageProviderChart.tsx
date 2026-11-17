@@ -1,5 +1,6 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
@@ -271,7 +272,9 @@ function UsageChartTooltip({
         );
       })}
       <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-        <span className="text-muted-foreground">Total</span>
+        <span className="text-muted-foreground">
+          <T>Total</T>
+        </span>
         <span className={cn("tabular-nums", partial ? "text-muted-foreground" : "text-foreground")}>
           {format(column?.total ?? 0)}
         </span>
@@ -415,6 +418,7 @@ export function UsageProviderChart({
   timeZone,
   hour12,
 }: UsageProviderChartProps) {
+  const gt = useGT();
   const periods = resolution === "hour" ? hours : days;
   const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
   const byPeriod = new Map(
@@ -525,17 +529,27 @@ export function UsageProviderChart({
       {/* The plot and its axes are hover-only; this carries the same figures for screen readers. */}
       <table className="sr-only">
         <caption>
-          {`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+          {resolution === "hour"
+            ? metric === "tokens"
+              ? gt("Hourly processed tokens by provider")
+              : gt("Hourly cost by provider")
+            : metric === "tokens"
+              ? gt("Daily processed tokens by provider")
+              : gt("Daily cost by provider")}
         </caption>
         <thead>
           <tr>
-            <th scope="col">{resolution === "hour" ? "Hour" : "Day"}</th>
+            <th scope="col">{resolution === "hour" ? gt("Hour") : gt("Day")}</th>
             {providers.map((provider) => (
               <th key={provider} scope="col">
                 {PROVIDER_PRESENTATION[provider].label}
               </th>
             ))}
-            {providers.length > 1 ? <th scope="col">Total</th> : null}
+            {providers.length > 1 ? (
+              <th scope="col">
+                <T>Total</T>
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>

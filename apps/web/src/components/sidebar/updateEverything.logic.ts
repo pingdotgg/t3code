@@ -9,7 +9,9 @@ import {
 } from "@t3tools/contracts";
 import { cliReleaseChannelOf, desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
@@ -72,6 +74,7 @@ export interface SkippedMachine {
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   targetVersion: string,
+  resolve: MessageResolver = m,
 ): {
   readonly targets: ServerUpdateTarget[];
   readonly skipped: SkippedMachine[];
@@ -89,9 +92,9 @@ export function collectServerUpdateTargets(
     }
     const skip = (reason: string) =>
       skipped.push({ environmentId: machine.environmentId, label: machine.label, reason });
-    const unavailable = unavailableReason(machine);
+    const unavailable = unavailableReason(machine, resolve);
     if (config === null || unavailable !== null) {
-      skip(unavailable ?? "not connected");
+      skip(unavailable ?? resolve(msg("not connected")));
       continue;
     }
     const selfUpdate = resolveServerSelfUpdateCapability(config);
@@ -105,11 +108,11 @@ export function collectServerUpdateTargets(
     }
     const desktopAppUpdate = supportsDesktopAppUpdate(config);
     if (selfUpdate === null) {
-      skip("needs a manual update");
+      skip(resolve(msg("needs a manual update")));
       continue;
     }
     if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
-      skip("needs a newer desktop app");
+      skip(resolve(msg("needs a newer desktop app")));
       continue;
     }
     const serverChannel = cliReleaseChannelOf(config.environment.serverVersion);
@@ -119,7 +122,7 @@ export function collectServerUpdateTargets(
       serverChannel !== cliReleaseChannelOf(targetVersion) &&
       (selfUpdate !== "desktop-managed" || serverChannel === "stable")
     ) {
-      skip(`on the ${serverChannel} channel`);
+      skip(resolve(msg("on the {channel} channel", { channel: serverChannel })));
       continue;
     }
     const target: ServerUpdateTarget = {
@@ -135,10 +138,13 @@ export function collectServerUpdateTargets(
   return { targets, skipped };
 }
 
-function unavailableReason(machine: UpdateEverythingMachine): string | null {
-  if (machine.serverConfig === null || !machine.connected) return "not connected";
-  if (!machine.canMaintain) return "no permission";
-  if (machine.updateState.status === "running") return "already updating";
+function unavailableReason(
+  machine: UpdateEverythingMachine,
+  resolve: MessageResolver,
+): string | null {
+  if (machine.serverConfig === null || !machine.connected) return resolve(msg("not connected"));
+  if (!machine.canMaintain) return resolve(msg("no permission"));
+  if (machine.updateState.status === "running") return resolve(msg("already updating"));
   return null;
 }
 
@@ -149,8 +155,11 @@ export interface ChannelSwitchRelease {
   readonly databaseMigration: number | undefined;
 }
 
-export const channelSwitchLabel = (channel: DesktopUpdateChannel) =>
-  channel === "nightly" ? "Nightly" : "Stable";
+/** Components pass `useMessages()` so labels follow a language switch. */
+export const channelSwitchLabel = (channel: DesktopUpdateChannel, resolve: MessageResolver = m) =>
+  channel === "nightly"
+    ? resolve(msg("Nightly", { $context: "release track" }))
+    : resolve(msg("Stable", { $context: "release track" }));
 
 /** Stable and Nightly each build their own commits, so either can hold migrations the other lacks.
  * Crossing tracks needs proof that the target release knows every migration the database holds. */
@@ -161,18 +170,30 @@ function channelSwitchBlockReason(
   fromVersion: string,
   release: ChannelSwitchRelease,
   currentMigration: number | undefined,
+  resolve: MessageResolver,
 ): string | null {
   if (!crossesTrack(fromVersion, release)) return null;
-  const from = channelSwitchLabel(desktopUpdateChannelOf(fromVersion));
+  const from = channelSwitchLabel(desktopUpdateChannelOf(fromVersion), resolve);
+  const to = channelSwitchLabel(release.channel, resolve);
   // Servers and releases from before this check report no migration number.
   if (currentMigration === undefined) {
-    return `its server predates database checks; update it on ${from} first`;
+    return resolve(msg("its server predates database checks; update it on {from} first", { from }));
   }
   if (release.databaseMigration === undefined) {
-    return `${release.version} predates database checks; wait for a newer ${channelSwitchLabel(release.channel)} release`;
+    return resolve(
+      msg("{version} predates database checks; wait for a newer {to} release", {
+        version: release.version,
+        to,
+      }),
+    );
   }
   return currentMigration > release.databaseMigration
-    ? `its database has changes ${release.version} does not support yet; stay on ${from} until ${channelSwitchLabel(release.channel)} has them`
+    ? resolve(
+        msg(
+          "its database has changes {version} does not support yet; stay on {from} until {to} has them",
+          { version: release.version, from, to },
+        ),
+      )
     : null;
 }
 
@@ -189,6 +210,7 @@ export function localSwitchBlockReason(
   }>,
   backendCount: number,
   localEnvironmentEnabled: boolean,
+  resolve: MessageResolver = m,
 ): string | null {
   if (!localEnvironmentEnabled || !crossesTrack(appVersion, release)) return null;
   if (
@@ -196,11 +218,13 @@ export function localSwitchBlockReason(
     hosted.length < backendCount ||
     hosted.some((server) => !server.connected)
   ) {
-    return "its server is not connected, so its database cannot be checked";
+    return resolve(msg("its server is not connected, so its database cannot be checked"));
   }
   return (
     hosted
-      .map((server) => channelSwitchBlockReason(appVersion, release, server.databaseMigration))
+      .map((server) =>
+        channelSwitchBlockReason(appVersion, release, server.databaseMigration, resolve),
+      )
       .find((reason) => reason !== null) ?? null
   );
 }
@@ -230,6 +254,7 @@ function managedMachineUpdateDenial(
 export function collectChannelSwitchTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   release: ChannelSwitchRelease,
+  resolve: MessageResolver = m,
 ): { readonly targets: ServerUpdateTarget[]; readonly skipped: SkippedMachine[] } {
   const targets: ServerUpdateTarget[] = [];
   const skipped: SkippedMachine[] = [];
@@ -260,20 +285,20 @@ export function collectChannelSwitchTargets(
       sameTrack &&
       resolveVersionMismatch(serverVersion, release.version) === null
     ) {
-      const move = trackSwitchMove(config, true);
+      const move = trackSwitchMove(config, true, resolve);
       if (
         !("skip" in move) &&
         move.selfUpdate === "desktop-managed" &&
-        unavailableReason(machine) === null &&
+        unavailableReason(machine, resolve) === null &&
         managedMachineUpdateDenial(config, release.version) === undefined
       ) {
         targets.push({ ...target(move.selfUpdate, serverVersion), trackOnly: true });
       }
       continue;
     }
-    const unavailable = unavailableReason(machine);
+    const unavailable = unavailableReason(machine, resolve);
     if (config === null || serverVersion === undefined || unavailable !== null) {
-      skip(unavailable ?? "not connected");
+      skip(unavailable ?? resolve(msg("not connected")));
       continue;
     }
     const managedDenial = managedMachineUpdateDenial(config, release.version);
@@ -281,7 +306,7 @@ export function collectChannelSwitchTargets(
       skip(managedDenial);
       continue;
     }
-    const move = trackSwitchMove(config, sameTrack);
+    const move = trackSwitchMove(config, sameTrack, resolve);
     if ("skip" in move) {
       skip(move.skip);
       continue;
@@ -290,6 +315,7 @@ export function collectChannelSwitchTargets(
       serverVersion,
       release,
       config.environment.databaseMigration,
+      resolve,
     );
     if (blocked !== null) {
       skip(blocked);
@@ -301,7 +327,11 @@ export function collectChannelSwitchTargets(
       compareSemverVersions(release.version, serverVersion) <= 0
     ) {
       skip(
-        `run \`t3 update --channel ${release.channel === "nightly" ? "nightly" : "stable"} --allow-downgrade\` there`,
+        resolve(
+          msg("run `{command}` there", {
+            command: `t3 update --channel ${release.channel === "nightly" ? "nightly" : "stable"} --allow-downgrade`,
+          }),
+        ),
       );
       continue;
     }
@@ -320,7 +350,7 @@ export function awaitsTrackSwitch(
     !machine.hostedByThisApp &&
     config !== null &&
     !isOnTrack(config.environment.serverVersion, channel) &&
-    !("skip" in trackSwitchMove(config, false))
+    !("skip" in trackSwitchMove(config, false, m))
   );
 }
 
@@ -332,19 +362,20 @@ function isOnTrack(version: string, channel: DesktopUpdateChannel): boolean {
 function trackSwitchMove(
   config: NonNullable<UpdateEverythingMachine["serverConfig"]>,
   sameTrack: boolean,
+  resolve: MessageResolver,
 ): { readonly selfUpdate: ServerSelfUpdateCapability } | { readonly skip: string } {
   if (cliReleaseChannelOf(config.environment.serverVersion) === "preview") {
-    return { skip: "runs a preview build" };
+    return { skip: resolve(msg("runs a preview build")) };
   }
   const selfUpdate = resolveServerSelfUpdateCapability(config);
-  if (selfUpdate === null) return { skip: "needs a manual update" };
+  if (selfUpdate === null) return { skip: resolve(msg("needs a manual update")) };
   if (selfUpdate !== "desktop-managed") return { selfUpdate };
   if (config.environment.capabilities.desktopAppChannelSwitch !== true) {
-    return { skip: "needs a newer desktop app" };
+    return { skip: resolve(msg("needs a newer desktop app")) };
   }
   // Squirrel.Mac renames the bundle for the new track and then cannot relaunch it.
   if (!sameTrack && config.environment.platform.os === "darwin") {
-    return { skip: "switch the Mac app on that Mac" };
+    return { skip: resolve(msg("switch the Mac app on that Mac")) };
   }
   return { selfUpdate };
 }
@@ -437,11 +468,13 @@ export function closeFinishedUpdateRun(run: UpdateEverythingRun): UpdateEverythi
 
 const UPDATE_SLOW_AFTER_MS = 3 * 60 * 1000;
 
-export function formatUpdateElapsed(ms: number): string {
+export function formatUpdateElapsed(ms: number, resolve: MessageResolver = m): string {
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return "<1m";
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (minutes < 1) return resolve(msg("<1m"));
+  if (minutes < 60) return resolve(msg("{minutes}m", { minutes }));
+  return resolve(
+    msg("{hours}h {minutes}m", { hours: Math.floor(minutes / 60), minutes: minutes % 60 }),
+  );
 }
 
 export interface UpdateRunMachineView {
@@ -468,13 +501,18 @@ export function describeUpdateCapsule(
   machines: ReadonlyArray<UpdateRunMachineView>,
   local: UpdateRunLocalState,
   now: number,
+  resolve: MessageResolver = m,
 ): UpdateCapsuleView {
   if (run.phase === "countdown" && run.restartAt !== null) {
     const seconds = Math.max(0, Math.ceil((run.restartAt - now) / 1000));
-    return { tone: "default", label: `Restart in ${seconds}s`, action: "later" };
+    return {
+      tone: "default",
+      label: resolve(msg("Restart in {seconds}s", { seconds })),
+      action: "later",
+    };
   }
   if (run.phase === "installing") {
-    return { tone: "default", label: "Restarting…", action: null };
+    return { tone: "default", label: resolve(msg("Restarting…")), action: null };
   }
   const active = machines.filter(({ status }) => isActive(status) && status !== "waiting");
   const slowest = active.toSorted((a, b) => a.machine.startedAt - b.machine.startedAt)[0];
@@ -483,20 +521,27 @@ export function describeUpdateCapsule(
       tone: "slow",
       label: slowest.machine.label,
       slow: {
-        status: RUN_STATUS_LABELS[slowest.status],
-        elapsed: formatUpdateElapsed(now - slowest.machine.startedAt),
+        status: resolve(RUN_STATUS_LABELS[slowest.status]),
+        elapsed: formatUpdateElapsed(now - slowest.machine.startedAt, resolve),
       },
       action: null,
     };
   }
   const done = machines.filter(({ status }) => status === "done").length;
   if (machines.some(({ status }) => isActive(status))) {
-    return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
+    return {
+      tone: "default",
+      label: resolve(msg("{done} of {total} updated", { done, total: machines.length })),
+      action: null,
+    };
   }
   if (local?.status === "downloading") {
     return {
       tone: "default",
-      label: `Downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`,
+      label:
+        local.percent === null
+          ? resolve(msg("Downloading"))
+          : resolve(msg("Downloading {percent}%", { percent: Math.floor(local.percent) })),
       action: null,
     };
   }
@@ -504,23 +549,31 @@ export function describeUpdateCapsule(
   if (failed.length > 0) {
     return {
       tone: "failed",
-      label: failed.length === 1 ? `${failed[0]!.machine.label} failed` : `${failed.length} failed`,
+      label:
+        failed.length === 1
+          ? resolve(msg("{machine} failed", { machine: failed[0]!.machine.label }))
+          : resolve(msg("{count} failed", { count: failed.length })),
       action:
         !run.trackSwitch && failed.some(({ machine }) => machine.server !== null)
           ? "retry"
           : "dismiss",
     };
   }
-  return { tone: "default", label: `${done} of ${machines.length} updated`, action: null };
+  return {
+    tone: "default",
+    label: resolve(msg("{done} of {total} updated", { done, total: machines.length })),
+    action: null,
+  };
 }
 
+/** `msg()` strings: resolve them with `m` or `useMessages()` where they show. */
 export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
-  providers: "updating providers",
-  waiting: "waiting",
-  downloading: "downloading",
-  restarting: "restarting",
-  done: "done",
-  failed: "failed",
+  providers: msg("updating providers"),
+  waiting: msg("waiting"),
+  downloading: msg("downloading"),
+  restarting: msg("restarting"),
+  done: msg("done"),
+  failed: msg("failed"),
 };
 
 export interface UpdateEverythingResult {
@@ -549,7 +602,7 @@ export function collectUpdateEverythingResult(input: {
     updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
     restarting: [],
     failures: [
-      ...input.localFailures.map((failure) => `This app: ${failure}`),
+      ...input.localFailures.map((failure) => m(msg("This app: {failure}", { failure }))),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),
@@ -567,27 +620,35 @@ export function getUpdateEverythingToastView(
   readonly description?: string;
 } | null {
   const parts = [
-    result.localVersion !== null && result.localVersion === appVersion ? "this app" : null,
-    countLabel(result.updatedServers, "server"),
-    countLabel(result.updatedProviders, "provider"),
+    result.localVersion !== null && result.localVersion === appVersion ? m(msg("this app")) : null,
+    serverCountLabel(result.updatedServers, m),
+    providerCountLabel(result.updatedProviders, m),
   ].filter((part) => part !== null);
   const restarting =
     result.restarting.length === 0
       ? []
       : [
-          `${joinList(result.restarting)} ${result.restarting.length === 1 ? "is" : "are"} still restarting.`,
+          m(
+            msg(
+              "{count, plural, one {{machines} is still restarting.} other {{machines} are still restarting.}}",
+              { count: result.restarting.length, machines: joinList(result.restarting, m) },
+            ),
+          ),
         ];
   if (result.failures.length === 0) {
     if (parts.length === 0) return null;
     return {
       type: "success",
-      title: `Updated ${joinList(parts)}`,
+      title: m(msg("Updated {items}", { items: joinList(parts, m) })),
       ...(restarting.length === 0 ? {} : { description: restarting.join("\n") }),
     };
   }
   return {
     type: "error",
-    title: parts.length === 0 ? "Update failed" : `Updated ${joinList(parts)}`,
+    title:
+      parts.length === 0
+        ? m(msg("Update failed"))
+        : m(msg("Updated {items}", { items: joinList(parts, m) })),
     description: [...result.failures, ...restarting].join("\n"),
   };
 }
@@ -618,17 +679,33 @@ export interface UpdateEverythingRow {
   readonly providers: ReadonlyArray<string>;
 }
 
-function countLabel(count: number, noun: string): string | null {
-  return count === 0 ? null : `${count} ${noun}${count === 1 ? "" : "s"}`;
+function serverCountLabel(count: number, resolve: MessageResolver): string | null {
+  return count === 0
+    ? null
+    : resolve(msg("{count, plural, one {{count} server} other {{count} servers}}", { count }));
 }
 
-function joinList(parts: ReadonlyArray<string>): string {
-  if (parts.length <= 2) return parts.join(" and ");
-  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+function providerCountLabel(count: number, resolve: MessageResolver): string | null {
+  return count === 0
+    ? null
+    : resolve(msg("{count, plural, one {{count} provider} other {{count} providers}}", { count }));
+}
+
+function joinList(parts: ReadonlyArray<string>, resolve: MessageResolver): string {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) {
+    return resolve(msg("{first} and {second}", { first: parts[0], second: parts[1] }));
+  }
+  return resolve(
+    msg("{items}, and {last}", { items: parts.slice(0, -1).join(", "), last: parts.at(-1) }),
+  );
 }
 
 /** One row per machine: this app's machines first, then servers, provider-only, and skipped. */
-export function describeUpdateEverything(plan: UpdateEverythingPlan): {
+export function describeUpdateEverything(
+  plan: UpdateEverythingPlan,
+  resolve: MessageResolver = m,
+): {
   readonly summary: string;
   readonly version: string | null;
   readonly providerCount: number;
@@ -638,13 +715,18 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     (count, machine) => count + machine.providers.length,
     0,
   );
-  const summary = `Update ${joinList(
-    [
-      plan.localVersion ? "this app" : null,
-      countLabel(plan.servers.length, "server"),
-      countLabel(providerCount, "provider"),
-    ].filter((part) => part !== null),
-  )}`;
+  const summary = resolve(
+    msg("Update {items}", {
+      items: joinList(
+        [
+          plan.localVersion ? resolve(msg("this app")) : null,
+          serverCountLabel(plan.servers.length, resolve),
+          providerCountLabel(providerCount, resolve),
+        ].filter((part) => part !== null),
+        resolve,
+      ),
+    }),
+  );
 
   const rows = new Map<EnvironmentId | null, UpdateEverythingRow>();
   const update = (
@@ -662,7 +744,9 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
     rows.set(environmentId, { ...row, ...change });
   };
   if (plan.localVersion) {
-    if (plan.localMachines.length === 0) update(null, "This app", { app: "this-app" });
+    if (plan.localMachines.length === 0) {
+      update(null, resolve(msg("This app")), { app: "this-app" });
+    }
     for (const machine of plan.localMachines) {
       update(machine.environmentId, machine.label, { app: "this-app" });
     }
