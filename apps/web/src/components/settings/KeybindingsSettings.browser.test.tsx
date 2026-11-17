@@ -25,7 +25,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
       label: "Build workstation",
       serverConfig: {
         keybindings: compileResolvedKeybindingsConfig([
-          { command: "script.run-tests.run", key: "mod+r" },
+          { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
         ]),
         keybindingsConfigPath: null,
         availableEditors: [],
@@ -113,27 +113,16 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
-it("shows Unassign only while recording and keeps it clickable without blurring the recorder", async () => {
+it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
   const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
   await vi.mocked(atomCommands.useAtomCommand).withImplementation(
     () => mutate as never,
     async () => {
       await using screen = await render(<KeybindingsSettingsPanel />);
-      const remove = screen.getByRole("button", { name: "Unassign shortcut for Sidebar: Toggle" });
-      const field = screen.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" });
-      const pill = screen.getByRole("button", { name: /^Edit shortcut for Sidebar: Toggle:/ });
 
-      await expect.element(remove).not.toBeInTheDocument();
-      await pill.click();
-      await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
-      await expect.element(remove).toBeVisible();
-      await userEvent.keyboard("{Escape}");
-      await expect.element(remove).not.toBeInTheDocument();
-      await pill.click();
-      await remove.click();
-
-      expect(mutate).toHaveBeenCalledTimes(1);
-      expect(mutate).toHaveBeenCalledWith({
+      await screen.getByRole("button", { name: "Actions for Sidebar: Toggle" }).click();
+      await screen.getByRole("menuitem", { name: "Unassign" }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
         environmentId: "env",
         input: {
           command: "sidebar.toggle",
@@ -142,22 +131,21 @@ it("shows Unassign only while recording and keeps it clickable without blurring 
           replace: { command: "sidebar.toggle", key: "mod+b" },
         },
       });
-      await expect.element(field).toHaveFocus();
-      await userEvent.keyboard("{Escape}");
+
       await screen
-        .getByRole("button", { name: /^Edit shortcut for Run Script: Run Tests:/ })
+        .getByRole("button", {
+          name: "Edit shortcut for Composer: Start in Background: Unassigned",
+        })
         .click();
-      await expect
-        .element(
-          screen.getByRole("button", { name: "Unassign shortcut for Run Script: Run Tests" }),
-        )
-        .not.toBeInTheDocument();
-      await userEvent.keyboard("{Escape}");
-      await screen.getByRole("button", { name: "Actions for Run Script: Run Tests" }).click();
-      await screen.getByRole("menuitem", { name: "Remove", exact: true }).click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await screen.getByRole("button", { name: "Save" }).click();
       expect(mutate).toHaveBeenLastCalledWith({
         environmentId: "env",
-        input: { command: "script.run-tests.run", key: "mod+r" },
+        input: expect.objectContaining({
+          command: "composer.sendBackground",
+          when: "composerFocus && draftThreadRoute",
+          replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        }),
       });
     },
   );

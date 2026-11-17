@@ -312,14 +312,14 @@ function WhenVariableSelect({
   );
 }
 
-function WhenExpressionUnassignButton({
+function WhenExpressionRemoveButton({
   label,
   className,
-  onUnassign,
+  onRemove,
 }: {
   label: string;
   className?: string | undefined;
-  onUnassign: () => void;
+  onRemove: () => void;
 }) {
   return (
     <Tooltip>
@@ -332,7 +332,7 @@ function WhenExpressionUnassignButton({
             size="icon-sm"
             className={cn("size-7", className)}
             aria-label={label}
-            onClick={onUnassign}
+            onClick={onRemove}
           />
         }
       >
@@ -348,13 +348,13 @@ function WhenExpressionNodeEditor({
   variables,
   depth = 0,
   onChange,
-  onUnassign,
+  onRemove,
 }: {
   node: KeybindingWhenNode;
   variables: ReadonlyArray<WhenVariableOption>;
   depth?: number;
   onChange: (node: KeybindingWhenNode) => void;
-  onUnassign?: () => void;
+  onRemove?: () => void;
 }) {
   const condition = conditionParts(node);
 
@@ -381,10 +381,10 @@ function WhenExpressionNodeEditor({
           unknownIdentifiers={unknownIdentifiers}
           onChange={(value) => onChange(setConditionIdentifier(node, value))}
         />
-        {onUnassign ? (
-          <WhenExpressionUnassignButton
+        {onRemove ? (
+          <WhenExpressionRemoveButton
             label={whenNodeRemoveLabel(node, depth)}
-            onUnassign={onUnassign}
+            onRemove={onRemove}
           />
         ) : null}
       </div>
@@ -410,11 +410,11 @@ function WhenExpressionNodeEditor({
           >
             Not
           </Toggle>
-          {onUnassign ? (
-            <WhenExpressionUnassignButton
+          {onRemove ? (
+            <WhenExpressionRemoveButton
               label={whenNodeRemoveLabel(node, depth)}
               className="ml-auto"
-              onUnassign={onUnassign}
+              onRemove={onRemove}
             />
           ) : null}
         </div>
@@ -519,11 +519,11 @@ function WhenExpressionNodeEditor({
           <PlusIcon className="size-3.5" />
           Group
         </Button>
-        {onUnassign ? (
-          <WhenExpressionUnassignButton
+        {onRemove ? (
+          <WhenExpressionRemoveButton
             label={whenNodeRemoveLabel(node, depth)}
             className="ml-auto"
-            onUnassign={onUnassign}
+            onRemove={onRemove}
           />
         ) : null}
       </div>
@@ -549,7 +549,7 @@ function WhenExpressionNodeEditor({
               variables={variables}
               depth={depth + 1}
               onChange={(next) => updateChild(child, next)}
-              onUnassign={() => removeChild(child)}
+              onRemove={() => removeChild(child)}
             />
           </div>
         ))}
@@ -656,7 +656,7 @@ function WhenExpressionBuilder({
             node={value}
             variables={variables}
             onChange={updateExpressionValue}
-            onUnassign={() => updateExpressionValue(undefined)}
+            onRemove={() => updateExpressionValue(undefined)}
           />
         ) : (
           <div className="rounded-md border border-dashed border-border/80 bg-muted/15 p-3">
@@ -733,6 +733,16 @@ function useKeybindingRowEditor({
     when: whenDraftExpression,
   });
 
+  // Giving an unassigned row a shortcut brings back its default condition.
+  const setKeyDraft = (next: string, patch: Partial<KeybindingRowDraftState> = {}) =>
+    setDraft({
+      ...patch,
+      keyDraft: next,
+      ...(row.isUnassigned && whenDraftExpression === "false"
+        ? { whenDraft: parseKeybindingWhenExpression(row.defaultWhen) ?? undefined }
+        : {}),
+    });
+
   const save = () => {
     onSave({
       command: row.command,
@@ -759,13 +769,7 @@ function useKeybindingRowEditor({
       layoutCharacter: true,
     });
     if (!next) return;
-    setDraft({
-      keyDraft: next,
-      isRecording: false,
-      ...(row.isUnassigned && whenDraftExpression === "false"
-        ? { whenDraft: parseKeybindingWhenExpression(row.defaultWhen) ?? undefined }
-        : {}),
-    });
+    setKeyDraft(next, { isRecording: false });
   };
 
   return {
@@ -777,6 +781,7 @@ function useKeybindingRowEditor({
     isDirty,
     conflictLabels,
     setDraft,
+    setKeyDraft,
     save,
     captureKeybinding,
     pillRef,
@@ -804,13 +809,11 @@ function KeybindingKeyControl({
   row,
   editor,
   isSaving,
-  onUnassign,
   pillClassName,
 }: {
   row: KeybindingRow;
   editor: KeybindingRowEditor;
   isSaving: boolean;
-  onUnassign: (row: KeybindingRow) => void;
   pillClassName?: string | undefined;
 }) {
   const {
@@ -819,6 +822,7 @@ function KeybindingKeyControl({
     isDirty,
     isWhenDraftValid,
     setDraft,
+    setKeyDraft,
     save,
     captureKeybinding,
     pillRef,
@@ -834,20 +838,6 @@ function KeybindingKeyControl({
           onClick={save}
         >
           {isSaving ? "Saving" : "Save"}
-        </Button>
-      ) : null}
-      {isRecording && row.source === "Default" ? (
-        <Button
-          type="button"
-          variant="destructive"
-          size="sm"
-          disabled={isSaving}
-          aria-label={`Unassign shortcut for ${commandLabel(row.command)}`}
-          // Keep the recorder mounted until the unassign click is handled.
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => onUnassign(row)}
-        >
-          Unassign
         </Button>
       ) : null}
       {showPill ? (
@@ -879,7 +869,7 @@ function KeybindingKeyControl({
           className="w-44"
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
-          onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
+          onChange={(event) => setKeyDraft(event.currentTarget.value)}
           onKeyDown={captureKeybinding}
         />
       )}
@@ -938,16 +928,19 @@ function KeybindingRowMenu({
   row,
   isSaving,
   onReset,
+  onUnassign,
   onRemove,
 }: {
   row: KeybindingRow;
   isSaving: boolean;
   onReset: (row: KeybindingRow) => void;
+  onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }) {
   const canReset = row.source === "Custom" && row.defaultKey !== null;
-  const canRemove = row.source !== "Default";
-  if (!canReset && !canRemove) return null;
+  const canUnassign = row.source === "Default";
+  // Reset to default is the way back; removing would drop the default for good.
+  const canRemove = row.source !== "Default" && !row.isUnassigned;
 
   return (
     <Menu>
@@ -968,6 +961,11 @@ function KeybindingRowMenu({
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
             Reset to default
+          </MenuItem>
+        ) : null}
+        {canUnassign ? (
+          <MenuItem variant="destructive" disabled={isSaving} onClick={() => onUnassign(row)}>
+            Unassign
           </MenuItem>
         ) : null}
         {canRemove ? (
@@ -1029,6 +1027,7 @@ function KeybindingHoverRowMenu(props: {
   row: KeybindingRow;
   isSaving: boolean;
   onReset: (row: KeybindingRow) => void;
+  onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }) {
   return (
@@ -1062,13 +1061,13 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
             row={row}
             isSaving={isSaving}
             onReset={onReset}
+            onUnassign={onUnassign}
             onRemove={onRemove}
           />
           <KeybindingKeyControl
             row={row}
             editor={editor}
             isSaving={isSaving}
-            onUnassign={onUnassign}
             pillClassName="-mr-1.5"
           />
         </div>
