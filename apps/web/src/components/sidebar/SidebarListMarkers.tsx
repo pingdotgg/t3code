@@ -151,7 +151,7 @@ export const SIDEBAR_RUNNING_SHELF_ROW = "shelf:running";
 
 /**
  * Heads the boring sidebar's Running shelf. Unlike the other shelves it is no drag
- * marker: its rows keep their pinned or active section, so drops resolve as in their folders.
+ * marker: its rows repeat rows that stay in their folders, which own dragging.
  */
 export function SidebarRunningShelfHeader(props: {
   count: number;

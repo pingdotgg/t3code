@@ -263,6 +263,7 @@ import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   SidebarSearchResultRow,
   SortableThreadRow,
+  StaticThreadRow,
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
@@ -408,6 +409,17 @@ function resolveDraggedOrders(input: {
   };
 }
 
+/** Keeps each thread's first place, since running threads show in both the Running shelf and their folder. */
+function uniqueThreads(threads: readonly EnvironmentThreadShell[]): EnvironmentThreadShell[] {
+  const seen = new Set<string>();
+  return threads.filter((thread) => {
+    const key = threadShellKey(thread);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function routeThreadOnly(
   threads: readonly EnvironmentThreadShell[],
   routeThreadKey: string | null,
@@ -534,26 +546,13 @@ function useSidebarThreads(input: {
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
   const topThreads = [...pinnedThreads, ...activeThreads];
-  // Boring mode lifts running threads out of their folders into a Running shelf at the top.
+  // Boring mode repeats running threads in a Running shelf at the top; they stay in their folders too.
   const runningThreads =
     folderGroups === null
       ? EMPTY_THREADS
       : sortWorkingThreadsBySend(
           topThreads.filter((thread) => threadRuntimeIsActive(thread.runtime)),
         );
-  const folderThreads =
-    runningThreads.length === 0
-      ? topThreads
-      : topThreads.filter((thread) => !threadRuntimeIsActive(thread.runtime));
-  const runningProjectKeys = new Set(
-    runningThreads.map((thread) => `${thread.environmentId}:${thread.projectId}`),
-  );
-  // A folder whose threads are all running stays put, so it does not blink out and back.
-  const keepFolder = (group: SidebarProjectSnapshot) =>
-    keepEmpty(group) ||
-    group.memberProjectRefs.some((ref) =>
-      runningProjectKeys.has(`${ref.environmentId}:${ref.projectId}`),
-    );
   const visibleRunningThreads = runningShelfExpanded
     ? runningThreads
     : routeThreadOnly(runningThreads, routeRowThreadKey);
@@ -561,7 +560,7 @@ function useSidebarThreads(input: {
   const projectFolders =
     folderGroups === null
       ? null
-      : groupSidebarThreadsByProject(folderGroups, folderThreads, keepFolder).map((folder) => {
+      : groupSidebarThreadsByProject(folderGroups, topThreads, keepEmpty).map((folder) => {
           const collapsed = !resolveProjectExpanded(
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
@@ -578,13 +577,13 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
-  const orderedThreads = [
+  const orderedThreads = uniqueThreads([
     ...visibleRunningThreads,
     ...(projectFolders === null ? topThreads : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
-  ];
+  ]);
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
     [pinnedThreads, "pinned"],
@@ -3410,9 +3409,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           : isCard
                             ? "card"
                             : "slim";
+                        // The shelf copy repeats a folder row, so it must not register a second drag target.
+                        const ThreadRow = shelfRow ? StaticThreadRow : SortableThreadRow;
                         return (
-                          <SortableThreadRow
-                            key={threadKey}
+                          <ThreadRow
+                            key={shelfRow ? `${shelfRow}:${threadKey}` : threadKey}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={

@@ -35,7 +35,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
-  resolveSidebarFolderDot,
+  resolveSidebarFolderStatus,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1662,7 +1662,7 @@ describe("groupSidebarThreadsByProject", () => {
   });
 });
 
-describe("resolveSidebarFolderDot", () => {
+describe("resolveSidebarFolderStatus", () => {
   it("flags the most urgent hidden thread and stays quiet otherwise", () => {
     const idle = {
       hasActionableProposedPlan: false,
@@ -1688,14 +1688,17 @@ describe("resolveSidebarFolderDot", () => {
       runtime: { ...runtime, status: "failed" as const, lastErrorClass: "usage_limit" as const },
     };
 
-    expect(resolveSidebarFolderDot([idle])).toBeNull();
+    expect(resolveSidebarFolderStatus([idle])).toEqual({ dot: null, working: false });
     // A waiting thread stays quiet even with an unread completion, like its row.
     expect(
-      resolveSidebarFolderDot([{ ...unread, runtime: { ...runtime, status: "idle" as const } }]),
-    ).toBeNull();
-    expect(resolveSidebarFolderDot([idle, working])).toBe("working");
-    expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
-    expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+      resolveSidebarFolderStatus([{ ...unread, runtime: { ...runtime, status: "idle" as const } }]),
+    ).toEqual({ dot: null, working: false });
+    expect(resolveSidebarFolderStatus([idle, working])).toEqual({ dot: null, working: true });
+    expect(resolveSidebarFolderStatus([working, unread])).toEqual({ dot: "unread", working: true });
+    expect(resolveSidebarFolderStatus([unread, limited])).toEqual({
+      dot: "attention",
+      working: false,
+    });
   });
 });
 

@@ -6,23 +6,22 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { resolveSidebarFolderStatus, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
   failed: "bg-error",
   unread: "bg-success",
-  working: "bg-info",
 } as const;
 
 const FOLDER_DOT_LABEL = {
   attention: ", needs you",
   failed: ", failed",
   unread: ", done",
-  working: ", working",
 } as const;
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
@@ -46,8 +45,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
-    ? resolveSidebarFolderDot(
+  const status = collapsed
+    ? resolveSidebarFolderStatus(
         hiddenThreads.map((thread) => ({
           ...thread,
           lastVisitedAt: resolveThreadLastVisitedAt(
@@ -79,9 +78,12 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
           {group.displayName}
         </span>
-        {dot ? (
-          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
-            <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+        {status?.working ? (
+          <Spinner aria-label="working" size="xs" tone="muted" className="shrink-0" />
+        ) : null}
+        {status?.dot ? (
+          <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[status.dot])}>
+            <span className="sr-only">{FOLDER_DOT_LABEL[status.dot]}</span>
           </span>
         ) : null}
         {collapsed && hiddenThreads.length > 0 ? (
