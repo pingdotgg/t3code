@@ -40,7 +40,12 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  isUnlistedModel,
+  parseRateTable,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   DESKTOP_HOST_SCOPE_ENV,
   listTranscriptFiles,
@@ -83,6 +88,12 @@ const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
 
 const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
+);
+
+const providerRateModels = new Map(
+  BUILT_IN_USAGE_DRIVERS.flatMap(({ usage }) =>
+    usage?.rateModel === undefined ? [] : [[usage.provider, usage.rateModel] as const],
+  ),
 );
 
 const transcriptFormats = new Map(
@@ -312,6 +323,24 @@ export const make = Effect.gen(function* () {
 
   const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
 
+  // Rates are kept for RATES_TTL_MS, so a model released after the table was fetched would stay unpriced
+  // that long. A scan that meets a model the table does not list refetches early: once per model against
+  // a fresh table, with loadRates keeping RATES_REFRESH_FLOOR_MS between attempts.
+  const checkedUnlistedModels = new Set<string>();
+  const refreshForUnlistedModels = Effect.fn("UsageService.refreshForUnlistedModels")(function* (
+    models: ReadonlySet<string>,
+  ) {
+    const unlisted = [...models].filter(
+      (model) => !checkedUnlistedModels.has(model) && isUnlistedModel(rates, model),
+    );
+    if (unlisted.length === 0) return;
+    yield* ensureRates(true);
+    const now = yield* Clock.currentTimeMillis;
+    // A failed fetch leaves the models unchecked, so a later scan tries again.
+    if (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_REFRESH_FLOOR_MS) return;
+    for (const model of unlisted) checkedUnlistedModels.add(model);
+  });
+
   const refreshRates = ensureRates(true).pipe(
     Effect.map(pricing),
     Effect.withSpan("UsageService.refreshRates"),
@@ -337,9 +366,8 @@ export const make = Effect.gen(function* () {
     > = Object.entries(settings.providerInstances)
       .filter(([, instance]) => instance.driver === driver.driverKind)
       .map(([id, instance]) => [ProviderInstanceId.make(id), instance, true] as const);
-    if (!Object.hasOwn(settings.providerInstances, driver.driverKind)) {
-      entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
-    }
+    // History in the driver's default home stays counted after every instance moves elsewhere; readers dedupe shared directories.
+    entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
     const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
     return yield* Effect.forEach(
       entries,
@@ -881,18 +909,8 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
-    const aggregator = new UsageAggregator({
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
-      ...hourlyWindow,
-      rates,
-      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-      modelAliases: resolveModelAliases(settings.usageModelAliases),
-      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-    });
-
+    const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
+    const modelAliases = resolveModelAliases(settings.usageModelAliases);
     const sources: UsageSource[] = [];
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
@@ -958,6 +976,37 @@ export const make = Effect.gen(function* () {
       for (const filePath of ordered) fileCache.set(filePath, entries.get(filePath)!);
       cacheDirty = true;
     }
+
+    // The models priced below, as UsageAggregator resolves them: an alias replaces rateModel.
+    const rateModels = new Set<string>();
+    for (const files of filesByDir) {
+      for (const file of files) {
+        for (const record of file.records) {
+          const alias = modelAliases.get(record.model);
+          const model = alias ?? record.model;
+          if (priceOverrides.has(model.trim())) continue;
+          rateModels.add(alias === undefined ? (record.rateModel ?? model) : model);
+        }
+      }
+    }
+    // A saved answer prices with saved rates and the full scan after it refetches.
+    if (!fromMemory) yield* refreshForUnlistedModels(rateModels);
+
+    const summaryPricing = pricing();
+
+    const aggregator = new UsageAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
+      ...hourlyWindow,
+      rates,
+      priceOverrides,
+      modelAliases,
+      rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+    });
+
     const windowEndMs =
       hourlyWindow?.untilTimeMs ??
       Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
@@ -1116,7 +1165,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: pricing(),
+      pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;

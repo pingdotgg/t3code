@@ -1,4 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
@@ -28,29 +32,25 @@ import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref 
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
+import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { isImageAttachment, type ChatMessage } from "../../types";
+import { isImageAttachment, type ChatImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
+import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ContractChatAttachment>;
-}
-
-interface QueuedRowThumbnail {
-  readonly key: string;
-  readonly name: string;
-  readonly url: string | null;
 }
 
 // A longer queue shows its first messages and a button that shows the rest.
@@ -67,7 +67,7 @@ function queuedImageResources(projection: ThreadQueueProjection | undefined) {
   if (!projection) return [];
   return deriveThreadQueueWorkflowState(projection).queuedRuns.flatMap(({ attachments }) =>
     attachments.flatMap((attachment) =>
-      attachment.type === "image"
+      isImageAttachment(attachment)
         ? [{ _tag: "attachment" as const, attachmentId: attachment.id }]
         : [],
     ),
@@ -93,8 +93,9 @@ export function QueuedRunsControl({
   readonly onCancelEdit: () => void;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
+  readonly onImageExpand: (preview: ExpandedImagePreview) => void;
 }) {
-  const projection = useThreadProjection(
+  const projection = useQuietThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
@@ -140,13 +141,14 @@ export function QueuedRunsControl({
       // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
       editable: context?.guest === undefined,
       attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
+      thumbnails: attachments.filter(isImageAttachment).map<ChatImageAttachment>((attachment) => {
+        const previewUrl = queuedImageUrlById.get(attachment.id);
+        return {
+          ...attachment,
+          type: "image",
+          ...(previewUrl ? { previewUrl } : {}),
+        };
+      }),
       pending: false,
     })),
     ...optimisticQueued.map((message) => ({
@@ -159,13 +161,7 @@ export function QueuedRunsControl({
       text: message.text,
       editable: true,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
-      thumbnails: (message.attachments ?? [])
-        .filter(isImageAttachment)
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: attachment.previewUrl ?? null,
-        })),
+      thumbnails: (message.attachments ?? []).filter(isImageAttachment),
       pending: true,
     })),
   ];
@@ -177,19 +173,27 @@ export function QueuedRunsControl({
     if (!canSendRun(freshContext) || steerInFlightRef.current) return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
-    if (workflow?.canSendNow) {
-      await resume({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId, runId: queuedRunId },
-      });
-    } else if (activeRun !== null) {
-      await promote({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
-      });
-    }
+    const result = workflow?.canSendNow
+      ? await resume({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, runId: queuedRunId },
+        })
+      : activeRun !== null
+        ? await promote({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
+          })
+        : null;
     steerInFlightRef.current = false;
     setBusyRunId(null);
+    if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not send queued message",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
   };
 
   useImperativeHandle(ref, () => ({
@@ -273,6 +277,7 @@ export function QueuedRunsControl({
                 isEditing={isEditing}
                 timestampFormat={props.timestampFormat}
                 onOpenThread={props.onOpenThread}
+                onImageExpand={props.onImageExpand}
               >
                 {canSendRun(item.freshContext) && !isEditing ? (
                   <>
@@ -407,11 +412,12 @@ function QueuedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage | undefined;
   readonly previewText: string;
-  readonly thumbnails: ReadonlyArray<QueuedRowThumbnail>;
+  readonly thumbnails: ReadonlyArray<ChatImageAttachment>;
   readonly isEditing: boolean;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
   readonly children: ReactNode;
+  readonly onImageExpand: (preview: ExpandedImagePreview) => void;
 }) {
   const presentation = props.message ? resolveUserMessagePresentation(props.message) : null;
   const attribution = presentation?.attribution ?? null;
@@ -484,20 +490,28 @@ function QueuedMessage(props: {
             {props.thumbnails.length > 0 ? (
               <span className="flex flex-wrap items-center gap-1">
                 {props.thumbnails.map((thumbnail) => (
-                  <span
-                    key={thumbnail.key}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
+                  <button
+                    key={thumbnail.id}
+                    type="button"
+                    aria-label={`Preview ${thumbnail.name}`}
+                    disabled={!thumbnail.previewUrl}
+                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background enabled:cursor-zoom-in"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(props.thumbnails, thumbnail.id);
+                      if (preview) props.onImageExpand(preview);
+                    }}
                   >
-                    {thumbnail.url ? (
+                    {thumbnail.previewUrl ? (
                       <img
-                        src={thumbnail.url}
+                        src={thumbnail.previewUrl}
                         alt={thumbnail.name}
                         className="size-full object-cover"
                       />
                     ) : (
                       <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
                     )}
-                  </span>
+                  </button>
                 ))}
               </span>
             ) : null}

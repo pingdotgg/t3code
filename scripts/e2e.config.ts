@@ -155,6 +155,8 @@ export default {
       engine: web({ viewport: { width: 1280, height: 800 } }),
       app: {
         url: `http://${LOOPBACK}:0`,
+        // Lets a scenario put an image on the clipboard for a real keyboard paste.
+        permissions: { "clipboard-write": "grant" },
         // Vite answers before the server does; this path is proxied to the server.
         readyUrl: `http://${LOOPBACK}:{port}/.well-known/t3/environment`,
         command: {

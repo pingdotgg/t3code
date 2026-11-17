@@ -158,7 +158,9 @@ T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
 again, after the other routes, if none of them connect. While connected over a
 later route, T3 Code checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+return to the app, and every minute, and moves back as soon as one works. A
+route whose machine refused this device's sign-in is marked **Sign-in
+refused**; pair that address again with **Add route** to use it.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,
@@ -195,6 +197,13 @@ Mobile keeps its manual environment selection.
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
 HTTPS** in **Settings → Sharing & access**. Turn it off there to remove that route.
+
+Your tailnet needs MagicDNS and HTTPS certificates enabled; see
+[Tailscale's HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+On Linux, T3 Code also needs permission to manage Tailscale; see
+[operator permission](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission)
+for non-root users. If any of these is missing, T3 Code still starts but can't
+add the HTTPS route.
 
 To start a command-line server with Tailscale HTTPS:
 
@@ -316,8 +325,10 @@ The server shows the exact line for how you started it, and keeps your `PATH`
 when you started it with `npx` and Node is installed only for your user. Where `t3` is not on your `PATH`, such as with only the
 desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your T3 server runs as root, run it as a nonroot user to keep
