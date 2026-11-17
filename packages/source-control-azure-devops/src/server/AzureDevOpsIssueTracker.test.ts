@@ -222,27 +222,41 @@ describe("AzureDevOpsIssueTracker", () => {
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-            execute: ({ args }) =>
-              args[args.indexOf("--resource") + 1] === "wiql"
-                ? fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
-                    Effect.orDie,
-                    Effect.map((body) => {
-                      bodies.push(body);
-                      return TestSourceControlHost.processOutput(
-                        encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
-                      );
-                    }),
-                  )
-                : Effect.sync(() => {
-                    if (args[args.indexOf("--resource") + 1] !== "workitems") {
-                      return TestSourceControlHost.processOutput(answer(args));
-                    }
-                    hydrated.push(args.find((arg) => arg.startsWith("ids=")) ?? "");
-                    // The page as REST answers it: an envelope, in an order of its own.
-                    return TestSourceControlHost.processOutput(
-                      encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
-                    );
+            execute: ({ args }) => {
+              const resource = args[args.indexOf("--resource") + 1];
+              if (resource === "workitems") {
+                // `az devops invoke` resolves `wit/workitems` to the create route
+                // (`.../workitems/${type}`) and fails before sending anything.
+                return Effect.fail(
+                  new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                    operation: "execute",
+                    command: "az",
+                    cwd: "/w",
+                    argumentCount: args.length,
+                    cause: "KeyError: 'type'",
                   }),
+                );
+              }
+              if (resource !== "wiql" && resource !== "workitemsbatch") {
+                return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
+              }
+              return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
+                Effect.orDie,
+                Effect.map((body) => {
+                  if (resource === "wiql") {
+                    bodies.push(body);
+                    return TestSourceControlHost.processOutput(
+                      encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
+                    );
+                  }
+                  hydrated.push((JSON.parse(body) as { ids: number[] }).ids.join(","));
+                  // The page as REST answers it: an envelope, in an order of its own.
+                  return TestSourceControlHost.processOutput(
+                    encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
+                  );
+                }),
+              );
+            },
           }),
         ),
       );
@@ -260,7 +274,7 @@ describe("AzureDevOpsIssueTracker", () => {
         cursor: "2026-07-01T00:00:00Z|7",
       });
       // The rows come back in WIQL's order, and the cursor is the last one of the page.
-      expect(hydrated).toEqual(["ids=9,7"]);
+      expect(hydrated).toEqual(["9,7"]);
       expect(page.items.map((item) => item.key)).toEqual(["9", "7"]);
       expect(page.nextCursor).toBe("2026-07-01T00:00:00Z|7");
       expect(bodies).toHaveLength(1);
