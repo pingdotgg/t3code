@@ -19,7 +19,7 @@ command -v gh >/dev/null 2>&1 || {
 if [[ -z "$tag" ]]; then
   tag="$(
     gh api "repos/$repo/releases?per_page=100" --jq \
-      '.[] | select(.draft == false and .prerelease == true) | select(any(.assets[]; .name | test("^T3-Dulli-.+-x86_64\\.AppImage$"))) | .tag_name' \
+      '.[] | select(.draft == false and .prerelease == true) | select(any(.assets[]; .name | test("^T3-Dulli-(.+-)?x86_64\\.AppImage$"))) | .tag_name' \
       | head -n 1
   )"
 fi
@@ -28,8 +28,15 @@ if [[ -z "$tag" ]]; then
   exit 1
 fi
 
-version="${tag#v}"
-asset="T3-Dulli-${version}-x86_64.AppImage"
+# Releases before 0.1.10-dulli.1 carry the version in the AppImage name.
+asset="$(
+  gh api "repos/$repo/releases/tags/$tag" --jq \
+    '[.assets[].name | select(test("^T3-Dulli-(.+-)?x86_64\\.AppImage$"))][0] // empty'
+)"
+[[ -n "$asset" ]] || {
+  echo "Release $tag has no T3 Dulli AppImage." >&2
+  exit 1
+}
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 

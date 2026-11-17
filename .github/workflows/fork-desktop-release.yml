@@ -545,7 +545,7 @@ jobs:
               fi
               ;;
             linux)
-              test -s "release-publish/T3-Dulli-${version}-x86_64.AppImage"
+              test -s "release-publish/T3-Dulli-x86_64.AppImage"
               compgen -G "release-publish/T3-Dulli-${version}-*.deb" >/dev/null
               test -s "release-publish/latest-linux.yml"
               ;;
