@@ -65,6 +65,14 @@ export class NotModifiedResponse extends Response {
   }
 }
 
+// `init.headers` may be a `Headers` instance or entry array, which object
+// spread would silently drop, so normalize through `Headers`.
+const withLocation = (init: ResponseInit | undefined, location: string): Headers => {
+  const headers = new Headers(init?.headers);
+  headers.set("Location", location);
+  return headers;
+};
+
 export class MovedPermanentlyResponse extends Response {
   static readonly status = 301;
 
@@ -73,10 +81,7 @@ export class MovedPermanentlyResponse extends Response {
       ...init,
       status: MovedPermanentlyResponse.status,
       statusText: "Moved Permanently",
-      headers: {
-        ...init?.headers,
-        Location: location,
-      },
+      headers: withLocation(init, location),
     });
   }
 }
@@ -89,10 +94,7 @@ export class FoundResponse extends Response {
       ...init,
       status: FoundResponse.status,
       statusText: "Found",
-      headers: {
-        ...init?.headers,
-        Location: location,
-      },
+      headers: withLocation(init, location),
     });
   }
 }
@@ -105,10 +107,7 @@ export class SeeOtherResponse extends Response {
       ...init,
       status: SeeOtherResponse.status,
       statusText: "See Other",
-      headers: {
-        ...init?.headers,
-        Location: location,
-      },
+      headers: withLocation(init, location),
     });
   }
 }
@@ -121,10 +120,7 @@ export class TemporaryRedirectResponse extends Response {
       ...init,
       status: TemporaryRedirectResponse.status,
       statusText: "Temporary Redirect",
-      headers: {
-        ...init?.headers,
-        Location: location,
-      },
+      headers: withLocation(init, location),
     });
   }
 }
@@ -137,10 +133,7 @@ export class PermanentRedirectResponse extends Response {
       ...init,
       status: PermanentRedirectResponse.status,
       statusText: "Permanent Redirect",
-      headers: {
-        ...init?.headers,
-        Location: location,
-      },
+      headers: withLocation(init, location),
     });
   }
 }

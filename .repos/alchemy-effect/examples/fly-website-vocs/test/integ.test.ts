@@ -1,7 +1,7 @@
-import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Fly from "@alchemy.run/fly";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import Stack from "../alchemy.run.ts";

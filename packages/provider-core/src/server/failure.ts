@@ -40,6 +40,12 @@ const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
+// Gateways answer an oversized body with a 413 page; resending the same history fails identically.
+const REQUEST_TOO_LARGE_STATUS = /^\s*(?:(?:API Error|Error|HTTP|status)(?:\s*:)?\s*)?413\b/iu;
+const REQUEST_TOO_LARGE_REASON = /\b(?:Request Entity|Payload|Content) Too Large\b/u;
+const REQUEST_TOO_LARGE_MESSAGE =
+  "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.";
+
 const PROVIDER_FAILURE_CATEGORIES: Partial<
   Record<string, { readonly summary: string; readonly guidance: string }>
 > = {
@@ -60,6 +66,14 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
     guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
   },
 };
+
+// codex_protocol::protocol::validate_thread_goal_objective
+const CODEX_GOAL_VALIDATION_MESSAGE =
+  /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
+
+// codex_config::ConstraintError::InvalidValue for a managed requirements.toml or cloud policy.
+const CODEX_ACCESS_REQUIREMENT_REJECTION =
+  /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
 
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
@@ -107,9 +121,35 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeAppendSystemPromptMissingValueError":
         case "ClaudeSettingsLaunchArgError":
         case "ClaudeMcpRegistrationTimeoutError":
+        case "ClaudeCodeRootRefusalError":
+        case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
+        case "CodexGoalObjectiveTooLongError":
         case "ProviderSetupError":
+        case "ProviderAdapterThreadInUseError":
+        case "ProviderCompactionUnsupportedError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
+        case "CodexAppServerRequestError": {
+          // Only Codex's fixed-shape goal validation and managed-requirements
+          // text is actionable and safe to show; other request error text stays hidden.
+          const rejection = stringField(cause, "message");
+          if (
+            (cause as Record<string, unknown>).method === "thread/goal/set" &&
+            rejection !== undefined &&
+            CODEX_GOAL_VALIDATION_MESSAGE.test(rejection)
+          ) {
+            return { known: `Codex rejected the goal: ${rejection}.`, category: categoryMessage() };
+          }
+          const access =
+            rejection === undefined ? null : CODEX_ACCESS_REQUIREMENT_REJECTION.exec(rejection);
+          if (access !== null) {
+            return {
+              known: `Codex's managed requirements do not allow \`${access[1]}\` \`${access[2]}\`, which this thread's access mode uses. Switch the thread to an access mode the policy allows.`,
+              category: categoryMessage(),
+            };
+          }
+          break;
+        }
         case "AcpProcessExitedError": {
           const exit = `provider process exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
@@ -118,6 +158,14 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         }
+        // ACP reserves -32000 for auth_required; the agent's own text is not shown.
+        case "AcpRequestError":
+          if ((cause as Record<string, unknown>).code !== -32000) break;
+          return {
+            known:
+              "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
+            category: categoryMessage(),
+          };
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
@@ -243,8 +291,12 @@ export function makeProviderFailure(input: {
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
   const curated = curatedCauseMessages(input.cause);
-  const rawMessage =
-    input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const requestTooLarge =
+    input.message !== undefined &&
+    (REQUEST_TOO_LARGE_STATUS.test(input.message) || REQUEST_TOO_LARGE_REASON.test(input.message));
+  const rawMessage = requestTooLarge
+    ? REQUEST_TOO_LARGE_MESSAGE
+    : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =
@@ -254,7 +306,7 @@ export function makeProviderFailure(input: {
     class: input.class ?? "unknown",
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
-    retryable: input.retryable ?? null,
+    retryable: requestTooLarge ? false : (input.retryable ?? null),
     ...(input.class === "usage_limit" &&
     input.resetAt != null &&
     Number.isFinite(Date.parse(input.resetAt))
@@ -299,6 +351,13 @@ export function makeProviderFailureTurnItem(input: {
     ...(input.retry === undefined ? {} : { retry: input.retry }),
   };
 }
+
+/**
+ * Longest a turn may stay in provider retries before the adapter stops it as
+ * failed. Codex waits for the network without limit and a hung Claude request
+ * can take many minutes per attempt, so counting attempts alone never ends them.
+ */
+export const PROVIDER_RETRY_BUDGET_MS = 10 * 60 * 1000;
 
 export function makeProviderRetryTurnItem(input: {
   readonly driver: ProviderDriverKind;

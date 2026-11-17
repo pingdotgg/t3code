@@ -5,7 +5,7 @@ import { Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -42,12 +42,18 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
   }));
 }
 
-type ProjectOrder = readonly { readonly memberProjectRefs: readonly ScopedProjectRef[] }[];
+type ProjectOrder = readonly {
+  readonly memberProjectRefs: readonly ScopedProjectRef[];
+  readonly pinned: boolean;
+  readonly archived: boolean;
+}[];
 const sameProjectOrder = (previous: ProjectOrder, next: ProjectOrder) =>
   previous.length === next.length &&
   previous.every((group, index) => {
     const members = next[index]!.memberProjectRefs;
     return (
+      group.pinned === next[index]!.pinned &&
+      group.archived === next[index]!.archived &&
       group.memberProjectRefs.length === members.length &&
       group.memberProjectRefs.every(
         (ref, member) =>
@@ -70,7 +76,11 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
       threads: get(environmentThreadShells.threadShellsAtom),
       pendingTasks: [],
       projectSortOrder: "updated_at",
-    }).map((scope) => ({ memberProjectRefs: scope.projectRefs })),
+    }).map((scope) => ({
+      memberProjectRefs: scope.projectRefs,
+      pinned: scope.pinned,
+      archived: scope.archived,
+    })),
   ).pipe(Atom.withEquality(sameProjectOrder)),
 );
 
@@ -359,6 +369,7 @@ export function PullRequestListFilters(props: {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ overflow: "visible" }}
       // In the Android sidebar the first pill lines up with the rows' content instead
       // (8dp row margin + 12dp padding).
       contentContainerStyle={

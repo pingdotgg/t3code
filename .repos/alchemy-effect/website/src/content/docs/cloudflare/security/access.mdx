@@ -24,7 +24,7 @@ application — created, updated, and deleted with the Worker, and
 namespaced under it as `Api/Access`):
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -151,7 +151,7 @@ When several Workers should sit behind the same policy set, declare
 the application once and pass it to each Worker directly:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const TeamOnly = Cloudflare.Access.Application("TeamOnly", {
   type: "self_hosted",

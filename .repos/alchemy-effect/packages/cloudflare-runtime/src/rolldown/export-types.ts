@@ -9,10 +9,7 @@
  * server can regenerate its Worker wrappers whenever the exports change.
  */
 
-export type ExportType =
-  | "DurableObject"
-  | "WorkerEntrypoint"
-  | "WorkflowEntrypoint";
+export type ExportType = "DurableObject" | "WorkerEntrypoint" | "WorkflowEntrypoint";
 
 /** Maps each named export of a Worker entry to the kind of export it is. */
 export type ExportTypes = Record<string, ExportType>;
@@ -26,8 +23,7 @@ const EXPORT_TYPES: ReadonlyArray<string> = [
 /**
  * HMR event the Worker entry uses to report its export types to the dev server.
  */
-export const WORKER_EXPORT_TYPES_EVENT =
-  "distilled-cloudflare:worker-export-types";
+export const WORKER_EXPORT_TYPES_EVENT = "distilled-cloudflare:worker-export-types";
 
 /** Specifier of the virtual module that classifies a Worker entry's exports. */
 export const EXPORT_TYPES_MODULE_ID = "distilled:export-types";
@@ -102,10 +98,7 @@ export function isExportTypes(value: unknown): value is ExportTypes {
 /**
  * Returns `true` if any export was added, removed, or changed type.
  */
-export function haveExportTypesChanged(
-  previous: ExportTypes,
-  next: ExportTypes,
-): boolean {
+export function haveExportTypesChanged(previous: ExportTypes, next: ExportTypes): boolean {
   const previousNames = Object.keys(previous);
   const nextNames = Object.keys(next);
   if (previousNames.length !== nextNames.length) {

@@ -1,8 +1,18 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, createContext, type ReactNode, use, useState } from "react";
+import {
+  type ComponentProps,
+  type CSSProperties,
+  createContext,
+  type ReactNode,
+  use,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "~/lib/utils";
-import { Button } from "~/components/ui/button";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -40,6 +50,20 @@ function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
   );
 }
 
+function useDialogActionInitialFocus() {
+  const popupRef = useRef<HTMLDivElement>(null);
+  const initialFocus = (openType: string) => {
+    // Match Base UI: touch opens focus the popup to avoid opening the virtual keyboard.
+    if (openType === "touch") return popupRef.current;
+    return (
+      popupRef.current?.querySelector<HTMLElement>(
+        '[data-slot="dialog-action"]:not(:disabled):not([aria-disabled="true"])',
+      ) ?? true
+    );
+  };
+  return { popupRef, initialFocus };
+}
+
 const DialogPortal = DialogPrimitive.Portal;
 
 function DialogTrigger(props: DialogPrimitive.Trigger.Props) {
@@ -71,8 +95,9 @@ function DialogBackdrop({
 function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props) {
   return (
     <DialogPrimitive.Viewport
+      // Electron drag regions ignore z-index, so without no-drag a click over a header drag strip never reaches the page.
       className={cn(
-        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
+        "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4 [-webkit-app-region:no-drag]",
         className,
       )}
       data-slot="dialog-viewport"
@@ -87,12 +112,46 @@ function DialogPopup({
   showCloseButton = true,
   bottomStickOnMobile = true,
   variant = "default",
+  mediaControlsPlacement = "outside",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
+  mediaControlsPlacement?: "inside" | "outside";
 }) {
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
+  const popup = useRender({
+    ref: popupRef,
+    render: (
+      <DialogPrimitive.Popup
+        className={cn(
+          variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+          "row-start-2 text-popover-foreground",
+          variant === "default" && "max-h-full max-w-lg",
+          bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
+          className,
+        )}
+        data-slot="dialog-popup"
+        initialFocus={initialFocus}
+        render={renderRetainedPopup}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="absolute end-2 top-2"
+            render={<Button size="icon" variant="ghost" />}
+          >
+            <XIcon />
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
+    ),
+  });
+  // macOS has no CSS window-controls overlay, so use the platform titlebar height.
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -101,35 +160,29 @@ function DialogPopup({
         className={cn(
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
-            "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
+            "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[calc(var(--media-dialog-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
+          variant === "media" &&
+            mediaControlsPlacement === "inside" &&
+            "pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)]",
         )}
+        style={
+          variant === "media"
+            ? ({ "--media-dialog-titlebar-height": `${nativeTitlebarHeight}px` } as CSSProperties)
+            : undefined
+        }
       >
-        <DialogPrimitive.Popup
-          className={cn(
-            variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
-            "row-start-2 text-popover-foreground",
-            variant === "default" && "max-h-full max-w-lg",
-            bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
-            className,
-          )}
-          data-slot="dialog-popup"
-          render={renderRetainedPopup}
-          {...props}
-        >
-          {children}
-          {showCloseButton && (
-            <DialogPrimitive.Close
-              aria-label="Close"
-              className="absolute end-2 top-2"
-              render={<Button size="icon" variant="ghost" />}
-            >
-              <XIcon />
-            </DialogPrimitive.Close>
-          )}
-        </DialogPrimitive.Popup>
+        {popup}
       </DialogViewport>
     </DialogPortal>
   );
+}
+
+type DialogActionProps = Omit<React.ComponentProps<typeof Button>, "variant"> & {
+  variant?: Exclude<ButtonVariant, `${string}destructive${string}`>;
+};
+
+function DialogAction(props: DialogActionProps) {
+  return <Button data-slot="dialog-action" {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
@@ -169,7 +222,7 @@ function DialogFooter({
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("wrap-anywhere font-semibold text-xl leading-none", className)}
+      className={cn("wrap-anywhere font-semibold text-xl leading-snug", className)}
       data-slot="dialog-title"
       {...props}
     />
@@ -212,6 +265,8 @@ export {
   DialogTrigger,
   DialogPortal,
   DialogClose,
+  DialogAction,
+  useDialogActionInitialFocus,
   DialogBackdrop,
   DialogBackdrop as DialogOverlay,
   DialogPopup,

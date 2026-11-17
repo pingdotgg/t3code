@@ -1,7 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-
 import CrossVersionWorker from "./src/worker.ts";
 
 // Identical across every stage folder: same Stack name ("CrossVersionApp"),

@@ -1,5 +1,7 @@
-import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import * as SemVer from "effect/SemVer";
 import { FrameworkError } from "./Framework.ts";
 
 /**
@@ -13,19 +15,13 @@ import { FrameworkError } from "./Framework.ts";
  * `@alchemy.run/cloudflare-runtime`'s `core/internal/Port.ts`, which
  * serves that package's own Vite plugin consumers.
  */
-export const viteSupportsPortZero = (
-  version: string | null | undefined,
-): boolean => {
-  if (typeof version !== "string") return false;
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  return (
-    major > 8 || (major === 8 && (minor > 2 || (minor === 2 && patch >= 1)))
-  );
+export const viteSupportsPortZero = (version: string | null | undefined): boolean => {
+  const parsed =
+    typeof version === "string" ? Result.getOrUndefined(SemVer.parse(version)) : undefined;
+  return parsed !== undefined && SemVer.isGreaterThanOrEqualTo(parsed, VITE_PORT_ZERO);
 };
+
+const VITE_PORT_ZERO = SemVer.parseUnsafe("8.2.1");
 
 /**
  * Resolve the port a Vite-based framework dev server should bind.
@@ -50,7 +46,7 @@ export const viteSupportsPortZero = (
  */
 export const resolveViteDevPort = (
   viteVersion: string | null | undefined,
-  explicitPort?: number | undefined,
+  explicitPort?: number,
 ): Effect.Effect<number, FrameworkError> =>
   explicitPort
     ? Effect.succeed(explicitPort)
@@ -69,9 +65,7 @@ export const resolveViteDevPort = (
  * REPORTS after binding, never to the probed number — a lost race can
  * shift a dev server by one port; it cannot serve the wrong app.
  */
-export const findEphemeralPort = (
-  host = "127.0.0.1",
-): Effect.Effect<number, FrameworkError> =>
+export const findEphemeralPort = (host = "127.0.0.1"): Effect.Effect<number, FrameworkError> =>
   Effect.callback<number, FrameworkError>((resume) => {
     const server = NodeNet.createServer();
     server.unref();
@@ -87,10 +81,7 @@ export const findEphemeralPort = (
     );
     server.listen({ port: 0, host, exclusive: true }, () => {
       const address = server.address();
-      const port =
-        typeof address === "object" && address !== null
-          ? address.port
-          : undefined;
+      const port = typeof address === "object" && address !== null ? address.port : undefined;
       server.close(() => {
         if (port !== undefined) {
           resume(Effect.succeed(port));

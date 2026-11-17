@@ -1,0 +1,75 @@
+name: Sync Cloudflare permission groups
+
+# Regenerates the typed Cloudflare API token permission-group catalog from the
+# live API and opens (or updates) a PR when Cloudflare's list has changed.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-cloudflare-permission-groups
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      BRANCH: chore/sync-cloudflare-permission-groups
+      CATALOG: packages/cloudflare/src/ApiToken/PermissionGroups.ts
+    steps:
+      # PRs opened with the default GITHUB_TOKEN don't trigger CI, so open
+      # them as the bot.
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.bot-token.outputs.token }}
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      # The token needs `Account API Tokens Read` to list permission groups.
+      - name: Sync permission groups
+        run: pnpm -C packages/cloudflare sync:permission-groups
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TEST_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Open or update PR
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+        run: |
+          if git diff --quiet -- "$CATALOG"; then
+            echo "Permission groups are up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$CATALOG"
+          git commit -m "chore(cloudflare): sync API token permission groups"
+          git push --force origin "$BRANCH"
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore(cloudflare): sync API token permission groups" \
+              --body "Regenerated \`$CATALOG\` from \`GET /accounts/{account_id}/tokens/permission_groups\` with \`pnpm -C packages/cloudflare sync:permission-groups\`."
+          fi

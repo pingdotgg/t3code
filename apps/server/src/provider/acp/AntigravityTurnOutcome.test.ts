@@ -22,9 +22,12 @@ const errorPayload = (error: string) =>
       `Agent execution terminated due to error.\u0012agent executor error: ${error}: ${error}\n(1) attached stack trace\n  -- stack trace:`,
     ),
   ]);
-// An unparsable reset timestamp must not hide the reset delay.
+// An unparsable reset timestamp must not hide the reset delay, nor a retry delay outrank it.
 const QUOTA_ERROR = errorPayload(
-  "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:soon] reason:QUOTA_EXHAUSTED]]",
+  "Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.RetryInfo retryDelay:42s] map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s quotaResetTimeStamp:soon] reason:QUOTA_EXHAUSTED]]",
+);
+const RATE_LIMIT_ERROR = errorPayload(
+  "Error 429, Message: Resource has been exhausted (e.g. check quota)., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:cloudcode-pa.googleapis.com reason:RATE_LIMIT_EXCEEDED] map[@type:type.googleapis.com/google.rpc.RetryInfo retryDelay:42s]]",
 );
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
@@ -104,6 +107,19 @@ describe("watchAntigravityPromptOutcome", () => {
       assert.deepEqual(
         yield* turn([
           [USER_INPUT, input],
+          [ERROR_MESSAGE, RATE_LIMIT_ERROR],
+        ]),
+        {
+          class: "usage_limit",
+          message: "Resource has been exhausted (e.g. check quota).",
+          code: "RESOURCE_EXHAUSTED",
+          retryable: true,
+          resetAt: "1970-01-01T00:00:42.000Z",
+        },
+      );
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
           [ERROR_MESSAGE, INVALID_ARGUMENT_ERROR],
         ]),
         {
@@ -142,7 +158,7 @@ describe("watchAntigravityPromptOutcome", () => {
         code: "QUOTA_EXHAUSTED",
         retryable: true,
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads only this session's own unlinked log, and keeps a typed refusal", () =>
@@ -190,6 +206,6 @@ describe("watchAntigravityPromptOutcome", () => {
         code: "QUOTA_EXHAUSTED",
         retryable: true,
       });
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

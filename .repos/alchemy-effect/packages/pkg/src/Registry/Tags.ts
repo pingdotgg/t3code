@@ -9,7 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
  * D1 binding.
  */
 
-const LinkedPrs = Schema.fromJsonString(Schema.Array(Schema.String));
+const LinkedPrs = Schema.String.pipe(Schema.Array, Schema.fromJsonString);
 
 export const TagRow = Schema.Struct({
   package: Schema.String,
@@ -71,9 +71,7 @@ export const resolve = (pkg: string, tag: string) =>
   Effect.map(get(pkg, tag), (row) => row?.sha256);
 
 /** Rows tied to pull requests whose expiry falls before `before`. */
-export const dueLinked = Effect.fn("Tags.dueLinked")(function* (
-  before: number,
-) {
+export const dueLinked = Effect.fn("Tags.dueLinked")(function* (before: number) {
   const sql = yield* SqlClient.SqlClient;
   return yield* decodeTags(
     yield* sql`
@@ -94,9 +92,7 @@ export const setExpiry = Effect.fn("Tags.setExpiry")(function* (
 });
 
 /** Delete every expired row and return the tarballs those rows pointed at. */
-export const deleteExpired = Effect.fn("Tags.deleteExpired")(function* (
-  now: number,
-) {
+export const deleteExpired = Effect.fn("Tags.deleteExpired")(function* (now: number) {
   const sql = yield* SqlClient.SqlClient;
   return yield* decodeTarballs(
     yield* sql`
@@ -106,12 +102,8 @@ export const deleteExpired = Effect.fn("Tags.deleteExpired")(function* (
 });
 
 /** Every tarball some tag still points at, as `<package>/<sha256>`. */
-export const referencedTarballs = Effect.fn("Tags.referencedTarballs")(
-  function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* decodeTarballs(
-      yield* sql`SELECT DISTINCT package, sha256 FROM tags`,
-    );
-    return new Set(rows.map((row) => `${row.package}/${row.sha256}`));
-  },
-);
+export const referencedTarballs = Effect.fn("Tags.referencedTarballs")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* decodeTarballs(yield* sql`SELECT DISTINCT package, sha256 FROM tags`);
+  return new Set(rows.map((row) => `${row.package}/${row.sha256}`));
+});

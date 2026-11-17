@@ -1,7 +1,5 @@
 import "./styles/global.css";
-
 import { Runtime } from "foldkit";
-
 import { init, Model, update, view } from "./main.ts";
 
 const application = Runtime.makeApplication({
