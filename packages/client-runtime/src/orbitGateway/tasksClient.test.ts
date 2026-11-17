@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrbitGatewayRequest, OrbitGatewayTransport } from "./client.ts";
 import type { OrbitTasksInvalidation } from "./tasks.ts";
 import { createOrbitTasksClient } from "./tasksClient.ts";
+import livePage from "./fixtures/tasks-live-page.json" with { type: "json" };
 
 // The examples from Orbit's Conn Tasks read contract v1.
 const ROW = {
@@ -107,11 +108,9 @@ function transport(status: number, body: unknown, seen: OrbitGatewayRequest[] = 
 }
 
 describe("createOrbitTasksClient", () => {
-  it("decodes the list and sends only the filters given", async () => {
+  it("decodes a live Gateway page and passes its cursor back unchanged", async () => {
     const seen: OrbitGatewayRequest[] = [];
-    const client = createOrbitTasksClient(
-      transport(200, { data: [ROW], meta: { next_cursor: 5700 } }, seen),
-    );
+    const client = createOrbitTasksClient(transport(200, livePage, seen));
     const result = await client.listTasks({ project: 78, limit: 50 });
     expect(seen).toEqual([
       { method: "GET", path: "/tasks", query: { project: "78", limit: "50" } },
@@ -119,21 +118,21 @@ describe("createOrbitTasksClient", () => {
     expect(result).toMatchObject({
       status: "ok",
       value: {
-        nextCursor: 5700,
+        nextCursor: "5458",
+        skipped: 0,
         tasks: [
           {
-            id: 5753,
-            pullRequest: { number: 3982, state: "open" },
-            workspace: {
-              instanceId: 3599,
-              powerState: "running",
-              connEnvironmentId: ROW.workspace.conn_environment_id,
-            },
-            subtaskCounts: { total: 3, completed: 1 },
+            id: 5776,
+            pullRequest: { number: 3989, state: "merged" },
+            workspace: null,
+            subtaskCounts: { total: 1, completed: 1 },
           },
         ],
       },
     });
+    if (result.status !== "ok") throw new Error(result.message);
+    await client.listTasks({ project: 78, limit: 50, cursor: result.value.nextCursor! });
+    expect(seen[1]?.query).toEqual({ project: "78", limit: "50", cursor: "5458" });
   });
 
   it("orders subtasks, keeps agent ids apart from Conn threads, and never passes subtask lines", async () => {

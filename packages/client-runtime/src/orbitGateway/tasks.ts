@@ -168,14 +168,14 @@ export interface OrbitTasksListQuery {
   readonly instance?: number;
   readonly status?: OrbitTaskStatus;
   readonly limit?: number;
-  readonly cursor?: number;
+  readonly cursor?: string;
 }
 
 export interface OrbitTasksPage {
   readonly tasks: ReadonlyArray<OrbitTaskSummary>;
   /** Rows left out because they did not match the contract, such as an unknown status. */
   readonly skipped: number;
-  readonly nextCursor: number | null;
+  readonly nextCursor: string | null;
 }
 
 /** Realtime notices only invalidate; the read that follows is authoritative. */

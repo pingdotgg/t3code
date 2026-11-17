@@ -145,7 +145,7 @@ const Detail = Schema.Struct({
 const ListEnvelope = Schema.Struct({
   data: Schema.Array(Schema.Unknown),
   meta: Schema.optionalKey(
-    Schema.Struct({ next_cursor: Schema.optionalKey(Schema.NullOr(Schema.Int)) }),
+    Schema.Struct({ next_cursor: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
   ),
 });
 
