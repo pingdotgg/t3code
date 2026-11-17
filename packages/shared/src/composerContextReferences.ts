@@ -454,6 +454,35 @@ export function composerContextProviderTextForDisplay(text: string): string {
   return result + text.slice(cursor);
 }
 
+const ECHOED_PROVIDER_MARKER =
+  /\[([A-Za-z][a-z0-9 ]{0,39}): ([^\]\n]*?); ref=([a-z0-9_-]{1,128})\]/gi;
+// Payloads are escaped, so the first closing tag always ends the envelope.
+const ECHOED_PROVIDER_ENVELOPE = new RegExp(
+  String.raw`\n*<${CONTEXT_ENVELOPE_TAG} version="1">(?:\n<${CONTEXT_ENTRY_TAG} kind="[a-z][a-z0-9-]{0,39}" id="[A-Za-z0-9_-]{1,128}"(?: unavailable="true"/>|>\n(?:(?!</?(?:${CONTEXT_ENVELOPE_TAG}|${CONTEXT_ENTRY_TAG})\b)[\s\S])*\n</${CONTEXT_ENTRY_TAG}>))+\n</${CONTEXT_ENVELOPE_TAG}>`,
+  "g",
+);
+
+// Restore reference links in provider echoes of projected prompts.
+export function restoreComposerContextReferences(providerText: string): string {
+  if (!providerText.includes("; ref=") && !providerText.includes(`<${CONTEXT_ENVELOPE_TAG}`)) {
+    return providerText;
+  }
+  return providerText
+    .replace(ECHOED_PROVIDER_ENVELOPE, "")
+    .replace(
+      ECHOED_PROVIDER_MARKER,
+      (marker, kindName: string, label: string, contextId: string) => {
+        const kind = kindName.toLowerCase().replace(/ /g, "-");
+        if (!CONTEXT_KIND_PATTERN.test(kind)) return marker;
+        return formatComposerContextReference({
+          kind,
+          contextId: contextId as ComposerContextId,
+          label: label.replace(/&lt;(?=\/?(?:t3_context|context)\b)/gi, "<"),
+        });
+      },
+    );
+}
+
 // An agent reads threads on its own machine and on those it links to, even when a draft
 // moves between machines.
 export function threadContextsOutsideEnvironment(input: {
