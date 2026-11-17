@@ -1413,7 +1413,8 @@ const make = Effect.gen(function* () {
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
-              Option.isSome(launchReceipt) && accepted?.type === "worktree"
+              Option.isSome(launchReceipt) &&
+              (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
                 : Option.isSome(launchReceipt) &&
                     workspaceStrategy.type === "root" &&
