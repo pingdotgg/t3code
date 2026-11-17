@@ -38,7 +38,6 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
   NotebookPen,
-  ListTodo,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -147,7 +146,6 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  onAddAiPm: () => void;
   onAddDocs: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -158,7 +156,6 @@ export interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
-  aiPmAvailable: boolean;
   docsAvailable: boolean;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
@@ -189,7 +186,6 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
-  aiPm: "AI PM is only available with a connected environment.",
   docs: "Docs are only available from a thread with a project folder.",
   sideChat: "Side chats start after the first message.",
 } as const;
@@ -216,7 +212,6 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
-  aiPm: "Available with a connected environment.",
   docs: "Available from a thread with a project folder.",
   sideChat: "Available after the first message.",
 } as const;
@@ -336,7 +331,6 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  onAddAiPm: () => void;
   onAddDocs: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -347,7 +341,6 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
-  aiPmAvailable: boolean;
   docsAvailable: boolean;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
@@ -411,14 +404,6 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
-    },
-    {
-      label: "AI PM",
-      icon: ListTodo,
-      shortcut: "A",
-      available: props.aiPmAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.aiPm,
-      onClick: props.onAddAiPm,
     },
     {
       label: "Docs",
@@ -607,8 +592,6 @@ function surfaceTitle(
   terminalLabelsById: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
-    case "ai-pm":
-      return "AI PM";
     case "docs": {
       const localPath = surface.cloudPath ? localDocPathFromAppPath(surface.cloudPath) : null;
       return localPath ? docTitleFromPath(localPath) : "Docs";
@@ -697,8 +680,6 @@ function SurfaceIcon({
   switch (surface.kind) {
     case "preview":
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
-    case "ai-pm":
-      return <ListTodo className="size-3 shrink-0" />;
     case "docs":
       return <NotebookPen className="size-3 shrink-0" />;
     case "diff":
@@ -1192,14 +1173,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDevice,
     },
     {
-      label: "AI PM",
-      icon: ListTodo,
-      shortcut: "A",
-      available: props.aiPmAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.aiPm,
-      onClick: props.onAddAiPm,
-    },
-    {
       label: "Docs",
       icon: NotebookPen,
       shortcut: "O",
@@ -1604,7 +1577,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
-            onAddAiPm={props.onAddAiPm}
             onAddDocs={props.onAddDocs}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
@@ -1614,7 +1586,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
-            aiPmAvailable={props.aiPmAvailable}
             docsAvailable={props.docsAvailable}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}

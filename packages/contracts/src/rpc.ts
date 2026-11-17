@@ -1,13 +1,3 @@
-import {
-  AiPmBriefInput,
-  AiPmBriefResult,
-  AiPmError,
-  AiPmIdea,
-  AiPmIdeasResult,
-  AiPmListResult,
-  AiPmSaveIdeaInput,
-  AiPmSetIdeaStatusInput,
-} from "./aiPm.ts";
 import { SkillTrashEntryInput, SkillTrashError, SkillTrashListResult } from "./skillTrash.ts";
 import {
   SkillLibraryListInput,
@@ -630,11 +620,6 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
-  aiPmList: "aiPm.list",
-  aiPmBrief: "aiPm.brief",
-  aiPmIdeas: "aiPm.ideas",
-  aiPmSaveIdea: "aiPm.saveIdea",
-  aiPmSetIdeaStatus: "aiPm.setIdeaStatus",
   docsListComments: "docs.listComments",
   docsCreateComment: "docs.createComment",
   docsReplyComment: "docs.replyComment",
@@ -2178,32 +2163,6 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
-const WsAiPmListRpc = Rpc.make(WS_METHODS.aiPmList, {
-  payload: Schema.Struct({}),
-  success: AiPmListResult,
-  error: Schema.Union([AiPmError, EnvironmentAuthorizationError]),
-});
-const WsAiPmBriefRpc = Rpc.make(WS_METHODS.aiPmBrief, {
-  payload: AiPmBriefInput,
-  success: AiPmBriefResult,
-  error: Schema.Union([AiPmError, EnvironmentAuthorizationError]),
-});
-const WsAiPmIdeasRpc = Rpc.make(WS_METHODS.aiPmIdeas, {
-  payload: Schema.Struct({}),
-  success: AiPmIdeasResult,
-  error: Schema.Union([AiPmError, EnvironmentAuthorizationError]),
-});
-const WsAiPmSaveIdeaRpc = Rpc.make(WS_METHODS.aiPmSaveIdea, {
-  payload: AiPmSaveIdeaInput,
-  success: AiPmIdea,
-  error: Schema.Union([AiPmError, EnvironmentAuthorizationError]),
-});
-const WsAiPmSetIdeaStatusRpc = Rpc.make(WS_METHODS.aiPmSetIdeaStatus, {
-  payload: AiPmSetIdeaStatusInput,
-  success: AiPmIdea,
-  error: Schema.Union([AiPmError, EnvironmentAuthorizationError]),
-});
-
 const WsSkillsTrashListRpc = Rpc.make(WS_METHODS.skillsTrashList, {
   payload: Schema.Struct({}),
   success: SkillTrashListResult,
@@ -2431,11 +2390,6 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
-  WsAiPmListRpc,
-  WsAiPmBriefRpc,
-  WsAiPmIdeasRpc,
-  WsAiPmSaveIdeaRpc,
-  WsAiPmSetIdeaStatusRpc,
   WsDocsListCommentsRpc,
   WsDocsCreateCommentRpc,
   WsDocsReplyCommentRpc,

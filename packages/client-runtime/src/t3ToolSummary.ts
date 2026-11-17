@@ -502,9 +502,6 @@ export function summarizeT3ToolCalls(
     case "docs-comments":
       label = phrase("Used", "use", quantity(selected.length, "doc comment tool"));
       break;
-    case "ai-pm-ideas":
-      label = phrase("Used", "use", quantity(selected.length, "AI PM idea tool"));
-      break;
     case "mcp-servers":
       label = phrase("Used", "use", quantity(selected.length, "MCP server tool"));
       break;

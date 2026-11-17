@@ -1,10 +1,4 @@
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  ChartNoAxesColumnIcon,
-  ListChecksIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -272,17 +266,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
-          <SidebarUtilityItem
-            icon={<ListChecksIcon />}
-            label="AI PM"
-            onClick={() => {
-              closeMobileSidebar();
-              void navigate({
-                to: "/ai-pm",
-                search: { project: undefined, environment: undefined },
-              });
-            }}
-          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

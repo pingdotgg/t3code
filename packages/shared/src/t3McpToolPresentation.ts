@@ -79,7 +79,6 @@ export type T3McpToolSummaryAction =
   | "html-render"
   | "docs"
   | "docs-comments"
-  | "ai-pm-ideas"
   | "mcp-servers"
   | "send-to-user";
 
@@ -418,9 +417,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Resolve", "Resolving", "Resolved", "a doc comment"],
     "docs-comments",
   ),
-  aipm_idea_list: tool(["List", "Listing", "Listed", "AI PM ideas"], "ai-pm-ideas"),
-  aipm_idea_save: tool(["Park", "Parking", "Parked", "an idea"], "ai-pm-ideas"),
-  aipm_idea_set_status: tool(["Update", "Updating", "Updated", "an idea's status"], "ai-pm-ideas"),
   t3_skill_sources_list: tool(["List", "Listing", "Listed", "skill sources"], "tools-read"),
   t3_skill_library_list: tool(["List", "Listing", "Listed", "the skill library"], "tools-read"),
   mcp_servers_list: tool(["List", "Listing", "Listed", "MCP servers"], "mcp-servers"),

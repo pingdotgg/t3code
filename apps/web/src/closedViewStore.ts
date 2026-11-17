@@ -65,11 +65,6 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         surface.id === "docs" &&
         (surface.cloudPath === undefined || typeof surface.cloudPath === "string")
       );
-    case "ai-pm":
-      return (
-        surface.id === "ai-pm" &&
-        (surface.projectId === undefined || typeof surface.projectId === "string")
-      );
     case "diff":
     case "files":
     case "pull-requests":
@@ -139,7 +134,7 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const entries = (persisted as Partial<Pick<ClosedViewStoreState, "entries">> | null)
           ?.entries;

@@ -93,10 +93,6 @@ import * as DocsCloudImport from "../docs/DocsCloudImport.ts";
 import * as DocsHandlers from "./toolkits/docs/handlers.ts";
 import { DocsToolkit } from "./toolkits/docs/tools.ts";
 import * as WorkspaceDocs from "../workspace/WorkspaceDocs.ts";
-import * as AiPmService from "../aiPm/AiPmService.ts";
-import * as ProcessRunner from "../processRunner.ts";
-import * as AipmHandlers from "./toolkits/aipm/handlers.ts";
-import { AipmToolkit } from "./toolkits/aipm/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import * as McpUpstreamClients from "../mcpHub/McpUpstreamClients.ts";
 import { forwardMcpRequest } from "../mcpHub/McpUpstreamForwarder.ts";
@@ -1260,10 +1256,6 @@ export const layerDocsToolkit = toolkitRegistration(DocsToolkit, DocsHandlers.la
   Layer.provide(WorkspaceDocs.layer),
 );
 
-const layerAipmToolkit = toolkitRegistration(AipmToolkit, AipmHandlers.layer).pipe(
-  Layer.provide(AiPmService.layer.pipe(Layer.provide(ProcessRunner.layer))),
-);
-
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
@@ -1464,7 +1456,6 @@ export const T3_MCP_TOOLKITS: ReadonlyArray<Toolkit.Any> = [
   HtmlRenderToolkit,
   HtmlPreviewToolkit,
   DocsToolkit,
-  AipmToolkit,
   McpServersToolkit,
   SkillTrashToolkit,
   SkillLibraryToolkit,
@@ -1534,7 +1525,6 @@ export const layer = Layer.mergeAll(
       layerTools,
       layerToolSearch,
       layerDocsToolkit,
-      layerAipmToolkit,
       layerMcpServersToolkit,
       layerSkillTrashToolkit,
       layerSkillLibraryToolkit,
