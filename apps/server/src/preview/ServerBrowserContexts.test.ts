@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Hands a real file on disk to a real desktop browser.
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
@@ -12,6 +16,7 @@ const launches = vi.hoisted(() => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
 }));
+const launchPersistentChromium = chromium.launchPersistentContext.bind(chromium);
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
 vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
@@ -105,6 +110,26 @@ describe("ServerBrowserContexts", () => {
       await pool.close();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("closes a scratch context when creating its page fails", async () => {
+    const browser = makeBrowser();
+    launches.launch.mockResolvedValue(browser as unknown as Browser);
+    const pool = new ServerBrowserContexts(options());
+    const peer = await pool.contextFor("default", "peer");
+    const context = await browser.newContext();
+    const failure = new Error("newPage failed");
+    browser.created[1]!.newPage.mockRejectedValueOnce(failure);
+    browser.newContext.mockResolvedValueOnce(context);
+    try {
+      await expect(pool.scratchPage()).rejects.toBe(failure);
+      expect(context.close).toHaveBeenCalledOnce();
+      expect(browser.contexts()).toEqual([peer]);
+      expect(peer.close).not.toHaveBeenCalled();
+      expect(browser.close).not.toHaveBeenCalled();
+    } finally {
+      await pool.close();
     }
   });
 
@@ -326,5 +351,46 @@ describe("ServerBrowserContexts", () => {
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
     expect(browser.created[0]?.close).toHaveBeenCalled();
+  });
+
+  it("uploads a file over 50 MB to a desktop tab, which shares the server's filesystem", async () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-upload-"));
+    const userDataDir = NodePath.join(directory, "profile");
+    const pool = new ServerBrowserContexts(options());
+    try {
+      const desktop = await launchPersistentChromium(userDataDir, {
+        headless: true,
+        args: ["--remote-debugging-port=0"],
+      });
+      try {
+        const [port] = NodeFS.readFileSync(
+          NodePath.join(userDataDir, "DevToolsActivePort"),
+          "utf8",
+        ).split("\n");
+        const { browser, page } = await pool.connectDesktopPage(`http://127.0.0.1:${port}`);
+        try {
+          const file = NodePath.join(directory, "large.bin");
+          NodeFS.writeFileSync(file, "");
+          NodeFS.truncateSync(file, 51 * 1024 * 1024);
+          await page.setContent(`<input type="file">`);
+          await page.locator("input").setInputFiles(file);
+          expect(
+            await page.$eval("input", (input) =>
+              Array.from(
+                (input as unknown as { files: ArrayLike<{ name: string; size: number }> }).files,
+                ({ name, size }) => ({ name, size }),
+              ),
+            ),
+          ).toEqual([{ name: "large.bin", size: 51 * 1024 * 1024 }]);
+        } finally {
+          await browser.close();
+        }
+      } finally {
+        await pool.close();
+        await desktop.close();
+      }
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
