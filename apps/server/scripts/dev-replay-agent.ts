@@ -66,6 +66,11 @@ export const SCENARIOS = [
     name: "Multi turn",
     file: `${FIXTURES}/multi_turn/registry_transcript.ndjson`,
   },
+  {
+    id: "command-output",
+    name: "Command output",
+    file: "./dev-replay/command_output_transcript.ndjson",
+  },
   // Generated, so `vp run stress` can load the app without committing a large recording.
   { id: "stress", name: "Stress", generate: stressTranscript },
 ] as const;

@@ -96,6 +96,7 @@ import { ExpandableText } from "./ExpandableText";
 import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
+import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -351,25 +352,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       hasServerConfig: environment.serverConfig !== null,
     }),
   )?.environmentId;
-  const searchableCursorEnvironmentId = options.find(
-    (environment) =>
-      environment.serverConfig?.environment.platform.os === "darwin" &&
-      isProviderSettingsEnvironmentAvailable({
-        connectionPhase: environment.connection.phase,
-        hasServerConfig: true,
-      }),
-  )?.environmentId;
   let searchRedirectEnvironmentId: EnvironmentId | undefined;
   {
     if (
-      !target.scoped &&
-      searchTargetId === searchableSetting("cursor-keychain-usage").id &&
-      (!selectedEnvironmentCanRenderSettings ||
-        selectedEnvironment?.serverConfig?.environment.platform.os !== "darwin") &&
-      searchableCursorEnvironmentId !== undefined
-    ) {
-      searchRedirectEnvironmentId = searchableCursorEnvironmentId;
-    } else if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
@@ -823,6 +808,7 @@ export function EnvironmentProviderSettings({
         description: error instanceof Error ? error.message : "The settings update failed.",
       });
     }
+    return result._tag !== "Failure";
   };
 
   const updateInstance = useStableCallback(
@@ -836,7 +822,7 @@ export function EnvironmentProviderSettings({
         isDisabling &&
         resolveAppModelSelectionState(settings, serverProviders).instanceId === instanceId &&
         readEnvironmentScope(environmentId, AuthSettingsWriteScope);
-      void persistInstance(
+      return persistInstance(
         instanceId,
         next,
         shouldClearTextGen ? DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection : undefined,
@@ -1105,9 +1091,19 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
-        cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
         readOnly={readOnly}
       />
+
+      {/* The server drops text generators under a provider allow-list. */}
+      {managedPolicy?.limits?.providers?.allowedDrivers === undefined ? (
+        <TextGeneratorsSettings
+          key={`text-generators:${environmentId}`}
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          providers={serverProviders}
+          readOnly={readOnly}
+        />
+      ) : null}
 
       <SettingsSection title="Advanced">
         <SettingsRow
@@ -1202,11 +1198,11 @@ interface ProviderInstanceRowActions {
     instanceId: ProviderInstanceId,
     previous: ProviderInstanceConfig,
     next: ProviderInstanceConfig,
-  ) => void;
+  ) => Promise<boolean>;
   readonly enableInstance: (
     instanceId: ProviderInstanceId,
     next: ProviderInstanceConfig,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   readonly deleteInstance: (
     instanceId: ProviderInstanceId,
     instance: ProviderInstanceConfig,

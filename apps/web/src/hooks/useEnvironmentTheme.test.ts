@@ -2,14 +2,12 @@ import type { EnvironmentTheme } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const publishedThemes = vi.hoisted(() => ({
-  atom: null as unknown as import("effect/reactivity").Atom.Writable<
-    ReadonlyArray<EnvironmentTheme>
-  >,
+  atom: null as unknown as import("effect/reactivity").Atom.Writable<ReadonlyArray<EnvironmentTheme> | null>,
 }));
 vi.mock(import("../state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
-  publishedThemes.atom = Atom.make<ReadonlyArray<EnvironmentTheme>>([]);
-  return { primaryServerEnvironmentThemesAtom: publishedThemes.atom } as never;
+  publishedThemes.atom = Atom.make<ReadonlyArray<EnvironmentTheme> | null>([]);
+  return { themeServerEnvironmentThemesAtom: publishedThemes.atom } as never;
 });
 const refreshTheme = vi.hoisted(() => vi.fn());
 vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
@@ -21,6 +19,7 @@ import {
   invalidateCustomThemes,
   publishedThemeDefinitions,
 } from "../themePalette";
+import { startEnvironmentThemeRepaint } from "./useEnvironmentTheme";
 
 const NIGHTFALL_THEME = {
   id: "nightfall",
@@ -120,6 +119,29 @@ describe("environment themes", () => {
       invalidateCustomThemes();
     }
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+  });
+
+  it("keeps the last published palette while the server has not answered", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+      },
+    });
+    const stop = startEnvironmentThemeRepaint();
+    try {
+      appAtomRegistry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
+      appAtomRegistry.set(publishedThemes.atom, null);
+      expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+
+      appAtomRegistry.set(publishedThemes.atom, []);
+      appAtomRegistry.set(publishedThemes.atom, null);
+      expect(getThemeDefinition("nightfall")).toBeNull();
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("repaints when the environment publishes themes nothing has read yet", async () => {

@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type * as Electron from "electron";
+import * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -64,6 +64,9 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
+const describeUpdate = (version: string | null) =>
+  version === null ? "A new version of T3 Code" : `T3 Code ${version}`;
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -77,6 +80,35 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
+  } else if (updateState.status === "available") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update available",
+      message: `${describeUpdate(updateState.availableVersion)} is available.`,
+      detail: `You're running T3 Code ${updateState.currentVersion}.`,
+      buttons: ["Download", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) yield* updates.download;
+  } else if (updateState.status === "downloading") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update downloading",
+      message: `${describeUpdate(updateState.availableVersion)} is already downloading.`,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloaded") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update ready",
+      message: `${describeUpdate(updateState.downloadedVersion ?? updateState.availableVersion)} is ready to install.`,
+      detail: "T3 Code will restart to install it. Any running tasks will be interrupted.",
+      buttons: ["Restart", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) yield* updates.install;
   } else if (updateState.status === "error") {
     yield* electronDialog.showMessageBox({
       type: "warning",
@@ -200,6 +232,17 @@ export const make = Effect.gen(function* () {
                 },
                 { type: "separator" as const },
               ]),
+          {
+            label: "Close Developer Tools",
+            accelerator: "CmdOrCtrl+W",
+            visible: false,
+            click: () => {
+              Electron.webContents
+                .getAllWebContents()
+                .find((contents) => !contents.isDestroyed() && contents.isDevToolsFocused())
+                ?.closeDevTools();
+            },
+          },
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
             ? { label: "Close Window", click: (_item, window) => window?.close() }

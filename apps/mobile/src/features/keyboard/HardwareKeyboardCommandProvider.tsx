@@ -18,7 +18,7 @@ import { copyThreadReference } from "../../lib/copyThreadReference";
 import {
   firstWorkspaceDetailOpen,
   workspaceHasColumns,
-} from "../workspace/workspace-selection-store";
+} from "../layout/workspace/workspace-selection-store";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
@@ -32,7 +32,7 @@ import {
   subscribeToHardwareKeyboardCommandRegistrations,
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
-import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
+import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
 
 const EMPTY_COPY_FEEDBACK: GitActionProgress = {
   phase: "idle",

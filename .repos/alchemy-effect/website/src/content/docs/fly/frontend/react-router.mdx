@@ -1,16 +1,16 @@
 ---
 title: React Router
-description: Deploy React Router v7 (framework mode) to Fly with Fly.Website.ReactRouter — SSR on a Machine, client assets baked into the image, and React Router's own Vite dev server under alchemy dev.
+description: Deploy React Router v8 (framework mode) to Fly with Fly.Website.ReactRouter — SSR on a Machine, client assets baked into the image, and React Router's own Vite dev server under alchemy dev.
 sidebar:
   order: 7
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Fly.Website.ReactRouter` deploys a
-[React Router](https://reactrouter.com) v7 app in framework mode to Fly.
+[React Router](https://reactrouter.com) v8 app in framework mode to Fly.
 React Router builds through Vite, so Alchemy runs your project's own
 build: the SSR server runs as a Node [`Fly.Service`](/fly/compute/services)
 on a Machine, and client assets are baked into the image and served
@@ -26,20 +26,7 @@ The build integration is not bundled with alchemy. Install
 deploy time. It is only used at build time, so a dev dependency is
 enough:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers dev={devDeps} />
 
 The React Router side is whatever `npx create-react-router@latest`
 scaffolds — `react-router`, `@react-router/dev`, `@react-router/node`,
@@ -96,7 +83,7 @@ Stack):
 
 ```typescript
 // alchemy.run.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 
 export const Website = Fly.Website.ReactRouter("Website");
 ```
