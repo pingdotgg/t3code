@@ -9,6 +9,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
+import { PopoverClose } from "../ui/popover";
 import { ModelMentionChip } from "./ModelMentionChip";
 
 function SkillInlineText(props: {
@@ -137,9 +138,12 @@ export function SkillChipPopover(props: {
         <p className="font-medium">{props.label}</p>
         <p>{props.description || gt("No description is available for this skill.")}</p>
         {props.onViewInstructions ? (
-          <Button variant="outline" size="sm" onClick={props.onViewInstructions}>
+          <PopoverClose
+            render={<Button variant="outline" size="sm" />}
+            onClick={props.onViewInstructions}
+          >
             <T>View instructions</T>
-          </Button>
+          </PopoverClose>
         ) : null}
       </div>
     </ContextChipPopover>
