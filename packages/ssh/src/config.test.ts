@@ -105,8 +105,8 @@ describe("ssh config", () => {
       );
       for (const [file, alias] of [
         ["teamxone.conf", "single-ascii"],
-        ["teaméone.conf", "single-unicode"],
-        ["exacté.conf", "double-byte"],
+        ["teamøone.conf", "single-unicode"],
+        ["exactø.conf", "double-byte"],
       ] as const) {
         yield* fs.writeFileString(
           path.join(sshDir, "single.d", file),
