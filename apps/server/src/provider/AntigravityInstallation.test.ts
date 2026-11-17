@@ -718,6 +718,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect("retains startup diagnostics when ACP initialization times out", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.never,
+            stderr: Stream.succeed(
+              new TextEncoder().encode(
+                "Could not initialize local harness\nAuthorization: Bearer private-fixture-token\n",
+              ),
+            ).pipe(Stream.tap(() => Deferred.succeed(entered, undefined))),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const { installation } = yield* makeHarness({
+        previous: true,
+        useDefaultValidation: true,
+        spawner,
+      });
+      yield* installation.start;
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("90 seconds");
+      const failed = yield* terminalState(installation);
+      expect(failed).toMatchObject({
+        phase: "failed",
+        diagnostics: {
+          step: "Antigravity initialization",
+          stderr: "Could not initialize local harness\nAuthorization: [redacted]",
+          exitCode: null,
+          signal: null,
+          truncated: false,
+        },
+      });
+      yield* expectPreviousRelease(installation);
+      expect((yield* installation.start).diagnostics).toBeNull();
+      const running = yield* installation.state;
+      expect((yield* installation.cancel(running.operationId!)).diagnostics).toBeNull();
+    }),
+  );
+
   it.effect.each(["downloaded", "existing", "concurrent"] as const)(
     "reports a verification timeout for a %s runtime without changing the active release",
     (source) =>
@@ -765,8 +815,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* TestClock.adjust("90 seconds");
         expect(yield* terminalState(installation)).toMatchObject({
           phase: "failed",
-          message:
-            "Antigravity runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+          message: expect.stringContaining(
+            "Antigravity runtime verification timed out after 90 seconds.",
+          ),
         });
         if (source !== "existing") yield* Deferred.await(stagingReleased);
         yield* expectPreviousRelease(installation);

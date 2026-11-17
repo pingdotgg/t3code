@@ -5,7 +5,11 @@ import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
-import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstallDiagnostics,
+  type ProviderInstallState,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import { resolveCommandPath } from "@t3tools/shared/shell";
@@ -48,6 +52,7 @@ import {
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
+import { makeInstallationDiagnostics } from "./installationDiagnostics.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
@@ -78,6 +83,7 @@ export class AntigravityInstallationError extends Schema.TaggedError<Antigravity
   {
     operation: Schema.String,
     detail: Schema.String,
+    diagnostics: Schema.optionalKey(ProviderInstallDiagnostics),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -192,6 +198,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   let releaseAsset = options.releaseAsset ?? null;
   const supported =
     options.releaseAsset === undefined
@@ -444,20 +451,19 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         ),
     );
 
+  const validationTimeoutError = installationError(
+    "verify",
+    "Antigravity runtime verification timed out after 90 seconds. Review Installation details or this environment's server log, then retry installation.",
+  );
   const withValidationTimeout = Effect.timeoutOrElse({
     duration: VALIDATION_TIMEOUT,
-    orElse: () =>
-      Effect.fail(
-        installationError(
-          "verify",
-          "Antigravity runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
-        ),
-      ),
+    orElse: () => Effect.fail(validationTimeoutError),
   });
-  const validate =
+  const validateRuntime =
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const validationScope = yield* Effect.scope;
         const profileDirectory = yield* Effect.acquireRelease(
           fs.makeTempDirectory({ prefix: "t3-antigravity-validate-" }),
@@ -527,7 +533,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       },
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
@@ -540,6 +545,43 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         return installationError("verify", detail, cause);
       }),
     );
+
+  const validate = Effect.fn("AntigravityInstallation.verify")(function* (
+    executable: AntigravityExecutable,
+    expectedVersion: string,
+  ) {
+    const capture = yield* makeInstallationDiagnostics("Antigravity initialization").pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Environment, environment),
+      Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+    );
+    return yield* validateRuntime(executable, expectedVersion).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture.spawner),
+      Effect.scoped,
+      withValidationTimeout,
+      Effect.mapError(
+        (error) =>
+          new AntigravityInstallationError({
+            ...error,
+            diagnostics: {
+              ...capture.snapshot(isAcpProcessExitedError(error.cause) ? error.cause : undefined),
+              ...(error === validationTimeoutError ? { exitCode: null, signal: null } : {}),
+            },
+          }),
+      ),
+      Effect.tapError((error) =>
+        SubscriptionRef.get(state).pipe(
+          Effect.flatMap(({ operationId }) =>
+            Effect.logWarning("Managed runtime verification failed", {
+              driver: DRIVER,
+              operationId,
+              diagnostics: error.diagnostics,
+            }),
+          ),
+        ),
+      ),
+    );
+  });
 
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset) {
@@ -616,7 +658,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         }
         yield* report("verifying", "Checking the installed runtime.");
-        yield* validate(existing, asset.version).pipe(Effect.scoped, withValidationTimeout);
+        yield* validate(existing, asset.version);
         yield* activate();
         return;
       }
@@ -873,7 +915,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
-      ).pipe(Effect.scoped, withValidationTimeout);
+      );
       const record: InstalledRelease = {
         releaseId,
         version: asset.version,
@@ -896,7 +938,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           completedRelease(releaseId).pipe(
             Effect.flatMap((existing) =>
               existing.version === asset.version
-                ? validate(existing, asset.version).pipe(Effect.scoped, withValidationTimeout)
+                ? validate(existing, asset.version)
                 : Effect.fail(
                     installationError(
                       "activate",
@@ -1014,6 +1056,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           version: reuse?.version ?? asset?.version ?? null,
           installedVersion: current.installedVersion,
           canRemove: current.canRemove,
+          diagnostics: null,
           message:
             reuse === undefined
               ? "Downloading Google's official Antigravity runtime."
@@ -1024,8 +1067,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           reuse === undefined
             ? install(asset!)
             : validate(reuse, reuse.version!).pipe(
-                Effect.scoped,
-                withValidationTimeout,
                 Effect.andThen(ensureEligible(reuse.version!)),
                 Effect.andThen(
                   SubscriptionRef.update(state, (value) => ({
@@ -1050,6 +1091,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                   return {
                     ...value,
                     phase: cancelled ? "cancelled" : "failed",
+                    diagnostics:
+                      cancelled || Option.isNone(error) ? null : (error.value.diagnostics ?? null),
                     message: cancelled
                       ? "Installation cancelled. The previous runtime is unchanged."
                       : Option.isSome(error)
@@ -1134,6 +1177,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                 installedVersion: null,
                 canRemove: false,
                 message: null,
+                diagnostics: null,
               }) satisfies ProviderInstallState,
           );
         }).pipe(Effect.uninterruptible),

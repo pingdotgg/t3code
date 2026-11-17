@@ -137,6 +137,12 @@ over to new threads. Custom models do not offer it. If Codex rejects a turn
 because your login lacks the program, switch Cyber Access back to Standard or
 sign in to Codex with an account that has it.
 
+## Troubleshoot runtime installation
+
+If the managed runtime fails to install, open **Installation details** in Codex setup
+to see the failed check, any reported exit status, and redacted startup output from
+the environment running Codex. The same failure is visible in mobile **Settings > Providers**.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and
