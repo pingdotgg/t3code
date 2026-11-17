@@ -67,6 +67,12 @@ const ICON_ACTION_CLASS = \`rounded-md \${"hover:surface-ghost-hover"}\`;`,
   );
 
   rule.invalid(
+    "reads appearance from both sides of a string concatenation",
+    `const el = <button className={"rounded-md px-2 " + extraClasses} />;`,
+    (output) => assert.match(output, /<button> is styled by hand \(rounded-md px-2\)/),
+  );
+
+  rule.invalid(
     "still reads appearance from a logical fallback",
     `const el = <button className={classes || "bg-red-500"} />;`,
     (output) => assert.match(output, /<button> is styled by hand \(bg-red-500\)/),

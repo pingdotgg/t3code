@@ -34,8 +34,9 @@ export default defineRule({
         }
       },
       TemplateLiteral(node) {
-        if (node.expressions.length !== 0) return;
-        if (hasSpacedCaps(node.quasis[0]?.value.cooked ?? "")) {
+        // Joined with a space, so a token cut by an expression never completes across it.
+        const staticText = node.quasis.map((quasi) => quasi.value.cooked ?? "").join(" ");
+        if (hasSpacedCaps(staticText)) {
           context.report({ node, message: MESSAGE });
         }
       },
