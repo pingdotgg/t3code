@@ -118,15 +118,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
       if (action !== "copy-path") return;
       const clipboardPath = formatFilePathForClipboard(workspacePath);
       void writeTextToClipboard(clipboardPath, "workspace path").then(
-        (didCopy) => {
-          if (didCopy) {
-            toastManager.add({
-              type: "success",
-              title: "Path copied",
-              description: clipboardPath,
-            });
-          }
-        },
+        undefined,
         (error: unknown) => {
           toastManager.add(
             stackedThreadToast({

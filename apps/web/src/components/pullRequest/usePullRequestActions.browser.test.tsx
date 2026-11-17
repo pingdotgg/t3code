@@ -1,14 +1,26 @@
-import { EnvironmentId, ProjectId, type PullRequestRef } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type PullRequestRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { usePullRequestActionRunner } from "./usePullRequestActions";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { ToastProvider } from "../ui/toast";
+import { usePullRequestActionRunner, usePullRequestHandoffs } from "./usePullRequestActions";
 
-const state = vi.hoisted(() => ({ runAction: vi.fn() }));
+const state = vi.hoisted(() => ({
+  runAction: vi.fn(),
+  newThread: vi.fn(),
+  prepareThread: vi.fn(),
+}));
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: (() => state.runAction) as never,
+}));
+vi.mock(import("~/hooks/useHandleNewThread"), () => ({
+  useNewThreadHandler: (() => state.newThread) as never,
+}));
+vi.mock(import("~/state/sourceControlActions"), () => ({
+  usePreparePullRequestThreadAction: (() => ({ run: state.prepareThread })) as never,
 }));
 
 function deferred<T>() {
@@ -71,4 +83,65 @@ it("keeps pending merges with their pull request when navigating between threads
     await secondResult.promise;
   });
   await expect.element(button).toHaveTextContent("Merge");
+});
+
+function FixChecksButton() {
+  const { startHandoff } = usePullRequestHandoffs({
+    environmentId: EnvironmentId.make("environment"),
+    detail: {
+      projectId: ProjectId.make("project"),
+      workspaceRoot: "/repo",
+      url: "https://github.com/owner/repo/pull/1",
+    },
+  });
+  return (
+    <button type="button" onClick={() => void startHandoff("fix", { prompt: "Fix the checks" })}>
+      Fix
+    </button>
+  );
+}
+
+it("stops a pull request handoff when its loading toast is dismissed", async () => {
+  const prepared = deferred<{
+    _tag: "Success";
+    value: {
+      branch: string;
+      worktreePath: string;
+      isOnPullRequestHead: boolean;
+      pullRequest: { url: string };
+    };
+  }>();
+  state.newThread
+    .mockReset()
+    .mockResolvedValueOnce({ draftId: "draft-1", threadId: ThreadId.make("thread-1") })
+    .mockResolvedValueOnce({ draftId: "draft-2", threadId: ThreadId.make("thread-1") });
+  state.prepareThread.mockReset().mockReturnValueOnce(prepared.promise);
+  await using screen = await render(
+    <ToastProvider>
+      <FixChecksButton />
+    </ToastProvider>,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+  const toast = screen.getByRole("dialog", { name: "Preparing the pull request checkout..." });
+  await expect.element(toast).toBeVisible();
+  await userEvent.click(toast.getByRole("button", { name: "Dismiss notification" }));
+  await expect.element(toast).not.toBeInTheDocument();
+  await act(async () => {
+    prepared.resolve({
+      _tag: "Success",
+      value: {
+        branch: "pr-1",
+        worktreePath: "/repo-worktrees/pr-1",
+        isOnPullRequestHead: true,
+        pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+      },
+    });
+    await prepared.promise;
+  });
+
+  expect(state.newThread).toHaveBeenCalledTimes(1);
+  expect(useComposerDraftStore.getState().getComposerDraft("draft-2" as never)?.prompt ?? "").toBe(
+    "",
+  );
 });

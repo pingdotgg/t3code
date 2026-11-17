@@ -38,7 +38,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
           model: raw.model,
         };
         if (raw.profileId !== undefined) base.profileId = raw.profileId;
-        if (raw.options !== undefined) base.options = raw.options;
+        if (raw.options !== undefined && raw.options !== null) base.options = raw.options;
         return Effect.succeed(base as typeof ModelSelectionWire.Encoded);
       },
       encode: (value) => {

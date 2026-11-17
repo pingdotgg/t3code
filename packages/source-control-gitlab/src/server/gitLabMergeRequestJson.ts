@@ -18,13 +18,14 @@ import type {
   PullRequestReactionContent,
   PullRequestReferenceCandidate,
   PullRequestReviewDecision,
-  PullRequestReviewThread,
+  PullRequestConversationThread,
   PullRequestReviewerCandidate,
   PullRequestState,
 } from "@t3tools/contracts";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import type { ProviderChangeRequestWatchFingerprint } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 /** Unknown pipeline or merge status values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
@@ -72,6 +73,7 @@ const RawMergeRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
+  detailed_merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   has_conflicts: Schema.optional(Schema.NullOr(Schema.Boolean)),
   created_at: Schema.String,
@@ -207,6 +209,7 @@ export interface GitLabMergeRequestListItem {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -483,6 +486,7 @@ export function decodePipelineStageChecksJson(
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
+  const detailedMergeStatus = raw.detailed_merge_status?.trim().toLowerCase();
   return {
     number: raw.iid,
     title: raw.title,
@@ -493,6 +497,12 @@ function toListItem(
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
     mergeability: toMergeability(raw),
+    rebaseRequired:
+      detailedMergeStatus === "need_rebase"
+        ? true
+        : detailedMergeStatus === "mergeable"
+          ? false
+          : undefined,
     additions: 0,
     deletions: 0,
     createdAt: raw.created_at,
@@ -789,7 +799,7 @@ export interface GitLabDiffRefs {
 }
 
 export interface GitLabDiscussions {
-  readonly threads: ReadonlyArray<PullRequestReviewThread>;
+  readonly threads: ReadonlyArray<PullRequestConversationThread>;
   /** GitLab moves a thread onto each new diff that still has its line; this is the last one. */
   readonly diffRefsByThreadId: ReadonlyMap<string, GitLabDiffRefs>;
   /** First notes of unresolved discussions on the MR itself rather than a diff line. */
@@ -808,7 +818,7 @@ export function decodeDiscussionsJson(
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const threads: PullRequestReviewThread[] = [];
+  const threads: PullRequestConversationThread[] = [];
   const diffRefsByThreadId = new Map<string, GitLabDiffRefs>();
   const overviewFindingIds: string[] = [];
   for (const entry of decoded.success) {
@@ -816,11 +826,30 @@ export function decodeDiscussionsJson(
     if (!Exit.isSuccess(discussion)) continue;
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
-    const position = root?.position;
-    if (root !== undefined && !position && root.resolvable === true && root.resolved !== true) {
-      overviewFindingIds.push(String(root.id));
+    if (root === undefined) continue;
+    const comments = notes.map((note) => ({
+      id: String(note.id),
+      author: toActor(note.author),
+      body: note.body ?? "",
+      createdAt: note.created_at,
+      url: null,
+    }));
+    const position = root.position;
+    if (!position) {
+      // A thread started on the overview: resolvable, unlike a single comment.
+      if (root.resolvable !== true) continue;
+      if (root.resolved !== true) overviewFindingIds.push(String(root.id));
+      threads.push({
+        id: discussion.value.id,
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: root.resolved === true,
+        isOutdated: false,
+        comments,
+      });
+      continue;
     }
-    if (root === undefined || !position) continue;
     let side: "left" | "right";
     let path: string | null;
     let line: number | null | undefined;
@@ -850,13 +879,7 @@ export function decodeDiscussionsJson(
       side,
       isResolved: root.resolved === true,
       isOutdated: false,
-      comments: notes.map((note) => ({
-        id: String(note.id),
-        author: toActor(note.author),
-        body: note.body ?? "",
-        createdAt: note.created_at,
-        url: null,
-      })),
+      comments,
     });
   }
   return Result.succeed({
@@ -1201,6 +1224,25 @@ function toReactions(
   );
 }
 
+/**
+ * Resolving a thread moves lastEditedAt on every note in it; only lastEditedBy marks a text
+ * edit, and a resolved note's stamp may be the resolve rather than that edit.
+ */
+function textEditedAt(
+  note: {
+    readonly lastEditedAt?: string | null | undefined;
+    readonly lastEditedBy?: { readonly username?: string | null | undefined } | null | undefined;
+    readonly resolved?: boolean | null | undefined;
+  } | null,
+): string | null {
+  const editedAt = trimmed(note?.lastEditedAt);
+  return editedAt !== null &&
+    trimmed(note?.lastEditedBy?.username) !== null &&
+    note?.resolved !== true
+    ? editedAt
+    : null;
+}
+
 function noteIdOf(gid: string | null | undefined): string | null {
   const id = trimmed(gid)?.split("/").at(-1);
   return id !== undefined && /^\d+$/.test(id) ? id : null;
@@ -1234,16 +1276,8 @@ export function decodeAwardEmojiJson(
     if (id === null) continue;
     const reactions = toReactions(node?.awardEmoji, viewer);
     if (reactions.length > 0) reactionsByNoteId.set(id, reactions);
-    // Resolving a thread moves lastEditedAt on every note in it; only lastEditedBy marks a
-    // text edit, and a resolved note's stamp may be the resolve rather than that edit.
-    const editedAt = trimmed(node?.lastEditedAt);
-    if (
-      editedAt !== null &&
-      trimmed(node?.lastEditedBy?.username) !== null &&
-      node?.resolved !== true
-    ) {
-      editedAtByNoteId.set(id, editedAt);
-    }
+    const editedAt = textEditedAt(node);
+    if (editedAt !== null) editedAtByNoteId.set(id, editedAt);
   }
   const pageInfo = mergeRequest?.notes?.pageInfo;
   return Result.succeed({
@@ -1268,7 +1302,7 @@ const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
 export function decodeOwnAwardIdJson(
   raw: string,
   input: { readonly content: PullRequestReactionContent; readonly viewer: string },
-): Result.Result<number | null, DecodeFailure> {
+): Result.Result<{ readonly id: number | null; readonly empty: boolean }, DecodeFailure> {
   const decoded = decodeUnknownList(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -1280,9 +1314,9 @@ export function decodeOwnAwardIdJson(
     const value = award.value;
     if (trimmed(value.name)?.toLowerCase() !== name) continue;
     if (trimmed(value.user?.username) !== input.viewer) continue;
-    return Result.succeed(value.id);
+    return Result.succeed({ id: value.id, empty: false });
   }
-  return Result.succeed(null);
+  return Result.succeed({ id: null, empty: decoded.success.length === 0 });
 }
 
 export const REPOSITORY_BLOBS_GRAPHQL_QUERY = `query($fullPath: ID!, $ref: String!, $paths: [String!]!) {
@@ -2027,4 +2061,153 @@ export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
   const files = mergeRequest?.diffStats ?? [];
   const fileCount = mergeRequest?.diffStatsSummary?.fileCount;
   return Result.succeed({ files, truncated: fileCount === undefined || files.length < fileCount });
+}
+
+/**
+ * One cheap read that tells a watch whether anything it reports on changed. Edits to comments
+ * older than the newest 100 are missed here and left to the watch's periodic full reread.
+ * Finished job counts move whenever one job settles while its pipeline still runs, and bridge
+ * jobs are read because their downstream pipelines are checks of their own.
+ */
+export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      state mergeStatusEnum detailedMergeStatus conflicts diffHeadSha
+      userPermissions { updateMergeRequest }
+      headPipeline {
+        id status
+        succeeded: jobs(retried: false, statuses: [SUCCESS]) { count }
+        failed: jobs(retried: false, statuses: [FAILED]) { count }
+        stopped: jobs(retried: false, statuses: [CANCELED, SKIPPED]) { count }
+        jobs(jobKind: BRIDGE, retried: false, first: 100) {
+          pageInfo { hasNextPage }
+          nodes { name status downstreamPipeline { id status } }
+        }
+      }
+      userNotesCount
+      notes(filter: ONLY_COMMENTS, last: 100) {
+        nodes { lastEditedAt lastEditedBy { username } resolved }
+      }
+    }
+  }
+}`;
+
+const PipelineIdentitySchema = Schema.Struct({ id: Schema.String, status: Schema.String });
+const JobCountSchema = Schema.NullOr(Schema.Struct({ count: Schema.Int }));
+// GitLab's connection `count` stops at its default limit and answers `limit + 1` above it.
+const JOB_COUNT_LIMIT = 1000;
+
+const decodeMergeRequestWatchFingerprint = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              state: Schema.String,
+              mergeStatusEnum: Schema.NullOr(Schema.String),
+              detailedMergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
+              conflicts: Schema.Boolean,
+              diffHeadSha: Schema.NullOr(Schema.String),
+              userPermissions: Schema.Struct({ updateMergeRequest: Schema.Boolean }),
+              headPipeline: Schema.NullOr(
+                Schema.Struct({
+                  ...PipelineIdentitySchema.fields,
+                  succeeded: JobCountSchema,
+                  failed: JobCountSchema,
+                  stopped: JobCountSchema,
+                  jobs: Schema.NullOr(
+                    Schema.Struct({
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+                      nodes: Schema.Array(
+                        Schema.NullOr(
+                          Schema.Struct({
+                            name: Schema.NullOr(Schema.String),
+                            status: Schema.NullOr(Schema.String),
+                            downstreamPipeline: Schema.NullOr(PipelineIdentitySchema),
+                          }),
+                        ),
+                      ),
+                    }),
+                  ),
+                }),
+              ),
+              userNotesCount: Schema.NullOr(Schema.Int),
+              notes: Schema.Struct({
+                nodes: Schema.Array(
+                  Schema.NullOr(
+                    Schema.Struct({
+                      lastEditedAt: Schema.NullOr(Schema.String),
+                      lastEditedBy: Schema.NullOr(
+                        Schema.Struct({ username: Schema.NullOr(Schema.String) }),
+                      ),
+                      resolved: Schema.NullOr(Schema.Boolean),
+                    }),
+                  ),
+                ),
+              }),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+/** Null when GitLab returned no merge request, so the watch falls back to full reads. */
+export function decodeMergeRequestWatchFingerprintJson(
+  raw: string,
+): Result.Result<ProviderChangeRequestWatchFingerprint | null, DecodeFailure> {
+  const decoded = decodeMergeRequestWatchFingerprint(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mr = decoded.success.data.project?.mergeRequest;
+  if (mr == null) return Result.succeed(null);
+  const newestEdit = mr.notes.nodes.reduce((newest, note) => {
+    const editedAt = textEditedAt(note);
+    return editedAt !== null && editedAt > newest ? editedAt : newest;
+  }, "");
+  const pipeline = mr.headPipeline;
+  const jobCounts = [pipeline?.succeeded, pipeline?.failed, pipeline?.stopped].map(
+    (jobs) => jobs?.count ?? null,
+  );
+  // Past a capped count or the first bridge page, a job can settle without moving the status.
+  const seesEveryJob =
+    pipeline?.jobs?.pageInfo.hasNextPage !== true &&
+    jobCounts.every((count) => count === null || count <= JOB_COUNT_LIMIT);
+  const bridges = (pipeline?.jobs?.nodes ?? [])
+    .flatMap((job) =>
+      job === null
+        ? []
+        : [
+            [job.name, job.status, job.downstreamPipeline?.id, job.downstreamPipeline?.status]
+              .map((part) => part ?? "")
+              .join(":"),
+          ],
+    )
+    .toSorted()
+    .join(",");
+  return Result.succeed({
+    status: [
+      mr.state,
+      mr.mergeStatusEnum ?? "",
+      mr.detailedMergeStatus ?? "",
+      mr.conflicts,
+      mr.diffHeadSha ?? "",
+      pipeline?.id ?? "",
+      pipeline?.status ?? "",
+      jobCounts.map((count) => count ?? "").join("/"),
+      bridges,
+    ].join(" "),
+    remarks: [mr.userNotesCount ?? "", newestEdit].join(" "),
+    // GraphQL never asks GitLab to recheck mergeability. The REST detail read does, but only for
+    // viewers who can update the merge request, so only they keep detail reads going until it settles.
+    coversDetail:
+      seesEveryJob &&
+      (mr.conflicts ||
+        !mr.userPermissions.updateMergeRequest ||
+        mr.mergeStatusEnum === "CAN_BE_MERGED" ||
+        mr.mergeStatusEnum === "CANNOT_BE_MERGED"),
+  });
 }
