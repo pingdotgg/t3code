@@ -2523,6 +2523,16 @@ describe("CursorAdapterV2", () => {
         runtimeMode === "full-access",
       );
     }
+    const unrestrictedOverrides = makeCursorAgentOptions({
+      ...input,
+      runtimePolicy: {
+        ...policy,
+        runtimeMode: "auto-accept-edits",
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      },
+    });
+    assert.notInclude(unrestrictedOverrides.local?.settingSources ?? [], "project");
     for (const restriction of [
       { approvalPolicy: "on-request" as const },
       { sandboxPolicy: { type: "readOnly" as const } },
