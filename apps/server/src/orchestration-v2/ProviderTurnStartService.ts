@@ -1087,20 +1087,17 @@ export const layer: Layer.Layer<
       };
       const prepareRetryHandoff = Effect.fn("ProviderTurnStartService.prepareRetryHandoff")(
         function* (context: ReturnType<typeof handoffContextForThread>) {
-          const { missedRunIds, coveredItemIds, missedRuns } = context;
-          const missedItems =
+          const { missedRunIds, coveredItemIds, missedRuns, acceptedAttempts } = context;
+          const missedHistory =
             missedRunIds.size === 0
               ? []
               : (yield* projectionStore.getTurnStartHistory(input.threadId, [
                   ...missedRunIds,
-                ])).filter(
-                  (item) =>
-                    item.runId !== null &&
-                    missedRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
-                    historicalMessage(item) !== null,
-                );
-          const retryHandoff =
+                ])).filter((item) => item.runId !== null && missedRunIds.has(item.runId));
+          const missedItems = missedHistory.filter(
+            (item) => !coveredItemIds.has(item.id) && historicalMessage(item) !== null,
+          );
+          const handoffs =
             missedItems.length === 0
               ? []
               : [
@@ -1122,7 +1119,34 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          return retryHandoff;
+          // History delivery (inline or injected) is text only, so missed images ride on prompts
+          // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
+          // own accepted attempt predates its unsent steering input, so it does not count.
+          const lastPromptOrdinal = Math.max(
+            0,
+            ...acceptedAttempts.flatMap((attempt) => {
+              if (missedRunIds.has(attempt.runId)) return [];
+              const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
+              const message = projection.messages.find(
+                (candidate) => candidate.id === source?.userMessageId,
+              );
+              return source === undefined ||
+                (message !== undefined &&
+                  (isCompactionCommandMessage(message) ||
+                    (goalDriver && parseGoalCommand(message) !== null)))
+                ? []
+                : [source.ordinal];
+            }),
+          );
+          const attachments = missedHistory.flatMap((item) =>
+            item.type === "user_message" &&
+            missedRuns.some(
+              (source) => source.id === item.runId && source.ordinal > lastPromptOrdinal,
+            )
+              ? item.attachments
+              : [],
+          );
+          return { handoffs, attachments };
         },
       );
       const prepareRecoveryHandoff = Effect.fn("ProviderTurnStartService.prepareRecoveryHandoff")(
@@ -1181,7 +1205,7 @@ export const layer: Layer.Layer<
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
         ];
       };
-      let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
+      let resumedRetryHandoff: Effect.Success<ReturnType<typeof prepareRetryHandoff>> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
@@ -1423,7 +1447,7 @@ export const layer: Layer.Layer<
           resumedHandoffContext = context;
           resumedRetryHandoff = yield* prepareRetryHandoff(context);
           const fits = yield* deliverContextHandoffs({
-            handoffs: [...handoffs, ...resumedRetryHandoff],
+            handoffs: [...handoffs, ...resumedRetryHandoff.handoffs],
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
@@ -1470,7 +1494,7 @@ export const layer: Layer.Layer<
           }
         }
         resumedHandoffContext = undefined;
-        resumedRetryHandoff = [];
+        resumedRetryHandoff = { handoffs: [], attachments: [] };
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
         // Another client is still writing to the native thread. A fresh
         // session here would silently split the conversation from it.
@@ -1795,7 +1819,7 @@ export const layer: Layer.Layer<
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
             budget,
@@ -1826,14 +1850,26 @@ export const layer: Layer.Layer<
           const startInput = noteContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
+          const missedAttachments =
+            compact || goalCommand
+              ? []
+              : retryHandoff.attachments.filter(
+                  (missed) =>
+                    !turnInput.message.attachments.some((current) => current.id === missed.id),
+                );
+          // Like pending history, pending images need a prompt; native resume carries none.
+          const prompted = context !== "" || missedAttachments.length > 0;
           const operation =
-            turnInput.resume && context === "" && session.resumeTurn !== undefined
+            turnInput.resume && !prompted && session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
               : start({
-                  ...(context === "" ? startInput : contextInput),
+                  ...(prompted ? contextInput : startInput),
                   message: {
                     ...turnInput.message,
                     text,
+                    ...(missedAttachments.length === 0
+                      ? {}
+                      : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
                   },
                   ...(text === userText
                     ? {}
@@ -1894,7 +1930,8 @@ export const layer: Layer.Layer<
       );
       const deliverySession =
         effectiveHandoffs.length === 0 &&
-        retryHandoff.length === 0 &&
+        retryHandoff.handoffs.length === 0 &&
+        retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation
