@@ -15,7 +15,6 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { revisionedQuery } from "~/state/revisionedQuery";
 
 const EMPTY_PROJECT_FILE_PATH = "";
@@ -92,7 +91,7 @@ export function setProjectFileQueryData(
     unsavedFileMounts.set(atom, appAtomRegistry.mount(atom));
   }
   appAtomRegistry.set(atom, {
-    confirmedAgainst: undefined,
+    saved: false,
     data: {
       relativePath,
       contents,
@@ -128,7 +127,7 @@ export function getUnsavedProjectFileQueryData(
   relativePath: string,
 ): ProjectReadFileResult | null {
   const optimistic = appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath));
-  return optimistic?.confirmedAgainst === undefined ? (optimistic?.data ?? null) : null;
+  return !optimistic?.saved ? (optimistic?.data ?? null) : null;
 }
 
 export function confirmProjectFileQueryData(
@@ -142,21 +141,13 @@ export function confirmProjectFileQueryData(
   if (optimisticFile?.data.contents !== contents) return false;
 
   const queryAtom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
-  const confirmed = {
+  appAtomRegistry.set(atom, {
     ...optimisticFile,
-    confirmedAgainst: appAtomRegistry.get(queryAtom),
-  };
-  appAtomRegistry.set(atom, confirmed);
+    saved: true,
+    confirmingQuery: queryAtom,
+  });
   releaseUnsavedFile(atom);
   appAtomRegistry.refresh(queryAtom);
-  void executeAtomQuery(appAtomRegistry, queryAtom, {
-    reportDefect: false,
-    reportFailure: false,
-  }).then((result) => {
-    if (result._tag === "Success" && appAtomRegistry.get(atom) === confirmed) {
-      appAtomRegistry.set(atom, null);
-    }
-  });
   return true;
 }
 

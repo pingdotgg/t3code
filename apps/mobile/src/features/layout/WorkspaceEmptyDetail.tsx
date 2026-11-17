@@ -6,7 +6,7 @@ import { NewThreadButton } from "../../components/NewThreadButton";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
+import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
 
 export function WorkspaceEmptyDetail(props: {
   readonly tab?: WorkspaceTab | "settings";
@@ -14,6 +14,7 @@ export function WorkspaceEmptyDetail(props: {
   readonly onAddConnection?: () => void;
 }) {
   const pullRequests = props.tab === "pullRequests";
+  const issues = props.tab === "issues";
   const settings = props.tab === "settings";
   if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
   return (
@@ -55,18 +56,22 @@ export function WorkspaceEmptyDetail(props: {
                 ? "Select a setting"
                 : pullRequests
                   ? "Select a pull request"
-                  : "Select a thread"}
+                  : issues
+                    ? "Select an issue"
+                    : "Select a thread"}
             </Text>
             <Text className="text-center text-base text-foreground-muted">
               {settings
                 ? "Choose a page from the sidebar."
                 : pullRequests
                   ? "Choose a pull request from the sidebar to review it."
-                  : Platform.OS === "android"
-                    ? "Choose a thread from the sidebar or start a new thread."
-                    : "Choose a thread from the sidebar or start a new task."}
+                  : issues
+                    ? "Choose an issue from the sidebar to read it."
+                    : Platform.OS === "android"
+                      ? "Choose a thread from the sidebar or start a new thread."
+                      : "Choose a thread from the sidebar or start a new task."}
             </Text>
-            {props.onStartNewTask && !pullRequests && !settings ? (
+            {props.onStartNewTask && !pullRequests && !issues && !settings ? (
               Platform.OS === "android" ? (
                 <NewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />
               ) : (

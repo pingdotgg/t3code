@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import {
+  type ComposerPromptHistoryMentions,
   type ComposerPromptHistoryPosition,
   buildComposerPromptHistoryEntries,
   stepComposerPromptHistory,
@@ -17,7 +18,11 @@ import {
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
-import { type PreviewAnnotationPayload } from "@t3tools/contracts";
+import {
+  type EnvironmentContextRecord,
+  type PreviewAnnotationPayload,
+  type ThreadContextRecord,
+} from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import {
@@ -30,18 +35,18 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
- * prompt history on ArrowUp/ArrowDown, plan-mode toggle, and list continuation.
+ * prompt history on ArrowUp/ArrowDown, plan-mode toggle, prompt suggestions on Tab, and list continuation.
  * Returns the editor's key handler; it reads the inputs captured by the render that built it.
  */
 export function composerCommandKeyHandler(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
+  readonly getShortcutContext: ChatComposerProps["getShortcutContext"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
   readonly phase: ChatComposerProps["phase"];
-  readonly isCompacting: boolean;
+  readonly canSteer: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
   readonly isSoftwareKeyboardOpen: boolean;
-  readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly promptHistoryEntries: ChatComposerProps["promptHistoryEntries"];
@@ -64,11 +69,18 @@ export function composerCommandKeyHandler(input: {
     target: ChatComposerProps["composerDraftTarget"],
     prompt: string,
   ) => void;
+  readonly setComposerDraftThreadContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<ThreadContextRecord>,
+  ) => void;
+  readonly setComposerDraftEnvironmentContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<EnvironmentContextRecord>,
+  ) => void;
   readonly setComposerCursor: Dispatch<SetStateAction<number>>;
   readonly setComposerTrigger: (trigger: ComposerTrigger | null) => void;
   readonly setComposerHighlightedItemId: Dispatch<SetStateAction<string | null>>;
   readonly dismissComposerTrigger: (trigger: ComposerTrigger | null) => void;
-  readonly toggleInteractionMode: () => void;
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
   readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
   readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
@@ -84,16 +96,19 @@ export function composerCommandKeyHandler(input: {
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
+  /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
+  readonly promptSuggestion: string | null;
+  readonly dismissPromptSuggestion: () => void;
 }) {
   const {
     keybindings,
+    getShortcutContext,
     sendShortcut,
     routeKind,
     phase,
-    isCompacting,
+    canSteer,
     followUpBehavior,
     isSoftwareKeyboardOpen,
-    planModeUiEnabled,
     isLiteralPendingAnswer,
     pendingUserInputs,
     promptHistoryEntries,
@@ -110,17 +125,20 @@ export function composerCommandKeyHandler(input: {
     composerMenuItemsRef,
     activeComposerMenuItemRef,
     setComposerDraftPrompt,
+    setComposerDraftThreadContexts,
+    setComposerDraftEnvironmentContexts,
     setComposerCursor,
     setComposerTrigger,
     setComposerHighlightedItemId,
     dismissComposerTrigger,
-    toggleInteractionMode,
     nudgeComposerMenuHighlight,
     onSelectComposerItem,
     resolveActiveComposerTrigger,
     readComposerSnapshot,
     applyPromptReplacement,
     submitComposer,
+    promptSuggestion,
+    dismissPromptSuggestion,
   } = input;
 
   // The composer persists across threads. A recall from thread A must not
@@ -128,9 +146,14 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePromptFromHistory = (
+    nextPrompt: string,
+    mentions: ComposerPromptHistoryMentions,
+  ) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+    setComposerDraftThreadContexts(composerDraftTarget, mentions.threadContexts);
+    setComposerDraftEnvironmentContexts(composerDraftTarget, mentions.environmentContexts);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
     setComposerTrigger(null);
     setComposerHighlightedItemId(null);
@@ -175,7 +198,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePromptFromHistory(step.prompt, step.mentions);
     return true;
   };
 
@@ -202,17 +225,15 @@ export function composerCommandKeyHandler(input: {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
       keybindings,
+      context: getShortcutContext(event.target),
       isSoftwareKeyboardOpen,
       isDraftThread: routeKind === "draft",
-      isRunning: phase === "running",
+      isRunning: phase === "running" || phase === "connecting",
       sendShortcut,
       prompt: promptRef.current,
     });
     if (key === "Tab" && event.shiftKey && submissionIntent === null) {
-      if (applyListEdit(event, listOutdentForTab)) return true;
-      if (!planModeUiEnabled) return false;
-      toggleInteractionMode();
-      return true;
+      return applyListEdit(event, listOutdentForTab);
     }
     const { trigger } = resolveActiveComposerTrigger();
     // A machine trigger keeps its menu hidden until a machine matches.
@@ -220,7 +241,12 @@ export function composerCommandKeyHandler(input: {
       !isLiteralPendingAnswer &&
       (composerMenuOpenRef.current || (trigger !== null && trigger.kind !== "environment"));
     if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (event.isComposing || event.keyCode === 229) return false;
+      if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
+        dismissPromptSuggestion();
+        return true;
+      }
+      if (!menuIsActive) return false;
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
@@ -243,6 +269,21 @@ export function composerCommandKeyHandler(input: {
         return true;
       }
     }
+    if (
+      key === "Tab" &&
+      promptSuggestion !== null &&
+      promptRef.current.length === 0 &&
+      !menuIsActive &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.isComposing &&
+      event.keyCode !== 229
+    ) {
+      // The typing guard must see this draft, so an approval that lands next is not answered with it.
+      return applyPromptReplacement(0, 0, promptSuggestion);
+    }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
     }
@@ -250,10 +291,10 @@ export function composerCommandKeyHandler(input: {
       submitComposer(
         undefined,
         resolveComposerDispatchMode({
-          running: phase === "running",
+          running: phase === "running" || phase === "connecting",
           alternateModifier: submissionIntent === "alternate",
           activeTurnDefault: followUpBehavior,
-          canSteer: !isCompacting,
+          canSteer,
         }),
         submissionIntent,
       );

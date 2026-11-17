@@ -13,7 +13,7 @@ import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import type { FilePreviewItem } from "../../components/FilePreviewModal";
+import type { FilePreviewItem } from "../../components/ui/FilePreviewModal";
 import { isBotBadgeImage } from "./botBadgeImages";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
@@ -22,13 +22,17 @@ const COLLAPSED_HEIGHT = 240;
 
 export function PullRequestDescription(props: {
   readonly markdown: string;
-  readonly onCollapse: () => void;
-  readonly expanded: boolean;
-  readonly onExpandedChange: (expanded: boolean) => void;
+  /** Clips a long description behind "Show more"; absent, it is always shown in full. */
+  readonly collapse?: {
+    readonly expanded: boolean;
+    readonly onExpandedChange: (expanded: boolean) => void;
+    readonly onCollapse: () => void;
+  };
   readonly footer?: ReactNode;
   readonly onTaskListChange?: ComponentProps<typeof PullRequestMarkdown>["onTaskListChange"];
 }) {
-  const { expanded, onExpandedChange } = props;
+  const { collapse } = props;
+  const expanded = collapse?.expanded ?? true;
   const [bodyHeight, setBodyHeight] = useState(0);
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
@@ -49,7 +53,7 @@ export function PullRequestDescription(props: {
         name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
       };
     });
-  const canCollapse = bodyHeight > COLLAPSED_HEIGHT;
+  const canCollapse = collapse !== undefined && bodyHeight > COLLAPSED_HEIGHT;
   const collapsed = canCollapse && !expanded;
   return (
     <View className="gap-5">
@@ -108,14 +112,14 @@ export function PullRequestDescription(props: {
                 />
               </View>
             ) : null}
-            {canCollapse ? (
+            {collapse !== undefined && canCollapse ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded }}
                 accessibilityLabel={expanded ? "Collapse description" : "Expand description"}
                 onPress={() => {
-                  if (expanded) props.onCollapse();
-                  onExpandedChange(!expanded);
+                  if (expanded) collapse.onCollapse();
+                  collapse.onExpandedChange(!expanded);
                 }}
                 style={
                   collapsed

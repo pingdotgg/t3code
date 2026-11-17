@@ -144,11 +144,15 @@ describe("indentCodeBlock", () => {
     expect(textOf(editor)).toBe("one\ntwo");
   });
 
-  it("keeps the selection across the shifted lines", () => {
-    const editor = codeEditor("one\ntwo", { from: 0, to: 7 });
+  it.each([
+    ["one\ntwo", "    one\n    two", 5],
+    ["\none\ntwo", "\n    one\n    two", 1],
+  ])("keeps the selection across the shifted lines in %s", (code, expected, from) => {
+    const editor = codeEditor(code, { from: 0, to: code.length });
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
-    expect(textOf(editor)).toBe("    one\n    two");
+    expect(textOf(editor)).toBe(expected);
+    expect(editor.state.selection.from).toBe(from);
   });
 
   it("reports handled when outdenting can go no further, so Tab never escapes the editor", () => {
