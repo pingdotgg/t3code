@@ -38,7 +38,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     threadId: ThreadId,
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
-    turnCompleted: Schema.optional(Schema.Boolean),
+    /** The turn completed or failed without the steer, so it can be sent as its own run. */
+    turnEnded: Schema.optional(Schema.Boolean),
     steerDeclined: Schema.optional(Schema.Boolean),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
@@ -47,6 +48,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 ) {}
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
+
+const steerOutlivesTurn = (status: string) => status === "completed" || status === "failed";
 
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
@@ -154,7 +157,7 @@ export const layer: Layer.Layer<
             threadId: input.threadId,
             operation: "steer",
             providerTurnId: input.providerTurnId,
-            turnCompleted: providerTurn.status === "completed",
+            turnEnded: steerOutlivesTurn(providerTurn.status),
             cause: "The provider turn ended before the steering message was delivered.",
           });
         }
@@ -452,7 +455,7 @@ export const layer: Layer.Layer<
                     threadId: input.threadId,
                     operation: "steer",
                     providerTurnId: input.providerTurnId,
-                    turnCompleted: status === "completed",
+                    turnEnded: status !== undefined && steerOutlivesTurn(status),
                     cause,
                   });
                 }),
