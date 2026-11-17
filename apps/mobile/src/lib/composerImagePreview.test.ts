@@ -131,4 +131,25 @@ describe("materializedPreviewAtom", () => {
       "file:///cache/t3-composer-previews/image-rebuilt.jpg",
     ]);
   });
+
+  it("deletes a discarded pasted image's cached preview once its preview is released", async () => {
+    const registry = AtomRegistry.make();
+    const attachment: DraftComposerImageAttachment = {
+      id: "image-discarded",
+      type: "image",
+      name: "pasted-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "data:image/png;base64,AAAA",
+    };
+    const uri = "file:///cache/t3-composer-previews/image-discarded.png";
+    const atom = materializedPreviewAtom(new MaterializedPreviewKey(attachment));
+    const unmount = registry.mount(atom);
+    await vi.waitFor(() => expect(mocks.files.has(uri)).toBe(true));
+
+    unmount();
+    registry.dispose();
+
+    await vi.waitFor(() => expect(mocks.files.has(uri)).toBe(false));
+  });
 });
