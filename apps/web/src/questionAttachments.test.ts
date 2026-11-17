@@ -169,8 +169,17 @@ it.each(["cancelled", "expired"] as const)(
     );
     const answer = `Purple, like ${formatInlineContextReference(threadContextReference(reference))}`;
     store.setPrompt({ environmentId, threadId }, "Earlier draft");
-    store.setThreadContexts(questionAttachmentDraftId(environmentId, threadId, request, "first"), [
-      reference,
+    const questionDraft = questionAttachmentDraftId(environmentId, threadId, request, "first");
+    store.setThreadContexts(questionDraft, [reference]);
+    store.addFiles(questionDraft, [
+      {
+        type: "file",
+        id: "notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+      },
     ]);
     usePendingUserInputAnswers.setState({
       [userInputDraftKey(environmentId, threadId, request)]: {
@@ -185,6 +194,7 @@ it.each(["cancelled", "expired"] as const)(
     expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
       prompt: `Earlier draft\n\n${answer}\n\nAlso this`,
       threadContexts: [reference],
+      files: [expect.objectContaining({ name: "notes.txt" })],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
   },
