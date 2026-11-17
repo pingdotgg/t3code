@@ -44,6 +44,7 @@ const configuredRelayTracingUrl = repoEnv.VITE_RELAY_OTLP_TRACES_URL?.trim() || 
 const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.trim() || "";
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
+const dulliBuild = process.env.VITE_DESKTOP_BUILD_BRAND?.trim().toLowerCase() === "dulli";
 const configuredReleaseChannel =
   process.env.T3CODE_BUILT_DEV === "1" ? "dev" : process.env.VITE_RELEASE_CHANNEL?.trim() || "";
 const configuredDesktopUpdateRepository =
@@ -282,8 +283,12 @@ function bootstrapTitlePlugin(): Plugin {
       const stageLabel = resolveWebAppStageLabel({
         hostedAppChannel: configuredHostedAppChannel,
         development,
+        dulli: dulliBuild,
       });
-      const title = formatAppDisplayName({ baseName: "T3 Code", stageLabel });
+      const title = formatAppDisplayName({
+        baseName: dulliBuild ? "T3 Dulli" : "T3 Code",
+        stageLabel,
+      });
       return html.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`);
     },
   };

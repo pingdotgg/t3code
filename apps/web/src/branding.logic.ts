@@ -20,9 +20,11 @@ export function resolveHostedAppChannelLabel(channel: string | null | undefined)
 export function resolveWebAppStageLabel(input: {
   readonly hostedAppChannel: string | null | undefined;
   readonly development: boolean;
+  readonly dulli?: boolean;
 }): string {
   return (
-    resolveHostedAppChannelLabel(input.hostedAppChannel) ?? (input.development ? "Dev" : "Beta")
+    resolveHostedAppChannelLabel(input.hostedAppChannel) ??
+    (input.development ? "Dev" : input.dulli ? "Latest" : "Beta")
   );
 }
 
