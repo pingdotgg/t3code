@@ -92,16 +92,17 @@ function escapeRegex(value: string): string {
 
 const utf8 = new TextEncoder();
 
-// OpenSSH's glob matches UTF-8 bytes, so `?` consumes one byte of a filename.
 function globBytes(value: string): string {
   return Array.from(utf8.encode(value), (byte) => String.fromCharCode(byte)).join("");
 }
 
-function globToRegExp(pattern: string): RegExp {
-  return new RegExp(
-    `^${escapeRegex(pattern).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
+// OpenSSH matches Include globs and Host patterns on UTF-8 bytes, so `?` consumes one byte.
+function globMatcher(pattern: string): (value: string) => boolean {
+  const regex = new RegExp(
+    `^${escapeRegex(globBytes(pattern)).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
     "u",
   );
+  return (value) => regex.test(globBytes(value));
 }
 
 function hasGlobWildcard(value: string): boolean {
@@ -126,7 +127,7 @@ const expandGlob = Effect.fnUntraced(function* (
   const directoryIsGlob = hasGlobWildcard(directoryPattern);
   const directories = directoryIsGlob ? yield* expandGlob(directoryPattern) : [directoryPattern];
 
-  const matcher = globToRegExp(globBytes(basePattern));
+  const matches = globMatcher(basePattern);
   const matchedPaths: string[] = [];
   for (const directory of directories) {
     if (!(yield* fs.exists(directory))) continue;
@@ -137,7 +138,7 @@ const expandGlob = Effect.fnUntraced(function* (
       : yield* fs.readDirectory(directory);
     for (const entry of entries) {
       if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
-      if (!matcher.test(globBytes(entry))) {
+      if (!matches(entry)) {
         continue;
       }
       const entryPath = path.join(directory, entry);
@@ -165,7 +166,7 @@ function matchesHostPatterns(alias: string, patterns: ReadonlyArray<string>): bo
     const hostPattern = negated ? pattern.slice(1) : pattern;
     const matches =
       hostPattern === "*" ||
-      (hasSshPattern(hostPattern) ? globToRegExp(hostPattern).test(alias) : hostPattern === alias);
+      (hasSshPattern(hostPattern) ? globMatcher(hostPattern)(alias) : hostPattern === alias);
     if (!matches) continue;
     if (negated) return false;
     matched = true;
