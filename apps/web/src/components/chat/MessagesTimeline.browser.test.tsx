@@ -1451,7 +1451,7 @@ const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
 describe("MessagesTimeline agent messages", () => {
-  it("folds a message from another agent into a one-line preview", async () => {
+  it("folds a message from another agent into a work-log row", async () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
@@ -1474,31 +1474,56 @@ describe("MessagesTimeline agent messages", () => {
       { onOpenThread },
     );
     const row = screen.button(/^Agent/);
-    expect(row.textContent).toContain("Review finished");
-    expect(row.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.text()).not.toContain("drops the index");
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(row.textContent).toContain("Review finished");
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.text()).not.toContain("drops the index");
+      expect(row.contains(screen.button("Open thread"))).toBe(false);
+    });
+
+    await click(screen.button("Open thread"));
+    await vi.waitFor(() => {
+      expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+    });
 
     await click(row);
-    expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+    await vi.waitFor(() => {
+      expect(screen.text()).toContain("The migration drops the index before backfilling it.");
+      expect(row.querySelector("[data-user-message-body]")).toBeNull();
+    });
     await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID);
+    await vi.waitFor(() =>
+      expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID, ENVIRONMENT_ID),
+    );
 
     await click(screen.button(/^Agent/));
-    expect(screen.text()).not.toContain("drops the index");
+    await vi.waitFor(() => expect(screen.text()).not.toContain("drops the index"));
 
     // The linked sender shows the title it sent, and its thread cannot be opened from here.
-    await click(screen.button(/^Release lead/));
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+    const linkedRow = screen.button(/^Release lead/);
+    await click(linkedRow);
+    await vi.waitFor(() =>
+      expect(
+        linkedRow.closest('[data-user-message-attribution="agent"]')?.querySelectorAll("button"),
+      ).toHaveLength(1),
+    );
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("folds a message sent by T3 Code into a work-log row", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
     ]);
-    expect(screen.buttons(/^Agent/)).toHaveLength(0);
-    expect(screen.text()).toContain("drops the index");
+    const row = screen.button(/^T3 Code/);
+    await vi.waitFor(() => {
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.text()).not.toContain("drops the index");
+      expect(screen.buttons("Open thread")).toHaveLength(0);
+    });
+
+    await click(row);
+    await vi.waitFor(() => expect(screen.text()).toContain("drops the index"));
   });
 
   it("reveals a find match inside a folded agent message", async () => {
@@ -1515,12 +1540,18 @@ describe("MessagesTimeline agent messages", () => {
     await vi.waitFor(() =>
       expect(screen.button(/^Agent/).getAttribute("aria-expanded")).toBe("true"),
     );
-    const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
-    const body = screen.container.querySelector("[data-user-message-body]")!;
-    expect(range.getBoundingClientRect().height).toBeGreaterThan(0);
-    expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
-      body.getBoundingClientRect().bottom,
-    );
+    await vi.waitFor(() => {
+      const { range } = collectThreadFindRanges(screen.container, "drops the index")[0]!;
+      const body = screen.container.querySelector("[data-user-message-body]")!;
+      const details = body.closest(".cursor-auto")!;
+      expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        details.getBoundingClientRect().bottom,
+      );
+      expect(range.getBoundingClientRect().height).toBeGreaterThan(0);
+      expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        body.getBoundingClientRect().bottom,
+      );
+    });
   });
 });
 
