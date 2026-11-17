@@ -264,7 +264,8 @@ describe("CommandPalette open intents", () => {
     openCommandPalette({ open: "new-thread-in" });
     await userEvent.fill(page.getByPlaceholder("Search..."), "li");
     await expect.element(page.getByRole("option", { name: /server/ })).not.toBeInTheDocument();
-    await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent("Ctrl+1");
+    // The redesign draws each key of the shortcut as its own badge, without the "+".
+    await expect.element(page.getByRole("option", { name: /lima/ })).toMatchTextContent(/Ctrl1$/);
     await userEvent.keyboard("{Control>}1{/Control}");
 
     await vi.waitFor(() =>
