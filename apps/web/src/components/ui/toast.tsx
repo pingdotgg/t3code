@@ -725,12 +725,16 @@ function AnchoredToasts() {
   const activeThreadRef = useActiveThreadRefFromRoute();
 
   return (
-    <Toast.Portal data-slot="toast-portal-anchored">
+    // Chromium exposes clickable or focusable empty divs, which NVDA browse mode reads as blank lines.
+    // React marks portal containers and onClick elements clickable; onClickCapture is delegated only.
+    <Toast.Portal data-slot="toast-portal-anchored" role="none">
       <Toast.Viewport
         aria-label={undefined}
         className="outline-none"
         data-slot="toast-viewport-anchored"
+        render={({ onClick, ...props }) => <div {...props} onClickCapture={onClick} />}
         role={undefined}
+        tabIndex={toasts.length > 0 ? -1 : undefined}
       >
         {toasts
           .filter((toast) => shouldRenderThreadScopedToast(toast.data, activeThreadRef))
