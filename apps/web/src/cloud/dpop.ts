@@ -1,15 +1,11 @@
-import {
-  computeDpopAccessTokenHash,
-  computeDpopJwkThumbprint,
-  DpopPublicJwk,
-} from "@t3tools/shared/dpop";
+import { DpopProof } from "@t3tools/client-runtime/relay";
+import { computeDpopJwkThumbprint, DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { importJWK, SignJWT, type JWK } from "jose";
 
 export interface BrowserDpopKey {
   readonly privateKey: CryptoKey;
@@ -17,10 +13,12 @@ export interface BrowserDpopKey {
   readonly thumbprint: string;
 }
 
-export class BrowserDpopError extends Data.TaggedError("BrowserDpopError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class BrowserDpopError extends Schema.TaggedError<BrowserDpopError>()("BrowserDpopError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const isBrowserDpopError = Schema.is(BrowserDpopError);
 
 const DPOP_DATABASE_NAME = "t3code:cloud-auth";
 const DPOP_DATABASE_VERSION = 1;
@@ -28,7 +26,9 @@ const DPOP_KEY_STORE_NAME = "keys";
 const DPOP_KEY_ID = "relay-dpop-proof-key";
 const decodeDpopPublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
 
-export const layer = Layer.mergeAll(SecureRandom.layerWebCrypto, Digest.layerWebCrypto);
+export const layer = Layer.mergeAll(Digest.layerWebCrypto, Signature.layerWebCrypto).pipe(
+  Layer.provideMerge(SecureRandom.layerWebCrypto),
+);
 
 function dpopError(message: string, cause?: unknown) {
   return new BrowserDpopError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -51,7 +51,7 @@ function openDpopDatabase(): Effect.Effect<IDBDatabase, BrowserDpopError> {
   });
 }
 
-export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
+function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.succeed(null);
   }
@@ -74,9 +74,7 @@ export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null,
   );
 }
 
-export function writeStoredBrowserDpopKey(
-  key: BrowserDpopKey,
-): Effect.Effect<void, BrowserDpopError> {
+function writeStoredBrowserDpopKey(key: BrowserDpopKey): Effect.Effect<void, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.void;
   }
@@ -97,7 +95,7 @@ export function writeStoredBrowserDpopKey(
   );
 }
 
-export const generateBrowserDpopKey = Effect.gen(function* () {
+const generateBrowserDpopKey = Effect.gen(function* () {
   const generated = yield* Effect.tryPromise({
     try: () =>
       crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
@@ -116,13 +114,14 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
   }).pipe(
     Effect.flatMap((jwk) => decodeDpopPublicJwk(jwk)),
     Effect.mapError((cause) =>
-      cause instanceof BrowserDpopError
-        ? cause
-        : dpopError("Generated DPoP public key is invalid.", cause),
+      isBrowserDpopError(cause) ? cause : dpopError("Generated DPoP public key is invalid.", cause),
     ),
   );
   const privateKey = yield* Effect.tryPromise({
-    try: () => importJWK(privateJwk as JWK, "ES256", { extractable: false }) as Promise<CryptoKey>,
+    try: () =>
+      crypto.subtle.importKey("jwk", privateJwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
+        "sign",
+      ]),
     catch: (cause) => dpopError("Could not import DPoP private key.", cause),
   });
   return {
@@ -132,39 +131,26 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
   };
 });
 
-export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(function* (input: {
-  readonly method: string;
-  readonly url: string;
-  readonly accessToken?: string;
-  readonly proofKey: BrowserDpopKey;
-}): Effect.fn.Return<
-  { readonly proof: string; readonly thumbprint: string },
-  BrowserDpopError,
-  SecureRandom.SecureRandom
-> {
-  const normalizedUrl = yield* Effect.try({
-    try: () => new URL(input.url),
-    catch: (cause) => dpopError("Could not normalize DPoP proof URL.", cause),
-  });
-  normalizedUrl.search = "";
-  normalizedUrl.hash = "";
-  const jti = yield* SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4()));
-  const proof = yield* Effect.tryPromise({
-    try: () =>
-      new SignJWT({
-        htm: input.method.toUpperCase(),
-        htu: normalizedUrl.toString(),
-        jti,
-        ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
-      })
-        .setProtectedHeader({
-          typ: "dpop+jwt",
-          alg: "ES256",
-          jwk: input.proofKey.publicJwk,
-        })
-        .setIssuedAt()
-        .sign(input.proofKey.privateKey),
-    catch: (cause) => dpopError("Could not sign DPoP proof.", cause),
-  });
-  return { proof, thumbprint: input.proofKey.thumbprint };
+/** The stored key, or a new one persisted on first use, as a DPoP proof key. */
+export const loadOrCreateProofKey = Effect.fn("dpop.loadOrCreateProofKey")(function* () {
+  const signature = yield* Signature.Signature;
+  const stored = yield* readStoredBrowserDpopKey();
+  const browserKey = stored ?? (yield* generateBrowserDpopKey);
+  if (stored === null) yield* writeStoredBrowserDpopKey(browserKey);
+  const privateKey = yield* Signature.privateKeyFromCryptoKey(
+    Signature.ecdsaP256,
+    browserKey.privateKey,
+  ).pipe(Effect.mapError((cause) => dpopError("Could not load DPoP proof key.", cause)));
+  return {
+    publicJwk: browserKey.publicJwk,
+    sign: (signingInput) =>
+      signature
+        .sign(privateKey, signingInput)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DpopProof.DpopProofError({ message: "Could not sign DPoP proof.", cause }),
+          ),
+        ),
+  } satisfies DpopProof.DpopProofKey;
 });

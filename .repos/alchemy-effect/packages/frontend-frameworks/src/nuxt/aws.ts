@@ -42,8 +42,7 @@ export const NITRO_PRESET = "aws-lambda";
  * export { handler } from "nitropack/presets/aws-lambda/runtime/aws-lambda-streaming";
  * ```
  */
-export const NITRO_HANDLER_SPECIFIER =
-  "nitropack/presets/aws-lambda/runtime/aws-lambda-streaming";
+export const NITRO_HANDLER_SPECIFIER = "nitropack/presets/aws-lambda/runtime/aws-lambda-streaming";
 
 /** AWS-specific knobs carried on the shared {@link NuxtTargetConfig}. */
 export interface NuxtAwsTargetConfig extends NuxtTargetConfig {
@@ -78,8 +77,7 @@ const makeAwsAdapterTarget = (config: NuxtAwsTargetConfig = {}): NuxtTarget =>
     nitroPreset: NITRO_PRESET,
     configureNitro: (nitroConfig, _context) => {
       const awsLambda =
-        nitroConfig.awsLambda !== null &&
-        typeof nitroConfig.awsLambda === "object"
+        nitroConfig.awsLambda !== null && typeof nitroConfig.awsLambda === "object"
           ? (nitroConfig.awsLambda as Record<string, unknown>)
           : {};
       nitroConfig.awsLambda = {
@@ -127,14 +125,13 @@ export const buildInChild = (config: NuxtAwsBuildChildConfig) =>
  * Create the AWS Lambda {@link NuxtTarget}. See the module doc for the
  * seams.
  */
-export const makeAwsTarget = (
-  config: NuxtAwsTargetConfig = {},
-): NuxtTarget => ({
+export const makeAwsTarget = (config: NuxtAwsTargetConfig = {}): NuxtTarget => ({
   ...makeAwsAdapterTarget(config),
   build: (context) =>
     runBuildChild({
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "nuxt",
       config: {
         rootDir: context.root,

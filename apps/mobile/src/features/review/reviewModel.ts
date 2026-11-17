@@ -56,6 +56,11 @@ export interface ReviewRenderableFile {
   readonly id: string;
   readonly cacheKey: string;
   readonly notice?: string;
+  readonly noticeTone?: "warning";
+  /** The notice row reports taps, as for loading a withheld file's diff. */
+  readonly noticeActionable?: boolean;
+  /** The host left out this file's hunks as too large; it can be loaded on its own. */
+  readonly withheld?: boolean;
   readonly path: string;
   readonly previousPath: string | null;
   readonly changeType: ChangeTypes;
@@ -609,7 +614,9 @@ export function buildReviewParsedDiff(
   try {
     const cacheKey = buildPatchCacheKey(text, cacheScope);
     const patchId = getReviewPatchId(cacheKey);
-    const parsedPatches = runDiffParserSilently(() => parsePatchFiles(text, cacheKey));
+    const parsedPatches = runDiffParserSilently(() =>
+      parsePatchFiles(text, { cacheKeyPrefix: cacheKey }),
+    );
     const rawFiles = new Map<string, string | null>();
     if (!truncated) {
       for (const rawFile of text.split(/(?=^diff --git )/m)) {

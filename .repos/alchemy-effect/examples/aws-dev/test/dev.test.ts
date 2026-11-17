@@ -3,7 +3,7 @@
  * every local binding over HTTP against the floci emulator.
  *
  * This is a different code path from the `Test.make({ dev: true })` harness
- * suites under packages/alchemy/test/AWS — the harness mirrors the RPC
+ * suites under packages/integration-tests/test/AWS — the harness mirrors the RPC
  * sidecar topology, but only this test covers the CLI itself: arg parsing,
  * the `bin/exec` child under `--watch`, the `ALCHEMY_RPC_SPAWNER_URL`
  * handshake, and provider sidecars whose lifetime is tied to the CLI
@@ -35,10 +35,9 @@
  *                          the new marker; restoring it must swap back
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 
 const root = path.resolve(import.meta.dirname, "..");
 const STAGE = "dev-cli-test";
@@ -63,31 +62,27 @@ const cli = new DevCli({
 const markerPath = path.join(root, "src", "marker.ts");
 const markerSource = fs.readFileSync(markerPath, "utf8");
 
-// The whole suite needs docker (floci runs as a container).
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 afterAll(async () => {
   // Always leave the repo tree clean, even on a mid-reload failure.
   fs.writeFileSync(markerPath, markerSource);
 
   await cli.stop();
-  if (!process.env.NO_DESTROY && dockerAvailable) {
+  if (!process.env.NO_DESTROY) {
     cli.destroy();
   }
 }, 180_000);
 
-test.skipIf(!dockerAvailable)(
+test(
   "alchemy dev serves every local AWS binding end-to-end with hot reload",
   async () => {
     cli.start();
 
     // The first dev deploy may pull the floci image, provision the local
     // data plane, and package the function before printing stack outputs.
-    const api = await cli.pollUntil(
-      "api url in stack outputs",
-      () => cli.outputUrl("api"),
-      { tries: 300, delayMs: 1000 },
-    );
+    const api = await cli.pollUntil("api url in stack outputs", () => cli.outputUrl("api"), {
+      tries: 300,
+      delayMs: 1000,
+    });
 
     // Dev identity: the function URL is served locally, not by AWS
     // (e.g. http://<id>.lambda-url.us-east-1.localhost:<port>/). The port
@@ -100,9 +95,8 @@ test.skipIf(!dockerAvailable)(
     // CLI's exec process and put/get an object through the S3 bindings.
     // The dummy account id proves the calls hit the emulator, not real
     // AWS; the roundtripped body proves the put actually landed.
-    const seedAccount = await cli.pollUntil(
-      "seedAccount in stack outputs",
-      () => cli.outputValue("seedAccount"),
+    const seedAccount = await cli.pollUntil("seedAccount in stack outputs", () =>
+      cli.outputValue("seedAccount"),
     );
     expect(seedAccount).toBe("000000000000");
     const seedText = await cli.pollUntil("seedText in stack outputs", () =>
@@ -141,9 +135,7 @@ test.skipIf(!dockerAvailable)(
     const received = await cli.pollUntil(
       "queue message to be consumed",
       async () => {
-        const res = await fetch(
-          new URL(`/queue/messages?id=${message.id}`, api),
-        );
+        const res = await fetch(new URL(`/queue/messages?id=${message.id}`, api));
         if (!res.ok) return undefined;
         const { body } = (await res.json()) as { body: string | null };
         return body ?? undefined;
@@ -166,9 +158,7 @@ test.skipIf(!dockerAvailable)(
     const delivered = await cli.pollUntil(
       "topic notification to be consumed",
       async () => {
-        const res = await fetch(
-          new URL(`/topic/messages?id=${notification.id}`, api),
-        );
+        const res = await fetch(new URL(`/topic/messages?id=${notification.id}`, api));
         if (!res.ok) return undefined;
         const { body } = (await res.json()) as { body: string | null };
         return body ?? undefined;
@@ -201,10 +191,7 @@ test.skipIf(!dockerAvailable)(
     // ── HOT RELOAD: rewrite src/marker.ts with the CLI still running. The
     // `--watch` exec child re-runs, the dev provider hot-swaps the function
     // code in floci, and the SAME url serves the new marker — no deploy ──
-    fs.writeFileSync(
-      markerPath,
-      markerSource.replace("aws-dev-marker-v1", "aws-dev-marker-v2"),
-    );
+    fs.writeFileSync(markerPath, markerSource.replace("aws-dev-marker-v1", "aws-dev-marker-v2"));
     await cli.pollUntil(
       "hot-swapped marker v2",
       async () => {

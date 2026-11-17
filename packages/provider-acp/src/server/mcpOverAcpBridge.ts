@@ -1,5 +1,7 @@
-// @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalJsonInEffect:off
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
@@ -23,15 +25,20 @@ interface Connection {
   nextRequestId: number;
 }
 
-export class AcpMcpOverAcpError extends Error {
-  readonly _tag = "AcpMcpOverAcpError";
-  override readonly name = "AcpMcpOverAcpError";
-}
+export class AcpMcpOverAcpError extends Schema.TaggedError<AcpMcpOverAcpError>()(
+  "AcpMcpOverAcpError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const isAcpMcpOverAcpError = Schema.is(AcpMcpOverAcpError);
 
 const bridgeError = (cause: unknown): AcpMcpOverAcpError =>
-  cause instanceof AcpMcpOverAcpError
+  isAcpMcpOverAcpError(cause)
     ? cause
-    : new AcpMcpOverAcpError(cause instanceof Error ? cause.message : String(cause), { cause });
+    : new AcpMcpOverAcpError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      });
 
 const asEnvelope = (value: unknown): JsonRpcEnvelope | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -75,6 +82,8 @@ export interface AcpMcpOverAcpBridge {
   readonly disconnect: (
     request: AcpSchema.DisconnectMcpRequest,
   ) => Effect.Effect<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError>;
+  /** Fails every call in flight, so Stop releases their HTTP responses. */
+  readonly stopCalls: Effect.Effect<void>;
   readonly dispose: Effect.Effect<void>;
 }
 
@@ -83,12 +92,17 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
 ): Effect.fn.Return<AcpMcpOverAcpBridge> {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const connections = yield* Effect.sync(() => new Map<string, Connection>());
+  let callsStopped = yield* Deferred.make<void>();
 
   const connectionFor = (connectionId: string): Effect.Effect<Connection, AcpMcpOverAcpError> =>
     Effect.suspend(() => {
       const connection = connections.get(connectionId);
       return connection === undefined
-        ? Effect.fail(new AcpMcpOverAcpError(`Unknown MCP-over-ACP connection "${connectionId}".`))
+        ? Effect.fail(
+            new AcpMcpOverAcpError({
+              message: `Unknown MCP-over-ACP connection "${connectionId}".`,
+            }),
+          )
         : Effect.succeed(connection);
     });
 
@@ -98,7 +112,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       connection.protocolVersion === null ? connection.mutex.withPermits(1)(effect) : effect,
     );
 
-  const send = (
+  const sendNow = (
     connection: Connection,
     message: unknown,
   ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
@@ -107,7 +121,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       Effect.gen(function* () {
         const body = JSON.stringify(message);
         if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
-          return yield* Effect.fail(new AcpMcpOverAcpError("MCP-over-ACP message exceeds 8 MiB."));
+          return yield* new AcpMcpOverAcpError({ message: "MCP-over-ACP message exceeds 8 MiB." });
         }
         const response = yield* Effect.tryPromise({
           try: (signal) =>
@@ -134,9 +148,9 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
           yield* Effect.promise(
             () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
           );
-          return yield* Effect.fail(
-            new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
-          );
+          return yield* new AcpMcpOverAcpError({
+            message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
+          });
         }
         const payloads = [...(yield* Stream.runCollect(responsePayloads(response, bridgeError)))];
         for (const payload of payloads) {
@@ -146,6 +160,21 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       }).pipe(Effect.mapError(bridgeError)),
     );
 
+  const send = (
+    connection: Connection,
+    message: unknown,
+  ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
+    Effect.suspend(() =>
+      Effect.raceFirst(
+        sendNow(connection, message),
+        Deferred.await(callsStopped).pipe(
+          Effect.andThen(
+            Effect.fail(new AcpMcpOverAcpError({ message: "The MCP call was stopped." })),
+          ),
+        ),
+      ),
+    );
+
   const disconnect = Effect.fn("mcpOverAcpBridge.disconnect")(function* (
     request: AcpSchema.DisconnectMcpRequest,
   ): Effect.fn.Return<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError> {
@@ -153,30 +182,33 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     connections.delete(request.connectionId);
     const sessionId = connection.sessionId;
     if (sessionId !== null) {
-      const response = yield* Effect.tryPromise({
-        try: (signal) =>
-          fetchImplementation(options.endpoint, {
-            method: "DELETE",
-            signal,
-            headers: {
-              authorization: options.authorization,
-              "mcp-session-id": sessionId,
-              ...(connection.protocolVersion === null
-                ? {}
-                : { "mcp-protocol-version": connection.protocolVersion }),
-            },
-          }),
-        catch: bridgeError,
-      });
-      if (!response.ok && response.status !== 404) {
-        return yield* Effect.fail(
-          new AcpMcpOverAcpError(
-            `T3 Code MCP endpoint rejected disconnect with HTTP ${response.status}.`,
-          ),
+      yield* Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: (signal) =>
+            fetchImplementation(options.endpoint, {
+              method: "DELETE",
+              signal,
+              headers: {
+                authorization: options.authorization,
+                "mcp-session-id": sessionId,
+                ...(connection.protocolVersion === null
+                  ? {}
+                  : { "mcp-protocol-version": connection.protocolVersion }),
+              },
+            }),
+          catch: bridgeError,
+        });
+        if (!response.ok && response.status !== 404) {
+          return yield* new AcpMcpOverAcpError({
+            message: `T3 Code MCP endpoint rejected disconnect with HTTP ${response.status}.`,
+          });
+        }
+        yield* Effect.promise(
+          () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
         );
-      }
-      yield* Effect.promise(
-        () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+      }).pipe(
+        // Restore a session that failed to close, so a retry or dispose can close it.
+        Effect.onError(() => Effect.sync(() => connections.set(request.connectionId, connection))),
       );
     }
     return {};
@@ -185,12 +217,12 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   return {
     connect: Effect.fn("mcpOverAcpBridge.connect")(function* (request) {
       if (request.serverId !== "t3-code") {
-        return yield* Effect.fail(
-          new AcpMcpOverAcpError(`Unknown ACP MCP server "${request.serverId}".`),
-        );
+        return yield* new AcpMcpOverAcpError({
+          message: `Unknown ACP MCP server "${request.serverId}".`,
+        });
       }
       if (connections.size >= MAX_CONNECTIONS) {
-        return yield* Effect.fail(new AcpMcpOverAcpError("Too many MCP-over-ACP connections."));
+        return yield* new AcpMcpOverAcpError({ message: "Too many MCP-over-ACP connections." });
       }
       const connectionId = yield* options.allocateConnectionId;
       connections.set(connectionId, {
@@ -213,12 +245,12 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       const response = payloads.find((payload) => asEnvelope(payload)?.id === id);
       const envelope = asEnvelope(response);
       if (envelope === null) {
-        return yield* Effect.fail(
-          new AcpMcpOverAcpError("MCP server did not return a matching response."),
-        );
+        return yield* new AcpMcpOverAcpError({
+          message: "MCP server did not return a matching response.",
+        });
       }
       if (envelope.error !== undefined) {
-        return yield* Effect.fail(new AcpMcpOverAcpError(errorMessage(envelope.error)));
+        return yield* new AcpMcpOverAcpError({ message: errorMessage(envelope.error) });
       }
       return (envelope.result ?? null) as AcpSchema.MessageMcpResponse;
     }),
@@ -231,6 +263,11 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       });
     }),
     disconnect,
+    stopCalls: Effect.suspend(() => {
+      const stopped = callsStopped;
+      callsStopped = Deferred.makeUnsafe();
+      return Deferred.succeed(stopped, undefined);
+    }).pipe(Effect.asVoid),
     dispose: Effect.suspend(() =>
       Effect.forEach(
         [...connections.keys()],

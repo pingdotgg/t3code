@@ -29,10 +29,10 @@ describe("linkReferenceAutolinks", () => {
   });
 
   it("leaves markdown unchanged for a host that links nothing", () => {
-    const gitlab = changeRequestReferenceAutolinker({
-      provider: "gitlab",
-      url: "https://gitlab.com/group/project/-/merge_requests/7",
+    const forgejo = changeRequestReferenceAutolinker({
+      provider: "forgejo",
+      url: "https://codeberg.org/acme/web/pulls/7",
     });
-    expect(linkReferenceAutolinks("Closes #123", gitlab)).toBe("Closes #123");
+    expect(linkReferenceAutolinks("Closes #123", forgejo)).toBe("Closes #123");
   });
 });

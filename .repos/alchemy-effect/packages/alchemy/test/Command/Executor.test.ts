@@ -1,23 +1,18 @@
-import type { ScopedPlanStatusSession } from "@/Report.ts";
-import * as Command from "@/Command";
-import * as Test from "@/Test/Alchemy";
-import { assert, expect } from "alchemy-test";
+import { assert, expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Redacted from "effect/Redacted";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Scope from "effect/Scope";
-import * as Clock from "effect/Clock";
-import * as Cause from "effect/Cause";
+import * as FileSystem from "effect/FileSystem";
 import * as ChildProcess from "effect/process/ChildProcess";
-import {
-  assertDead,
-  lifecycleFixture,
-  pgid,
-  pidAlive,
-} from "./fixture/lifecycle-support.ts";
+import * as Redacted from "effect/Redacted";
+import * as Scope from "effect/Scope";
 import * as pathe from "pathe";
+import * as Command from "@/Command";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
+import { assertDead, lifecycleFixture, pgid, pidAlive } from "./fixture/lifecycle-support.ts";
 const { test } = Test.make({ providers: Command.providers() });
 
 const session = (notes: Array<string>) =>
@@ -229,16 +224,12 @@ for (const mode of ["cooperative", "stubborn", "early-exit"]) {
         );
         yield* executor.spawn(fixture.props).pipe(Scope.provide(scope));
         const pids = yield* fixture.ready;
-        expect(yield* pgid(pids.leaf)).toBe(
-          mode === "cooperative" ? pids.leaf : pids.wrapper,
-        );
+        expect(yield* pgid(pids.leaf)).toBe(mode === "cooperative" ? pids.leaf : pids.wrapper);
         const started = yield* Clock.currentTimeMillis;
         yield* Scope.close(scope, Exit.void);
         expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(3500);
         expect(yield* fixture.has("wrapper.term")).toBe(true);
-        expect(yield* fixture.has("wrapper.clean")).toBe(
-          mode === "cooperative",
-        );
+        expect(yield* fixture.has("wrapper.clean")).toBe(mode === "cooperative");
         yield* assertDead(pids.wrapper);
         yield* assertDead(pids.leaf);
       }),
@@ -294,9 +285,7 @@ test.skipIf(process.platform === "win32")(
     Effect.gen(function* () {
       const fixture = yield* lifecycleFixture();
       const executor = yield* Command.CommandExecutor;
-      const fiber = yield* executor
-        .run(fixture.props, session([]))
-        .pipe(Effect.forkScoped);
+      const fiber = yield* executor.run(fixture.props, session([])).pipe(Effect.forkScoped);
       const pids = yield* fixture.ready;
       yield* Fiber.interrupt(fiber);
       const exit = yield* Fiber.await(fiber);
@@ -340,9 +329,7 @@ test.skipIf(process.platform === "win32")(
       forceKillAfter: "1 second",
     });
     const pids = yield* fixture.ready;
-    yield* child
-      .kill({ killSignal: "SIGTERM" })
-      .pipe(Effect.timeoutOption("200 millis"));
+    yield* child.kill({ killSignal: "SIGTERM" }).pipe(Effect.timeoutOption("200 millis"));
     expect(yield* fixture.has("wrapper.term")).toBe(true);
     expect(yield* pidAlive(pids.wrapper)).toBe(true);
     expect(yield* pidAlive(pids.leaf)).toBe(true);

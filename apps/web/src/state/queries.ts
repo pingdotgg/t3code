@@ -12,7 +12,11 @@ import {
   type ThreadSearchResultsState,
   type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import {
+  ProjectSearchContentsError,
+  PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH,
+  THREAD_SEARCH_QUERY_MAX_LENGTH,
+} from "@t3tools/contracts";
 import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
@@ -27,6 +31,7 @@ import type {
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -43,6 +48,8 @@ const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
+const PROJECT_CONTENT_SEARCH_SCAN_RETRY_MS = 30_000;
+const isProjectSearchContentsError = Schema.is(ProjectSearchContentsError);
 const THREAD_SEARCH_DEBOUNCE_MS = 120;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
@@ -53,6 +60,7 @@ const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> =
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make<ThreadSearchResultsState>({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  failed: false,
   rows: [],
 }).pipe(Atom.withLabel("web:thread-search:empty"));
 
@@ -107,6 +115,8 @@ export function useThreadSearch(
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly query: string;
   readonly isPending: boolean;
+  /** No environment could run the search for the current query, so an empty result is not "no matches". */
+  readonly failed: boolean;
 } {
   // A pasted wall of text searches by its start rather than failing the request.
   const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
@@ -125,6 +135,7 @@ export function useThreadSearch(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearch.results(searchKey),
   );
   const isPending = canSearch && (normalizedQuery !== debouncedQuery || result.isLoading);
+  const failed = settledQuery !== null && !result.isLoading && result.failed;
   // What fast environments returned shows without waiting for a slow one;
   // callers keep shown rows in place with `nextShownOrder`.
   const ready =
@@ -160,6 +171,7 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
+    failed,
   };
 }
 
@@ -313,7 +325,7 @@ export function useProjectPathSearch(
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            query: debouncedTarget.query.slice(0, 256).replace(/[\uD800-\uDBFF]$/, ""),
             limit,
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
@@ -344,7 +356,7 @@ export function useProjectPathSearch(
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
-  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+  return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT, { allowEmptyQuery: true });
 }
 
 interface ProjectContentSearchTarget {
@@ -364,13 +376,16 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   // Preserve query whitespace; trim only to detect blank input.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
+  const queryTooLong = query.length > PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
     canReadFiles &&
       target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
-      debouncedQuery.trim().length > 0
+      !queryTooLong &&
+      debouncedQuery.trim().length > 0 &&
+      debouncedQuery.length <= PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH
       ? projectContentSearch({
           environmentId: target.environmentId,
           input: {
@@ -384,6 +399,22 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
         })
       : null,
   );
+  // Only once the timeout has come back: a refresh restarts a search still in flight.
+  const settledScanTimeout =
+    !result.isPending &&
+    isProjectSearchContentsError(result.failure) &&
+    result.failure.failure === "search_index_scan_timed_out"
+      ? result.failure
+      : null;
+  const { refresh } = result;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retry timer: nothing tells the client when the server's first scan ends
+  useEffect(() => {
+    if (settledScanTimeout === null) return;
+    const timer = window.setTimeout(refresh, PROJECT_CONTENT_SEARCH_SCAN_RETRY_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [refresh, settledScanTimeout]);
 
   return {
     canReadFiles,
@@ -392,12 +423,14 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
     error:
       !hasTarget || isCheckingAccess
         ? null
-        : canReadFiles
-          ? result.error
-          : (fileAccess.error ?? "This connection cannot search host files."),
+        : !canReadFiles
+          ? (fileAccess.error ?? "This connection cannot search host files.")
+          : queryTooLong
+            ? `Search is limited to ${PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH} characters.`
+            : result.error,
     isPending:
       isCheckingAccess ||
-      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
+      (canReadFiles && hasQuery && !queryTooLong && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,

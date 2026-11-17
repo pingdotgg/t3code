@@ -8,15 +8,11 @@ import * as Redacted from "effect/Redacted";
 
 export const makeAuth = Effect.gen(function* () {
   const baseURL = yield* Config.String("AUTH_BASE_URL").pipe(Config.option);
-  const githubEnabled = yield* Config.Boolean("GITHUB_ENABLED").pipe(
-    Config.withDefault(false),
-  );
+  const githubEnabled = yield* Config.Boolean("GITHUB_ENABLED").pipe(Config.withDefault(false));
   const github = githubEnabled
     ? {
         clientId: yield* Config.String("GITHUB_CLIENT_ID"),
-        clientSecret: Redacted.value(
-          yield* Config.Redacted("GITHUB_CLIENT_SECRET"),
-        ),
+        clientSecret: Redacted.value(yield* Config.Redacted("GITHUB_CLIENT_SECRET")),
       }
     : undefined;
 
@@ -28,9 +24,6 @@ export const makeAuth = Effect.gen(function* () {
   });
 });
 
-export class Auth extends Context.Service<
-  Auth,
-  Effect.Success<typeof makeAuth>
->()("app/Auth") {
+export class Auth extends Context.Service<Auth, Effect.Success<typeof makeAuth>>()("app/Auth") {
   static readonly layer = Layer.effect(Auth, makeAuth);
 }

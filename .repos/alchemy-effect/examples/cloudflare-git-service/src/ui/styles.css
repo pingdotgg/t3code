@@ -245,8 +245,7 @@ body {
  * (consumed by the shadow root, not by Tailwind's @theme).
  */
 :root {
-  --diffs-font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --diffs-font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --diffs-font-size: 12px;
   --diffs-line-height: 1.5;
   --diffs-tab-size: 2;

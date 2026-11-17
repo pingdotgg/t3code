@@ -1,3 +1,4 @@
+import * as Fly from "@alchemy.run/fly";
 /**
  * A Fly.io Sprite that exercises the Platform class form:
  *
@@ -7,7 +8,6 @@
  * `main` and runs it on the Sprite. Auth is FLY_API_TOKEN.
  */
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import Box from "./src/box.ts";
 

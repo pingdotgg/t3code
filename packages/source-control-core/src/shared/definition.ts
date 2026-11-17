@@ -9,7 +9,12 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import {
+  canonicalRepositoryPath,
+  normalizeGitRemoteUrl,
+  parseGitRemoteRepository,
+} from "@t3tools/shared/git";
+import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -24,6 +29,17 @@ export interface ChangeRequestLink {
   readonly repository: string;
   readonly number: number;
   readonly authority?: string;
+}
+
+/**
+ * An issue as a URL names it: the host it is served from, the container the tracker addresses
+ * it by, and its native key there. Written like a project's own binding, lower case, because
+ * links are matched against those.
+ */
+export interface IssueLink {
+  readonly host: string;
+  readonly scope: string;
+  readonly key: string;
 }
 
 export interface ParsedChangeRequestUrl extends ChangeRequestLink {
@@ -68,6 +84,7 @@ export type ChangeRequestHostIdentity =
   | {
       readonly canonicalKey?: string | undefined;
       readonly locator?: { readonly remoteUrl: string } | undefined;
+      readonly webUrl?: string | undefined;
     }
   | null
   | undefined;
@@ -257,10 +274,18 @@ export interface SourceControlDefinition {
   readonly parseCommitUrl?: (url: URL, known: boolean) => CommitLink | null;
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
+  /** Null when the URL is not one of this host's issues. Absent for a host with none. */
+  readonly parseIssueUrl?: (url: URL) => IssueLink | null;
   /**
-   * The change request URL a bare `#123` autolink might name, for hosts that write every
-   * reference through their issue route. Only a candidate: the caller must read it as a change
-   * request before treating it as one.
+   * The repository URL when `url` is a page inside one of this host's repositories. `known` is set
+   * when the caller already knows this host serves the URL's repository. Off a known host, return
+   * `url.href` when the path may already be a clone URL, so no rewrite happens.
+   */
+  readonly repositoryUrlFromPage?: (url: URL, known: boolean) => string | null;
+  /**
+   * The change request URL a `reference` autolink might name, such as a GitHub `#123` written
+   * through the issue route. Only a candidate: the caller must read it as a change request
+   * before treating it as one.
    */
   readonly changeRequestUrlFromReferenceAutolink: (url: URL) => string | null;
   /**
@@ -331,10 +356,14 @@ export interface SourceControlDefinition {
    */
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
-   * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * The container the project's issues live in, where that is not its repository: Azure DevOps
+   * keeps work items per project. Null when the repository cannot be placed.
+   */
+  readonly issueScope?: (identity: RepositorySelectorIdentity) => string | null;
+  /**
+   * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
+   * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
+   * Null when the key is not this host's. Persisted keys are built with it: output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -347,6 +376,15 @@ export interface SourceControlDefinition {
    * media itself, so it asks the server, whose driver for this host fetches it.
    */
   readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
+  /**
+   * A URL `mediaUrl` claims for the bytes of `path` at full commit `sha` in the repository at
+   * `repositoryUrl`. Null or absent when the host cannot serve one.
+   */
+  readonly rawFileUrl?: (input: {
+    readonly repositoryUrl: string;
+    readonly sha: string;
+    readonly path: string;
+  }) => string | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -364,7 +402,7 @@ export function parseCommitPath(url: URL, route: RegExp): CommitLink | null {
   return repository && sha && FULL_COMMIT_SHA.test(sha)
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         sha: sha.toLowerCase(),
         ...(url.port ? { authority: url.host.toLowerCase() } : {}),
       }
@@ -402,11 +440,34 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
   return repository && Number.isSafeInteger(number) && number > 0
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         number,
         repositoryUrl: `${url.origin}/${repository}`,
       }
     : null;
+}
+
+/** Reads an issue from `url` with `route`, whose groups are the scope and the issue number. */
+export function parseIssuePath(url: URL, route: RegExp): IssueLink | null {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const match = route.exec(url.pathname);
+  const scope = match?.[1];
+  const number = Number(match?.[2]);
+  return scope && Number.isSafeInteger(number) && number > 0
+    ? { host: url.hostname.toLowerCase(), scope: scope.toLowerCase(), key: String(number) }
+    : null;
+}
+
+/** Reads a repository page from `url` with `route`, whose first group is the repository path. */
+export function repositoryUrlFromPagePath(url: URL, route: RegExp): string | null {
+  const repository = route.exec(url.pathname)?.[1];
+  if (!repository) return null;
+  // Keeps the credentials and port a private clone relies on.
+  const repositoryUrl = new URL(url);
+  repositoryUrl.pathname = `/${repository}`;
+  repositoryUrl.search = "";
+  repositoryUrl.hash = "";
+  return repositoryUrl.href;
 }
 
 export function changeRequestUrlBelow(webUrl: string, route: string): string {
@@ -486,7 +547,7 @@ export function isChangeRequestInProjectRepository(
   const repository = projectRepositoryPath(identity);
   return (
     repository !== null &&
-    repository.toLowerCase() === link.repository.toLowerCase() &&
+    canonicalRepositoryPath(repository) === canonicalRepositoryPath(link.repository) &&
     isChangeRequestOnProjectHost(projectHost, identity, link)
   );
 }
@@ -498,7 +559,7 @@ export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) return null;
   let host: string;
-  const scpHost = SCP_REMOTE.exec(trimmed)?.[1];
+  const scpHost = SCP_REMOTE.exec(trimmed)?.[1] ?? userlessScpRemoteHost(trimmed);
   if (scpHost) {
     host = scpHost.toLowerCase();
   } else {
@@ -609,11 +670,17 @@ export interface SourceControlDefinitionRegistry {
   readonly findByPublicDomain: (hostname: string) => SourceControlDefinition | undefined;
   /** The first host, in registry order, that reads `url` as one of its change requests. */
   readonly parseChangeRequestUrl: (url: string) => ParsedChangeRequest | null;
+  /** The first host, in registry order, that reads `url` as one of its issues. */
+  readonly parseIssueUrl: (
+    url: string,
+  ) => { readonly definition: SourceControlDefinition; readonly link: IssueLink } | null;
   readonly parseCommitUrl: (url: string, kind?: SourceControlProviderKind) => ParsedCommit | null;
   readonly findByChangeRequestUrl: (url: string) => SourceControlDefinition | undefined;
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
   readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
+  /** The repository a page URL copied from a browser is in, such as a branch or file view. */
+  readonly repositoryUrlFromPage: (url: string) => string | null;
   /**
    * The host a remote is on, from the first definition in recognition order that claims it, or an
    * unknown host. Null when the remote names no host.
@@ -627,6 +694,8 @@ export interface SourceControlDefinitionRegistry {
   readonly repositorySelector: (
     identity: RepositorySelectorIdentity | null | undefined,
   ) => string | null;
+  /** Where the project's issues live: the host's `issueScope`, else its repository. */
+  readonly issueScope: (identity: RepositorySelectorIdentity | null | undefined) => string | null;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,
@@ -675,13 +744,27 @@ export function makeSourceControlDefinitionRegistry(
   }
   const claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
   const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
-  const repositoryKeyOwner = (key: string) => {
+  // Keys persisted before paths had one spelling still compare equal.
+  const canonicalKeyPath = (key: string) => {
+    const slash = key.indexOf("/");
+    return slash < 0
+      ? key
+      : `${key.slice(0, slash)}/${canonicalRepositoryPath(key.slice(slash + 1))}`;
+  };
+  const repositoryKeyOwner = (written: string) => {
+    const key = canonicalKeyPath(written);
     for (const definition of definitions) {
       const canonical = definition.canonicalRepositoryKey?.(key);
       if (canonical != null) return { definition, canonical };
     }
     return undefined;
   };
+  const remoteOwner = (remote: GitRemoteHost) =>
+    recognitionOrder.find((definition) => definition.recognizeRemote(remote) !== null);
+  const repositorySelector = (identity: RepositorySelectorIdentity | null | undefined) =>
+    identity?.provider === undefined
+      ? defaultRepositorySelector(identity)
+      : (byKind.get(identity.provider)?.repositorySelector ?? defaultRepositorySelector)(identity);
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
     if (url === null) return null;
@@ -709,6 +792,15 @@ export function makeSourceControlDefinitionRegistry(
       );
     },
     parseChangeRequestUrl,
+    parseIssueUrl: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      for (const definition of claimOrder) {
+        const link = definition.parseIssueUrl?.(url) ?? null;
+        if (link !== null) return { definition, link };
+      }
+      return null;
+    },
     parseCommitUrl: (value, kind) => {
       const url = httpUrl(value);
       if (url === null) return null;
@@ -743,6 +835,24 @@ export function makeSourceControlDefinitionRegistry(
       }
       return null;
     },
+    repositoryUrlFromPage: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      // A recognized host's paths are its own, so another host's any-host route never rewrites them.
+      const remote = parseGitRemoteHost(value);
+      const owner = remote === null ? undefined : remoteOwner(remote);
+      if (owner) return owner.repositoryUrlFromPage?.(url, true) ?? null;
+      // Elsewhere a path ending in `.git` is already a clone URL, whatever routes it contains.
+      if (url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
+      // On an unrecognized host, only rewrite when every route that matches agrees. A route that
+      // answers with the page itself says it may already be the clone URL.
+      const [repositoryUrl, ...others] = new Set(
+        claimOrder.flatMap((definition) => definition.repositoryUrlFromPage?.(url, false) ?? []),
+      );
+      return repositoryUrl !== undefined && repositoryUrl !== url.href && others.length === 0
+        ? repositoryUrl
+        : null;
+    },
     recognizeRemote: (remoteUrl) => {
       const remote = parseGitRemoteHost(remoteUrl);
       if (remote === null) return null;
@@ -754,21 +864,24 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      const written = parseGitRemoteRepository(remoteUrl, { keepGitSuffix: true });
+      if (written === null) return key;
       for (const definition of definitions) {
-        const spelled = definition.repositoryKeyFromRemote?.(key);
+        const spelled = definition.repositoryKeyFromRemote?.(`${written.host}/${written.path}`);
         if (spelled != null) return spelled;
       }
       return key;
     },
-    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key,
+    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? canonicalKeyPath(key),
     findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
-    repositorySelector: (identity) =>
-      identity?.provider === undefined
-        ? defaultRepositorySelector(identity)
-        : (byKind.get(identity.provider)?.repositorySelector ?? defaultRepositorySelector)(
-            identity,
-          ),
+    repositorySelector,
+    issueScope: (identity) => {
+      const issueScope =
+        identity?.provider === undefined ? undefined : byKind.get(identity.provider)?.issueScope;
+      return issueScope === undefined || identity == null
+        ? repositorySelector(identity)
+        : issueScope(identity);
+    },
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),

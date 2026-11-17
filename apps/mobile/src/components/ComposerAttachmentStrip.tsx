@@ -1,4 +1,4 @@
-import { FilePreviewGallery, useFilePreviewGallery } from "./FilePreviewGallery";
+import { FilePreviewGallery, useFilePreviewGallery } from "./ui/FilePreviewGallery";
 import { composerImageGallery } from "../lib/composerImageGallery";
 import { SymbolView } from "./ui/AppSymbol";
 import { imageMimeType } from "@t3tools/shared/image";
@@ -18,10 +18,11 @@ import {
   type DraftComposerImageAttachment,
 } from "../lib/composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "../lib/composerAttachmentFiles";
+import { rememberDraftImage } from "../lib/sentImageHandoff";
 import { VideoAttachmentTile } from "./VideoAttachmentTile";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { PresentationSource } from "./ui/NativePresentation";
-import type { FilePreviewSource } from "./FilePreviewModal";
+import type { FilePreviewSource } from "./ui/FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -161,6 +162,13 @@ function ComposerImageAttachment(
           style={style}
           className="bg-subtle"
           resizeMode="cover"
+          onLoad={({ nativeEvent: { source } }) => {
+            if (previewUri !== null)
+              rememberDraftImage(attachment.id, {
+                uri: previewUri,
+                aspectRatio: source.width / source.height,
+              });
+          }}
         />
       </Pressable>
     </PresentationSource>

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type EasDeviceHostConfig, ThreadId } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { type EasDeviceHostConfig, SecretProviderId, ThreadId } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -25,7 +26,7 @@ const APP_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
 const config = (overrides: Partial<EasDeviceHostConfig> = {}): EasDeviceHostConfig => ({
   kind: "eas",
   id: "eas",
-  label: "EAS Simulator",
+  label: "Expo Simulators",
   appId: APP_ID,
   accessToken: "expo-token",
   maxSessionMinutes: 25,
@@ -130,7 +131,15 @@ const fakeExpo = (
         if (options.rejectCreate)
           return HttpClientResponse.fromWeb(
             request,
-            Response.json({ errors: [{ message: "Not allowed" }] }),
+            Response.json({
+              errors: [
+                {
+                  message: "Device run sessions are not enabled for this account.",
+                  extensions: { errorType: "USER" },
+                },
+              ],
+              data: null,
+            }),
           );
       }
       if (operation === "T3StopEasSimulatorSession" && options.failStop?.()) {
@@ -138,6 +147,24 @@ const fakeExpo = (
       }
       if (operation === "T3ActiveEasSimulatorSessions" && options.failList?.()) {
         return HttpClientResponse.fromWeb(request, new Response("bad gateway", { status: 502 }));
+      }
+      // The account's feature gate is off, as for an Expo admin whom the create still admits.
+      if (body.query.includes("accountFeatureGates")) {
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            data: {
+              app: {
+                byId: {
+                  ownerAccount: {
+                    name: "pingdotgg",
+                    accountFeatureGates: { "device-run-sessions": false },
+                  },
+                },
+              },
+            },
+          }),
+        );
       }
       const sessionGate =
         operation === "T3EasSimulatorSession" ? options.sessionGate?.() : undefined;
@@ -147,73 +174,62 @@ const fakeExpo = (
         yield* Deferred.await(sessionGate.release);
       }
       const data =
-        operation === "T3EasSimulatorAvailability"
-          ? {
-              app: {
-                byId: {
-                  ownerAccount: {
-                    name: "pingdotgg",
-                    accountFeatureGates: { "device-run-sessions": true },
+        operation === "T3CreateEasSimulatorSession"
+          ? { deviceRunSession: { createDeviceRunSession: { id: `session-${++created}` } } }
+          : operation === "T3ActiveEasSimulatorSessions"
+            ? {
+                app: {
+                  byId: {
+                    deviceRunSessionsPaginated: {
+                      edges: [
+                        ...(options.omitCreatedFromActive
+                          ? []
+                          : [{ node: { id: "orphan", status: "NEW", name: createdName } }]),
+                        {
+                          node: {
+                            id: "someone-else",
+                            status: "IN_PROGRESS",
+                            name: "T3 Code · Expo Simulators · 000000",
+                          },
+                        },
+                        ...(options.active ?? []).map((node) => ({ node })),
+                        ...(options.activeIncludesCreated && created > 0
+                          ? [
+                              {
+                                node: {
+                                  id: `session-${created}`,
+                                  status: "STARTING",
+                                  name: createdName,
+                                },
+                              },
+                            ]
+                          : []),
+                      ],
+                    },
                   },
                 },
-              },
-            }
-          : operation === "T3CreateEasSimulatorSession"
-            ? { deviceRunSession: { createDeviceRunSession: { id: `session-${++created}` } } }
-            : operation === "T3ActiveEasSimulatorSessions"
+              }
+            : operation === "T3EasSimulatorSession"
               ? {
-                  app: {
+                  deviceRunSessions: {
                     byId: {
-                      deviceRunSessionsPaginated: {
-                        edges: [
-                          ...(options.omitCreatedFromActive
-                            ? []
-                            : [{ node: { id: "orphan", status: "NEW", name: createdName } }]),
-                          {
-                            node: {
-                              id: "someone-else",
-                              status: "IN_PROGRESS",
-                              name: "T3 Code · EAS Simulator · 000000",
-                            },
-                          },
-                          ...(options.active ?? []).map((node) => ({ node })),
-                          ...(options.activeIncludesCreated && created > 0
-                            ? [
-                                {
-                                  node: {
-                                    id: `session-${created}`,
-                                    status: "STARTING",
-                                    name: createdName,
-                                  },
-                                },
-                              ]
-                            : []),
-                        ],
+                      id: body.variables.id,
+                      status: options.status?.() ?? "IN_PROGRESS",
+                      remoteConfig: {
+                        __typename: "AgentDeviceRunSessionRemoteConfig",
+                        agentDeviceRemoteSessionUrl: "https://agent.test",
+                        agentDeviceRemoteSessionToken: "agent-token",
+                        webPreviewToken: "preview-token",
+                        previewApiUrl: "https://preview.test?token=preview-token",
                       },
                     },
                   },
                 }
-              : operation === "T3EasSimulatorSession"
-                ? {
-                    deviceRunSessions: {
-                      byId: {
-                        id: body.variables.id,
-                        status: options.status?.() ?? "IN_PROGRESS",
-                        remoteConfig: {
-                          __typename: "AgentDeviceRunSessionRemoteConfig",
-                          agentDeviceRemoteSessionUrl: "https://agent.test",
-                          agentDeviceRemoteSessionToken: "agent-token",
-                          webPreviewToken: "preview-token",
-                          previewApiUrl: "https://preview.test?token=preview-token",
-                        },
-                      },
-                    },
-                  }
-                : {
-                    deviceRunSession: {
-                      ensureDeviceRunSessionStopped: { id: body.variables.id, status: "STOPPED" },
-                    },
-                  };
+              : {
+                  deviceRunSession: {
+                    ensureDeviceRunSessionStopped: { id: body.variables.id, status: "STOPPED" },
+                  },
+                };
       return HttpClientResponse.fromWeb(request, Response.json({ data }));
     }),
   );
@@ -228,9 +244,25 @@ const fakeExpo = (
   return { http, named, stopped, allowPreview, allowCreate, releases, previews };
 };
 
+const makeSecretResolver = (values: Record<string, string> = {}) =>
+  Layer.succeed(SecretResolver.SecretResolver, {
+    label: (provider) => Effect.succeed(provider),
+    read: (references) =>
+      Effect.succeed(references.map((reference) => values[reference.reference])),
+    invalidate: () => Effect.void,
+  });
+
+const layerWith = (secrets: Layer.Layer<SecretResolver.SecretResolver>) =>
+  Layer.mergeAll(
+    ProcessRunner.layer,
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-eas-host-" }),
+    secrets,
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
 const layer = Layer.mergeAll(
   ProcessRunner.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-eas-host-" }),
+  makeSecretResolver(),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeHost = (
@@ -243,7 +275,7 @@ const makeHost = (
     Effect.provideService(Scope.Scope, scope),
   );
 
-describe("EAS Simulator host", () => {
+describe("Expo Simulators host", () => {
   it.effect("starts a bounded session and routes its stream and agent to that session", () =>
     Effect.gen(function* () {
       const expo = fakeExpo();
@@ -298,6 +330,65 @@ describe("EAS Simulator host", () => {
       ]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
+
+  it.effect("reads its token from the secret provider the setting names", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const source = { provider: SecretProviderId.make("homelab"), reference: "expo#token" };
+      const host = yield* makeHost(expo, config({ accessToken: source }), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerWith(makeSecretResolver({ "expo#token": "expo-token" }))),
+    ),
+  );
+
+  it.effect("fails instead of using another Expo login when its secret cannot be read", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const source = { provider: SecretProviderId.make("homelab"), reference: "expo#token" };
+      const host = yield* makeHost(expo, config({ accessToken: source }), yield* Scope.make()).pipe(
+        Effect.provideService(HostProcess.Environment, { EXPO_TOKEN: "expo-token" }),
+      );
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      const failure = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
+      expect(failure.message).toContain('secret provider "homelab"');
+      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("still stops its sessions when the secret becomes unreadable after they start", () => {
+    const readable = { value: true };
+    return Effect.gen(function* () {
+      const expo = fakeExpo();
+      const source = { provider: SecretProviderId.make("homelab"), reference: "expo#token" };
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(expo, config({ accessToken: source }), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
+
+      readable.value = false;
+      yield* ready.devices.shutdown({ ...catalogDevice!, id: "session-1" });
+      expect(expo.stopped()).toEqual(["session-1"]);
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerWith(
+          Layer.succeed(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            read: (references) =>
+              Effect.succeed(references.map(() => (readable.value ? "expo-token" : undefined))),
+            invalidate: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("runs an Android session through serve-emu beside an iOS one", () =>
     Effect.gen(function* () {
@@ -357,13 +448,13 @@ describe("EAS Simulator host", () => {
       yield* ready.devices.boot(catalogDevice!);
       const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
       expect(refused.message).toBe(
-        "EAS Simulator is unavailable: EAS Simulator is limited to 1 running session. Close one in the Device panel first.",
+        "Expo Simulators is unavailable: Expo Simulators is limited to 1 running session. Close one in the Device panel first.",
       );
       expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("tells concurrent sessions apart although EAS gives each the same UDID", () =>
+  it.effect("tells concurrent sessions apart although Expo gives each the same UDID", () =>
     Effect.gen(function* () {
       const expo = fakeExpo();
       const scope = yield* Scope.make();
@@ -459,6 +550,17 @@ describe("EAS Simulator host", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.effect("leaves admission to Expo's create although the account's gate is off", () =>
+    Effect.gen(function* () {
+      const expo = fakeExpo();
+      const host = yield* makeHost(expo, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [catalogDevice] = (yield* ready.devices.list).devices;
+      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
+      expect(expo.named("T3CreateEasSimulatorSession")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("stops the session a refused create made anyway", () =>
     Effect.gen(function* () {
       // Expo refuses the create but lists a session by its name.
@@ -467,7 +569,9 @@ describe("EAS Simulator host", () => {
       const ready = yield* host.ensureReady(() => Effect.void);
       const [catalogDevice] = (yield* ready.devices.list).devices;
       const failure = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(failure.message).toContain("Not allowed");
+      expect(failure.message).toBe(
+        "Expo Simulators is unavailable: Expo could not start a simulator session: Device run sessions are not enabled for this account.",
+      );
       expect(expo.stopped()).toEqual(["orphan"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
@@ -534,7 +638,7 @@ describe("EAS Simulator host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("asks for an EAS project before starting anything when none can be found", () =>
+  it.effect("asks for an Expo project before starting anything when none can be found", () =>
     Effect.gen(function* () {
       const expo = fakeExpo();
       const host = yield* makeHost(expo, config({ appId: undefined }), yield* Scope.make());

@@ -1,4 +1,4 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import Users from "./users.ts";
 
@@ -25,9 +25,7 @@ export default class Orders extends Fly.Service<Orders>()(
     return {
       list: () =>
         Effect.forEach(ORDERS, (order) =>
-          users
-            .get(order.userId)
-            .pipe(Effect.map((user) => ({ ...order, user }))),
+          users.get(order.userId).pipe(Effect.map((user) => ({ ...order, user }))),
         ),
     };
   }),

@@ -35,6 +35,14 @@
       "types": "./src/server/pullRequestChecks.ts",
       "import": "./src/server/pullRequestChecks.ts"
     },
+    "./server/IssueTracker": {
+      "types": "./src/server/IssueTracker.ts",
+      "import": "./src/server/IssueTracker.ts"
+    },
+    "./server/IssueTrackerHost": {
+      "types": "./src/server/IssueTrackerHost.ts",
+      "import": "./src/server/IssueTrackerHost.ts"
+    },
     "./server/PullRequestProvider": {
       "types": "./src/server/PullRequestProvider.ts",
       "import": "./src/server/PullRequestProvider.ts"
@@ -53,7 +61,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
