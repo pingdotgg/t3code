@@ -14003,9 +14003,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
-            const nativeThreadId = activeNativeThreadId(
-              providerThread.nativeThreadRef?.nativeId,
-            );
+            const nativeThreadId = activeNativeThreadId(providerThread.nativeThreadRef?.nativeId);
             if (nativeThreadId === undefined || nativeThreadId === null) {
               return false;
             }
@@ -14229,8 +14227,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !==
-                activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
+              live.nativeThreadId !== activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
             ) {
               return;
             }
@@ -14261,8 +14258,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !==
-                activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
+              live.nativeThreadId !== activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
             ) {
               return;
             }
@@ -14302,9 +14298,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(
             function* ({ providerThread, taskIds, awaited }) {
-              const nativeThreadId = activeNativeThreadId(
-                providerThread.nativeThreadRef?.nativeId,
-              );
+              const nativeThreadId = activeNativeThreadId(providerThread.nativeThreadRef?.nativeId);
               if (nativeThreadId == null) return { matched: [] };
               const roster = rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
