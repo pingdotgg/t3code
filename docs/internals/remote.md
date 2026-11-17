@@ -162,7 +162,7 @@ parameter would disclose it to the wrong origin.
 
 A desktop webview for another environment keeps `localhost` URLs and reaches the environment's
 loopback through `/api/preview/tunnel`, one WebSocket per TCP connection, on the same origin as
-every other request. That is why it works over any connection method. Three choices are easy to
+every other request. That is why it works over any connection method. Four choices are easy to
 undo by accident:
 
 - **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
@@ -176,6 +176,9 @@ undo by accident:
 - **Media tickets.** Desktop main opens the tunnel but holds no environment credentials. Media
   tickets are not DPoP-bound, so the renderer can hand one over. Main asks it for a tunnel URL per
   connection, which also makes the tunnel follow a route switch.
+- **Owner check, not auth.** Chromium can't authenticate to a SOCKS proxy, so any local process
+  can connect to the listener and ride this user's tunnel. On Linux the listener looks the client
+  up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet.
 - **System browser links** have no tunnel. They keep the private-network rewrite in
   [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 
