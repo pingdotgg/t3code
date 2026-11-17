@@ -114,15 +114,17 @@ export function threadSnoozeWakeLabel(
   return thread.snoozeUntilPullRequest ? "PR" : snoozeWakeLabel(thread.snoozedUntil, options);
 }
 
-/** Sentence form, completing "Snoozed, wakes in …" or "Snoozed until the PR updates". */
+/** A snoozed thread in a sentence, such as "Snoozed, 3h left" or "Snoozed until the PR updates". */
 export function threadSnoozeStatusLabel(
   thread: Pick<EnvironmentThreadShell, "snoozedUntil" | "snoozeUntilPullRequest">,
   options: { readonly now: string },
 ): string | undefined {
   if (thread.snoozedUntil == null) return undefined;
-  return thread.snoozeUntilPullRequest
-    ? `Snoozed ${PULL_REQUEST_SNOOZE_STATUS[thread.snoozeUntilPullRequest]}`
-    : `Snoozed, wakes in ${snoozeWakeLabel(thread.snoozedUntil, options)}`;
+  if (thread.snoozeUntilPullRequest) {
+    return `Snoozed ${PULL_REQUEST_SNOOZE_STATUS[thread.snoozeUntilPullRequest]}`;
+  }
+  const wake = snoozeWakeLabel(thread.snoozedUntil, options);
+  return wake === "now" ? "Snoozed" : `Snoozed, ${wake} left`;
 }
 
 function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) {
@@ -271,6 +273,8 @@ export function threadHasUnseenCompletion(
 ): boolean {
   const completedAt = thread.latestRun?.completedAt;
   if (!completedAt) return false;
+  const status = thread.latestRun?.status;
+  if (status === "interrupted" || status === "cancelled") return false;
   const completedAtMs = Date.parse(completedAt);
   if (Number.isNaN(completedAtMs)) return false;
   if (!thread.lastVisitedAt) return false;

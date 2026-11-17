@@ -418,6 +418,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   /** Set while the snooze also waits on this change to the thread's open pull requests. */
   snoozeUntilPullRequest: Schema.optional(PullRequestSnoozeTrigger),
   /** Absent from linked environments that predate it. */
+  pinned: Schema.optional(Schema.Boolean),
+  /** Absent from linked environments that predate it. */
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestratorMcpThreadBackgroundTask)),
@@ -494,6 +496,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   /** Set while the snooze also waits on this change to the thread's open pull requests. */
   snoozeUntilPullRequest: Schema.optional(PullRequestSnoozeTrigger),
+  /** Absent from linked environments that predate it. */
+  pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   blockedOnThreadWait: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
