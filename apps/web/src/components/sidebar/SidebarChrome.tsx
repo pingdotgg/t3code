@@ -223,7 +223,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               {pullRequestsSupported ? (
                 <SidebarUtilityItem
                   icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                  label="Pull Requests"
+                  label="Pull requests"
                   onClick={handlePullRequestsClick}
                 />
               ) : null}
