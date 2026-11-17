@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  formatDuration,
+  formatResetsIn,
   type LimitPace,
   limitsNotice,
   paceOf,
@@ -163,7 +163,7 @@ function LimitRow({
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
-              Resets in {formatDuration(resetsAt - now)} ·{" "}
+              {formatResetsIn(window, now)?.replace("resets in", "Resets in")} ·{" "}
               {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
             </span>
           ) : null}
