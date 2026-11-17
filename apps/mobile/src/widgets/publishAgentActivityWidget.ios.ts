@@ -6,19 +6,29 @@ import {
   type AgentActivityWidgetSource,
 } from "./agentActivityWidgetTimeline";
 
-let lastSource: AgentActivityWidgetSource | null = null;
+let last: { readonly source: AgentActivityWidgetSource; readonly publishedAt: number } | null =
+  null;
 
 export async function publishAgentActivityWidget(
   source: AgentActivityWidgetSource,
   resolve: MessageResolver = m,
 ) {
-  lastSource = source;
-  if (!requireOptionalNativeModule("ExpoWidgets")) return;
-  const { default: widget } = await import("./AgentActivityWidget");
-  widget.updateTimeline(agentActivityWidgetTimeline(source, Date.now(), resolve));
+  const publishedAt = Date.now();
+  last = { source, publishedAt };
+  await updateTimeline(source, publishedAt, resolve);
 }
 
-/** Re-renders the last published state, for a UI language switch. */
+/** Re-renders the last published state for a UI language switch, keeping its stale deadline. */
 export async function republishAgentActivityWidget(resolve: MessageResolver) {
-  if (lastSource !== null) await publishAgentActivityWidget(lastSource, resolve);
+  if (last !== null) await updateTimeline(last.source, last.publishedAt, resolve);
+}
+
+async function updateTimeline(
+  source: AgentActivityWidgetSource,
+  publishedAt: number,
+  resolve: MessageResolver,
+) {
+  if (!requireOptionalNativeModule("ExpoWidgets")) return;
+  const { default: widget } = await import("./AgentActivityWidget");
+  widget.updateTimeline(agentActivityWidgetTimeline(source, publishedAt, resolve));
 }
