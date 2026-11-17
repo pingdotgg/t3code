@@ -3086,12 +3086,14 @@ describe("v2 run and attempt history", () => {
       timelineEntries: ReadonlyArray<TimelineEntry>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
       latestRun?: typeof ended | typeof running,
+      revealedMessageId?: MessageId,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
         expandedRunIds: new Set([runId]),
         isWorking: latestRun !== undefined,
         ...(latestRun ? { latestRun } : {}),
+        ...(revealedMessageId ? { revealedMessageId } : {}),
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
@@ -3107,6 +3109,7 @@ describe("v2 run and attempt history", () => {
     ]);
     expect(rows([user, failed, final], "hideAll")).toEqual(["user", "final"]);
     expect(rows(turn, "zen")).toEqual(["user", "final"]);
+    expect(rows(turn, "zen", undefined, MessageId.make("step"))).toEqual(["user", "step", "final"]);
     const [steer, answer] = [
       message("steer", "user", 4, "steer"),
       message("answer", "assistant", 7),

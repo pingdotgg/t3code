@@ -201,6 +201,7 @@ import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
+import { hasPinnableTextSelection } from "../pinnedSelections";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
@@ -2722,6 +2723,7 @@ export default function ChatView(props: ChatViewProps) {
     previewOpen: previewPanelOpen,
     rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
+    textSelected: hasPinnableTextSelection(),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
     composerFocus:
       document.activeElement?.getAttribute("data-testid") === "composer-editor" &&

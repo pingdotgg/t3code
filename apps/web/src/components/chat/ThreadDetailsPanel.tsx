@@ -38,6 +38,7 @@ import { useProject, useServerConfigs } from "../../state/entities";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 import { cn } from "../../lib/utils";
 import { SlidersHorizontalIcon } from "lucide-react";
+import { PinnedSelectionsRow } from "./PinnedSelectionsSection";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -260,7 +261,19 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
                       />
                     ) : null}
+                    {props.isServerThread ? (
+                      <PinnedSelectionsRow threadRef={activeThreadRef} />
+                    ) : null}
                   </div>
+                </ThreadDetailsSection>
+              ) : props.isServerThread ? (
+                <ThreadDetailsSection
+                  headingId="thread-details-pins-heading"
+                  title="Pinned"
+                  showHeading={false}
+                  separated={density === "full"}
+                >
+                  <PinnedSelectionsRow threadRef={activeThreadRef} />
                 </ThreadDetailsSection>
               ) : null}
 

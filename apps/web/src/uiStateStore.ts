@@ -4,6 +4,15 @@ import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 
+import { randomUUID } from "./lib/utils";
+import {
+  insertPinnedSelection,
+  PINNED_SELECTIONS_VERSION,
+  pinnedSelectionsFromPersisted,
+  type PinnedSelection,
+  type PinnedSelectionDraft,
+} from "./pinnedSelections";
+
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -32,6 +41,8 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  pinnedSelectionsVersion?: number;
+  threadPinnedSelectionsById?: Record<string, readonly PinnedSelection[]>;
 }
 
 export interface UiProjectState {
@@ -43,6 +54,7 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  threadPinnedSelectionsById: Record<string, readonly PinnedSelection[]>;
 }
 
 export interface UiEndpointState {
@@ -62,6 +74,7 @@ const initialState: UiState = {
   sidebarProjectScopeKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadPinnedSelectionsById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
 };
@@ -145,6 +158,10 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    threadPinnedSelectionsById: pinnedSelectionsFromPersisted(
+      parsed.pinnedSelectionsVersion,
+      parsed.threadPinnedSelectionsById,
+    ),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -209,29 +226,51 @@ function sanitizePersistedThreadChangedFilesExpanded(
   return nextState;
 }
 
+function persistedPins(pinsByThread: UiThreadState["threadPinnedSelectionsById"]) {
+  const entries = Object.entries(pinsByThread)
+    .flatMap(([threadKey, pins]) => pins.map((pin) => ({ threadKey, pin })))
+    .sort((a, b) => b.pin.createdAt.localeCompare(a.pin.createdAt));
+  const result: UiThreadState["threadPinnedSelectionsById"] = {};
+  let remaining = 256_000;
+  for (const { threadKey, pin } of entries) {
+    remaining -= JSON.stringify([threadKey, pin]).length;
+    if (remaining < 0) break;
+    result[threadKey] = [pin, ...(result[threadKey] ?? [])];
+  }
+  return result;
+}
+
 export function persistState(state: UiState): void {
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.setItem(
-      PERSISTED_STATE_KEY,
-      JSON.stringify({
-        projectExpandedById: state.projectExpandedById,
-        projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
-        defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
-        // Older clients read only this field.
-        sidebarProjectScopeKey:
-          state.sidebarProjectScopeKeys.length === 1
-            ? (state.sidebarProjectScopeKeys[0] ?? null)
-            : null,
-        threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
-        threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
-        pullRequestMergeMethod: state.pullRequestMergeMethod,
-      } satisfies PersistedUiState),
-    );
+    const persisted = {
+      projectExpandedById: state.projectExpandedById,
+      projectOrder: state.projectOrder,
+      threadLastVisitedAtById: state.threadLastVisitedAtById,
+      defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+      sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
+      // Older clients read only this field.
+      sidebarProjectScopeKey:
+        state.sidebarProjectScopeKeys.length === 1
+          ? (state.sidebarProjectScopeKeys[0] ?? null)
+          : null,
+      threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
+      threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+      pinnedSelectionsVersion: PINNED_SELECTIONS_VERSION,
+      threadPinnedSelectionsById: persistedPins(state.threadPinnedSelectionsById),
+      pullRequestMergeMethod: state.pullRequestMergeMethod,
+    } satisfies PersistedUiState;
+    try {
+      window.localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(persisted));
+    } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
+      window.localStorage.setItem(
+        PERSISTED_STATE_KEY,
+        JSON.stringify({ ...persisted, threadPinnedSelectionsById: {} }),
+      );
+    }
     if (!legacyKeysCleanedUp) {
       legacyKeysCleanedUp = true;
       for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -426,6 +465,9 @@ interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  addPinnedSelection: (threadKey: string, draft: PinnedSelectionDraft) => PinnedSelection;
+  removePinnedSelection: (threadKey: string, pinId: string) => void;
+  clearPinnedSelections: (threadKey: string) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
@@ -437,7 +479,7 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -445,6 +487,34 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  addPinnedSelection: (threadKey, draft) => {
+    const current = get().threadPinnedSelectionsById[threadKey] ?? [];
+    const inserted = insertPinnedSelection(current, draft, randomUUID(), new Date().toISOString());
+    if (inserted.selections !== current) {
+      set({
+        threadPinnedSelectionsById: {
+          ...get().threadPinnedSelectionsById,
+          [threadKey]: inserted.selections,
+        },
+      });
+    }
+    return inserted.pin;
+  },
+  clearPinnedSelections: (threadKey) => {
+    if (!(threadKey in get().threadPinnedSelectionsById)) return;
+    const threadPinnedSelectionsById = { ...get().threadPinnedSelectionsById };
+    delete threadPinnedSelectionsById[threadKey];
+    set({ threadPinnedSelectionsById });
+  },
+  removePinnedSelection: (threadKey, pinId) => {
+    const current = get().threadPinnedSelectionsById[threadKey];
+    if (!current?.some((pin) => pin.id === pinId)) return;
+    const next = current.filter((pin) => pin.id !== pinId);
+    const threadPinnedSelectionsById = { ...get().threadPinnedSelectionsById };
+    if (next.length === 0) delete threadPinnedSelectionsById[threadKey];
+    else threadPinnedSelectionsById[threadKey] = next;
+    set({ threadPinnedSelectionsById });
+  },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKeys: (projectKeys) =>
