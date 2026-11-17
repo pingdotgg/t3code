@@ -1099,6 +1099,8 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   itemIdentityVersion: Schema.optional(Schema.Literal(2)),
   forkHeadMessageId: Schema.optional(TrimmedNonEmptyString),
+  // A fork whose source only the configured Claude binary can read; its first query forks it.
+  claudeForkSourceSessionId: Schema.optional(TrimmedNonEmptyString),
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),

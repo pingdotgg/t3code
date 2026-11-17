@@ -719,6 +719,60 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }).pipe(Effect.provide(realQueryRunner)),
   );
 
+  // A wrapper (a sandbox) keeps its sessions where the server cannot read them.
+  it.effect("forks a session only the configured binary can read through that binary", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-fork-wrapper-",
+      });
+      const forkThrough = (script: string) =>
+        Effect.gen(function* () {
+          const cli = fakeClaudeCli(script);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() =>
+              NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true }),
+            ),
+          );
+          const runner = yield* ClaudeAgentSdkQueryRunner;
+          const forked = yield* runner
+            .forkSession({
+              sessionId: FORK_SESSION_ID,
+              options: { upToMessageId: "aaaaaaaa-0000-4000-8000-000000000002" },
+              environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+              pathToClaudeCodeExecutable: cli,
+              threadId: ThreadId.make("thread-fork-wrapper"),
+              providerSessionId: ProviderSessionId.make("session-fork-wrapper"),
+            })
+            .pipe(Effect.exit);
+          const argvPath = NodePath.join(NodePath.dirname(cli), "argv");
+          return {
+            forked,
+            argv: NodeFS.existsSync(argvPath) ? NodeFS.readFileSync(argvPath, "utf8") : "",
+          };
+        });
+
+      const found = yield* forkThrough(
+        'printf "%s " "$@" > "$(dirname "$0")/argv"\ncat > /dev/null',
+      );
+      assert.isTrue(Exit.isSuccess(found.forked));
+      if (Exit.isSuccess(found.forked)) {
+        const { sessionId, throughBinary } = found.forked.value;
+        assert.isTrue(throughBinary);
+        assert.notEqual(sessionId, FORK_SESSION_ID);
+        assert.include(found.argv, `--resume=${FORK_SESSION_ID}`);
+        assert.include(found.argv, "--fork-session");
+        assert.include(found.argv, `--session-id=${sessionId}`);
+        assert.include(found.argv, "--resume-session-at=aaaaaaaa-0000-4000-8000-000000000002");
+      }
+
+      const missing = yield* forkThrough(
+        `printf '%s\\n' 'No conversation found with session ID: ${FORK_SESSION_ID}' >&2\nexit 1`,
+      );
+      assert.isTrue(Exit.isFailure(missing.forked));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(realQueryRunner, NodeServices.layer))),
+  );
+
   // What Claude Code writes when the session store behind --resume is gone.
   it.effect("names a resumed conversation Claude Code cannot find", () =>
     Effect.gen(function* () {
