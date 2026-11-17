@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  EnvironmentId,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -142,6 +143,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
+    acpMcpNode: string | undefined;
+    threadId: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
@@ -200,6 +203,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         geminiApiKey: env("GEMINI_API_KEY"),
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        acpMcpNode: env("T3_ACP_MCP_NODE"),
+        threadId: env("T3CODE_THREAD_ID"),
         handle,
       });
       return handle;
@@ -214,6 +219,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
       { name: "T3_ACP_REQUEST_LOG_PATH", value: requestLog },
+      { name: "T3_ACP_MCP_HTTP", value: "1" },
       { name: "GEMINI_API_KEY", value: "must-not-be-used" },
       { name: "google_api_key", value: "must-not-be-used" },
       { name: "GOOGLE_APPLICATION_CREDENTIALS", value: "/must-not-be-used.json" },
@@ -444,6 +450,44 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "gives the agent process the ACP MCP terminal fallback environment",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-mcp-env-" });
+        const threadId = ThreadId.make("thread-antigravity-mcp-env");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-antigravity-mcp"),
+          threadId,
+          providerSessionId: "mcp-session-antigravity",
+          providerInstanceId: h.instance.instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-antigravity-token",
+          browserToolsAvailable: false,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const session = yield* h.instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-mcp-env"),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+        // Antigravity runs shell commands itself (`terminal: false`), so they inherit this env.
+        const launch = h.launches.at(-1);
+        expect(launch?.threadId).toBe(threadId);
+        expect(launch?.acpMcpNode).toBeTruthy();
       }),
   );
 
