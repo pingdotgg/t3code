@@ -702,15 +702,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
+      // Drain the server's output so a full pipe cannot block it; its lines are not
+      // logged.
       yield* Effect.forkIn(
-        child.all.pipe(
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.runForEach((line) =>
-            Effect.logDebug("adb server output", { pid: Number(child.pid), output: line }),
-          ),
-          Effect.ignoreCause,
-        ),
+        child.all.pipe(Stream.decodeText(), Stream.runDrain, Effect.ignoreCause),
         scope,
       );
       const portTaken = Effect.map(
@@ -957,19 +952,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.gen(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
       const adbServerScope = yield* Ref.getAndSet(adbServerScopeRef, null);
-      // Hub cleanup waits for its exit unbounded; it must not strand the detached agent daemon.
+      // Hub cleanup waits for its exit unbounded; it must not strand the detached agent
+      // daemon, and the adb server closes beside it, not after the wait.
       yield* Effect.all(
         [
           stopHub(running?.hub).pipe(
             Effect.andThen(fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore)),
           ),
           stopAgentDeviceDaemon,
+          adbServerScope ? Scope.close(adbServerScope, Exit.void).pipe(Effect.ignore) : Effect.void,
         ],
         { concurrency: "unbounded", discard: true },
       );
-      if (adbServerScope) {
-        yield* Scope.close(adbServerScope, Exit.void).pipe(Effect.ignore);
-      }
     }),
   );
 
