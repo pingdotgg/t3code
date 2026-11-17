@@ -347,17 +347,26 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimePolicy,
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
-      const initialize = (yield* fileSystem.readFileString(requestLog))
+      const requests = (yield* fileSystem.readFileString(requestLog))
         .trim()
         .split("\n")
         .map(
           (line) =>
             JSON.parse(line) as {
               method?: string;
-              params?: { clientCapabilities?: { fs?: unknown }; clientInfo?: { name?: string } };
+              params?: {
+                clientCapabilities?: { fs?: unknown };
+                clientInfo?: { name?: string };
+                cwd?: string;
+                additionalDirectories?: ReadonlyArray<string>;
+              };
             },
-        )
-        .find((request) => request.method === "initialize");
+        );
+      const initialize = requests.find((request) => request.method === "initialize");
+      // agy runs shell commands in the lexicographically smallest workspace root, not in cwd.
+      const sessionNew = requests.find((request) => request.method === "session/new");
+      assert.equal(sessionNew?.params?.cwd, workspace);
+      assert.notInclude(sessionNew?.params?.additionalDirectories ?? [], host.paths.attachmentsDir);
       assert.deepEqual(initialize?.params?.clientCapabilities?.fs, {
         readTextFile: true,
         writeTextFile: false,
