@@ -1,7 +1,7 @@
 import {
   EnvironmentId,
   OrchestrationSearchThreadsInput,
-  ProjectId,
+  ScopedProjectRef,
   type OrchestrationThreadSearchMatch,
   type OrchestrationV2SearchThreadsInput,
   type OrchestrationV2SearchThreadsResult,
@@ -60,12 +60,11 @@ export interface ThreadSearchResultsState {
 }
 
 /**
- * How a search reaches environments whose shells omit older settled threads (others ignore it):
- * the caller's project scope and its names for environments, which its own ranking matches, and
- * whether to skip message search.
+ * The caller's project scope for message matches and older settled rows, its names for
+ * environments, which its own ranking matches, and whether to skip message search.
  */
 export const ThreadSearchScope = Schema.Struct({
-  projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
+  projectRefs: Schema.optionalKey(Schema.Array(ScopedProjectRef)),
   environmentLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   titlesOnly: Schema.optionalKey(Schema.Boolean),
 });
@@ -133,6 +132,10 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
       let isLoading = false;
 
       for (const environmentId of environmentIds) {
+        const projectIds = scope.projectRefs
+          ?.filter((ref) => ref.environmentId === environmentId)
+          .map((ref) => ref.projectId);
+        if (projectIds?.length === 0) continue;
         const before = options.olderSettledBefore
           ? get(options.olderSettledBefore(environmentId))
           : null;
@@ -141,11 +144,11 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         const result = get(
           options.getSearchAtom(environmentId, {
             query,
+            ...(projectIds === undefined ? {} : { projectIds }),
             ...(before === null
               ? {}
               : {
                   olderSettledBefore: before,
-                  ...(scope.projectIds === undefined ? {} : { projectIds: scope.projectIds }),
                   ...(label === undefined ? {} : { environmentLabel: label }),
                   ...(searchMessages ? {} : { titlesOnly: true }),
                 }),

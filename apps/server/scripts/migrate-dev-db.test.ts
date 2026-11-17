@@ -156,6 +156,19 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-dest-" });
       const source = yield* createFixtureSource(sourceDir);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`UPDATE projection_projects SET rowid = 50 WHERE project_id = 'project-kept'`;
+          yield* sql`
+          INSERT INTO orchestration_v2_projection_messages
+            (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+          VALUES ('kept-message', 'stopped-thread', 'user', 0, '2026-08-01', '2026-08-01', '{"text":"Release checklist complete."}'),
+            ('dropped-message', 'running-thread', 'user', 0, '2026-08-01', '2026-08-01', '{"text":"Release checklist complete."}')
+        `;
+        }),
+      );
 
       const result = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
@@ -194,7 +207,16 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, pullRequest, project, leftovers };
+          const search = yield* sql<{ readonly id: string }>`
+            SELECT messages.message_id AS id
+            FROM projection_projects AS projects
+            CROSS JOIN orchestration_v2_message_projects AS scope ON scope.project_rowid = projects.rowid
+            INNER JOIN orchestration_v2_projection_messages AS messages ON messages.rowid = scope.message_rowid
+            INNER JOIN orchestration_v2_message_search ON orchestration_v2_message_search.rowid = messages.rowid
+            WHERE projects.project_id = 'project-kept'
+              AND orchestration_v2_message_search MATCH ('text : "release" AND project : ":' || projects.rowid || ':"')
+          `;
+          return { threads, events, sessions, pullRequest, project, leftovers, search };
         }),
       );
       assert.deepStrictEqual(
@@ -234,6 +256,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         ],
         "copied project scripts stay listed but never run on settle in the original checkout",
       );
+      assert.deepStrictEqual(kept.search, [{ id: "kept-message" }]);
       assert.deepStrictEqual(kept.leftovers, {
         auth: 0,
         tasks: 0,
