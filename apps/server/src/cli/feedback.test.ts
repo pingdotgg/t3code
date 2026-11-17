@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Runtime from "effect/Runtime";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -61,6 +62,24 @@ const hidden = (tool: string) =>
     rpcError: { code: -32602, message: `Tool '${tool}' not found` },
   });
 
+/** Runs a failing command: stderr gets exactly one line, and the runtime logs nothing more. */
+const expectOneLine = (args: ReadonlyArray<string>, baseDir: string, stderr: string) =>
+  Effect.gen(function* () {
+    const before = (yield* TestConsole.errorLines).length;
+    const error = yield* Command.runWith(feedbackCommand, { version: "0.0.0" })([
+      ...args,
+      "--base-dir",
+      baseDir,
+    ]).pipe(Effect.flip);
+    const lines = (yield* TestConsole.errorLines).slice(before);
+    expect(lines, args.join(" ")).toHaveLength(1);
+    expect(String(lines[0]), args.join(" ")).toContain(stderr);
+    if (stderr === FEEDBACK_OFF_MESSAGE) expect(lines).toEqual([FEEDBACK_OFF_MESSAGE]);
+    expect((error as { readonly [Runtime.errorReported]?: boolean })[Runtime.errorReported]).toBe(
+      false,
+    );
+  });
+
 it.effect("points to Labs only when the server hides the feedback tool", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -105,15 +124,13 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
         .spyOn(McpBridge, "mcpToolSession")
         .mockReturnValue(Effect.succeed({ call: call ?? (() => Effect.die("no call expected")) }));
 
-      yield* Command.runWith(feedbackCommand, { version: "0.0.0" })([
-        ...args,
-        "--base-dir",
-        baseDir,
-      ]).pipe(Effect.flip);
-
-      const lines = yield* TestConsole.errorLines;
-      expect(String(lines.at(-1)), args.join(" ")).toContain(stderr);
+      yield* expectOneLine(args, baseDir, stderr);
     }
+    // A damaged database is one line too.
+    const damaged = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-cli-" });
+    yield* fs.makeDirectory(path.join(damaged, "userdata"), { recursive: true });
+    yield* fs.writeFileString(path.join(damaged, "userdata", "statev2.sqlite"), "not a database");
+    yield* expectOneLine(["list"], damaged, "Could not read this machine's feedback reports: ");
 
     // On, the list prints each stored report whole, trace included, with no server running.
     yield* fs.writeFileString(

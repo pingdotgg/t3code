@@ -2,6 +2,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
+import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -34,6 +36,21 @@ import {
 /** The server hides the feedback tools from every session while the setting is off. */
 const feedbackOff = ({ tool }: { readonly tool: string }) =>
   Effect.fail(new ThreadToolFailedError({ tool, detail: FEEDBACK_OFF_MESSAGE }));
+
+class FeedbackListError extends Schema.TaggedError<FeedbackListError>()("FeedbackListError", {
+  detail: Schema.String,
+}) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+const firstLine = (error: { readonly _tag: string; readonly message?: unknown }) =>
+  (typeof error.message === "string" && error.message.trim() !== ""
+    ? error.message
+    : error._tag
+  ).split("\n")[0];
 
 /** Reads this machine's database and settings directly, whether or not its server runs. */
 const listReports = Effect.fn("cli.feedback.listReports")(function* (flags: CliAuthLocationFlags) {
@@ -90,11 +107,16 @@ const feedbackListCommand = Command.make("list", { ...authLocationFlags, json: j
           }
         }
       },
-      Effect.tapError((error) =>
-        error._tag === "FeedbackOffError" || error._tag === "FeedbackStorageError"
-          ? Console.error(error.message)
-          : Effect.void,
-      ),
+      // Every failure is one line on stderr; the runtime does not log it again.
+      Effect.catch((error) => {
+        const detail =
+          error._tag === "FeedbackOffError"
+            ? error.message
+            : `Could not read this machine's feedback reports: ${firstLine(error)}`;
+        return Console.error(detail).pipe(
+          Effect.andThen(Effect.fail(new FeedbackListError({ detail }))),
+        );
+      }),
     ),
   ),
 );
