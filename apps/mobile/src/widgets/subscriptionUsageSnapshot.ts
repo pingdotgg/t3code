@@ -1,11 +1,26 @@
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
   collectLimitPools,
+  remainingPercent,
   type LimitAccount,
+  type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
+import { providerColors } from "../features/usage/providerColors";
 import type { WidgetTheme } from "./widgetTheme";
+
+export interface WidgetLimitAccount {
+  name: string;
+  color?: string;
+  /** Absent when this account does not report the window. */
+  remaining?: number;
+  refill?: number;
+  resetsAt?: number;
+  reset?: string;
+  durationMs?: number;
+}
 
 export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
@@ -13,8 +28,15 @@ export interface SubscriptionUsageSnapshot {
   checkedAt: number;
   providers: Array<{
     name: string;
+    colors?: { light: string; dark: string };
     detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
+    windows: Array<{
+      kind?: string;
+      label: string;
+      remaining: number;
+      reset: string;
+      accounts?: WidgetLimitAccount[];
+    }>;
     expiresAt: number;
     totalWindows: number;
   }>;
@@ -44,6 +66,59 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
   };
 }
 
+// Widget snapshots must not persist account emails.
+function accountName(account: LimitAccount) {
+  if (account.displayName && !account.displayName.includes("@")) return account.displayName;
+  const email = account.email ?? account.displayName;
+  if (!email?.includes("@")) return "Account";
+  const [local = "", domain = ""] = email.split("@");
+  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase();
+}
+
+function clockLabel(at: number, from: number) {
+  const time = { hour: "numeric", minute: "2-digit" } as const;
+  if (new Date(at).toDateString() === new Date(from).toDateString())
+    return new Date(at).toLocaleTimeString(undefined, time);
+  return new Date(at).toLocaleString(
+    undefined,
+    at - from < 6 * 86_400_000 ? { weekday: "short", ...time } : { month: "short", day: "numeric" },
+  );
+}
+
+function widgetAccounts(window: LimitPoolWindow): WidgetLimitAccount[] {
+  const seen = new Map<string, number>();
+  return window.columns.map((column) => {
+    // Redacted initials can collide, and the widget keys segments by name.
+    const base = accountName(column.account);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    const color = normalizeProviderAccentColor(column.account.accentColor);
+    // expo-widgets cannot convert an explicit undefined into a Kotlin value.
+    const account = { name: count > 1 ? `${base}${count}` : base, ...(color && { color }) };
+    if (column.window === null) return account;
+    const checkedAt = Date.parse(column.account.limits.checkedAt);
+    const resetsAt = column.window.resetsAt ? Date.parse(column.window.resetsAt) : NaN;
+    // A reset at or before the observation already happened.
+    const reset = resetsAt > checkedAt;
+    return {
+      ...account,
+      remaining: remainingPercent(column.window),
+      refill: reset ? column.refillPercent : 0,
+      ...(reset && {
+        resetsAt,
+        reset: clockLabel(resetsAt, checkedAt),
+      }),
+      ...(column.window.windowDurationMins && {
+        durationMs: column.window.windowDurationMins * 60_000,
+      }),
+    };
+  });
+}
+
+// A reset at or before its account's observation already happened, so it cannot expire the snapshot.
+const isUpcoming = (reset: LimitPoolWindow["resets"][number]) =>
+  reset.at > Date.parse(reset.member.account.limits.checkedAt);
+
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
   now: number,
@@ -64,9 +139,12 @@ function subscriptionUsageProps(
       .map((driver) => {
         const pool = pools.find((candidate) => candidate.driver === driver);
         const name = driver === "codex" ? "Codex" : "Claude";
+        const kind = driver === "codex" ? "codex" : "claude";
+        const colors = { light: providerColors("light")[kind], dark: providerColors("dark")[kind] };
         if (!pool)
           return {
             name,
+            colors,
             detail: "No limits available",
             windows: [],
             expiresAt: 0,
@@ -75,7 +153,9 @@ function subscriptionUsageProps(
         const checkedAt = Math.min(...pool.accounts.map((a) => Date.parse(a.limits.checkedAt)));
         const expiresAt = Math.min(
           checkedAt + SNAPSHOT_MAX_AGE,
-          ...pool.windows.flatMap((window) => window.resets.map((reset) => reset.at)),
+          ...pool.windows.flatMap((window) =>
+            window.resets.filter(isUpcoming).map((reset) => reset.at),
+          ),
         );
         const fresh = Number.isFinite(expiresAt) && expiresAt > now;
         const sortedWindows = [...pool.windows].sort(
@@ -93,6 +173,7 @@ function subscriptionUsageProps(
           .sort((a, b) => a.remainingPercent - b.remainingPercent);
         return {
           name,
+          colors,
           detail: !fresh
             ? "Open T3 to refresh"
             : pool.accounts.length > 1
@@ -106,13 +187,16 @@ function subscriptionUsageProps(
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
-                  ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
+                  ? `${isUpcoming(window.resets[0]) ? "Next reset" : "Reset"} ${new Date(
+                      window.resets[0].at,
+                    ).toLocaleString(undefined, {
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
                       minute: "2-digit",
                     })}`
                   : "Reset time unavailable",
+                accounts: widgetAccounts(window),
               }))
             : [],
         };
