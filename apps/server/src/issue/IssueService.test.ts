@@ -1,8 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { driver as githubDriver } from "@t3tools/source-control-github/server/driver";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import {
   IssueTrackerKind,
   type IssueTrackerProjectBinding,
@@ -466,6 +473,81 @@ describe("IssueService", () => {
       });
       expect(listed).toEqual(["acme/web"]);
       expect(through.entries.map((entry) => entry.key)).toEqual(["4"]);
+    }),
+  );
+
+  it.effect("loads each All issues page in one GitHub request for a single repository", () =>
+    Effect.gen(function* () {
+      const decodeRequest = Schema.decodeUnknownSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            query: Schema.String,
+            variables: Schema.Record(Schema.String, Schema.Unknown),
+          }),
+        ),
+      );
+      let requests = 0;
+      const http = HttpClient.make((request) => {
+        if (
+          request.url !== "https://api.github.com/graphql" ||
+          request.body._tag !== "Uint8Array"
+        ) {
+          return Effect.die("Expected a GitHub GraphQL request.");
+        }
+        requests++;
+        const { query, variables } = decodeRequest(new TextDecoder().decode(request.body.body));
+        const search = /\bsearch\s*\(/.test(query);
+        const first = variables["cursor"] == null;
+        const data = {
+          viewer: { login: "julius" },
+          ...(search
+            ? {
+                search: {
+                  pageInfo: { hasNextPage: first, endCursor: first ? "next" : null },
+                  nodes: [
+                    {
+                      __typename: "Issue",
+                      ...issue(first ? "1" : "2"),
+                      number: first ? 1 : 2,
+                      state: "OPEN",
+                      stateReason: null,
+                      labels: { nodes: [] },
+                      assignees: { nodes: [] },
+                      comments: { totalCount: 0 },
+                    },
+                  ],
+                },
+              }
+            : {}),
+        };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ data })));
+      });
+      const { issues: tracker } = yield* githubDriver.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer({
+              process: { run: () => Effect.succeed(TestSourceControlHost.processOutput("")) },
+            }),
+            Layer.succeed(HostProcess.Environment, { GH_TOKEN: "test-token" }),
+            Layer.succeed(HttpClient.HttpClient, http),
+            NodeServices.layer,
+            NodeCrypto.layer,
+            SourceControlRateLimit.layer,
+          ),
+        ),
+      );
+      if (tracker === undefined) return yield* Effect.die("Missing GitHub issue tracker.");
+      const service = yield* makeService({
+        projects: [project({ id: "web", repository: "acme/web" })],
+        trackers: [tracker],
+      });
+
+      const input = { state: "open", involvement: "all", limit: 1 } as const;
+      const first = yield* service.list(input);
+      const next = yield* service.list({ ...input, cursors: first.nextCursors });
+      expect(first.entries.map((entry) => entry.key)).toEqual(["1"]);
+      expect(next.entries.map((entry) => entry.key)).toEqual(["2"]);
+      expect(requests, "GitHub requests for two All issues pages").toBe(2);
     }),
   );
 });
