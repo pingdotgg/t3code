@@ -108,10 +108,7 @@ export function resolveMessageDispatchIntent(
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
-  return turns !== undefined &&
-    !turns.supportsActiveSteering &&
-    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
-    turns.supportsQueuedMessages
+  return turns !== undefined && !turns.supportsActiveSteering && providerSwitchWaitsForTurn(turns)
     ? { type: "queue_after_active" }
     : mode;
 }

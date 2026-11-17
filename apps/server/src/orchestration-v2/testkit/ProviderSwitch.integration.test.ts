@@ -2629,12 +2629,12 @@ describe("orchestration v2 provider switching", () => {
     };
   });
 
-  it.live.each(["running", "has no provider session yet"] as const)(
+  it.live.each(["is running", "has no provider session yet"] as const)(
     "runs a provider switch steered into a Claude turn that %s after that turn",
     (phase) =>
       Effect.gen(function* () {
         const harness = yield* steerProviderSwitchHarness(
-          phase === "running" ? "running" : "before-session",
+          phase === "is running" ? "running" : "before-session",
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2652,7 +2652,7 @@ describe("orchestration v2 provider switching", () => {
               Effect.andThen(worker.drain()),
             );
           yield* harness.startClaudeTurn;
-          if (phase === "running") {
+          if (phase === "is running") {
             yield* Deferred.await(harness.started);
             yield* worker.drain();
             yield* harness.markClaudeTurnRunning;

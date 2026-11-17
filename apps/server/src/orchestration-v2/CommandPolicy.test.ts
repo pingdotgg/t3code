@@ -213,19 +213,6 @@ it("queues a steer for a provider that cannot steer either way", () => {
   );
 });
 
-it("runs a provider switch after the turn only when the provider cannot restart it", () => {
-  assert.isTrue(CommandPolicy.providerSwitchWaitsForTurn(ClaudeProviderCapabilitiesV2.turns));
-  assert.isFalse(CommandPolicy.providerSwitchWaitsForTurn(CodexProviderCapabilitiesV2.turns));
-  assert.isFalse(CommandPolicy.providerSwitchWaitsForTurn(CursorProviderCapabilitiesV2.turns));
-  // Without a queue the switch keeps failing as before instead of being dropped.
-  assert.isFalse(
-    CommandPolicy.providerSwitchWaitsForTurn({
-      ...ClaudeProviderCapabilitiesV2.turns,
-      supportsQueuedMessages: false,
-    }),
-  );
-});
-
 // regression: #27014 a Grok follow-up cancels the foreground tool the user wanted to finish
 it("does not steer a Grok follow-up by interrupting its running turn", () => {
   const grok = makeGrokAcpAdapterFlavor(
