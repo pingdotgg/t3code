@@ -32,6 +32,7 @@ import {
   type SpeechModel,
 } from "./model.ts";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+import { nativeSpeechLanguage } from "./nativeLanguage.ts";
 import { SILERO_VAD } from "./silero.ts";
 import { isSpeechPlatformSupported } from "./platform.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
@@ -137,6 +138,8 @@ export class SpeechService extends Context.Service<
     readonly selectModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly cancelDownload: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly removeModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    /** Uses catalog model files already on this machine, from a file or folder path. */
+    readonly linkModels: (source: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly prepareModel: Effect.Effect<void, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
@@ -451,6 +454,13 @@ const make = Effect.gen(function* () {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
     const ready = yield* store.isReady(definition);
+    const gpuDevices = yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => []));
+    const autoUsesCpu =
+      gpuDevices.length === 0 ||
+      autoCpuModel === definition.id ||
+      (loadedModelId === definition.id &&
+        loadedAcceleration === "auto" &&
+        model?.backend.toLowerCase() === "cpu");
     return {
       supported: true,
       state: activeTranscriptions > 0 ? "transcribing" : ready ? "ready" : "missing-model",
@@ -459,12 +469,18 @@ const make = Effect.gen(function* () {
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
       supportsBufferedStreaming: true,
+      supportsModelLinking: true,
       supportsTranslation: definition.supportsTranslation,
       languages: definition.languages,
       supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
+      benchmarkTier:
+        settings.speechAcceleration === "cpu" ||
+        (settings.speechAcceleration === "auto" && autoUsesCpu)
+          ? "cpu"
+          : "accelerated",
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => [])),
+      gpuDevices,
     };
   });
 
@@ -476,8 +492,8 @@ const make = Effect.gen(function* () {
     const models = yield* Effect.forEach(
       SPEECH_MODELS,
       (definition) =>
-        store.isReady(definition).pipe(
-          Effect.map((ready): EnvironmentSpeechModel => {
+        Effect.all([store.isReady(definition), store.linkedFrom(definition)]).pipe(
+          Effect.map(([ready, linkedFrom]): EnvironmentSpeechModel => {
             const operation = downloading?.modelId === definition.id ? downloading : undefined;
             return {
               id: definition.id,
@@ -501,6 +517,7 @@ const make = Effect.gen(function* () {
                   ? "installed"
                   : "downloadable",
               ...(operation ? { downloaded: operation.downloaded } : {}),
+              ...(ready && linkedFrom ? { linkedFrom } : {}),
             };
           }),
         ),
@@ -565,8 +582,9 @@ const make = Effect.gen(function* () {
   const silenceModelPath = Effect.fn("SpeechService.silenceModelPath")(function* (
     loaded: LoadedModel,
     options: SpeechTranscriptionOptions,
+    nativeStreaming: boolean,
   ) {
-    if (!options.speechSilenceFiltering && (loaded.supportsStreaming || loaded.supportsLongForm))
+    if (!options.speechSilenceFiltering && (nativeStreaming || loaded.supportsLongForm))
       return undefined;
     return yield* acquireSilenceModel("recording");
   });
@@ -602,7 +620,7 @@ const make = Effect.gen(function* () {
                 ),
               catch: (cause) => speechError("model preparation", cause),
             });
-            const vadPath = yield* silenceModelPath(loaded, options);
+            const vadPath = yield* silenceModelPath(loaded, options, false);
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
             // The vocabulary capability guarantees plain transcription, not translation.
@@ -613,11 +631,12 @@ const make = Effect.gen(function* () {
                 try: (signal) => {
                   // Interruption kills the isolated process; the next request reloads the model.
                   signal.addEventListener("abort", () => dropModel(inference), { once: true });
+                  const hint = nativeSpeechLanguage(inference.languages, language);
                   return inference.transcribe(
                     pcm,
                     {
                       timestamps: "none",
-                      ...(language === "auto" ? {} : { language }),
+                      ...(hint ? { language: hint } : {}),
                       ...(translateToEnglish
                         ? { task: "translate" as const, targetLanguage: "en" as const }
                         : {}),
@@ -737,7 +756,7 @@ const make = Effect.gen(function* () {
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
     );
     loaded = streamModel;
-    const vadPath = yield* silenceModelPath(streamModel, options);
+    const vadPath = yield* silenceModelPath(streamModel, options, streamModel.supportsStreaming);
     let translateToEnglish = false;
     const beginStream = async () => {
       translateToEnglish =
@@ -749,10 +768,11 @@ const make = Effect.gen(function* () {
         streamModel.supportsVocabulary && !translateToEnglish && customWords.length
           ? customWords
           : undefined;
+      const hint = nativeSpeechLanguage(streamModel.languages, language);
       await streamModel.begin(
         {
           timestamps: "none",
-          ...(language === "auto" ? {} : { language }),
+          ...(hint ? { language: hint } : {}),
           ...(translateToEnglish ? { task: "translate", targetLanguage: "en" } : {}),
           ...(vocabulary ? { vocabulary } : {}),
         },
@@ -936,6 +956,21 @@ const make = Effect.gen(function* () {
         ),
       ),
     ),
+    linkModels: Effect.fn("SpeechService.linkModels")(function* (source) {
+      yield* requireSupported;
+      const settings = yield* readSettings("model linking");
+      const linked = yield* exclusive(
+        "model linking",
+        store
+          .link(SPEECH_MODELS, source)
+          .pipe(Effect.mapError((cause) => speechError("model linking", cause))),
+      );
+      const first = linked[0];
+      if (first === undefined) return yield* new SpeechModelNotFoundError({ modelId: source });
+      if (!(yield* store.isReady(selectedModel(settings))))
+        yield* writeSettings("model linking", { speechModelId: first });
+      return yield* modelsEffect;
+    }),
     updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),

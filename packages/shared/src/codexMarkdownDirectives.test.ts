@@ -96,15 +96,28 @@ describe.each([
 ])("$name file citation round trips", ({ render }) => {
   // regression: #12243 copied Codex citations keep their backslashes
   it.each([
-    "C:\\Users\\test\\[draft]\\report.md",
-    "\\\\server\\share\\report.md",
-    "/tmp/report%5C.md",
-  ])("preserves the literal path and line: %s", (path) => {
+    ["C:\\Users\\test\\[draft]\\report.md", "C:\\Users\\test\\[draft]\\report.md"],
+    ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
+    ["/tmp/report%5C.md", "/tmp/report%5C.md"],
+    ["~\\reports\\draft.md", "~/reports/draft.md"],
+    ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
+    ["./reports/draft.md", "./reports/draft.md"],
+  ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
     expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: linkPath, line: 7 });
+  });
+
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
   });
 });
 
