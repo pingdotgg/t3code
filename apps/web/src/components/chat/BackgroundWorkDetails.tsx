@@ -6,7 +6,7 @@ import type {
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
 
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
   DialogHeader,
@@ -77,14 +77,16 @@ export function BackgroundWorkDetails(props: {
                     </div>
                   ) : null}
                   {childThreadId ? (
-                    <InlineButton
+                    <Button
+                      size="xs"
+                      variant="outline"
                       onClick={() => {
                         setOpen(false);
                         props.onOpenThread(childThreadId);
                       }}
                     >
                       Open subagent
-                    </InlineButton>
+                    </Button>
                   ) : null}
                 </section>
               );
