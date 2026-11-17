@@ -493,6 +493,25 @@ export type PullRequestDiffStats = ReadonlyMap<
   { readonly additions: number; readonly deletions: number }
 >;
 
+export interface PullRequestSortStats {
+  readonly key: string;
+  readonly stats: PullRequestDiffStats;
+  readonly settled: boolean;
+}
+
+export function settlePullRequestSortStats(
+  previous: PullRequestSortStats | null,
+  key: string,
+  knownStats: PullRequestDiffStats,
+  eagerStats: ReadonlyArray<EnvironmentPullRequestStat> | null,
+  settled: boolean,
+): PullRequestSortStats {
+  const snapshot = previous?.key === key ? previous : { key, stats: knownStats, settled: false };
+  if (snapshot.settled || !settled) return snapshot;
+  // Only the requested eager batches may change positions after the list first appears.
+  return { key, stats: mergePullRequestDiffStats(snapshot.stats, eagerStats ?? []), settled: true };
+}
+
 /** New stats queries must not blank existing counts. */
 export function mergePullRequestDiffStats(
   previous: PullRequestDiffStats,
@@ -796,15 +815,44 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   );
 }
 
-export function withDiffStat<
-  Entry extends PullRequestListEntry & { readonly environmentId: string },
->(
+function withDiffStat<Entry extends PullRequestListEntry & { readonly environmentId: string }>(
   entry: Entry,
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
   const stat = statsByRow.get(pullRequestDiffStatKey(entry));
   return stat === undefined ? entry : { ...entry, ...stat };
+}
+
+export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  sort: PullRequestListSort,
+  searchText: string,
+  statsByRow: PullRequestDiffStats,
+  sortStatsByRow: PullRequestDiffStats,
+  involvement: PullRequestInvolvement,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const displayed = new Map(
+    groups.flatMap((group) =>
+      group.entries.map(
+        (entry) => [pullRequestEntryKey(entry), withDiffStat(entry, statsByRow)] as const,
+      ),
+    ),
+  );
+  return sortPullRequestGroups(
+    groups.map((group) => ({
+      ...group,
+      entries: group.entries.map((entry) => withDiffStat(entry, sortStatsByRow)),
+    })),
+    sort,
+    searchText,
+    (entry) =>
+      entry.additions + entry.deletions > 0 || sortStatsByRow.has(pullRequestDiffStatKey(entry)),
+    involvement,
+  ).map((group) => ({
+    ...group,
+    entries: group.entries.map((entry) => displayed.get(pullRequestEntryKey(entry)) ?? entry),
+  }));
 }
 
 export interface PullRequestListOverride {
@@ -920,6 +968,49 @@ export function settlePullRequestOverrides<Entry extends PullRequestListEntry>(
     if (!agrees && !outranked) kept.set(key, override);
   }
   return kept.size === overrides.size ? overrides : kept;
+}
+
+export type PullRequestListItem<Entry extends ScopedEntry> =
+  | { readonly kind: "row"; readonly entry: Entry }
+  | { readonly kind: "stack"; readonly key: string; readonly entries: ReadonlyArray<Entry> };
+
+/**
+ * Folds the rows of one native stack into a single item where the first of them sat, its layers
+ * bottom first. A stack with one row shown stays a plain row: there is nothing to fold.
+ */
+export function clusterPullRequestStacks<Entry extends ScopedEntry>(
+  entries: ReadonlyArray<Entry>,
+): ReadonlyArray<PullRequestListItem<Entry>> {
+  const members = new Map<string, Entry[]>();
+  const stackKeyOf = (entry: Entry) =>
+    entry.stack === undefined
+      ? null
+      : `${entry.environmentId ?? ""}:${entry.host}:${entry.repository}#stack${entry.stack.number}`;
+  for (const entry of entries) {
+    const key = stackKeyOf(entry);
+    if (key === null) continue;
+    const list = members.get(key);
+    if (list) list.push(entry);
+    else members.set(key, [entry]);
+  }
+  const items: PullRequestListItem<Entry>[] = [];
+  const placed = new Set<string>();
+  for (const entry of entries) {
+    const key = stackKeyOf(entry);
+    const stack = key === null ? undefined : members.get(key);
+    if (key === null || stack === undefined || stack.length < 2) {
+      items.push({ kind: "row", entry });
+      continue;
+    }
+    if (placed.has(key)) continue;
+    placed.add(key);
+    items.push({
+      kind: "stack",
+      key,
+      entries: stack.toSorted((a, b) => (a.stack?.position ?? 0) - (b.stack?.position ?? 0)),
+    });
+  }
+  return items;
 }
 
 export type PullRequestQuickAction = "close" | "merge" | "ready" | "reopen";

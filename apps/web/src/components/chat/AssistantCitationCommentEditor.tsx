@@ -13,6 +13,7 @@ export function AssistantCitationCommentEditor({
   onSubmit,
   onSubmitAndSend,
   onCancel,
+  onViewSource,
   onDraftChange,
   onVoiceSetupOpenChange,
 }: {
@@ -21,6 +22,7 @@ export function AssistantCitationCommentEditor({
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
+  onViewSource?: () => void;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
@@ -87,8 +89,8 @@ export function AssistantCitationCommentEditor({
         placeholder="Add an optional comment..."
         rows={2}
         dir={textDirection(comment)}
-        className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none text-foreground placeholder:text-placeholder sm:text-sm"
-        value={comment}
+        className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-body outline-none text-foreground placeholder:text-muted-foreground max-sm:text-base"
+        value={speech.displayText}
         onChange={(event) => updateComment(event.currentTarget.value)}
         onKeyDown={(event) => {
           if (
@@ -107,13 +109,25 @@ export function AssistantCitationCommentEditor({
         }}
       />
       {commentTooLong ? (
-        <p role="status" className="pt-1 text-xs text-error-foreground">
+        <p role="status" className="pt-1 text-meta text-error-foreground">
           Comments can contain up to {ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}{" "}
           characters.
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} />
+        {onViewSource ? (
+          <Button
+            variant="secondary"
+            size="xs"
+            // Escape cancels; keep Tab from the comment on Save so Enter cannot leave a new citation.
+            tabIndex={-1}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onViewSource}
+          >
+            View source
+          </Button>
+        ) : null}
         <Button
           variant="secondary"
           size="xs"
@@ -127,6 +141,7 @@ export function AssistantCitationCommentEditor({
         <Button
           size="xs"
           disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
+          aria-keyshortcuts="Enter"
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >

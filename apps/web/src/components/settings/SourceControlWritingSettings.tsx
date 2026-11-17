@@ -29,20 +29,15 @@ import {
 } from "../../modelSelection";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { TraitsPicker } from "../chat/TraitsPicker";
+import { GitCommitHorizontalIcon } from "lucide-react";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
-import {
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  SettingResetButton,
-  SettingsRow,
-  SettingsSection,
-} from "./settingsLayout";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsModelPicker } from "./SettingsModelPicker";
 import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
@@ -230,9 +225,11 @@ export function SourceControlWritingSettingsSection() {
             }}
           >
             <SelectTrigger
-              size="sm"
+              variant="well"
+              size="compact"
               className="w-full sm:w-56"
               aria-label="Commit and pull request writing"
+              leadingIcon={<GitCommitHorizontalIcon />}
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
@@ -242,7 +239,7 @@ export function SourceControlWritingSettingsSection() {
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
-                <SelectItem key={mode} hideIndicator value={mode}>
+                <SelectItem key={mode} value={mode}>
                   {MODE_OPTIONS[mode].label}
                 </SelectItem>
               ))}
@@ -343,15 +340,31 @@ export function SourceControlWritingSettingsSection() {
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableReviewGuideModel ? (
-                    <ProviderModelPicker
+                    <SettingsModelPicker
                       environmentId={environmentId}
                       activeInstanceId={reviewGuideSelection.instanceId}
                       model={reviewGuideSelection.model}
-                      lockedProvider={null}
                       instanceEntries={instanceEntries}
                       modelOptionsByInstance={reviewGuideModelOptionsByInstance}
-                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       triggerAriaLabel="Review guide model"
+                      traits={
+                        usesReviewGuideModel && !mixedReviewGuideModel && reviewGuideInstanceEntry
+                          ? {
+                              provider: reviewGuideInstanceEntry.driverKind,
+                              models: reviewGuideInstanceEntry.models,
+                              modelOptions: reviewGuideSelection.options ?? [],
+                              includePlanAgent: selectsPlanAgent(reviewGuideSelection.options),
+                              onModelOptionsChange: (options) =>
+                                updateSettings({
+                                  reviewGuideModelSelection: createModelSelection(
+                                    reviewGuideSelection.instanceId,
+                                    reviewGuideSelection.model,
+                                    options,
+                                  ),
+                                }),
+                            }
+                          : null
+                      }
                       {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
                       getModelDisabledReason={writerModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
@@ -372,29 +385,6 @@ export function SourceControlWritingSettingsSection() {
                           ),
                         });
                       }}
-                    />
-                  ) : null}
-                  {usesReviewGuideModel &&
-                  canEnableReviewGuideModel &&
-                  !mixedReviewGuideModel &&
-                  reviewGuideInstanceEntry ? (
-                    <TraitsPicker
-                      provider={reviewGuideInstanceEntry.driverKind}
-                      models={reviewGuideInstanceEntry.models}
-                      model={reviewGuideSelection.model}
-                      modelOptions={reviewGuideSelection.options ?? []}
-                      allowPromptInjectedEffort={false}
-                      includePlanAgent={selectsPlanAgent(reviewGuideSelection.options)}
-                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      onModelOptionsChange={(options) =>
-                        updateSettings({
-                          reviewGuideModelSelection: createModelSelection(
-                            reviewGuideSelection.instanceId,
-                            reviewGuideSelection.model,
-                            options,
-                          ),
-                        })
-                      }
                     />
                   ) : null}
                   <Switch
@@ -536,14 +526,30 @@ export function SourceControlWritingSettingsSection() {
                   </span>
                 ) : null}
                 {usesDedicatedModel && canEnableDedicatedModel ? (
-                  <ProviderModelPicker
+                  <SettingsModelPicker
                     environmentId={environmentId}
                     activeInstanceId={activeSelection.instanceId}
                     model={activeSelection.model}
-                    lockedProvider={null}
                     instanceEntries={writerEntries}
                     modelOptionsByInstance={modelOptionsByInstance}
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    traits={
+                      !mixedWriterModel && writerInstanceEntry
+                        ? {
+                            provider: writerInstanceEntry.driverKind,
+                            models: writerInstanceEntry.models,
+                            modelOptions: activeSelection.options ?? [],
+                            includePlanAgent: selectsPlanAgent(activeSelection.options),
+                            onModelOptionsChange: (options) =>
+                              updateSettings({
+                                sourceControlWriterModelSelection: createModelSelection(
+                                  activeSelection.instanceId,
+                                  activeSelection.model,
+                                  options,
+                                ),
+                              }),
+                          }
+                        : null
+                    }
                     triggerAriaLabel="Source control writer model"
                     {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
                     {...(environmentId
@@ -575,29 +581,6 @@ export function SourceControlWritingSettingsSection() {
                         ),
                       });
                     }}
-                  />
-                ) : null}
-                {usesDedicatedModel &&
-                canEnableDedicatedModel &&
-                !mixedWriterModel &&
-                writerInstanceEntry ? (
-                  <TraitsPicker
-                    provider={writerInstanceEntry.driverKind}
-                    models={writerInstanceEntry.models}
-                    model={activeSelection.model}
-                    modelOptions={activeSelection.options ?? []}
-                    allowPromptInjectedEffort={false}
-                    includePlanAgent={selectsPlanAgent(activeSelection.options)}
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(options) =>
-                      updateSettings({
-                        sourceControlWriterModelSelection: createModelSelection(
-                          activeSelection.instanceId,
-                          activeSelection.model,
-                          options,
-                        ),
-                      })
-                    }
                   />
                 ) : null}
                 <Switch

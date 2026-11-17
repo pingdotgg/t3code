@@ -59,6 +59,7 @@ import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { RELAXED_PICKER_CLASS } from "../ui/picker-styles";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -845,6 +846,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
+          RELAXED_PICKER_CLASS,
           props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
@@ -926,6 +928,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             )}
           >
             <ComboboxSearchInput
+              variant="inset"
               separator={false}
               ref={searchInputRef}
               placeholder="Search models..."

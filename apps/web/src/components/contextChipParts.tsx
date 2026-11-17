@@ -1,5 +1,5 @@
 import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
-import { AtSignIcon, CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
+import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
   useEffect,
   useState,
@@ -13,6 +13,7 @@ import { documentChipKindForFileName } from "~/pierre-icons";
 
 import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
+import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { middleTruncateAttachmentName } from "./composerInlineChip";
 import { PullRequestContextDetails } from "./PullRequestContextDetails";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "./ContextChip";
@@ -321,7 +322,13 @@ function FileChipContent(props: {
 }) {
   return (
     <>
-      {props.unresolved ? <CircleDashedIcon /> : props.isVideo ? <FilmIcon /> : <AtSignIcon />}
+      {props.unresolved ? (
+        <CircleDashedIcon />
+      ) : props.isVideo ? (
+        <FilmIcon />
+      ) : (
+        <PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />
+      )}
       <ContextChipLabel className="flex items-baseline gap-[0.33em]">
         <span className="min-w-0 max-w-72 overflow-x-clip text-ellipsis whitespace-nowrap">
           {middleTruncateAttachmentName(props.name)}

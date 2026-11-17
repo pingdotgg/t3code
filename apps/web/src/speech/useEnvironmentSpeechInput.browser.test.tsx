@@ -66,6 +66,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/sidebar/mainAppLocation", () => ({
   useCloseAppModal: () => () => Promise.resolve(),
 }));
+// The redesign's modal reads the theme editor, whose palette module needs the real session state.
+vi.mock("../components/settings/themeEditorStore", () => ({
+  useThemeEditorStore: (select: (store: { session: null }) => unknown) => select({ session: null }),
+}));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
   usePreparedConnection: (environmentId: string | null) => {

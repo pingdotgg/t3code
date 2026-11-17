@@ -1,5 +1,6 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { useLayoutPane } from "../../layout/layoutPaneContext";
 import {
   AuthOrchestrationOperateScope,
   buildRemoteOpenUrl,
@@ -22,14 +23,18 @@ import {
 import { useEnvironment } from "../../state/environments";
 import {
   AppWindowIcon,
+  CheckIcon,
   ChevronDownIcon,
   FolderClosedIcon,
   SquareArrowOutUpRightIcon,
 } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
+import { Kbd } from "../ui/kbd";
 import {
   Menu,
+  MenuGroup,
+  MenuGroupLabel,
   MenuItem,
   MenuItemLabel,
   MenuPopup,
@@ -226,6 +231,9 @@ export const OpenInPicker = memo(function OpenInPicker({
   revealFileManager?: boolean;
 }) {
   const isPanel = displayMode === "panel";
+  // Compact sits in a pane's top bar beside its ghost icons: two ghost icons, no border.
+  const ghost = compact && !isPanel;
+  const ActionGroup = ghost ? "div" : Group;
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
@@ -279,6 +287,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   const backgroundThread = use(BackgroundThreadContext);
+  const { focused, related } = useLayoutPane();
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
@@ -325,8 +334,22 @@ export const OpenInPicker = memo(function OpenInPicker({
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+              {value !== preferredEditor ? null : presentation === "menu" ? (
+                openFavoriteEditorShortcutLabel && (
+                  <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                )
+              ) : (
+                // The popup marks the preferred editor with a check and its shortcut key cap.
+                <span className="ms-auto flex items-center gap-2 ps-4">
+                  <CheckIcon aria-label="Preferred editor" className="size-3.5 text-foreground" />
+                  {openFavoriteEditorShortcutLabel ? (
+                    isPanel ? (
+                      <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                    ) : (
+                      <Kbd>{openFavoriteEditorShortcutLabel}</Kbd>
+                    )
+                  ) : null}
+                </span>
               )}
             </MenuItem>
           ))}
@@ -377,7 +400,7 @@ export const OpenInPicker = memo(function OpenInPicker({
                 part="icon"
                 aria-label={primaryLabel}
                 disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-                {...(enableShortcut && !backgroundThread
+                {...(enableShortcut && (focused || related) && !backgroundThread
                   ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
                   : {})}
                 onClick={handleOpenPreferredEditor}
@@ -393,12 +416,19 @@ export const OpenInPicker = memo(function OpenInPicker({
           <TooltipPopup>{primaryLabel}</TooltipPopup>
         </Tooltip>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-          <MenuTrigger
-            disabled={isHostEditorDenied}
-            render={<ThreadDetailsControl part="icon" aria-label="Choose editor" />}
-          >
-            <ChevronDownIcon />
-          </MenuTrigger>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <MenuTrigger
+                  disabled={isHostEditorDenied}
+                  render={<ThreadDetailsControl part="icon" aria-label="Choose editor" />}
+                />
+              }
+            >
+              <ChevronDownIcon />
+            </TooltipTrigger>
+            <TooltipPopup>Choose editor</TooltipPopup>
+          </Tooltip>
           <MenuPopup side="bottom" align="end">
             {editorItems}
           </MenuPopup>
@@ -409,7 +439,11 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   const primaryControlLabel = compact ? "Open file in preferred editor" : primaryLabel;
   return (
-    <Group aria-label="Open in editor" role="group">
+    <ActionGroup
+      aria-label="Open in editor"
+      role="group"
+      {...(ghost ? { className: "flex shrink-0 items-center gap-0.5" } : {})}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -417,11 +451,11 @@ export const OpenInPicker = memo(function OpenInPicker({
               aria-label={primaryControlLabel}
               // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
               data-toolbar-control=""
-              size="xs"
-              variant="secondary"
+              size={ghost ? "icon-sm" : "xs"}
+              variant={ghost ? "ghost" : "secondary"}
               panel={false}
               disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-              {...(enableShortcut && !backgroundThread
+              {...(enableShortcut && (focused || related) && !backgroundThread
                 ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
                 : {})}
               onClick={handleOpenPreferredEditor}
@@ -438,7 +472,7 @@ export const OpenInPicker = memo(function OpenInPicker({
             className={
               compact
                 ? "sr-only"
-                : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+                : "sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5"
             }
           >
             {primaryLabel}
@@ -446,7 +480,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
       </Tooltip>
-      <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
+      {ghost ? null : (
+        <GroupSeparator {...(!compact ? { className: "hidden @4xl/header-actions:block" } : {})} />
+      )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <Tooltip>
           <TooltipTrigger
@@ -457,20 +493,25 @@ export const OpenInPicker = memo(function OpenInPicker({
                   <ThreadDetailsControl
                     aria-label="Choose editor"
                     data-toolbar-control=""
-                    size="icon-xs"
-                    variant="secondary"
+                    size={ghost ? "icon-sm" : "icon-xs"}
+                    variant={ghost ? "ghost" : "secondary"}
                     panel={false}
                   />
                 }
               />
             }
           >
-            <ChevronDownIcon aria-hidden="true" className="size-4" />
+            <ChevronDownIcon aria-hidden="true" className={ghost ? "size-3.5" : "size-4"} />
           </TooltipTrigger>
           <TooltipPopup side="top">Choose editor</TooltipPopup>
         </Tooltip>
-        <MenuPopup align="end">{editorItems}</MenuPopup>
+        <MenuPopup align="end" className="min-w-60">
+          <MenuGroup>
+            <MenuGroupLabel>Open in…</MenuGroupLabel>
+            {editorItems}
+          </MenuGroup>
+        </MenuPopup>
       </Menu>
-    </Group>
+    </ActionGroup>
   );
 });

@@ -19,12 +19,13 @@ const threadRef = (threadId: string) =>
   scopeThreadRef(EnvironmentId.make("env"), ThreadId.make(threadId));
 
 // Node has no DOM; entry only listens on the root's document for focus changes.
-const enterThread = (ref: ReturnType<typeof threadRef>) =>
+const enterThread = (ref: ReturnType<typeof threadRef>, preserveFocus = false) =>
   restoreFocusOnThreadEnter(ref, {
     root: {
       ownerDocument: Object.assign(new EventTarget(), { activeElement: null }),
     } as unknown as HTMLElement,
     focusComposer: () => {},
+    preserveFocus,
   });
 
 describe("focusTerminal", () => {
@@ -215,6 +216,24 @@ describe("focusTerminal", () => {
     leave();
     unregisterDrawer();
     unregisterPanel();
+  });
+
+  it("keeps workspace focus when entering a pane with its drawer open", () => {
+    const ref = threadRef("workspace-focus");
+    useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    const drawer = vi.fn(() => true);
+    const unregister = registerTerminalFocusTarget({
+      threadRef: ref,
+      terminalId: "drawer",
+      focus: drawer,
+    });
+    const leave = enterThread(ref, true);
+    expect(drawer).not.toHaveBeenCalled();
+    leave();
+    const leaveAgain = enterThread(ref);
+    expect(drawer).toHaveBeenCalledTimes(1);
+    leaveAgain();
+    unregister();
   });
 
   it("re-entering a thread after in-thread terminal actions focuses the drawer", () => {

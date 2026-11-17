@@ -4,7 +4,7 @@ import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
-import { useDevArtworkPreview } from "../devArtworkPreview";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { primaryServerConfigAtom } from "../state/server";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
@@ -37,21 +37,19 @@ export function resolveEnvironmentIdentificationPillLabel(
 export function useEnvironmentStageLabel(): string {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const devArtworkPreview = useDevArtworkPreview();
-
-  return (
-    devArtworkPreview ??
-    resolveServerBackedAppStageLabel({
-      primaryServerVersion,
-      fallbackStageLabel: APP_STAGE_LABEL,
-    })
-  );
+  return resolveServerBackedAppStageLabel({
+    primaryServerVersion,
+    fallbackStageLabel: APP_STAGE_LABEL,
+  });
 }
 
 export function useSidebarStageBackdropVariant(
   mode: EnvironmentIdentificationMode,
 ): SidebarStageBackdropVariant | null {
-  return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), mode);
+  const stageLabel = useEnvironmentStageLabel();
+  const isMobile = useMediaQuery("(width < 48rem)");
+  // Phone chrome uses the theme's --app-chrome-background without channel artwork.
+  return isMobile ? null : resolveSidebarStageBackdropVariant(stageLabel, mode);
 }
 
 /**
@@ -115,10 +113,6 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
 
 function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
-}
-
-export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
-  return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
 }
 
 const NIGHTLY_STARS: ReadonlyArray<{

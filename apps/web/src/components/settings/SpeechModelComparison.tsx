@@ -1,5 +1,6 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 
+import { Text } from "../ui/text";
 import { languageLabel } from "./SpeechLanguageSelect";
 
 const commonLanguages = [
@@ -65,7 +66,7 @@ export function ModelBenchmarks({
           (code): code is string => code !== undefined,
         );
   return (
-    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-meta text-muted-foreground tabular-nums">
       {visible.map((code) => {
         const score = data?.accuracy[code];
         return (
@@ -73,8 +74,10 @@ export function ModelBenchmarks({
             {languageLabel(code)}:{" "}
             {score ? (
               <>
-                <strong className="font-medium text-foreground">{score.grade}</strong> (
-                {score.errorPercent}% error)
+                <Text variant="meta" tone="strong" emphasis>
+                  {score.grade}
+                </Text>{" "}
+                ({score.errorPercent}% error)
               </>
             ) : (
               "not benchmarked"
@@ -90,7 +93,10 @@ export function ModelBenchmarks({
           "not benchmarked"
         ) : (
           <>
-            <strong className="font-medium text-foreground">{seconds} s</strong> / 30 s
+            <Text variant="meta" tone="strong" emphasis>
+              {seconds} s
+            </Text>{" "}
+            / 30 s
           </>
         )}
       </span>

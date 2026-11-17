@@ -61,9 +61,11 @@ function ComboboxInput({
         className={cn(
           startAddon &&
             "data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=combobox-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=combobox-input]:ps-[calc(--spacing(8)-1px)]",
-          sizeValue === "sm"
-            ? "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-6.5"
-            : "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-7",
+          // Room for the trigger or clear button that follows the input.
+          (showTrigger || showClear) &&
+            (sizeValue === "sm"
+              ? "*:data-[slot=combobox-input]:pe-6.5"
+              : "*:data-[slot=combobox-input]:pe-7"),
           className,
         )}
         data-slot="combobox-input"
@@ -106,28 +108,31 @@ function ComboboxInput({
   );
 }
 
+/**
+ * The search row at the top of a combobox popup. `inset` draws a sunken field inside the
+ * popover padding, like the sidebar search; the default is an underlined row.
+ */
 function ComboboxSearchInput({
   separator = true,
-  variant = "default",
+  variant = "underline",
   ...props
 }: React.ComponentProps<typeof ComboboxInput> & {
   separator?: boolean;
-  variant?: "default" | "inset";
+  variant?: "underline" | "inset";
 }) {
   if (variant === "inset") {
     return (
-      <div className="relative m-1.5 shrink-0 rounded-control surface-well">
-        <SearchIcon
-          aria-hidden
-          className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-[13px] -translate-y-1/2 text-dim-foreground"
-        />
-        <ComboboxInput
-          {...props}
-          showTrigger={false}
-          size="sm"
-          unstyled
-          className="[&_input]:h-7 [&_input]:ps-7.75 [&_input]:pe-2.5 [&_input]:text-meta [&_input]:font-normal"
-        />
+      <div className="min-w-0 shrink-0 px-2 pt-1.5">
+        <div className="relative isolate flex h-7 items-center gap-2 rounded-control px-2.5 before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well">
+          <SearchIcon aria-hidden="true" className="size-[13px] shrink-0 text-dim-foreground" />
+          <ComboboxInput
+            {...props}
+            className="min-w-0 flex-1 [&_input]:h-6.5 [&_input]:px-0 [&_input]:font-sans [&_input]:leading-6.5"
+            showTrigger={false}
+            size="sm"
+            unstyled
+          />
+        </div>
       </div>
     );
   }
@@ -136,7 +141,7 @@ function ComboboxSearchInput({
       <div
         className={cn(
           "relative -translate-y-px border-b pb-1.5 transition-colors",
-          separator ? "border-border/70 focus-within:border-ring" : "border-transparent",
+          separator ? "surface-search-separator focus-within:border-ring" : "border-transparent",
         )}
       >
         <SearchIcon

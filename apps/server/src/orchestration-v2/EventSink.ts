@@ -29,7 +29,7 @@ import * as SqlError from "effect/sql/SqlError";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
-import { projectStoredEventForWire } from "./WireProjection.ts";
+import { projectStoredEventForWire } from "@t3tools/shared/wireProjection";
 import { makeRunOutcomeRecorder, type RunOutcome } from "./RunMetrics.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -404,7 +404,11 @@ const layerBase: Layer.Layer<
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+            : event.type === "provider-turn.updated" && event.driver === "claudeAgent"
+              ? projectionStore
+                  .carryProviderTurnContextUsage(event.threadId, event.payload)
+                  .pipe(Effect.map((payload) => ({ ...event, payload })))
+              : Effect.succeed(event),
         { concurrency: 1 },
       );
     };

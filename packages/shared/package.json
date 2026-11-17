@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./appIcons": {
+      "types": "./src/appIcons.ts",
+      "import": "./src/appIcons.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"
@@ -150,6 +154,14 @@
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
+    },
+    "./assistantStreaming": {
+      "types": "./src/assistantStreaming.ts",
+      "import": "./src/assistantStreaming.ts"
+    },
+    "./wireProjection": {
+      "types": "./src/wireProjection.ts",
+      "import": "./src/wireProjection.ts"
     },
     "./htmlRender": {
       "types": "./src/htmlRender.ts",

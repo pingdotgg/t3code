@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import "~/index.css";
@@ -88,11 +88,7 @@ async function removeSource() {
 }
 
 async function clickButton(label: string) {
-  const button = [...document.querySelectorAll("button")].find(
-    (element) => element.textContent?.trim() === label,
-  );
-  expect(button, `button ${label}`).toBeDefined();
-  await act(async () => button!.click());
+  await page.getByRole("button", { name: label, exact: true }).click();
 }
 
 describe("citation comment source disappearance", () => {
@@ -157,7 +153,8 @@ describe("citation comment caret", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
 
     await userEvent.keyboard("agreed");
-    await userEvent.keyboard("{Tab}");
+    // The redesign keeps a mic before the buttons even without dictation; Cancel stays skipped.
+    await userEvent.keyboard("{Tab}{Tab}");
     await userEvent.keyboard("{Enter}");
 
     expect(onSave).toHaveBeenCalledWith("agreed");

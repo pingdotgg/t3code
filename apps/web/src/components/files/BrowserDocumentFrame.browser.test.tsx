@@ -54,8 +54,9 @@ describe("HtmlRenderDocument", () => {
 
     const viewer = page.getByRole("dialog", { name: "Expanded image preview" });
     await expect.element(viewer.getByAltText("Green")).toBeVisible();
-    await expect.element(viewer.getByRole("button", { name: "Next media" })).toBeVisible();
-    await expect.element(viewer.getByRole("button", { name: "Previous media" })).toBeVisible();
+    await expect
+      .element(viewer.getByRole("option", { selected: true }))
+      .toHaveAccessibleName(/\(2\/3\)$/u);
   });
 });
 

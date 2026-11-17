@@ -1,11 +1,9 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type {
-  ProviderApprovalDecision,
-  ResponseContextRecord,
-  RuntimeRequestId,
-  WorktreeSetupSnapshot,
-} from "@t3tools/contracts";
 import {
+  type ProviderApprovalDecision,
+  type ResponseContextRecord,
+  type RuntimeRequestId,
+  type WorktreeSetupSnapshot,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
@@ -26,7 +24,11 @@ import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
 import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
-import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
+import {
+  type MessagesTimelineRow,
+  type WorkGroupScrollAnchor,
+  type wakeUpsRailRows,
+} from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
@@ -103,6 +105,10 @@ export interface TimelineRowSharedState {
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
+  onToggleWorkingHistory: (key: string) => void;
+  onWorkingHistoryMoving: (moving: boolean) => void;
+  onWorkingHistorySettled: () => void;
+  onFocusComposer: (() => void) | null;
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -110,17 +116,35 @@ export interface TimelineRowActivityState {
   isWorking: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
+  turnEnded: boolean;
+  activeTurnStartedAt: string | null;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
   latestRunId: RunId | null;
-  backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+  /** The worktree setup of the live turn, drawn as the working row's first rows. */
+  worktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;
+  /** The approval or question the running turn waits on; it pauses the clock. */
+  pendingRequest: TimelinePendingRequest | null;
+  /** Background work that outlived the latest turn, named on its fold. */
+  usageLimit: TimelineUsageLimit | null;
+  /** The latest run's error as the composer banner shows it. */
+  threadErrorMessage: string | null;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+
+/** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
+export const TimelineWakeUpsRailCtx = createContext<ReturnType<typeof wakeUpsRailRows>>(new Map());
+
+export const TimelineWakeUpsRailInteractionCtx = createContext<{
+  hoveredFoldId: string | null;
+  onHover: (foldId: string | null) => void;
+  onCollapse: (foldId: string) => void;
+}>(null!);
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -156,4 +180,19 @@ export function useInitialOutputReady(pending: boolean, onReady: (() => void) | 
       onReady?.();
     }
   }, [pending, onReady]);
+}
+
+/** The latest run stopped at a usage limit; its fold offers to snooze until the reset. */
+export interface TimelineUsageLimit {
+  readonly runId: RunId;
+  readonly resetAt: string | null;
+  readonly snoozed: boolean;
+  readonly onToggleSnooze: (() => void) | null;
+}
+
+export interface TimelinePendingRequest {
+  readonly kind: "approval" | "question";
+  readonly label: string;
+  readonly createdAt: string;
+  readonly blocking?: boolean;
 }

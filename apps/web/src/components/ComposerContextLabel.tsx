@@ -6,18 +6,24 @@ import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyle
 export function ComposerContextLabel({
   children,
   displayMode = "toolbar",
+  compact = "hide",
 }: {
   children: ReactNode;
   displayMode?: "toolbar" | "panel";
+  /** "truncate" keeps a short label until the row compacts its branch too. */
+  compact?: "hide" | "truncate";
 }) {
+  const compactable = compact === "hide";
   return (
     <span
-      data-composer-label
+      data-composer-label={compact}
       className={cn(
         "min-w-0",
         displayMode === "panel"
           ? "flex-1 overflow-x-clip overflow-y-visible text-left"
-          : "max-w-[240px] group-data-[compact]/composer-context:max-w-0",
+          : compactable
+            ? "max-w-[240px] transition-[margin-inline-start] duration-180 ease-drawer group-data-[compact]/composer-context:-ms-1.5 group-data-[compact]/composer-context:max-w-0 motion-reduce:transition-none"
+            : "group-data-[compact=branch]/composer-context:max-w-24",
       )}
     >
       <span
@@ -26,6 +32,7 @@ export function ComposerContextLabel({
           "block w-full min-w-0 truncate",
           THREAD_DETAILS_PANEL_LABEL_CLASS,
           displayMode === "toolbar" &&
+            compactable &&
             "max-w-[240px] transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none",
         )}
       >

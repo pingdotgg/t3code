@@ -102,11 +102,36 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
      const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
+diff --git a/react.d.ts b/react.d.ts
+index 358fcd7faa598af8a4382719b7e7198b3ce04588..e3c7de6545578ee9dfd323064f02db7e783729a3 100644
+--- a/react.d.ts
++++ b/react.d.ts
+@@ -314,6 +314,7 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * @default 0.1
+      */
+     maintainScrollAtEndThreshold?: number;
++    immediateWebShrinks?: boolean;
+     /**
+      * Maintains visibility of content.
+      * - size (default: true) stabilizes during size/layout changes while scrolling.
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce727d5336 100644
+index 515545471e08426fc90856256db9491db0ca4b92..3ff1576fa5ce3522c7c34dcd905e36e231da3a8e 100644
 --- a/react.js
 +++ b/react.js
-@@ -5635,6 +5635,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -3489,6 +3489,12 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Offset sizes stay in layout pixels throughout ancestor transforms, including
++// the last frames of an overview zoom. The list rounds measured sizes too.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  return { height: element.offsetHeight, left: rect.left, top: rect.top, width: element.offsetWidth, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5635,6 +5641,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
  }
  
  // src/core/measureContainersInLayoutEffect.ts
@@ -126,7 +151,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
  function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
    var _a3, _b, _c;
    const dataChangeEpoch = ctx.state.dataChangeEpoch;
-@@ -5646,13 +5659,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5646,13 +5665,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -143,7 +168,32 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
        });
      }
    }
-@@ -6296,9 +6309,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6214,7 +6233,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6227,7 +6246,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6290,15 +6309,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -155,11 +205,40 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
          }
          applyLayout();
        }
+@@ -9133,6 +9151,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9431,6 +9450,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb57b1df590 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..2e62bbbb6b729f300b61fd878805d89ffc158d20 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -5614,6 +5614,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -3468,6 +3468,12 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Offset sizes stay in layout pixels throughout ancestor transforms, including
++// the last frames of an overview zoom. The list rounds measured sizes too.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  return { height: element.offsetHeight, left: rect.left, top: rect.top, width: element.offsetWidth, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5614,6 +5620,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
  }
  
  // src/core/measureContainersInLayoutEffect.ts
@@ -179,7 +258,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb5
  function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
    var _a3, _b, _c;
    const dataChangeEpoch = ctx.state.dataChangeEpoch;
-@@ -5625,13 +5638,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5625,13 +5644,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -196,7 +275,32 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb5
        });
      }
    }
-@@ -6275,9 +6288,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6193,7 +6212,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6206,7 +6225,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6269,15 +6288,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -208,3 +312,19 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb5
          }
          applyLayout();
        }
+@@ -9112,6 +9130,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9410,6 +9429,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,

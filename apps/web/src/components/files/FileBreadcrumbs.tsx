@@ -1,4 +1,3 @@
-import { InlineButton } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -6,6 +5,7 @@ import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
+import { Button, InlineButton } from "~/components/ui/button";
 import {
   Menu,
   MenuGroup,
@@ -34,6 +34,7 @@ import { useProjectEntriesQuery } from "./projectFilesQueryState";
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly isFolder?: boolean;
   /** Navigates to a folder; an empty path is the workspace root. */
   readonly onNavigateFolder: (relativePath: string) => void;
   readonly onOpenFile: (relativePath: string) => void;
@@ -215,7 +216,11 @@ function BreadcrumbMenuContent(props: {
   );
 }
 
-function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
+function FolderContentsMenu(
+  props: FileBreadcrumbsProps & {
+    readonly crumb: FileBreadcrumb;
+  },
+) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
   const [shownFor, setShownFor] = useState({
@@ -237,10 +242,10 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
     <Menu open={open} onOpenChange={handleOpenChange}>
       <MenuTrigger
         render={
-          <button
-            type="button"
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={`Browse ${props.crumb.label}`}
-            className="relative mx-0.5 flex h-5 w-4 shrink-0 cursor-pointer items-center justify-center rounded-kbd text-dim-foreground outline-none pointer-coarse:after:absolute pointer-coarse:after:-inset-3 hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:surface-selected data-popup-open:text-foreground"
           />
         }
       >
@@ -254,7 +259,16 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
           environmentId={props.environmentId}
           onDirectoryChange={setDirectoryPath}
           onOpenChange={handleOpenChange}
-          onOpenFile={props.onOpenFile}
+          onOpenFile={(path) => {
+            if (
+              breadcrumbPathOf(props.trail) !== breadcrumbPathOf(props.relativePath) &&
+              breadcrumbPathOf(path) === breadcrumbPathOf(props.trail)
+            ) {
+              props.onNavigateFolder(path);
+            } else {
+              props.onOpenFile(path);
+            }
+          }}
           projectName={props.projectName}
           rootPath={props.crumb.path}
           workspaceMutationId={props.workspaceMutationId}
@@ -291,6 +305,7 @@ function FolderBreadcrumb(props: {
 
 /** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+  const { resolvedTheme } = useTheme();
   const hostPath = isHostPath(props.relativePath);
   const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
@@ -309,7 +324,15 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
               data-current-file-crumb={current}
             >
               {current ? (
-                <span aria-current="page">
+                <span aria-current="page" className="flex min-w-0 items-center gap-1">
+                  {!props.isFolder && crumb.kind === "file" ? (
+                    <PierreEntryIcon
+                      pathValue={crumb.path}
+                      kind="file"
+                      theme={resolvedTheme}
+                      className="size-3.5"
+                    />
+                  ) : null}
                   <BreadcrumbLabel
                     current
                     label={crumb.label}

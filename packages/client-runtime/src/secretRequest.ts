@@ -76,6 +76,24 @@ export function secretRequestLink(item: Pick<SecretRequestItem, "url" | "reason"
   return url === null ? null : { href: url.href, host: url.host };
 }
 
+/** The reason split around its link, so the card names the link once; a link it lacks goes last. */
+export function secretRequestReasonParts(item: Pick<SecretRequestItem, "url" | "reason">) {
+  const reason = item.reason.trim();
+  const link = secretRequestLink(item);
+  if (link === null) return { before: reason, link, after: "" };
+  for (const candidate of [item.url, link.href, link.href.replace(/\/$/u, "")]) {
+    const start = candidate === undefined ? -1 : reason.indexOf(candidate);
+    if (candidate !== undefined && start !== -1) {
+      return {
+        before: reason.slice(0, start),
+        link,
+        after: reason.slice(start + candidate.length),
+      };
+    }
+  }
+  return { before: reason === "" ? "" : `${reason} `, link, after: "" };
+}
+
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
   | { readonly kind: "pending-elsewhere"; readonly label: string }

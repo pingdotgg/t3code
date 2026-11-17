@@ -21,6 +21,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { ClientSettingsRecoveryGate } from "../components/ClientSettingsRecoveryGate";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -48,6 +49,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useUiStateStore } from "../uiStateStore";
+import { wasLayoutSavedBeforeLoad } from "../layout/layoutStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
@@ -171,17 +173,6 @@ function RootRouteBranch() {
     return hostedPromptLinkLanding;
   }
 
-  // The dev design-system catalog: the user's appearance, no workspace shell.
-  if (import.meta.env.DEV && pathname === "/design-system") {
-    return (
-      <ToastProvider>
-        <AnchoredToastProvider>
-          <Outlet />
-        </AnchoredToastProvider>
-      </ToastProvider>
-    );
-  }
-
   const isWelcome = pathname === "/welcome";
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
@@ -221,7 +212,7 @@ function RootRouteBranch() {
   );
 
   return (
-    <>
+    <ClientSettingsRecoveryGate>
       <ChatGptWelcomeCoordinator />
       {isWelcome ? (
         <>
@@ -242,7 +233,7 @@ function RootRouteBranch() {
       )}
       {/* Above both shells and the router, so drafts survive navigation, including to /welcome. */}
       <ThemeEditorHost />
-    </>
+    </ClientSettingsRecoveryGate>
   );
 }
 
@@ -380,7 +371,9 @@ function EventRouter({
         );
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
-      if (readPathname() !== "/") {
+      // A first run opens the starter thread; after that the saved layout
+      // decides, so a user who closed everything sees the launcher.
+      if (readPathname() !== "/" || wasLayoutSavedBeforeLoad()) {
         return;
       }
       if (skipInitialBootstrapNavigationRef.current) {

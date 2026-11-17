@@ -16,6 +16,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  MessageSquarePlusIcon,
   OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
@@ -26,7 +27,7 @@ import { type CSSProperties, type ReactNode, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
@@ -37,22 +38,40 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
 
+export function AddToChatIconButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button size="icon-xs" variant="ghost-muted" aria-label="Add to chat" onClick={onClick} />
+        }
+      >
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>Add to chat</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function PullRequestLabelChip({
   label,
   size = "sm",
   className,
   focusable = false,
   children,
+  ...props
 }: {
   label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
   className?: string;
   focusable?: boolean;
   children?: ReactNode;
+  "data-row-label"?: string;
 }) {
   const color = pullRequestLabelColor(label.color);
   const badge = (
     <Badge
+      {...props}
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
@@ -286,6 +305,7 @@ export function pullRequestChecksState(
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: "Approved",
+    verb: "approved",
     Icon: CircleCheckIcon,
     toneClassName: "text-success-foreground",
     ringClassName: "ring-2 ring-success",
@@ -295,6 +315,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   "changes-requested": {
     label: "Changes requested",
+    verb: "requested changes",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
@@ -304,6 +325,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   dismissed: {
     label: "Review dismissed",
+    verb: "had a review dismissed",
     Icon: CircleDashedIcon,
     toneClassName: "text-dim-foreground",
     ringClassName: "ring-2 ring-muted-foreground/60",
@@ -316,6 +338,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   PullRequestReviewOutcome,
   {
     label: string;
+    verb: string;
     Icon: typeof CircleCheckIcon;
     toneClassName: string;
     ringClassName: string;
@@ -378,6 +401,10 @@ export function PullRequestReviewOutcomeAvatarBadge({
       )}
     />
   );
+}
+
+export function pullRequestReviewOutcomeVerb(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].verb;
 }
 
 export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
@@ -505,18 +532,6 @@ export function PullRequestDiffStat({
       <span className="text-diff-addition-foreground">+{formatDiffCount(additions)}</span>
       <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
     </span>
-  );
-}
-
-export function PullRequestMetaLine({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span className={cn("flex min-w-0 flex-col items-start gap-1", className)}>{children}</span>
   );
 }
 

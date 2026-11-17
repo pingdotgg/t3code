@@ -52,6 +52,8 @@ interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult>
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
   readonly isFile: boolean;
+  /** The file exists but holds binary data, so it has no text preview. */
+  readonly isBinary: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -280,6 +282,7 @@ export function useProjectFileQuery(
     isNotFile,
     // A folder error overrides cached contents retained across failed refreshes.
     isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
+    isBinary: readError?.failure === "binary_file",
     refresh,
   };
 }

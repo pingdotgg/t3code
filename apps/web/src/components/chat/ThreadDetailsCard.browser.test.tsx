@@ -1,6 +1,6 @@
-import { StrictMode } from "react";
+import { StrictMode, createRef } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
@@ -8,6 +8,7 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import "../../index.css";
 
 const threadA: ScopedThreadRef = {
@@ -66,7 +67,6 @@ function Card({
           lane: { padding: 48, minChatWidth: 640 },
           layout: resolveChatCanvasLayout({ container, preview: null }),
           previewKey: null,
-          registerTimeline: () => {},
           measureDetailsCard: () => {},
           detailsCardTopInset: 0,
           preferredDetailsCard: placement,
@@ -175,6 +175,19 @@ it("keeps every section at full density when the card needs to scroll", async ()
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");
+  await vi.waitFor(() => {
+    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-start")).toBe(
+      "0px",
+    );
+    expect(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")).toBe("0px");
+  });
+  await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
+  await vi.waitFor(() => {
+    expect(viewport.scrollTop).toBe(0);
+    expect(
+      parseFloat(getComputedStyle(viewport).getPropertyValue("--scroll-area-overflow-y-end")),
+    ).toBe(viewport.scrollHeight - viewport.clientHeight);
+  });
 });
 
 it("keeps full density when many automations make the content tall", async () => {
@@ -198,4 +211,24 @@ it("stays full while expanded server rows overflow", async () => {
   await expect
     .element(page.getByRole("region", { name: "Thread details" }))
     .toHaveAttribute("data-density", "full");
+});
+
+it("focuses the requested branch row when opening the details popover", async () => {
+  using fixture = setup();
+  const branch = createRef<HTMLButtonElement>();
+  await using _screen = await render(
+    <ThreadDetailsCard
+      threadRef={threadB}
+      anchor={fixture.anchor}
+      handle={fixture.handle}
+      onFocusRequest={() => {
+        branch.current?.focus();
+        return true;
+      }}
+    >
+      {() => <ThreadDetailsControl ref={branch}>feature/current</ThreadDetailsControl>}
+    </ThreadDetailsCard>,
+  );
+  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
+  await expect.element(page.getByRole("button", { name: "feature/current" })).toHaveFocus();
 });

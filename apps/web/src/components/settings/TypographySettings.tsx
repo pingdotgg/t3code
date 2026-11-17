@@ -454,7 +454,7 @@ function FontFamilySettingsRow({
       />
     ) : (
       <Input
-        size="sm"
+        size="settings"
         aria-label={`${title} family`}
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
@@ -514,13 +514,18 @@ function FontFamilySettingsRow({
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
+        <SelectTrigger
+          variant="well"
+          size="compact"
+          className="w-22 shrink-0"
+          aria-label={size.label}
+        >
           <SelectValue>{size.value} px</SelectValue>
         </SelectTrigger>
         <SelectPopup align="end" alignItemWithTrigger={false}>
           {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
             (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
+              <SelectItem key={px} value={String(px)}>
                 {px} px
               </SelectItem>
             ),

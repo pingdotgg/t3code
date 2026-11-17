@@ -8,6 +8,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 
+import { applyAppIconFavicon } from "./appIcon";
 import { applyAppearanceContrast } from "./appearanceContrast";
 import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
@@ -43,6 +44,7 @@ import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
   getClientSettings,
   getClientSettingsHydratedSnapshot,
+  startLegacyLayoutSettingsMigration,
   startModelPreferencesMigration,
   subscribeClientSettings,
   subscribeClientSettingsHydration,
@@ -104,6 +106,9 @@ function startClientAppearance(): void {
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
+    }
+    if (previous?.appIcon !== settings.appIcon) {
+      applyAppIconFavicon(settings.appIcon);
     }
     if (
       previous?.fontFamilySans !== settings.fontFamilySans ||
@@ -280,6 +285,7 @@ export function startAppServices(): AppRouter {
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
+  startLegacyLayoutSettingsMigration();
   startAgentOpenedPreviews();
   if (isElectron) startElectronBrowserHost();
   startPreviewTitleRecording();

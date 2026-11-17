@@ -1,5 +1,6 @@
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
 
 import { render } from "../../test/render";
 
@@ -14,6 +15,10 @@ vi.mock(import("../state/server"), async (original) => {
 });
 // The thread list needs live environments; the shortcut lives in the shell around it.
 vi.mock(import("./Sidebar"), () => ({ default: (() => null) as never }));
+// Pane routing is outside this shell shortcut test.
+vi.mock(import("../layout/WorkspacePlane"), () => ({
+  WorkspacePlane: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
 
 import { AppSidebarLayout } from "./AppSidebarLayout";
 

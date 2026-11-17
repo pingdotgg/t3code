@@ -33,7 +33,7 @@ import {
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
-import { projectTurnItemForWire } from "./WireProjection.ts";
+import { projectTurnItemForWire } from "@t3tools/shared/wireProjection";
 
 vi.mock("@t3tools/shared/threadFindText", { spy: true });
 
@@ -615,7 +615,7 @@ describe("V2 thread find", () => {
   );
 
   it.effect(
-    "does not search undispatched inputs, cancelled queue rows, or folded question answers",
+    "does not search undispatched inputs, cancelled queue rows, folded question answers, or retried prompts",
     () =>
       Effect.gen(function* () {
         const projection = yield* setup;
@@ -624,6 +624,8 @@ describe("V2 thread find", () => {
         const queued = item("cancelled", 1, "needle", "user_message");
         if (queued.type !== "user_message") return;
         const answer = item("async-answer:question", 2, "needle", "user_message");
+        const retried = item("retried", 4, "needle", "user_message");
+        if (retried.type !== "user_message") return;
         const question: OrchestrationV2TurnItem = {
           ...item("question", 3, ""),
           type: "user_input_request",
@@ -635,6 +637,7 @@ describe("V2 thread find", () => {
           { ...queued, runId: queuedRunId, inputIntent: "queued_turn" },
           answer,
           question,
+          { ...retried, retryOfRunId: runId },
         ]);
         const event: OrchestrationV2DomainEvent = {
           id: EventId.make("undispatched"),

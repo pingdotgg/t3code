@@ -2,8 +2,14 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
-import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
+/** Comment and review drafts stay separate across verdict switches and dock dismissal. */
+import type {
+  EnvironmentId,
+  PullRequestDetailView,
+  PullRequestRef,
+  PullRequestReviewVerdict,
+} from "@t3tools/contracts";
+import { MessageSquareIcon, MessageSquareTextIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "../ui/button";
@@ -41,13 +47,15 @@ export function PullRequestComposer({
   openReviewRequest?: number | undefined;
 }) {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
-  const [open, setOpen] = useState(false);
+  // "review" is open from a review request, which offers the review over a plain comment.
+  const [popover, setPopover] = useState<"closed" | "open" | "review">("closed");
+  const open = popover !== "closed";
+  const reviewRequested = popover === "review";
   const [reviewPending, setReviewPending] = useState(false);
-  const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
+  const [requestedMode, setRequestedMode] = useState<PullRequestReviewVerdict>("comment");
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
   const pendingComments = usePendingReviewComments(reference);
-  const clearComments = usePullRequestReviewStore((store) => store.clear);
   // Unsent summaries outlive the popover; select a boolean to avoid per-keystroke renders.
   const reviewKey = pullRequestReviewKey(reference);
   const summaryStarted = usePullRequestReviewStore(
@@ -57,8 +65,7 @@ export function PullRequestComposer({
   const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
-    setRequestedMode("review");
-    setOpen(true);
+    setPopover("review");
   }
 
   const canComment = detail.capabilities.comment && detail.viewerPermissions.comment;
@@ -67,14 +74,49 @@ export function PullRequestComposer({
   );
   if (!canComment && verdicts.length === 0) return null;
 
-  const mode = canComment ? (verdicts.length === 0 ? "comment" : requestedMode) : "review";
+  // Comment is offered wherever a plain remark or a commented review can be sent.
+  const modes = (["comment", "approve", "request-changes"] as const).filter((mode) =>
+    mode === "comment"
+      ? (!reviewRequested && canComment) || verdicts.includes("comment")
+      : verdicts.includes(mode),
+  );
+  const mode = modes.includes(requestedMode) ? requestedMode : (modes[0] ?? "comment");
+  // A review is what is sent when line comments or a summary have been started.
+  const sendsReview =
+    mode !== "comment" ||
+    !canComment ||
+    (verdicts.includes("comment") && (reviewStarted || reviewRequested));
+
+  const close = (
+    <PopoverClose render={<Button size="icon-xs" variant="ghost" />} aria-label="Close composer">
+      <XIcon className="size-3.5" />
+    </PopoverClose>
+  );
+  const modePicker =
+    modes.length > 1 ? (
+      <ToggleGroup
+        aria-label="Composer mode"
+        variant="segmented"
+        value={[mode]}
+        onValueChange={(next) => {
+          const value = modes.find((candidate) => candidate === next[0]);
+          if (value) setRequestedMode(value);
+        }}
+      >
+        {modes.map((value) => (
+          <Toggle key={value} value={value}>
+            {value === "comment" ? "Comment" : value === "approve" ? "Approve" : "Request changes"}
+          </Toggle>
+        ))}
+      </ToggleGroup>
+    ) : null;
 
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setRequestedMode(reviewStarted ? "review" : "comment");
-        setOpen(next);
+        // The last mode is kept: line comments waiting already turn Comment into the review.
+        setPopover((current) => (!next ? "closed" : current === "closed" ? "open" : current));
       }}
     >
       <PopoverTrigger
@@ -91,7 +133,7 @@ export function PullRequestComposer({
         {pendingComments.length > 0 ? (
           <span
             aria-hidden
-            className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info/15 px-1 text-3xs font-semibold tabular-nums text-info-foreground"
+            className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info/15 px-1 text-micro tabular-nums text-info-foreground"
           >
             {pendingComments.length}
           </span>
@@ -103,61 +145,42 @@ export function PullRequestComposer({
         align="end"
         sideOffset={8}
         width="lg"
-        initialFocus={mode === "review" ? reviewRef : commentRef}
+        initialFocus={sendsReview ? reviewRef : commentRef}
         aria-label={`${capitalizeTerm(term)} composer`}
       >
-        <div className="mb-3 flex items-center justify-between gap-2">
-          {canComment && verdicts.length > 0 ? (
-            <ToggleGroup
-              aria-label="Composer mode"
-              variant="segmented"
-              value={[mode]}
-              onValueChange={(next) => {
-                const value = next[0];
-                if (value === "comment" || value === "review") setRequestedMode(value);
-              }}
-            >
-              <Toggle value="comment">Comment</Toggle>
-              <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
-              </Toggle>
-            </ToggleGroup>
-          ) : (
-            <PopoverTitle>
-              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
-            </PopoverTitle>
-          )}
-          <div className="flex items-center gap-1">
-            {mode === "review" && pendingComments.length > 0 ? (
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Discard pending line comments"
-                title="Discard pending line comments"
-                disabled={reviewPending}
-                onClick={() => clearComments(reviewKey)}
-              >
-                <Trash2Icon className="size-3.5" />
-              </Button>
-            ) : null}
-            <PopoverClose
-              render={<Button size="icon-xs" variant="ghost" />}
-              aria-label="Close composer"
-            >
-              <XIcon className="size-3.5" />
-            </PopoverClose>
+        {/* With line comments waiting, the review header takes the title row and the verdicts
+            sit under it; otherwise the verdicts, or the plain title, share the row with close. */}
+        {pendingComments.length > 0 ? (
+          <>
+            <div className="mb-2 flex items-center gap-2 text-body">
+              <MessageSquareTextIcon aria-hidden className="size-4 text-muted-foreground" />
+              <PopoverTitle>Your review</PopoverTitle>
+              <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
+                {pendingComments.length} pending{" "}
+                {pendingComments.length === 1 ? "comment" : "comments"}
+              </span>
+              {close}
+            </div>
+            {modePicker ? <div className="mb-3">{modePicker}</div> : null}
+          </>
+        ) : (
+          <div className="mb-3 flex items-center justify-between gap-2">
+            {modePicker ?? (
+              <PopoverTitle>{sendsReview ? `Review ${term}` : `Comment on ${term}`}</PopoverTitle>
+            )}
+            {close}
           </div>
-        </div>
+        )}
         {/* Keep forms mounted to preserve drafts and submit guards across dismissal. */}
         {verdicts.length > 0 ? (
-          <div hidden={mode !== "review"}>
+          <div hidden={!sendsReview}>
             <PullRequestReviewForm
-              active={open && mode === "review"}
+              active={open && sendsReview}
               environmentId={environmentId}
               reference={reference}
               completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
+              verdict={mode}
               term={term}
-              verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
                 .get(detail.provider)
                 .reviewSummaryRequired("request-changes")}
@@ -165,14 +188,14 @@ export function PullRequestComposer({
               pending={reviewPending}
               onPendingChange={setReviewPending}
               onSubmitted={() => {
-                setOpen(false);
+                setPopover("closed");
                 onReviewSubmitted();
               }}
             />
           </div>
         ) : null}
         {canComment ? (
-          <div hidden={mode !== "comment"}>
+          <div hidden={sendsReview}>
             <PullRequestCommentForm
               active={open && mode === "comment"}
               environmentId={environmentId}
@@ -182,7 +205,9 @@ export function PullRequestComposer({
               textareaRef={commentRef}
               onCommentAction={onCommentAction}
               onCommented={onCommented}
-              onClose={() => setOpen(false)}
+              onClose={() => {
+                setPopover("closed");
+              }}
             />
           </div>
         ) : null}

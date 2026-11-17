@@ -22,6 +22,23 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## App icon
+
+On web and desktop, open **Settings → Appearance** and choose **App icon**, or use **Change app
+icon** in the command palette, to pick the black, Sunrise, or Blueprint icon or an older T3 Code
+icon. Desktop shows it in the Dock or taskbar, and the browser shows it in the tab. **Default**
+returns to your build's own icon. The choice is saved separately on each device.
+
+On macOS, the chosen icon shows in the Dock while T3 Code runs; when it is closed, the Dock and
+Finder show the default icon.
+
+## Style
+
+On web and desktop, **Style** in **Settings → Appearance** sets how buttons and controls are
+painted, independently of the theme: **Standard** (the default), **Flat**, **Soft**, **Gloss**,
+**Accent gloss**, or **Outline**. Accent gloss paints main buttons, the send button, and switches
+in the theme's accent color.
+
 ## Math
 
 Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown
@@ -36,10 +53,13 @@ preference is saved separately on each device.
 
 ## Motion
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
-**Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
-in your operating system. Moving between threads always snaps to the selected thread's panel state
-without replaying its transitions.
+The main sidebar, right panel, and terminal drawer open and close with a short 150 ms animation by
+default. The **Panel animations** slider sets it from 0 ms (off) to 400 ms. Moving between threads
+always snaps to the selected thread's panel state without replaying its transitions.
+
+Moving around the layout (switching workspaces, focusing a column off screen, opening and closing
+panes, the overview) always animates, whatever the slider says. Reduced motion in your operating
+system makes all of it, and the panels, instant.
 
 ## Custom themes
 

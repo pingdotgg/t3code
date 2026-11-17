@@ -1,5 +1,3 @@
-import { ChevronDownIcon } from "lucide-react";
-
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { ThreadDetailsItemsMenuItems } from "../chat/ThreadDetailsItemsMenu";
 import {
@@ -8,7 +6,7 @@ import {
   RESET_THREAD_DETAILS_ITEMS,
   THREAD_DETAILS_ITEMS,
 } from "../chat/threadDetailsItems";
-import { Button } from "../ui/button";
+import { SelectButton } from "../ui/select";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -32,18 +30,15 @@ export function ThreadDetailsItemsRow() {
         <Menu>
           <MenuTrigger
             render={
-              <Button
-                variant="secondary"
+              <SelectButton
+                variant="well"
                 size="sm"
-                className="w-full sm:w-40"
+                className="w-full @min-[26rem]/settings-row:w-40"
                 aria-label={`Thread details: ${enabled} of ${THREAD_DETAILS_ITEMS.length} on`}
               />
             }
           >
-            <span className="flex-1 text-start">
-              {enabled} of {THREAD_DETAILS_ITEMS.length} on
-            </span>
-            <ChevronDownIcon aria-hidden />
+            {enabled} of {THREAD_DETAILS_ITEMS.length} on
           </MenuTrigger>
           <MenuPopup align="end">
             <ThreadDetailsItemsMenuItems />

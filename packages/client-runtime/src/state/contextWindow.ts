@@ -111,6 +111,7 @@ export function deriveLatestContextWindowSnapshot(
       durationMs: null,
       compactsAutomatically: true,
       autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
+      breakdown: liveUsage.breakdown ?? null,
       cost: null,
       updatedAt: liveUsage.updatedAt,
     };
@@ -147,6 +148,7 @@ export function deriveLatestContextWindowSnapshot(
       compactsAutomatically: providerUsage.compactsAutomatically ?? null,
       cost: providerUsage.cost ?? null,
       autoCompactThreshold: providerUsage.autoCompactThreshold ?? null,
+      breakdown: providerUsage.breakdown ?? null,
       updatedAt: DateTime.formatIso(providerUsageUpdatedAt),
     };
   }
@@ -196,6 +198,7 @@ export function deriveLatestContextWindowSnapshot(
       durationMs: null,
       compactsAutomatically: true,
       autoCompactThreshold: null,
+      breakdown: null,
       cost: null,
       updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
     };

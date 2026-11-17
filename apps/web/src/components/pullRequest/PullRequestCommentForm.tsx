@@ -16,6 +16,7 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 
 export function PullRequestCommentForm({
   environmentId,
@@ -117,7 +118,7 @@ export function PullRequestCommentForm({
         // Lock while posting because success clears the draft.
         disabled={locked}
         readOnly={speech.freezesEditor}
-        value={body}
+        value={speech.displayText}
         rows={3}
         placeholder="Leave a comment"
         aria-label={`Comment on this ${sourceControlClients.get(detail.provider).changeRequest.singular}`}
@@ -173,14 +174,10 @@ export function PullRequestCommentForm({
             )}
           </Button>
         )}
-        <Button
-          size="xs"
-          variant="secondary"
-          disabled={submitDisabled}
-          onClick={() => submitAfterDictation("comment")}
-        >
+        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
           <SendIcon className="size-3.5" />
           {submitting === "comment" ? "Posting..." : "Comment"}
+          <PullRequestSubmitKeyHint />
         </Button>
       </div>
     </div>

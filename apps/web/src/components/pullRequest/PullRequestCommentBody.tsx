@@ -1,16 +1,47 @@
 import { useId, useRef, useState, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
-import { Button } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { observeResize } from "~/lib/observeResize";
 
+/** Keep collapse within the comment's scroller, without moving the workspace canvas. */
+function scrollCommentIntoView(element: HTMLElement) {
+  let scroller = element.parentElement;
+  while (scroller) {
+    if (
+      /(auto|scroll)/.test(getComputedStyle(scroller).overflowY) &&
+      scroller.scrollHeight > scroller.clientHeight
+    ) {
+      const offset = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      if (offset < 0) scroller.scrollTop += offset;
+      return;
+    }
+    scroller = scroller.parentElement;
+  }
+}
+
 export function PullRequestCommentBody({
   className,
+  variant = "comment",
+  revealCount = 0,
+  collapsedHeight = 0,
   ...props
-}: ComponentProps<typeof PullRequestMarkdown>) {
-  const [expanded, setExpanded] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
+}: ComponentProps<typeof PullRequestMarkdown> & {
+  variant?: "comment" | "description";
+  revealCount?: number;
+  /** Lets the collapsed body grow past its minimum height, never below it. */
+  collapsedHeight?: number;
+}) {
+  const maxHeight = Math.max(variant === "description" ? 64 : 240, collapsedHeight);
+  const [expanded, setExpanded] = useState(revealCount > 0);
+  const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
+  if (revealCount !== seenRevealCount) {
+    setSeenRevealCount(revealCount);
+    if (revealCount > 0) setExpanded(true);
+  }
+  const [textHeight, setTextHeight] = useState(0);
+  const overflowing = textHeight > maxHeight;
   const clip = useRef<HTMLDivElement>(null);
   const id = useId();
 
@@ -19,14 +50,16 @@ export function PullRequestCommentBody({
       <div
         ref={clip}
         id={id}
-        className={cn("relative", !expanded && "max-h-[240px] overflow-hidden")}
+        className={cn("relative", !expanded && "overflow-hidden")}
+        style={expanded ? undefined : { maxHeight }}
+        data-comment-clip
         onFocusCapture={() => setExpanded(true)}
       >
         <div
           ref={(element) => {
             if (element === null) return;
             return observeResize(element, ([entry]) => {
-              if (entry) setOverflowing(entry.contentRect.height > 240);
+              if (entry) setTextHeight(entry.contentRect.height);
             });
           }}
         >
@@ -35,24 +68,27 @@ export function PullRequestCommentBody({
         {overflowing && !expanded ? (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent"
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t to-transparent",
+              variant === "description" ? "from-(--code-surface)" : "from-(--card-bottom)",
+            )}
           />
         ) : null}
       </div>
       {overflowing ? (
-        <Button
-          size="xs"
-          variant="ghost-muted"
-          className="mt-2"
-          aria-expanded={expanded}
-          aria-controls={id}
-          onClick={() => {
-            if (expanded) clip.current?.scrollIntoView({ block: "nearest" });
-            setExpanded(!expanded);
-          }}
-        >
-          {expanded ? "Show less" : "Show full comment"}
-        </Button>
+        <div className="mt-1.5 text-meta">
+          <InlineButton
+            tone="muted"
+            aria-expanded={expanded}
+            aria-controls={id}
+            onClick={() => {
+              if (expanded && clip.current) scrollCommentIntoView(clip.current);
+              setExpanded(!expanded);
+            }}
+          >
+            {expanded ? "Show less" : variant === "description" ? "Read more" : "Show full comment"}
+          </InlineButton>
+        </div>
       ) : null}
     </div>
   );

@@ -39,6 +39,23 @@ function shownAfterDismissing(dismissed: ServerProvider, shown: ServerProvider):
 describe("compatibility banners", () => {
   it("shows and dismisses a warning on a healthy provider, then clears it after policy relaxation", () => {
     expect(shouldShowProviderStatusBanner(provider, false)).toBe(true);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...provider,
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            updateCommand: "npm i -g @openai/codex@latest",
+            canUpdate: true,
+            checkedAt: null,
+            message: null,
+          },
+        },
+        false,
+      ),
+    ).toBe(true);
     expect(shownAfterDismissing(provider, provider)).toBe(false);
     expect(shownAfterDismissing(provider, { ...provider, version: "1.0.1" })).toBe(true);
     const relaxed: ServerProvider = {
