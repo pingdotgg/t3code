@@ -5,13 +5,13 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  issueFilterProjects,
   issueListTargets,
   issueTrackerKey,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type {
   EnvironmentId,
   IssueInvolvement,
@@ -179,6 +179,12 @@ export function IssuesPage() {
   const capableEnvironments = environments.filter(
     (environment) => environment.serverConfig?.environment.capabilities.issues === true,
   );
+  const projectFilterEnvironmentIds = capableEnvironments
+    .filter(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.issueProjectFilter === true,
+    )
+    .map((environment) => environment.environmentId);
   const environmentLabels = new Map(environments.map((e) => [e.environmentId, e.label] as const));
 
   const debouncedQuery = useDebouncedValue(search.q ?? "", 300);
@@ -192,23 +198,39 @@ export function IssuesPage() {
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { sort: search.order } : {}),
   };
+  const selectedProjects = (search.project ?? []).flatMap(
+    (key) => parseScopedProjectKey(key) ?? [],
+  );
   const targets = issueListTargets(
     capableEnvironments.map((e) => e.environmentId),
     listInput,
-    (search.project ?? []).flatMap((key) => parseScopedProjectKey(key) ?? []),
+    selectedProjects,
+    projectFilterEnvironmentIds,
   );
-  const projectOptions = pullRequestFilterProjects(
+  const projectOptions = issueFilterProjects(
     projects.filter(
       (project) =>
-        !project.isScratch &&
-        capableEnvironments.some((e) => e.environmentId === project.environmentId),
+        !project.isScratch && projectFilterEnvironmentIds.includes(project.environmentId),
     ),
     environmentLabels,
   ).map((project) => ({
     ...project,
     key: scopedProjectKey({ environmentId: project.environmentId, projectId: project.id }),
   }));
-  const list = useIssueList(targets);
+  const listing = useIssueList(targets);
+  const unsupportedProjects = selectedProjects.some((project) =>
+    capableEnvironments.some(
+      (environment) =>
+        environment.environmentId === project.environmentId &&
+        !projectFilterEnvironmentIds.includes(project.environmentId),
+    ),
+  );
+  const list = {
+    ...listing,
+    error: unsupportedProjects
+      ? "Update the selected environment's T3 Code server to filter issues by project."
+      : listing.error,
+  };
   useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
@@ -262,7 +284,7 @@ export function IssuesPage() {
       )
     : held;
   const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(shown, projects);
+  const filterScopes = issueFilterScopes(shown, projects, selectedProjects);
 
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),

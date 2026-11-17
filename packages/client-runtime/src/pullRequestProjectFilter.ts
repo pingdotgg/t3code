@@ -8,7 +8,7 @@ interface FilterProject {
   readonly workspaceRoot: string;
 }
 
-function distinguishTitles<Project extends FilterProject>(
+export function distinguishTitles<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   suffix: (project: Project) => string,
 ) {

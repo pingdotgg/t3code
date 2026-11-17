@@ -8,11 +8,13 @@ import type {
   IssueListSort,
   IssueScopeRef,
   IssueTrackerSummary,
+  ProjectId,
   ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 
 import { mergeIssueListPage, type IssueListTarget } from "./state/issues.ts";
+import { distinguishTitles } from "./pullRequestProjectFilter.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
 
@@ -47,16 +49,38 @@ export function issueListTargets(
   environmentIds: ReadonlyArray<EnvironmentId>,
   input: IssueListInput,
   projects: ReadonlyArray<ScopedProjectRef>,
+  projectFilterEnvironmentIds: ReadonlyArray<EnvironmentId> = environmentIds,
 ): ReadonlyArray<IssueListTarget> {
   if (projects.length === 0)
     return environmentIds.map((environmentId) => ({ environmentId, input }));
   return environmentIds.flatMap((environmentId) => {
+    if (!projectFilterEnvironmentIds.includes(environmentId)) return [];
     const projectIds = projects
       .filter((project) => project.environmentId === environmentId)
       .map((project) => project.projectId)
       .sort();
     return projectIds.length === 0 ? [] : [{ environmentId, input: { ...input, projectIds } }];
   });
+}
+
+/** Issue tracker bindings belong to each checkout, including checkouts of the same repository. */
+export function issueFilterProjects<
+  Project extends {
+    readonly id: ProjectId;
+    readonly environmentId: EnvironmentId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+  },
+>(projects: ReadonlyArray<Project>, environmentLabels: ReadonlyMap<EnvironmentId, string>) {
+  const byServer = distinguishTitles(
+    projects,
+    (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
+  );
+  const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
+  const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
+  return distinguishTitles(byEnvironment, (project) => project.id).sort((left, right) =>
+    left.title.localeCompare(right.title),
+  );
 }
 
 /** Continuations are laid over the first page they continue; a new first page forgets them. */
@@ -188,32 +212,43 @@ export function groupIssues(
 /** The scopes whose labels and people a list filter offers, each reached through one project. */
 export function issueFilterScopes(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
-  projects: ReadonlyArray<EnvironmentProject>,
+  projects: ReadonlyArray<Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">>,
+  selectedProjects: ReadonlyArray<ScopedProjectRef> = [],
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
   for (const [environmentId, page] of held) {
-    for (const project of projects) {
-      if (project.environmentId !== environmentId) continue;
-      const identity = project.repositoryIdentity;
-      const kind = identity?.provider as SourceControlProviderKind | undefined;
-      const scope = sourceControlClients.issueScope(identity);
-      if (!identity || !kind || scope === null) continue;
-      const host = sourceControlClients.changeRequestHost(identity, kind);
-      const tracker = page.answer.trackers.find(
-        (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
-      );
-      if (!tracker?.configured || tracker.capabilities === null) continue;
-      if (
-        scopes.some(
-          (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+    if (page.answer.scopes === undefined) {
+      for (const project of projects) {
+        if (project.environmentId !== environmentId) continue;
+        if (
+          selectedProjects.length > 0 &&
+          !selectedProjects.some(
+            (selected) =>
+              selected.environmentId === environmentId && selected.projectId === project.id,
+          )
         )
-      )
-        continue;
-      scopes.push({
-        environmentId,
-        input: { projectId: project.id, tracker: tracker.tracker, host, scope },
-      });
+          continue;
+        const identity = project.repositoryIdentity;
+        const kind = identity?.provider as SourceControlProviderKind | undefined;
+        const scope = sourceControlClients.issueScope(identity);
+        if (!identity || !kind || scope === null) continue;
+        const host = sourceControlClients.changeRequestHost(identity, kind);
+        const tracker = page.answer.trackers.find(
+          (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
+        );
+        if (!tracker?.configured || tracker.capabilities === null) continue;
+        if (
+          scopes.some(
+            (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+          )
+        )
+          continue;
+        scopes.push({
+          environmentId,
+          input: { projectId: project.id, tracker: tracker.tracker, host, scope },
+        });
+      }
     }
     // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
     // matched or not. Older servers do not, so their rows stand in.
@@ -226,6 +261,14 @@ export function issueFilterScopes(
         scope,
       }));
     for (const input of covered) {
+      if (
+        selectedProjects.length > 0 &&
+        !selectedProjects.some(
+          (selected) =>
+            selected.environmentId === environmentId && selected.projectId === input.projectId,
+        )
+      )
+        continue;
       const host = input.host?.toLowerCase();
       const tracker = page.answer.trackers.find(
         (t) => t.tracker === input.tracker && t.host.toLowerCase() === host,

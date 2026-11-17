@@ -5,6 +5,7 @@ import type {
   IssueTrackerKind,
   IssueTrackerSummary,
   ProjectId,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,6 +16,7 @@ import {
   issueCursorsForHost,
   issueFilterScopes,
   issueListTargets,
+  issueFilterProjects,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -145,6 +147,56 @@ describe("issueFilterScopes", () => {
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
   });
 
+  it("uses answer scopes and limits legacy repositories to the chosen projects", () => {
+    const projects = [api, "web" as ProjectId].map((id) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        provider: "github" as SourceControlProviderKind,
+        host: "github.com",
+        owner: "acme",
+        name: id,
+        canonicalKey: `github.com/acme/${id}`,
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: `git@github.com:acme/${id}.git`,
+        },
+      },
+    }));
+    const scope = {
+      projectId: api,
+      tracker: "github" as IssueTrackerKind,
+      host: "github.com",
+      scope: "acme/api",
+    };
+    const current = new Map([
+      [
+        environmentId,
+        hold(
+          answer({
+            trackers: [tracker({ tracker: "github" as IssueTrackerKind, host: "github.com" })],
+            scopes: [scope],
+          }),
+        ),
+      ],
+    ]);
+    expect(issueFilterScopes(current, projects)).toEqual([{ environmentId, input: scope }]);
+    const legacy = new Map([
+      [
+        environmentId,
+        hold(
+          answer({
+            trackers: [tracker({ tracker: "github" as IssueTrackerKind, host: "github.com" })],
+          }),
+        ),
+      ],
+    ]);
+    expect(issueFilterScopes(legacy, projects, [{ environmentId, projectId: api }])).toEqual([
+      { environmentId, input: scope },
+    ]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [
@@ -245,4 +297,32 @@ describe("issueListTargets", () => {
       { environmentId: other, input: { ...input, projectIds: [api, "web"] } },
     ]);
   });
+});
+
+describe("issueFilterProjects", () => {
+  it("keeps checkouts of the same repository independently selectable", () => {
+    const projects = ["one", "two"].map((id) => ({
+      id: id as ProjectId,
+      environmentId,
+      title: "api",
+      workspaceRoot: `/work/${id}`,
+      repositoryIdentity: { canonicalKey: "github.com/acme/api" },
+    }));
+    const options = issueFilterProjects(projects, new Map([[environmentId, "Local"]]));
+    expect(options.map((project) => project.id)).toEqual(["one", "two"]);
+    expect(new Set(options.map((project) => project.title)).size).toBe(2);
+  });
+});
+
+it("does not request a project-filtered listing from a server without the capability", () => {
+  const other = "env-2" as EnvironmentId;
+  const input = { state: "open", limit: 50 } as const;
+  const chosen = [
+    { environmentId, projectId: api },
+    { environmentId: other, projectId: api },
+  ];
+  expect(issueListTargets([environmentId, other], input, chosen, [other])).toEqual([
+    { environmentId: other, input: { ...input, projectIds: [api] } },
+  ]);
+  expect(issueListTargets([environmentId], input, [], [])).toEqual([{ environmentId, input }]);
 });
