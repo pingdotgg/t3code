@@ -19,6 +19,7 @@
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
+    "i18n:check": "node scripts/i18n-check.ts",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "workflow:link": "node scripts/workflow-link.ts",
     "workflow:map": "node scripts/workflow-map.ts",
