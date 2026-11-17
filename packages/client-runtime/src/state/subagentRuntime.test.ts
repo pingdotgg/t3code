@@ -316,9 +316,9 @@ describe("resolveWorkflowOpening", () => {
       false,
     );
     expect(isWorkflowScriptMessage({ role: "assistant", text: SCRIPT })).toBe(false);
-    expect(isWorkflowScriptMessage({ role: "user", text: `// a\n/* b\n * c */\n${SCRIPT}` })).toBe(
-      true,
-    );
+    expect(
+      isWorkflowScriptMessage({ role: "user", text: `// a\r// b\u2028/* c\n * d */\r\n${SCRIPT}` }),
+    ).toBe(true);
     expect(isWorkflowScriptMessage({ role: "user", text: "// export const meta = {}" })).toBe(
       false,
     );
