@@ -132,13 +132,19 @@ it("unassigns a default shortcut and restores its condition when one is assigned
         },
       });
 
-      await screen
-        .getByRole("button", {
-          name: "Edit shortcut for Composer: Start in Background: Unassigned",
-        })
-        .click();
+      const unassigned = screen.getByRole("button", {
+        name: "Edit shortcut for Composer: Start in Background: Unassigned",
+      });
+      const save = screen.getByRole("button", { name: "Save" });
+      await unassigned.click();
       await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
-      await screen.getByRole("button", { name: "Save" }).click();
+      await expect.element(save).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(save).not.toBeInTheDocument();
+
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await save.click();
       expect(mutate).toHaveBeenLastCalledWith({
         environmentId: "env",
         input: expect.objectContaining({

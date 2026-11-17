@@ -759,7 +759,15 @@ function useKeybindingRowEditor({
       // An unhandled Escape closes the settings page.
       event.stopPropagation();
       const field = event.currentTarget;
-      flushSync(() => setDraft({ keyDraft: row.key, isRecording: false }));
+      flushSync(() =>
+        setDraft({
+          keyDraft: row.key,
+          isRecording: false,
+          ...(row.isUnassigned && whenDraftExpression === row.defaultWhen
+            ? { whenDraft: parseKeybindingWhenExpression(row.when) ?? undefined }
+            : {}),
+        }),
+      );
       // The field may unmount for the pill; focus would otherwise drop to the page.
       if (pillRef.current) pillRef.current.focus();
       else field.blur();
