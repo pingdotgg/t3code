@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { IssueTrackerKind } from "@t3tools/contracts";
 import { IssueTrackerError } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -64,7 +63,7 @@ const listWithProbeFailure = (reason: IssueTrackerError["reason"]) =>
                 IssueTrackerRegistry.fromTrackers([tracker]),
               ),
               Layer.mock(ServerSecretStore.ServerSecretStore)({
-                get: () => Effect.succeed(Option.some(new TextEncoder().encode("saved-valid-key"))),
+                get: () => Effect.succeedSome(new TextEncoder().encode("saved-valid-key")),
               }),
               Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
                 list: Effect.succeed(new Map()),
