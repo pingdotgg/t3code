@@ -25,12 +25,12 @@ describe("DesktopEarlyElectronStartup", () => {
     assert.equal(preference, "kwallet6");
   });
 
-  it("accepts JSONC in the early desktop settings file", () => {
+  it.each(["", "\uFEFF"])("accepts JSONC with prefix %j in early settings", (prefix) => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { T3CODE_HOME: "/home/user/.t3-test" },
       homeDirectory: "/home/user",
       joinPath,
-      readFileString: () => `{
+      readFileString: () => `${prefix}{
         // manually edited setting
         "linuxPasswordStore": "gnome-libsecret",
       }`,

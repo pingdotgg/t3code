@@ -73,7 +73,8 @@ export function resolveEarlyLinuxPasswordStorePreference(
 ): LinuxPasswordStorePreference {
   const settingsPath = resolveEarlyDesktopSettingsPath(input);
   try {
-    const parsed = decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
+    const contents = input.readFileString(settingsPath).replace(/^\uFEFF/u, "");
+    const parsed = decodeEarlyDesktopSettingsJson(contents);
     return normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore);
   } catch {
     return DEFAULT_LINUX_PASSWORD_STORE;
