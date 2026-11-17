@@ -2497,132 +2497,231 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("queues a provider switch sent as a steer into a running Claude turn", () =>
+  const steerProviderSwitchHarness = Effect.fn("steerProviderSwitchHarness")(function* (
+    key: string,
+  ) {
+    const cwd = yield* checkpointWorkspace(`steer-provider-switch-${key}`);
+    const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const threadId = ThreadId.make(`thread:steer-provider-switch:${key}`);
+    const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+      makeTestAdapter({
+        instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "Claude finished the current turn" },
+        capturedTurns,
+        holdFirstTurn: started,
+        releaseFirstTurn: release,
+      }),
+      makeTestAdapter({
+        instanceId: CODEX_MODEL_SELECTION.instanceId,
+        driver: CODEX_DRIVER,
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        responseByRunOrdinal: { 2: "Codex continued" },
+        capturedTurns,
+      }),
+    ]);
+    const layer = ProviderReplayHarness.layerWithRegistry(
+      {
+        name: `steer-provider-switch-${key}`,
+        runtimePolicyOverride: {
+          cwd,
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      },
+      layerRegistry,
+    );
+    const startClaudeTurn = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:create`),
+        threadId,
+        projectId: ProjectId.make(`project:steer-provider-switch:${key}`),
+        title: "Steer provider switch",
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:first`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:first`),
+        text: "Current Claude turn",
+        attachments: [],
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    const markClaudeTurnRunning = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const [claudeRun] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:steer-provider-switch:${key}:first-turn-running`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: claudeRun!.id,
+            nodeId: claudeRun!.rootNodeId!,
+            driver: CLAUDE_DRIVER,
+            providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            occurredAt: now,
+            payload: {
+              // The adapter's own turn id, so its completion ends this turn.
+              id: ProviderTurnId.make(`provider-turn:${CLAUDE_DRIVER}:${threadId}:1`),
+              providerThreadId: claudeRun!.providerThreadId!,
+              nodeId: claudeRun!.rootNodeId!,
+              runAttemptId: claudeRun!.activeAttemptId!,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+    });
+    const steerToCodex = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:codex`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:codex`),
+        text: "Continue with Codex",
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        deliveryIntent: "steer",
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    return {
+      threadId,
+      started,
+      release,
+      capturedTurns,
+      layer,
+      startClaudeTurn,
+      markClaudeTurnRunning,
+      steerToCodex,
+    };
+  });
+
+  it.live.each(["running", "has no provider session yet"] as const)(
+    "runs a provider switch steered into a Claude turn that %s after that turn",
+    (phase) =>
+      Effect.gen(function* () {
+        const harness = yield* steerProviderSwitchHarness(
+          phase === "running" ? "running" : "before-session",
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const waitForRun = (ordinal: number) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === harness.threadId &&
+                  event.payload.ordinal === ordinal &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+            );
+          yield* harness.startClaudeTurn;
+          if (phase === "running") {
+            yield* Deferred.await(harness.started);
+            yield* worker.drain();
+            yield* harness.markClaudeTurnRunning;
+          } else {
+            const beforeSession = yield* orchestrator.getThreadProjection(harness.threadId);
+            assert.include(["preparing", "starting"], beforeSession.runs[0]?.status);
+            assert.lengthOf(beforeSession.providerSessions, 0);
+          }
+          // Claude cannot restart its turn for new input, so the switch waits for the turn.
+          yield* harness.steerToCodex;
+          const queued = (yield* orchestrator.getThreadProjection(harness.threadId)).runs.at(-1);
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          assert.isUndefined(queued?.steerWhenReadyRunId);
+
+          yield* Deferred.await(harness.started);
+          yield* Deferred.succeed(harness.release, undefined);
+          yield* waitForRun(1);
+          yield* waitForRun(2);
+          const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+          assert.deepEqual(
+            projection.runs.map((run) => [run.status, run.providerInstanceId]),
+            [
+              ["completed", CLAUDE_MODEL_SELECTION.instanceId],
+              ["completed", CODEX_MODEL_SELECTION.instanceId],
+            ],
+          );
+          assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
+          const handoff = projection.contextHandoffs.find(
+            (candidate) => candidate.id === projection.runs[1]?.contextHandoffId,
+          );
+          assert.isDefined(handoff);
+          const codexTurn = (yield* Ref.get(harness.capturedTurns)).at(-1)!;
+          assert.include(codexTurn.text, "Continue with Codex");
+          assert.include(codexTurn.text, "Current Claude turn");
+          assert.include(codexTurn.text, "Claude finished the current turn");
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  // regression: #32891 a steer that Stop already reached is refused, not queued
+  it.live("refuses a provider switch steered into a Claude turn that Stop reached", () =>
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("steer-provider-switch-queues");
-      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-      const started = yield* Deferred.make<void>();
-      const steerThreadId = ThreadId.make("thread:steer-provider-switch-queues");
-      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-        makeTestAdapter({
-          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-          driver: CLAUDE_DRIVER,
-          capabilities: ClaudeProviderCapabilitiesV2,
-          modelSelection: CLAUDE_MODEL_SELECTION,
-          responseByRunOrdinal: {},
-          capturedTurns,
-          holdFirstTurn: started,
-        }),
-        makeTestAdapter({
-          instanceId: CODEX_MODEL_SELECTION.instanceId,
-          driver: CODEX_DRIVER,
-          capabilities: CodexProviderCapabilitiesV2,
-          modelSelection: CODEX_MODEL_SELECTION,
-          responseByRunOrdinal: {},
-          capturedTurns,
-        }),
-      ]);
+      const harness = yield* steerProviderSwitchHarness("after-stop");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const eventSink = yield* EventSink.EventSinkV2;
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make("command:steer-provider-switch-queues:create"),
-          threadId: steerThreadId,
-          projectId: ProjectId.make("project:steer-provider-switch-queues"),
-          title: "Steer provider switch",
-          modelSelection: CLAUDE_MODEL_SELECTION,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-        });
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make("command:steer-provider-switch-queues:first"),
-          threadId: steerThreadId,
-          messageId: MessageId.make("message:steer-provider-switch-queues:first"),
-          text: "Current Claude turn",
-          attachments: [],
-          modelSelection: CLAUDE_MODEL_SELECTION,
-          dispatchMode: { type: "start_immediately" },
-        });
-        yield* Deferred.await(started);
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
         yield* worker.drain();
-        const [claudeRun] = (yield* orchestrator.getThreadProjection(steerThreadId)).runs;
-        const now = yield* DateTime.now;
-        yield* eventSink.write({
-          events: [
-            {
-              id: EventId.make("event:steer-provider-switch-queues:first-turn-running"),
-              type: "provider-turn.updated",
-              threadId: steerThreadId,
-              runId: claudeRun!.id,
-              nodeId: claudeRun!.rootNodeId!,
-              driver: CLAUDE_DRIVER,
-              providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
-              occurredAt: now,
-              payload: {
-                id: ProviderTurnId.make("provider-turn:steer-provider-switch-queues:first"),
-                providerThreadId: claudeRun!.providerThreadId!,
-                nodeId: claudeRun!.rootNodeId!,
-                runAttemptId: claudeRun!.activeAttemptId!,
-                nativeTurnRef: null,
-                ordinal: 1,
-                status: "running",
-                startedAt: now,
-                completedAt: null,
-              },
-            },
-          ],
-        });
-        // Claude cannot restart its turn for new input, so the switch waits for the turn.
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // The worker has not delivered the interrupt yet, so the run still reads as running.
         yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make("command:steer-provider-switch-queues:codex"),
-          threadId: steerThreadId,
-          messageId: MessageId.make("message:steer-provider-switch-queues:codex"),
-          text: "Continue with Codex",
-          attachments: [],
-          modelSelection: CODEX_MODEL_SELECTION,
-          deliveryIntent: "steer",
-          dispatchMode: { type: "start_immediately" },
+          type: "run.interrupt",
+          commandId: CommandId.make("command:steer-provider-switch:after-stop:stop"),
+          threadId: harness.threadId,
+          runId: claudeRun!.id,
         });
-        const projection = yield* orchestrator.getThreadProjection(steerThreadId);
+        const error = yield* harness.steerToCodex.pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
         assert.deepEqual(
-          projection.runs.map((run) => [run.status, run.providerInstanceId]),
-          [
-            ["running", CLAUDE_MODEL_SELECTION.instanceId],
-            ["queued", CODEX_MODEL_SELECTION.instanceId],
-          ],
-        );
-        assert.deepEqual(projection.thread.modelSelection, CLAUDE_MODEL_SELECTION);
-      }).pipe(
-        Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            {
-              name: "steer-provider-switch-queues",
-              runtimePolicyOverride: {
-                cwd,
-                approvalPolicy: "never",
-                sandboxPolicy: {
-                  type: "readOnly",
-                  access: { type: "fullAccess" },
-                  networkAccess: false,
-                },
-              },
-            },
-            layerRegistry,
+          (yield* orchestrator.getThreadProjection(harness.threadId)).runs.map(
+            (run) => run.providerInstanceId,
           ),
-        ),
-      );
+          [CLAUDE_MODEL_SELECTION.instanceId],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
     }),
   );
 

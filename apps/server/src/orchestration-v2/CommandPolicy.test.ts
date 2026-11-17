@@ -213,50 +213,16 @@ it("queues a steer for a provider that cannot steer either way", () => {
   );
 });
 
-it("queues a provider switch the running provider cannot apply by restarting its turn", () => {
-  const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-  const codexInstanceId = ProviderInstanceId.make("codex");
-  const withProvider = (
-    sessionCapabilities: OrchestrationV2ProviderCapabilities,
-    providerInstanceId: ProviderInstanceId,
-  ) => {
-    const projection = dispatchProjection(sessionCapabilities);
-    return {
-      ...projection,
-      runs: projection.runs.map((run) => ({ ...run, providerInstanceId })),
-    } as OrchestrationV2ThreadProjection;
-  };
-  const claude = withProvider(ClaudeProviderCapabilitiesV2, claudeInstanceId);
-  for (const deliveryIntent of ["auto", "steer"] as const) {
-    assert.deepEqual(
-      CommandPolicy.resolveMessageDispatchIntent(
-        claude,
-        { type: "start_immediately" },
-        deliveryIntent,
-        codexInstanceId,
-      ),
-      { type: "queue_after_active" },
-    );
-    // The same provider still steers its running turn.
-    assert.deepEqual(
-      CommandPolicy.resolveMessageDispatchIntent(
-        claude,
-        { type: "start_immediately" },
-        deliveryIntent,
-        claudeInstanceId,
-      ),
-      { type: "steer_active", targetRunId: activeRunId },
-    );
-  }
-  // A provider that restarts its turn for new input still switches immediately.
-  assert.deepEqual(
-    CommandPolicy.resolveMessageDispatchIntent(
-      withProvider(baseCapabilities, codexInstanceId),
-      { type: "start_immediately" },
-      "steer",
-      claudeInstanceId,
-    ),
-    { type: "steer_active", targetRunId: activeRunId },
+it("runs a provider switch after the turn only when the provider cannot restart it", () => {
+  assert.isTrue(CommandPolicy.providerSwitchWaitsForTurn(ClaudeProviderCapabilitiesV2.turns));
+  assert.isFalse(CommandPolicy.providerSwitchWaitsForTurn(CodexProviderCapabilitiesV2.turns));
+  assert.isFalse(CommandPolicy.providerSwitchWaitsForTurn(CursorProviderCapabilitiesV2.turns));
+  // Without a queue the switch keeps failing as before instead of being dropped.
+  assert.isFalse(
+    CommandPolicy.providerSwitchWaitsForTurn({
+      ...ClaudeProviderCapabilitiesV2.turns,
+      supportsQueuedMessages: false,
+    }),
   );
 });
 

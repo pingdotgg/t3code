@@ -94,8 +94,6 @@ export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
-  /** The provider instance the message selects, when it names one. */
-  requestedInstanceId?: ProviderInstanceId,
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
@@ -105,23 +103,17 @@ export function resolveMessageDispatchIntent(
   if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
     return { type: "queue_after_active" };
   }
+  // A provider that can neither steer nor restart its turn takes the message after the turn.
   const turns =
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
-  if (
-    turns === undefined ||
-    !turns.supportsQueuedMessages ||
-    (turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
-  ) {
-    return mode;
-  }
-  // A provider that can neither steer nor restart its turn takes the message after the turn.
-  // A provider switch needs a new turn, so a provider that cannot restart its turn takes
-  // the switch after the turn too.
-  const switchesProvider =
-    requestedInstanceId !== undefined && requestedInstanceId !== target?.providerInstanceId;
-  return !turns.supportsActiveSteering || switchesProvider ? { type: "queue_after_active" } : mode;
+  return turns !== undefined &&
+    !turns.supportsActiveSteering &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
+    turns.supportsQueuedMessages
+    ? { type: "queue_after_active" }
+    : mode;
 }
 
 /** A run that still owns the thread's provider turn. */
@@ -143,7 +135,17 @@ export function followUpOwnerRun(
   );
 }
 
-function providerTurnCapabilities(
+/** A provider that cannot restart its turn for new input runs a provider switch after the turn. */
+export function providerSwitchWaitsForTurn(
+  turns: OrchestrationV2ProviderCapabilities["turns"],
+): boolean {
+  return (
+    turns.supportsQueuedMessages &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
+  );
+}
+
+export function providerTurnCapabilities(
   projection: OrchestrationV2ThreadProjection,
   run: OrchestrationV2Run,
 ) {
