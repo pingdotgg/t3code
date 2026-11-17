@@ -853,15 +853,16 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                         : "▾"}
                     </Button>
                   )}
-                  onRevealSearchMatch={(key) => {
+                  onFileCollapsedChange={(key, collapsed) => {
                     const file = files.find((file) => buildFileDiffIdentityKey(file) === key);
-                    if (file)
-                      setFolded(
-                        (current) =>
-                          new Set(
-                            [...current].filter((path) => path !== resolveFileDiffPath(file)),
-                          ),
-                      );
+                    if (!file) return;
+                    const path = resolveFileDiffPath(file);
+                    setFolded((current) => {
+                      const next = new Set(current);
+                      if (collapsed) next.add(path);
+                      else next.delete(path);
+                      return next;
+                    });
                   }}
                   options={{
                     diffStyle: props.split ? "split" : "unified",

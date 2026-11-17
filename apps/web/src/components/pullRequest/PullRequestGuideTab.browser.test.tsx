@@ -1,3 +1,4 @@
+import type { PullRequestReviewGuide } from "@t3tools/contracts";
 import { createRef } from "react";
 import { getRenderablePatch } from "~/lib/diffRendering";
 import { GuideStop, type GuideStopHandle } from "./guide/GuideStop";
@@ -284,3 +285,119 @@ it("scopes mounted guide drafts to the current ready account", async () => {
     .element(screen.getByRole("button", { name: "Add to composer", exact: true }))
     .toBeVisible();
 });
+
+it("steps with J and K beside a chat, also after a stop button or while the chat is maximized away", async () => {
+  vi.mocked(useReviewGuideWriter).mockReturnValue({
+    query: { isPending: false, error: null } as never,
+    data: { guide: threeStopGuide, run: null, currentHeadSha: "head" },
+    running: false,
+    canWrite: false,
+    write: async () => {},
+  });
+  const composerKeys: string[] = [];
+
+  const tree = (maximizedAway: boolean) => (
+    <>
+      <ChatBeside composerKeys={composerKeys} maximizedAway={maximizedAway} />
+      <PullRequestGuideTab
+        environmentId={EnvironmentId.make("environment")}
+        reference={reference}
+        title="Test pull request"
+        renderFallback={(status) => status}
+        viewControlsTarget={null}
+        detail={{
+          reviewThreads: [],
+          capabilities: {
+            diff: true,
+            comment: false,
+            actions: [],
+            mergeMethods: [],
+            search: false,
+            review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+            reviewers: { request: false, listCandidates: false },
+          },
+        }}
+        workspaceRoot="/workspace"
+        active
+        canComment={false}
+        rangeComments={false}
+        completionScope={null}
+        onAskAboutLines={null}
+        onAskAboutStop={null}
+        onFinishReview={null}
+        onOpenFile={() => {}}
+      />
+    </>
+  );
+  await using screen = await render(tree(true));
+
+  await userEvent.keyboard("j");
+  await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();
+  await screen.rerender(tree(false));
+  await userEvent.click(screen.getByText("Prose for the second stop."));
+  await userEvent.keyboard("k");
+  await expect.element(screen.getByText("Prose for the first stop.")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Next stop" }));
+  await userEvent.keyboard("j");
+  await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
+  await userEvent.keyboard("k");
+  await expect.element(screen.getByText("Prose for the second stop.")).toBeVisible();
+  (document.activeElement ?? document.body).dispatchEvent(
+    new KeyboardEvent("keydown", { key: "J", bubbles: true, cancelable: true, composed: true }),
+  );
+  await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual(["a"]);
+});
+
+function ChatBeside({
+  composerKeys,
+  maximizedAway,
+}: {
+  composerKeys: string[];
+  maximizedAway: boolean;
+}) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [],
+    scriptKeybindings: [],
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+      modelPickerOpen: false,
+    }),
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          composerKeys.push(key);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {},
+    fallback: () => undefined,
+  });
+  return <div data-chat-column-maximized-away={maximizedAway ? "true" : "false"} />;
+}
+
+const threeStopGuide: PullRequestReviewGuide = {
+  headSha: "head",
+  generatedAt: "2026-11-07T00:00:00.000Z",
+  modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } as never,
+  stops: ["First", "Second", "Third"].map((title) => ({
+    title,
+    summary: `Prose for the ${title.toLowerCase()} stop.`,
+    attention: null,
+    excerpts: [],
+    files: [],
+    notes: [],
+    questions: [],
+  })),
+};

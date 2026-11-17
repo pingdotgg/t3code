@@ -140,7 +140,40 @@ export function usePullRequestDiff(
   }, [cursor, key, query.data, state.key, state.pages]);
   if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
 
-  const parsed = useMemo(
+  const [withheldLoads, setWithheldLoads] = useState<{
+    readonly key: string;
+    readonly paths: readonly string[];
+  }>({ key: "", paths: NO_PATHS });
+  const withheldPaths = withheldLoads.key === key ? withheldLoads.paths : NO_PATHS;
+  const withheldResults = useAtomValue(
+    withheldFileDiffsAtom(JSON.stringify({ targetKey: key, paths: withheldPaths })),
+  );
+  const registry = useContext(RegistryContext);
+  const refreshWithheldFiles = () => {
+    for (const path of withheldPaths) registry.refresh(withheldFileDiff(key, path));
+  };
+  const loadWithheldFile = (path: string) => {
+    // The read is keyed without the head, so even a first load must not reuse an older one.
+    registry.refresh(withheldFileDiff(key, path));
+    if (!withheldPaths.includes(path)) setWithheldLoads({ key, paths: [...withheldPaths, path] });
+  };
+  // A refetch keeps showing the last patch, whose lines may not exist at the new head.
+  const withheldRefetching = withheldResults.some((result) => result.waiting);
+  const loads = new Map<string, WithheldFileLoad>();
+  withheldPaths.forEach((path, index) => {
+    const result = withheldResults[index];
+    if (result === undefined) return;
+    // A failed refetch still carries the last patch; show the failure instead.
+    loads.set(
+      path,
+      result._tag === "Failure"
+        ? { status: "error" }
+        : result._tag === "Success"
+          ? { status: "loaded", result: result.value }
+          : { status: "loading" },
+    );
+  });
+  const pagesParsed = useMemo(
     () => getCachedPullRequestDiffPages(pages, key, terminology, ignoreWhitespace),
     [key, pages, terminology, ignoreWhitespace],
   );

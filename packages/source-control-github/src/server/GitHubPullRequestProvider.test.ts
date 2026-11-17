@@ -841,6 +841,7 @@ describe("getChangeRequestActivity", () => {
             },
           ],
           commits: [],
+          truncated: false,
         }),
       listReviewThreadComments: () => Effect.succeed(threadComments),
     });

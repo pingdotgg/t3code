@@ -853,16 +853,28 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     mode: "serial",
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
-  const activity = writableQueryFamily(
-    createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:pull-requests:activity",
-      persistence: persistQuery(PullRequestActivity),
-      tag: WS_METHODS.pullRequestsActivity,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsActivity, input),
-      staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-    }),
+  const activityForViewer = Atom.family((viewer: string) =>
+    writableQueryFamily(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: viewer
+          ? `environment-data:pull-requests:activity:viewer:${viewer}`
+          : "environment-data:pull-requests:activity",
+        persistence: persistQuery(PullRequestActivity),
+        tag: WS_METHODS.pullRequestsActivity,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsActivity, input),
+        staleTimeMs: 60_000,
+        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+      }),
+    ),
   );
+  const activity = ({
+    viewer,
+    ...target
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+    readonly viewer?: string;
+  }) => activityForViewer(viewer?.trim().toLowerCase() ?? "")(target);
   const detailAnswerAtoms = Atom.family((_key: string) =>
     Atom.make<{ readonly value: PullRequestDetail; readonly version: number } | null>(null).pipe(
       Atom.setIdleTTL(5 * 60_000),
@@ -1293,17 +1305,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     detailReadVersion,
     preview,
     previewCard,
-    checks: normalizePullRequestQuery(
-      createEnvironmentRpcQueryAtomFamily(runtime, {
-        label: "environment-data:pull-requests:checks",
-        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-        tag: WS_METHODS.pullRequestsChecks,
-        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-        staleTimeMs: 45_000,
-        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
-      }),
-    ),
+    checks,
     activity: resolution.activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
@@ -1382,41 +1384,47 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
       },
     }),
-    runAction: createEnvironmentRpcCommand(runtime, {
-      tag: WS_METHODS.pullRequestsRunAction,
-      label: "environment-data:pull-requests:run-action",
-      // Preparation belongs to the write's lane. Refreshable queries would restart it after
-      // every preceding action, and preparing outside the lane could reorder the clicks.
-      execute: runAction,
-      onStart: (_target, registry) => readsInFlight(registry),
-      // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
-      onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) => {
-        const { projectId, host, repository, number, expectedAccountId } = input;
-        return applyActionReply(
-          registry,
-          environmentId,
-          {
-            projectId,
-            ...(host === undefined ? {} : { host }),
-            repository,
-            number,
-            ...(expectedAccountId === undefined ? {} : { expectedAccountId }),
-          },
-          reply,
-          readsBeforeSend ?? new Set(),
-        );
-      },
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-    }),
-    update: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:pull-requests:update",
-      tag: WS_METHODS.pullRequestsUpdate,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
-      onSuccess: (target, registry) => Effect.sync(() => registry.refresh(preview(target))),
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-    }),
+    runAction: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        tag: WS_METHODS.pullRequestsRunAction,
+        label: "environment-data:pull-requests:run-action",
+        // Preparation belongs to the write's lane. Refreshable queries would restart it after
+        // every preceding action, and preparing outside the lane could reorder the clicks.
+        execute: runAction,
+        onStart: (_target, registry) => readsInFlight(registry),
+        // Loaded readers show the reply, or re-read when the host's reply lacked the pull request.
+        onSuccess: ({ environmentId, input }, registry, reply, readsBeforeSend) =>
+          applyActionReply(
+            registry,
+            environmentId,
+            pullRequestReference(input),
+            reply,
+            readsBeforeSend ?? new Set(),
+          ).pipe(
+            // The re-read a bare reply starts would otherwise show the old state until it answers.
+            Effect.andThen(
+              reply === undefined
+                ? acceptEdit(registry, environmentId, actionEdit(input), true)
+                : Effect.void,
+            ),
+          ),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+      }),
+      (_registry, { input }) => actionEdit(input),
+    ),
+    update: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:pull-requests:update",
+        tag: WS_METHODS.pullRequestsUpdate,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
+        onSuccess: (target, registry) =>
+          acceptEdit(registry, target.environmentId, updateEdit(target.input)),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+      }),
+      (_registry, { input }) => updateEdit(input),
+    ),
     uploadAttachment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:upload-attachment",
       tag: WS_METHODS.pullRequestsUploadAttachment,
@@ -1570,44 +1578,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     labelCandidates,
-    setLabels: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:pull-requests:set-labels",
-      tag: WS_METHODS.pullRequestsSetLabels,
-      execute: (input) => routedRequest(WS_METHODS.pullRequestsSetLabels, input),
-      scheduler: commandScheduler,
-      concurrency: serialPerEnvironment,
-      onSuccess: (target, registry) =>
-        Effect.sync(() => {
-          const { labels, applied } = target.input;
-          const candidatesAtom = labelCandidates(target);
-          const candidates = AsyncResult.getOrElse(registry.get(candidatesAtom), () => null);
-          const names = new Set(labels);
-          updateCached(registry, candidatesAtom, (value) => ({
-            ...value,
-            candidates: value.candidates.map((candidate) =>
-              names.has(candidate.name) ? { ...candidate, isApplied: applied } : candidate,
-            ),
-          }));
-          for (const atom of loadedDetails(registry, target)) {
-            updateCached(registry, atom, (value) => ({
-              ...value,
-              labels: applied
-                ? [
-                    ...value.labels,
-                    ...labels
-                      .filter((name) => !value.labels.some((label) => label.name === name))
-                      .map((name) => ({
-                        name,
-                        color:
-                          candidates?.candidates.find((candidate) => candidate.name === name)
-                            ?.color ?? null,
-                      })),
-                  ]
-                : value.labels.filter((label) => !names.has(label.name)),
-            }));
-          }
-        }),
-    }),
+    setLabels: showWhileInFlight(
+      createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:pull-requests:set-labels",
+        tag: WS_METHODS.pullRequestsSetLabels,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsSetLabels, input),
+        scheduler: commandScheduler,
+        concurrency: serialPerEnvironment,
+        onSuccess: (target, registry) =>
+          acceptEdit(registry, target.environmentId, labelEdit(registry, target)),
+      }),
+      labelEdit,
+    ),
     setThreadResolution: {
       ...setThreadResolution,
       run: resolution.wrap(setThreadResolution).run,

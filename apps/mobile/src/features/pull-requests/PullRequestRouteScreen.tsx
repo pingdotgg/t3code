@@ -16,7 +16,6 @@ import {
   resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
-import { isNativeReviewDiffDrawEvent } from "../diffs/nativeReviewDiffSurface";
 import { pullRequestFileChapters } from "./pullRequestFileChapters";
 import { Chip } from "../../components/ui/Chip";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -47,7 +46,6 @@ import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
 import {
   filterPullRequestActivity,
-  DEFAULT_ACTIVITY_FILTER,
   type ActivityFilter,
 } from "@t3tools/client-runtime/review-activity";
 import { PullRequestActivityFilters } from "./PullRequestActivityFilters";
@@ -76,7 +74,10 @@ import { usePullRequestDescription } from "./usePullRequestDescription";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
-import { pullRequestDiffInitialPosition } from "./pullRequestDiffDebug";
+import {
+  handlePullRequestDiffDebugEvent,
+  pullRequestDiffInitialPosition,
+} from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
 import { usePullRequestViewingPreferences } from "./usePullRequestViewingPreferences";
 import { isPullRequestTestFile } from "./pullRequestFileFilters";
@@ -94,18 +95,10 @@ import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
-import {
-  use,
-  useEffectEvent,
-  useCallback,
-  useMemo,
-  useLayoutEffect,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { Linking, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
+import { use, useEffectEvent, useMemo, useLayoutEffect, useEffect, useRef, useState } from "react";
+import { Linking, Platform, Pressable, StyleSheet, View } from "react-native";
 
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -186,11 +179,6 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   const rows = (() => {
     if (!filtered) return [];
     const rows = pullRequestTimelineRows(filtered.activity, params, navigation, filter.newestFirst);
-    if (filter.newestFirst) {
-      const notice = rows.at(-1)?.key === "truncated" ? rows.pop() : undefined;
-      rows.reverse();
-      if (notice) rows.push(notice);
-    }
     if (!rows.length)
       rows.push({
         key: "empty",
@@ -405,7 +393,7 @@ export function PullRequestRouteScreen(props: StaticScreenProps<PullRequestParam
 }
 
 function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>) {
-  const returnToList = useAndroidWorkspaceBack("pullRequests");
+  const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -435,14 +423,8 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const filesContent = usePullRequestFilesSection(params);
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(() => {
-    const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
-    return kind === "timeline"
-      ? { ...DEFAULT_ACTIVITY_FILTER, bots: true, resolved: true }
-      : kind === "commits"
-        ? { ...DEFAULT_ACTIVITY_FILTER, kind: "commits" }
-        : DEFAULT_ACTIVITY_FILTER;
-  });
+  const activity = usePullRequestActivityFilter(parsePullRequestAnchor(params.navigationUrl)?.kind);
+  const activityFilter = activity.filter;
   const [commentsOpen, setCommentsOpen] = useState(false);
   const activityContent = usePullRequestActivityRows(params, activityFilter);
   const scrollOffsets = useRef<Record<string, number>>({});
@@ -940,7 +922,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                                 <>
                                   <PullRequestActivityFilters
                                     value={activityFilter}
-                                    onChange={setActivityFilter}
+                                    onChange={activity.setFilter}
                                     hiddenCount={tabContent.hiddenCount}
                                   />
                                   <PullRequestReadStatus
@@ -1269,7 +1251,7 @@ export function PullRequestDiffContent({
       : chapterId;
   const activeChapter =
     chapters.find((chapter) => chapter.id === requestedChapterId) ?? chapters[0];
-  const chapterFiles = activeChapter?.files ?? EMPTY_IDS;
+  const chapterFiles = activeChapter?.files ?? [];
   const reviewedChapterFiles = chapterFiles.filter(viewed.isViewed).length;
   const parsed = useMemo(() => {
     if (!activeChapter || visibleParsed.kind !== "files") return visibleParsed;
@@ -1365,8 +1347,16 @@ export function PullRequestDiffContent({
       : !jumpPath || requestedFile
         ? data.files[0]
         : undefined);
-  const range =
+  const linkRange =
     effectivePickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const range =
+    linkRange &&
+    resolvePullRequestAnchorRange(linkRange, (line) =>
+      data.rows.some(
+        (row) =>
+          row.fileId === targetFile?.id && row.change === "delete" && row.oldLineNumber === line,
+      ),
+    );
   const focus =
     params.focus ??
     (range
@@ -1381,8 +1371,26 @@ export function PullRequestDiffContent({
   const focusIndex = focusedRows.length
     ? data.rows.findIndex((row) => row.id === focusedRows[0]?.id)
     : -1;
-  const [collapsedIds, setCollapsedIds] = useState<readonly string[]>(EMPTY_IDS);
-  const [expandedViewed, setExpandedViewed] = useState<ReadonlySet<string>>(() => new Set());
+  const [foldChoices, setFoldChoices] = useState<FileDiffFoldChoices>(() => new Map());
+  const [foldScope, setFoldScope] = useState(`${scopeKey}:${commit ?? "all"}`);
+  const [revealedFileId, setRevealedFileId] = useState<string | null>(null);
+  if (foldScope !== `${scopeKey}:${commit ?? "all"}`) {
+    setFoldScope(`${scopeKey}:${commit ?? "all"}`);
+    setFoldChoices(new Map());
+    setRevealedFileId(null);
+  }
+  const requestedFileId =
+    (jumpPath ? data.files.find((file) => file.path === jumpPath)?.id : null) ?? null;
+  // A linked file must stay open if its Viewed response arrives after the first native draw.
+  if (requestedFileId !== revealedFileId) {
+    setRevealedFileId(requestedFileId);
+    if (requestedFileId)
+      setFoldChoices((current) => withFileDiffFold(current, requestedFileId, false));
+  }
+  const viewedIdSet = new Set(viewedIds);
+  const collapsedIds = data.files
+    .filter((file) => isFileDiffCollapsed(file.id, null, foldChoices, viewedIdSet.has(file.id)))
+    .map((file) => file.id);
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
   // The filter the current jump was made under. Hiding or showing test files replaces the rows,
@@ -1406,13 +1414,20 @@ export function PullRequestDiffContent({
         setJumpPath(activeChapter.files[0] ?? "");
       setSelectedRowId(null);
       setRangeEndRowId(null);
-      setCollapsedIds(EMPTY_IDS);
+      setFoldChoices(new Map());
     }
   }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-arms native file scrolling when a new chapter is mounted
   useLayoutEffect(() => {
     if (activeChapterId !== undefined) jumpedUnder.current = null;
   }, [activeChapterId]);
+  const scrollToFile = (fileId: string) => {
+    if (!nativeView.current) return;
+    jumpedUnder.current = filter.hideTestFiles;
+    void nativeView.current.scrollToFile(fileId, false).catch(() => {
+      jumpedUnder.current = null;
+    });
+  };
   const jumpScope = pullRequestFileJumpScope(params);
   const jumpToFile = useEffectEvent((path: string) => {
     if (params.focus) navigation.setParams({ focus: undefined });
@@ -1422,12 +1437,9 @@ export function PullRequestDiffContent({
     setRangeEndRowId(null);
     jumpedUnder.current = null;
     const file = data.files.find((entry) => entry.path === path);
-    if (!file || !nativeView.current) return;
-    setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
-    jumpedUnder.current = filter.hideTestFiles;
-    void nativeView.current.scrollToFile(file.id, false).catch(() => {
-      jumpedUnder.current = null;
-    });
+    if (!file) return;
+    setFoldChoices((current) => withFileDiffFold(current, file.id, false));
+    scrollToFile(file.id);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to file-jump events from the native review navigator
   useEffect(() => subscribePullRequestFileJump(jumpScope, (path) => jumpToFile(path)), [jumpScope]);
@@ -1438,9 +1450,7 @@ export function PullRequestDiffContent({
     sectionId: `pull-request:${params.repository}:${params.number}:${commit ?? "all"}:${activeChapter?.id ?? "all"}`,
     diff: result.patch,
     data,
-    collapsedFileIds: [
-      ...new Set([...collapsedIds, ...viewedIds.filter((id) => !expandedViewed.has(id))]),
-    ],
+    collapsedFileIds: collapsedIds,
     viewedFileIds: viewedIds,
     selectedRowIds: selectedRows.length
       ? selectedRows.map((row) => row.id)
@@ -1459,66 +1469,32 @@ export function PullRequestDiffContent({
     )
       loadMore();
   }, [targetFile, loadMore, onlyPaths, result.parsed]);
-  const { onDebug: updateVisibleRange } = bridge;
-  const onDebug = useCallback<NonNullable<NativeReviewDiffViewProps["onDebug"]>>(
-    (event) => {
-      const drawn = isNativeReviewDiffDrawEvent(event.nativeEvent);
-      const decoded =
-        event.nativeEvent.message === "rows-decoded" && event.nativeEvent.rows === data.rows.length;
-      if (!drawn && !decoded) return;
-      // Filtering replaces the native row payload asynchronously. Old draw events
-      // must not consume the file jump or highlight the new payload's row indices.
-      if (
-        typeof event.nativeEvent.totalRows === "number" &&
-        event.nativeEvent.totalRows !== data.rows.length
-      )
-        return;
-      if (drawn) updateVisibleRange(event);
-      if (
-        targetFile &&
-        !jumpStarted() &&
-        nativeView.current &&
-        (Platform.OS !== "ios" || decoded)
-      ) {
-        jumpedUnder.current = filter.hideTestFiles;
-        if (focusIndex >= 0) return;
-        void nativeView.current.scrollToFile(targetFile.id, false).catch(() => {
-          jumpedUnder.current = null;
-        });
-        return;
-      }
-      if (!drawn) return;
-      const lastRow = event.nativeEvent.lastRowIndex;
-      if (typeof lastRow === "number" && lastRow >= data.rows.length - 40) loadMore();
-    },
-    [
-      updateVisibleRange,
-      data.rows.length,
-      loadMore,
-      targetFile,
+  const lastFileRowIndex = data.rows.findLastIndex((row) => row.kind === "file");
+  const lastFileId = data.rows[lastFileRowIndex]?.fileId;
+  const lastShownRowIndex =
+    lastFileId && collapsedIds.includes(lastFileId) ? lastFileRowIndex : data.rows.length - 1;
+  const onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]> = (event) =>
+    handlePullRequestDiffDebugEvent(event, {
+      rowCount: data.rows.length,
+      lastShownRowIndex,
+      targetFileId: targetFile?.id,
       focusIndex,
+      isIos: Platform.OS === "ios",
+      nativeView,
       jumpStarted,
-      filter.hideTestFiles,
-    ],
-  );
-  const onToggleFile = useCallback<NonNullable<NativeReviewDiffViewProps["onToggleFile"]>>(
-    (event) => {
-      const id = event.nativeEvent.fileId;
-      if (!id) return;
-      if (viewedIds.includes(id)) {
-        setExpandedViewed((current) => {
-          const next = new Set(current);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
-      } else
-        setCollapsedIds((ids) =>
-          ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id],
-        );
-    },
-    [viewedIds, setExpandedViewed, setCollapsedIds],
-  );
+      setJumpStarted: (started) => {
+        jumpedUnder.current = started ? filter.hideTestFiles : null;
+      },
+      onDebug: bridge.onDebug,
+      loadMore,
+    });
+  const onToggleFile: NonNullable<NativeReviewDiffViewProps["onToggleFile"]> = (event) => {
+    const id = event.nativeEvent.fileId;
+    if (!id) return;
+    setFoldChoices((current) =>
+      withFileDiffFold(current, id, !isFileDiffCollapsed(id, null, current, viewedIdSet.has(id))),
+    );
+  };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
   const toggleTestFiles = () => {
     setJumpPath(visibleFile?.path ?? params.path);
@@ -1561,12 +1537,11 @@ export function PullRequestDiffContent({
       ]
     : [];
   const expandAllFiles = () => {
-    setCollapsedIds(EMPTY_IDS);
-    setExpandedViewed(new Set(viewedIds));
+    setFoldChoices(new Map());
+    setFoldChoices(new Map(data.files.map((file) => [file.id, false])));
   };
   const collapseAllFiles = () => {
-    setCollapsedIds(data.files.map((file) => file.id));
-    setExpandedViewed(new Set());
+    setFoldChoices(new Map(data.files.map((file) => [file.id, true])));
   };
   const changeViewingOption = (id: string) => {
     setJumpPath("");
@@ -1585,15 +1560,10 @@ export function PullRequestDiffContent({
     setSelectedRowId(null);
     setRangeEndRowId(null);
     jumpedUnder.current = null;
-    setCollapsedIds(EMPTY_IDS);
+    setFoldChoices(new Map());
   };
   const allCollapsed =
-    data.files.length > 0 &&
-    data.files.every(
-      (file) =>
-        collapsedIds.includes(file.id) ||
-        (viewedIds.includes(file.id) && !expandedViewed.has(file.id)),
-    );
+    data.files.length > 0 && data.files.every((file) => collapsedIds.includes(file.id));
   const toggleAllFiles = allCollapsed ? expandAllFiles : collapseAllFiles;
   const fileCommentCounts = reviewCommentCounts(
     parsed.kind === "files" ? parsed.files : [],
@@ -1618,8 +1588,7 @@ export function PullRequestDiffContent({
     setRangeEndRowId(null);
     const file = data.files.find((entry) => entry.path === path);
     if (!file) return;
-    setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
-    setExpandedViewed((ids) => new Set(ids).add(file.id));
+    setFoldChoices((current) => withFileDiffFold(current, file.id, false));
     jumpedUnder.current = null;
     if (nativeView.current) {
       jumpedUnder.current = filter.hideTestFiles;
@@ -1934,8 +1903,8 @@ export function PullRequestDiffContent({
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
               setSelectedRowId(null);
+              setFoldChoices(new Map());
               setRangeEndRowId(null);
-              setCollapsedIds(EMPTY_IDS);
             }}
           />
         </View>
@@ -1979,7 +1948,7 @@ export function PullRequestDiffContent({
               onDebug={onDebug}
               viewedFileIdsJson={bridge.viewedFileIdsJson}
               showViewedCheckbox={viewed.supported}
-              viewedCheckboxEnabled={viewed.canToggle}
+              viewedCheckboxEnabled={viewed.canToggle && !commit && !staleDiff}
               selectedRowIdsJson={bridge.selectedRowIdsJson}
               enableLineRangeSelection={detail.data?.capabilities.review.rangeComment === true}
               onPressLine={(event) => {
@@ -2005,16 +1974,15 @@ export function PullRequestDiffContent({
               }}
               onToggleViewedFile={(event) => {
                 const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
-                if (!file || !viewed.canToggle) return;
-                const wasViewed = viewed.isViewed(file.path);
-                setCollapsedIds((ids) =>
-                  wasViewed
-                    ? ids.filter((id) => id !== file.id)
-                    : ids.includes(file.id)
-                      ? ids
-                      : [...ids, file.id],
+                if (!file || !viewed.canToggle || commit || staleDiff) return;
+                setFoldChoices((current) =>
+                  withFileDiffFold(current, file.id, !viewed.isViewed(file.path)),
                 );
                 void viewed.toggle(file.path);
+              }}
+              onPressNotice={(event) => {
+                const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
+                if (file) result.loadWithheldFile(file.path);
               }}
               onToggleComment={(event) => {
                 const id = event.nativeEvent.commentId;

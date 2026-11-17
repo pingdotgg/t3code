@@ -60,6 +60,11 @@ export function useRetiredReviewDraftCommentIds(params: PullRequestParams) {
     : NO_RETIRED_COMMENTS;
 }
 
+export function isReviewDraftCommentRetired(scope: ReviewDraftScope, id: string) {
+  const retired = appAtomRegistry.get(removedHostComments);
+  return retired[pullRequestReviewKey(scope, scope.viewer)]?.includes(id) ?? false;
+}
+
 /** Keep a successful removal from reappearing in an older activity snapshot. */
 export function retireReviewDraftComments(
   params: ReviewDraftScope,
@@ -253,7 +258,9 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
   const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() || null : null;
   const scope = { ...params, viewer };
   const key = pullRequestReviewKey(scope, scope.viewer);
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = useEnvironmentQuery(
+    composerPullRequests.activity({ ...target, viewer: viewer ?? "" }),
+  );
   const retiredIds = useAtomValue(removedHostComments)[key];
   const draft = viewer ? (snapshot.drafts[key] ?? EMPTY_REVIEW_DRAFT) : EMPTY_REVIEW_DRAFT;
   const activityThreads = viewer ? activity.data?.reviewThreads : undefined;

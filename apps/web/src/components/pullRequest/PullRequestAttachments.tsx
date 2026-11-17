@@ -96,13 +96,19 @@ export function PullRequestAttachments({
             const connection = readPreparedConnection(environmentId);
             return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
           },
-          transport: (url) =>
-            uploadAttachmentBytes({
-              url,
-              file,
-              mimeType: file.type || "application/octet-stream",
-              onProgress: () => {},
-            }),
+          transport: (url) => {
+            const abort = new AbortController();
+            return {
+              abort: () => abort.abort(),
+              done: uploadAttachmentBytes({
+                url,
+                file,
+                mimeType: file.type || "application/octet-stream",
+                signal: abort.signal,
+                onProgress: () => {},
+              }),
+            };
+          },
         });
         if (!session.cancelled) {
           const current = textarea.value;

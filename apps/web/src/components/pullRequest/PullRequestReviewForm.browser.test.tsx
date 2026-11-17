@@ -1,3 +1,6 @@
+import { Atom } from "effect/reactivity";
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { attachmentEnvironment } from "~/state/attachments";
 import { createRef } from "react";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -9,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn().mockResolvedValue({ _tag: "Success" }),
   queue: vi.fn<(submit: (text: string) => void) => void>(),
   viewer: null as string | null,
+  publish: vi.fn(),
 }));
 vi.mock("~/speech/useTextFieldSpeech", () => ({
   TextFieldSpeechControls: () => null,
@@ -17,7 +21,14 @@ vi.mock("~/speech/useTextFieldSpeech", () => ({
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: (() => ({
-    data: mocks.viewer === null ? undefined : { viewer: mocks.viewer },
+    data:
+      mocks.viewer === null
+        ? undefined
+        : {
+            viewer: mocks.viewer,
+            capabilities: { attachments: true },
+            viewerPermissions: { attachments: true },
+          },
     error: null,
   })) as never,
 }));
@@ -25,7 +36,9 @@ vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.submit 
 vi.mock("./usePendingReviewCommentActions", () => ({
   usePendingReviewCommentActions: () => ({ busy: false }),
 }));
-vi.mock("./PullRequestAttachments", () => ({ PullRequestAttachments: () => null }));
+vi.mock("@t3tools/client-runtime/review-attachments", () => ({
+  publishReviewAttachment: mocks.publish,
+}));
 
 function setup() {
   mocks.viewer = null;
@@ -119,4 +132,56 @@ it("submits only the line comments still in the draft when dictation finishes", 
       }),
     }),
   );
+});
+
+it("keeps the summary when readiness is lost during an attachment upload", async () => {
+  setup();
+  mocks.viewer = "current-account";
+  let finish!: (markdown: string) => void;
+  mocks.publish.mockReset().mockReturnValue(
+    new Promise<string>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const reference = { projectId: ProjectId.make("upload"), repository: "test/repo", number: 2 };
+  const environmentId = EnvironmentId.make("upload");
+  const key = pullRequestReviewKey(reference, { environmentId, viewer: "current-account" });
+  const store = usePullRequestReviewStore.getState();
+  store.clear(key);
+  store.setSummary(key, "Original feedback");
+  using _publish = vi
+    .spyOn(pullRequestEnvironment.uploadAttachment, "permissionAtom")
+    .mockReturnValue(Atom.make(true));
+  using _transfer = vi
+    .spyOn(attachmentEnvironment.createUploadUrl, "permissionAtom")
+    .mockReturnValue(Atom.make(true));
+  const form = () => (
+    <PullRequestReviewForm
+      active
+      reviewThreads={[]}
+      environmentId={environmentId}
+      reference={reference}
+      completionScope={null}
+      term="pull request"
+      verdicts={["comment"]}
+      requestChangesSummaryRequired={false}
+      textareaRef={createRef()}
+      pending={false}
+      onPendingChange={() => {}}
+      onSubmitted={() => {}}
+    />
+  );
+  await using screen = await render(form());
+  const textarea = screen.container.querySelector("textarea")!;
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  const input = screen.container.querySelector('input[type="file"]')!;
+  Object.defineProperty(input, "files", {
+    value: [new File(["image"], "screen.png", { type: "image/png" })],
+  });
+  await act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+  expect(mocks.publish).toHaveBeenCalledOnce();
+  mocks.viewer = null;
+  await screen.rerender(form());
+  await act(() => finish("![screen](https://example.com/screen.png)"));
+  expect(usePullRequestReviewStore.getState().summaries[key]).toBe("Original feedback");
 });

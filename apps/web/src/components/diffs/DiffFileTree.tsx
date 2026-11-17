@@ -94,7 +94,7 @@ export function DiffFileTree({
   });
 
   const decorations = new Map<string, { total: number; reviewed: number; unresolved: number }>();
-  for (const entry of entries) {
+  for (const entry of reviewEntries) {
     const path = presented.modelPath(entry.path);
     const parts = path.split("/");
     const paths = [
@@ -317,8 +317,8 @@ export function DiffFileTree({
               renderContextMenu: (item, context) => {
                 const matches = diffFileTreeReviewEntries(
                   reviewEntries,
-                  model.getSelectedPaths(),
-                  item.path,
+                  model.getSelectedPaths().map(presented.selectionPath),
+                  presented.selectionPath(item.path),
                 );
                 if (matches.length === 0) return null;
                 const paths = matches.map((entry) => entry.path);

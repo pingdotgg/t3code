@@ -104,7 +104,7 @@ export function GuideTour({
   };
   const goTo = (next: number) => {
     const focused = document.activeElement;
-    if (scrollRef.current?.contains(focused) && !railRef.current?.contains(focused)) {
+    if (scrollRef.current?.contains(focused)) {
       scrollRef.current.focus({ preventScroll: true });
     }
     update((current) => ({
@@ -161,6 +161,8 @@ export function GuideTour({
         <main
           data-guide-diff-scroll
           ref={scrollRef}
+          tabIndex={-1}
+          aria-keyshortcuts="J K"
           className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
         >
           {banner ? <div className="px-4 py-3">{banner}</div> : null}

@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { SheetPane } from "../../components/ui/SheetPane";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";

@@ -321,6 +321,7 @@ const makeReviewDiffFileContentsInput = (
 ): ReviewDiffFileContentsInput => ({
   cwd,
   sourceKind: "working-tree",
+  status: "modified",
   changeType: "change",
   baseRef: "HEAD",
   headRef: null,
@@ -3036,6 +3037,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           driver.getReviewDiffFileContents(
             makeReviewDiffFileContentsInput(cwd, {
               sourceKind: "commit",
+              status: "added",
               changeType: "new",
               headRef: sha,
               baseRef: emptyTree,
@@ -3227,6 +3229,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           cwd,
           sourceKind: "working-tree",
           workingTreeScope: "unstaged",
+          status: "modified",
           changeType: "change",
           baseRef: "HEAD",
           headRef: null,
@@ -3339,6 +3342,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "untracked.txt",
             previousPath: null,
+            changeType: "new",
             additions: 1,
             deletions: 0,
             status: "added",
@@ -3448,7 +3452,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(metadata.sources[0]!.patchesDeferred);
         assert.isEmpty(metadata.sources[0]!.diff);
         assert.deepStrictEqual(metadata.sources[0]!.files, [
-          { path: "README.md", previousPath: null, additions: 1, deletions: 1, status: "modified" },
+          {
+            path: "README.md",
+            previousPath: null,
+            status: "modified",
+            changeType: "change",
+            additions: 1,
+            deletions: 1,
+          },
         ]);
       }),
     );
@@ -3550,6 +3561,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: ":(exclude)after.ts",
             previousPath: null,
+            changeType: "new",
             additions: 1,
             deletions: 0,
             status: "added",
@@ -3579,6 +3591,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "excluded/new.ts",
             previousPath: null,
+            changeType: "new",
             additions: 1,
             deletions: 0,
             status: "added",
@@ -3628,6 +3641,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "after.ts",
             previousPath: "before.ts",
+            changeType: "rename-changed",
             additions: 1,
             deletions: 1,
             status: "renamed",
@@ -3755,6 +3769,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               {
                 path: "untracked.txt",
                 previousPath: null,
+                changeType: "new",
                 additions: 1,
                 deletions: 0,
                 status: "added",
@@ -3802,6 +3817,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "tracked.txt",
               previousPath: null,
+              changeType: "change",
               additions: 1,
               deletions: 1,
               status: "modified",
@@ -3809,6 +3825,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "untracked.txt",
               previousPath: null,
+              changeType: "new",
               additions: 1,
               deletions: 0,
               status: "added",
@@ -3879,6 +3896,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "a-large.txt",
             previousPath: null,
+            changeType: "new",
             additions: 4000,
             deletions: 0,
             status: "added",
@@ -3886,16 +3904,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "untracked.txt",
             previousPath: null,
+            status: "added",
+            changeType: "new",
             additions: 4000,
+            deletions: 0,
+          },
+          {
+            path: "z-last.txt",
+            previousPath: null,
+            changeType: "new",
+            additions: 1,
             deletions: 0,
             status: "added",
           },
-          { path: "z-last.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
         ]);
         assert.deepStrictEqual(dirty.files, [
           {
             path: "a-large.txt",
             previousPath: null,
+            changeType: "change",
             additions: 4000,
             deletions: 4000,
             status: "modified",
@@ -3903,6 +3930,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "untracked.txt",
             previousPath: null,
+            changeType: "new",
             additions: 4000,
             deletions: 0,
             status: "added",
@@ -3910,6 +3938,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "z-last.txt",
             previousPath: null,
+            changeType: "change",
             additions: 1,
             deletions: 1,
             status: "modified",
@@ -3972,6 +4001,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.deepInclude(branch.files ?? [], {
           path: "renamed.md",
           previousPath: "README.md",
+          status: "renamed",
           changeType: "rename-pure",
           additions: 0,
           deletions: 0,
@@ -3979,6 +4009,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.deepInclude(branch.files ?? [], {
           path: "removed.txt",
           previousPath: null,
+          status: "deleted",
           changeType: "deleted",
           additions: 0,
           deletions: 1,
@@ -3989,7 +4020,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           changeType: "change",
           additions: 0,
           deletions: 0,
-          status: "renamed",
+          status: "modified",
         });
         assert.deepInclude(branch.files ?? [], {
           path: "binary.dat",
@@ -4023,10 +4054,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
         assert.deepStrictEqual(dirty.files, [
-          { path: "staged.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
+          {
+            path: "staged.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
           {
             path: "untracked.txt",
             previousPath: null,
+            changeType: "new",
             additions: 1,
             deletions: 0,
             status: "added",
@@ -4169,13 +4208,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const [added, deleted] = yield* Effect.all([
           driver.getReviewDiffFileContents(
             makeReviewDiffFileContentsInput(cwd, {
+              status: "added",
               changeType: "new",
               oldPath: "added.ts",
               newPath: "added.ts",
             }),
           ),
           driver.getReviewDiffFileContents(
-            makeReviewDiffFileContentsInput(cwd, { changeType: "deleted" }),
+            makeReviewDiffFileContentsInput(cwd, { status: "deleted", changeType: "deleted" }),
           ),
         ]);
 
@@ -4301,7 +4341,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const clean = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
         assert.deepStrictEqual(sourceFiles(clean, "working-tree"), []);
         assert.deepStrictEqual(sourceFiles(clean, "branch-range"), [
-          { path: "README.md", previousPath: null, additions: 1, deletions: 0, status: "modified" },
+          {
+            path: "README.md",
+            previousPath: null,
+            status: "modified",
+            changeType: "change",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
 
         yield* writeTextFile(cwd, "README.md", "# test\ncommitted\ndirty\n");
@@ -4309,14 +4356,42 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const dirty = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
         const changes = dirty.sources.find((source) => source.kind === "branch-range")!;
         assert.deepStrictEqual(changes.files, [
-          { path: "README.md", previousPath: null, additions: 2, deletions: 0, status: "modified" },
-          { path: "new.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
+          {
+            path: "README.md",
+            previousPath: null,
+            status: "modified",
+            changeType: "change",
+            additions: 2,
+            deletions: 0,
+          },
+          {
+            path: "new.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
         assert.strictEqual(changes.diff.match(/^diff --git a\/README\.md /gm)?.length, 1);
         assert.include(changes.diff, "+dirty");
         assert.deepStrictEqual(sourceFiles(dirty, "working-tree"), [
-          { path: "README.md", previousPath: null, additions: 1, deletions: 0, status: "modified" },
-          { path: "new.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
+          {
+            path: "README.md",
+            previousPath: null,
+            status: "modified",
+            changeType: "change",
+            additions: 1,
+            deletions: 0,
+          },
+          {
+            path: "new.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
       }),
     );
@@ -4345,7 +4420,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
         assert.strictEqual(changes.baseRef, "origin/main");
         assert.deepStrictEqual(changes.files, [
-          { path: "unpushed.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
+          {
+            path: "unpushed.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
       }),
     );
@@ -4387,6 +4469,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "feature.txt",
               previousPath: null,
+              changeType: "new",
               additions: 1,
               deletions: 0,
               status: "added",
@@ -4427,6 +4510,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "feature.txt",
               previousPath: null,
+              changeType: "new",
               additions: 1,
               deletions: 0,
               status: "added",
@@ -4434,6 +4518,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "upstream.txt",
               previousPath: null,
+              changeType: "change",
               additions: 1,
               deletions: 1,
               status: "modified",
@@ -4556,6 +4641,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "README.md",
               previousPath: null,
+              changeType: "change",
               additions: 1,
               deletions: 0,
               status: "modified",
@@ -4612,6 +4698,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "detached.txt",
               previousPath: null,
+              changeType: "new",
               additions: 1,
               deletions: 0,
               status: "added",
@@ -4646,7 +4733,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
         assert.isNull(changes.baseRef);
         assert.deepStrictEqual(changes.files, [
-          { path: "new.txt", previousPath: null, additions: 2, deletions: 0, status: "added" },
+          {
+            path: "new.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 2,
+            deletions: 0,
+          },
         ]);
         const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
         assert.deepStrictEqual(status.branchChanges, {
@@ -4681,6 +4775,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               {
                 path: "feature.txt",
                 previousPath: null,
+                changeType: "new",
                 additions: 1,
                 deletions: 0,
                 status: "added",
@@ -5123,6 +5218,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "asset.data",
               previousPath: null,
+              status: "deleted",
               changeType: "deleted",
               additions: 0,
               deletions: 1,
@@ -5130,6 +5226,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "ordinary.txt",
               previousPath: null,
+              status: "added",
               changeType: "new",
               additions: 1,
               deletions: 0,
@@ -8938,7 +9035,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const preview = yield* driver.getReviewDiffPreview({ cwd: worktreePath });
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
         assert.deepStrictEqual(changes.files, [
-          { path: "feature.txt", previousPath: null, additions: 1, deletions: 0, status: "added" },
+          {
+            path: "feature.txt",
+            previousPath: null,
+            status: "added",
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
         assert.include(changes.diff, "+feature work");
         assert.notInclude(changes.diff, "upstream-only work");
@@ -9446,6 +9550,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             {
               path: "feature.txt",
               previousPath: null,
+              changeType: "new",
               additions: 1,
               deletions: 0,
               status: "added",

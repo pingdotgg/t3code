@@ -682,6 +682,7 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Whether the host's merge requirements are satisfied, including branch protection. */
   mergeRequirementsSatisfied: Schema.optional(Schema.Boolean),
   additions: NonNegativeInt,

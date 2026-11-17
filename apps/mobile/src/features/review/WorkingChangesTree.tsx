@@ -1,7 +1,8 @@
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { reviewFileTreeRows } from "@t3tools/client-runtime/review-workspace";
 import { useMemo, useState } from "react";
-import { Pressable, RefreshControl, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";

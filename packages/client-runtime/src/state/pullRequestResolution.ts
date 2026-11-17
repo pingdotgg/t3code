@@ -4,6 +4,7 @@ import type { AtomCommand } from "./runtime.ts";
 
 type Target = {
   readonly environmentId: EnvironmentId;
+  readonly viewer?: string;
   readonly input: PullRequestRef;
 };
 type ResolutionTarget = Target & {

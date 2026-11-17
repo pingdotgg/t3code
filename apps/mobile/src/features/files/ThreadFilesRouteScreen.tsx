@@ -251,6 +251,7 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly selectable: boolean;
   readonly headerReserved?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
@@ -353,6 +354,7 @@ function FileContent(props: {
           path={props.relativePath}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated || props.headerReserved ? 0 : undefined}
+          selectable={props.selectable}
           onRefresh={props.onRefresh}
         />
       )}
@@ -1103,6 +1105,7 @@ export function ThreadFileScreen(
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          selectable={selectingText}
           headerReserved={props.workspaceTabs !== undefined}
           onRefresh={() => fileQuery.refresh()}
         />

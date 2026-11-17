@@ -258,6 +258,7 @@ export function PullRequestReviewForm({
         }}
       />
       <PullRequestAttachments
+        key={`${reviewKey}:${reviewReady}`}
         environmentId={environmentId}
         reference={reference}
         disabled={!reviewReady || pending}

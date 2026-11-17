@@ -579,6 +579,12 @@ internal data class DiffRow(
   val commentText: String,
   val commentRangeLabel: String,
   val commentSectionTitle: String,
+  /** A notice drawn in the warning colors. */
+  val tone: String = "",
+  /** A notice that reports taps through `onPressNotice`. */
+  val actionable: Boolean = false,
+  /** Where a cut line's note starts in `content`. */
+  val noteStart: Int? = null,
   val commentPending: Boolean = false,
   val commentResolvedSummary: String? = null,
   val renameSegments: List<DiffRenameSegment> = emptyList(),
@@ -1306,12 +1312,29 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    drawing.drawNoticeRow(
-      canvas,
-      row,
-      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
-      style,
+    fill(canvas, drawing.noticeFill(row), 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
+    val iconSize = 16f * density
+    val iconRect = RectF(
+      style.fileHeaderHorizontalPaddingPx + 2f * density,
+      (top + bottom - iconSize) / 2f,
+      style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
+      (top + bottom + iconSize) / 2f,
     )
+    drawing.drawNoticeIcon(canvas, iconRect, drawing.noticeColor(row))
+    drawing.configureUiPaint(
+      paint = textPaint,
+      color = drawing.noticeColor(row),
+      size = style.fileHeaderSubtextFontSizePx,
+      weight = style.fileHeaderSubtextFontWeight,
+    )
+    val textX = iconRect.right + 10f * density
+    canvas.drawText(
+      ellipsize(row.text, textPaint, width - textX - style.fileHeaderHorizontalPaddingPx),
+      textX,
+      centeredBaseline(top, bottom, textPaint),
+      textPaint,
+    )
+    drawBottomBorder(canvas, bottom)
   }
 
   private fun drawCommentRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {

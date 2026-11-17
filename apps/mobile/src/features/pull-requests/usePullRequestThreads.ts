@@ -24,7 +24,6 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
 
-import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 import {
   pendingReviewCommentComposerContext,
   pullRequestComposerContext,

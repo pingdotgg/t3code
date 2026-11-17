@@ -939,6 +939,34 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reports activity as truncated when comment pages remain past the page cap", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) => {
+        const head = call.kind === "graphql" && call.variables?.["head"] === true;
+        return Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    ...(head ? { author: null, commits: { nodes: [] } } : {}),
+                    comments: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "c1" } },
+                    ...(head ? { reviews: { nodes: [], pageInfo: lastPage } } : {}),
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const activity = yield* cli.getPullRequestActivity(pullRequestInput);
+
+      expect(activity.truncated).toBe(true);
+    }),
+  );
+
   it.effect("uploads local media against the selected repository and reads its hosted URL", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4239,7 +4267,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
-  it.effect.each([false, true])(
+  it.effect.each([false, true, "replaced"] as const)(
     "discards an already removed pending comment without a second mutation (review exists: %s)",
     (reviewExists) =>
       Effect.gen(function* () {
@@ -4253,7 +4281,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       id: "PR_7",
                       reviews: {
                         nodes: reviewExists
-                          ? [{ id: "PRR_1", fullDatabaseId: "81", body: "", viewerDidAuthor: true }]
+                          ? [
+                              {
+                                id: reviewExists === "replaced" ? "PRR_new" : "PRR_1",
+                                fullDatabaseId: "81",
+                                body: "",
+                                viewerDidAuthor: true,
+                              },
+                            ]
                           : [],
                       },
                     },

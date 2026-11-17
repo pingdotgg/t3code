@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     AsyncResult.AsyncResult<PullRequestDetail>
   > | null,
   activityLoaded: false,
+  privateActivity: false,
   activityError: null as string | null,
   write: vi.fn<(file: unknown, body: string) => Promise<void>>(),
   disk: "",
@@ -52,7 +53,7 @@ vi.mock("../../state/pull-requests", async () => {
     composerPullRequests: {
       detail: ({ input }: { input: { allowStale?: boolean } }) =>
         input.allowStale === false ? mocks.strictDetail : mocks.cachedDetail,
-      activity: () => "activity",
+      activity: ({ viewer }: { viewer?: string }) => `activity:${viewer ?? ""}`,
     },
   };
 });
@@ -68,7 +69,33 @@ vi.mock("../../state/query", () => ({
       };
     }
     return {
-      data: mocks.activityLoaded ? { reviewThreads: [] } : null,
+      data: mocks.activityLoaded
+        ? {
+            reviewThreads:
+              mocks.privateActivity && query !== "activity:bob"
+                ? [
+                    {
+                      id: "alice-thread",
+                      path: "a.ts",
+                      line: 1,
+                      side: "right",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: [
+                        {
+                          id: "alice-private",
+                          body: "Alice private feedback",
+                          author: { login: "alice", name: null, avatarUrl: null },
+                          createdAt: "2026-11-12T00:00:00Z",
+                          url: "https://host/comment",
+                          pendingReviewId: "alice-review",
+                        },
+                      ],
+                    },
+                  ]
+                : [],
+          }
+        : null,
       isPending: !mocks.activityLoaded,
       error: mocks.activityError,
       refresh: () => {},
@@ -89,6 +116,7 @@ function setup() {
   mocks.viewer = "alice";
   mocks.detailPending = true;
   mocks.activityLoaded = false;
+  mocks.privateActivity = false;
   mocks.activityError = null;
   mocks.write.mockReset().mockImplementation(async (_file, body) => {
     mocks.disk = body;
@@ -263,4 +291,15 @@ it("requires explicit ownership recovery and preserves the original until a scop
   ).toBeUndefined();
   expect(JSON.parse(mocks.disk).drafts[pullRequestReviewKey(screen.params, "bob")]).toBeUndefined();
   act(() => setReviewDraftBusy(captured.scope, false));
+  mocks.viewer = "alice";
+  mocks.activityLoaded = true;
+  mocks.privateActivity = true;
+  await screen.render();
+  expect(screen.current.comments.map((comment) => comment.body)).toContain(
+    "Alice private feedback",
+  );
+  mocks.viewer = "bob";
+  await screen.render();
+  expect(screen.current.comments).toEqual([]);
+  expect(screen.current.pendingReviewId).toBeUndefined();
 });

@@ -3021,3 +3021,57 @@ it.effect("loads the diff again for a new guide head without sending the head", 
     expect(inputs).toEqual([reference, reference]);
   }),
 );
+
+it.effect("keeps private review activity separate when the viewer changes", () =>
+  Effect.gen(function* () {
+    let viewer = "alice";
+    let reads = 0;
+    const client = {
+      [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+      [WS_METHODS.pullRequestsActivity]: () =>
+        Effect.sync(() => {
+          reads++;
+          return {
+            comments: [],
+            commits: [],
+            truncated: false,
+            reviewThreads: [
+              {
+                id: "thread",
+                path: "a.ts",
+                line: 1,
+                side: "right",
+                isResolved: false,
+                isOutdated: false,
+                comments: [
+                  {
+                    id: "private",
+                    body: viewer,
+                    author: null,
+                    createdAt: "2026-11-12T00:00:00Z",
+                    url: null,
+                    pendingReviewId: `${viewer}-review`,
+                  },
+                ],
+              },
+            ],
+          };
+        }),
+    } as unknown as WsRpcProtocolClient;
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const target = {
+      environmentId: TARGET.environmentId,
+      input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+    };
+    const alice = atoms.activity({ ...target, viewer });
+    expect(
+      (yield* AtomRegistry.getResult(registry, alice)).reviewThreads[0]?.comments[0]?.body,
+    ).toBe("alice");
+    viewer = "bob";
+    const bob = atoms.activity({ ...target, viewer });
+    expect((yield* AtomRegistry.getResult(registry, bob)).reviewThreads[0]?.comments[0]?.body).toBe(
+      "bob",
+    );
+    expect(reads).toBe(2);
+  }),
+);

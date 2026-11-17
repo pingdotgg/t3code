@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { attachmentUploadError } from "./state/attachmentUploads.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type EnvironmentId,
@@ -57,7 +59,15 @@ export function reviewAttachmentMarkdown(input: { url: string; name?: string; mi
 
 /** The bytes stay in their destination environment until its provider publishes them. */
 export async function publishReviewAttachment<E, RE, PE>(
-  input: Parameters<typeof runAttachmentUploadCycle<E, RE>>[0] & {
+  input: Omit<
+    Parameters<typeof runAttachmentUploadCycle<E, RE, ReturnType<typeof attachmentUploadError>>>[0],
+    "transport"
+  > & {
+    transport: (
+      url: string,
+    ) => Promise<void> | { readonly done: Promise<void>; readonly abort: () => void };
+    onMinted?: () => "continue" | "cancel";
+    onTransferStart?: (abort: () => void) => void;
     reference: PullRequestRef;
     isCancelled?: () => boolean;
     publish: AtomCommand<
@@ -75,11 +85,32 @@ export async function publishReviewAttachment<E, RE, PE>(
     );
   if (sizeBytes <= 0 || sizeBytes > Math.min(PROVIDER_SEND_TURN_MAX_FILE_BYTES, 100 * 1024 * 1024))
     throw new Error("The selected attachment is empty or too large to upload.");
-  const transferred = await runAttachmentUploadCycle(input);
+  const transferred = await Effect.runPromise(
+    runAttachmentUploadCycle({
+      ...input,
+      resolveUploadUrl: (url) =>
+        input.onMinted?.() === "cancel" || input.isCancelled?.()
+          ? null
+          : input.resolveUploadUrl(url),
+      transport: (url) =>
+        Effect.tryPromise({
+          try: (signal) => {
+            const transfer = input.transport(url);
+            if ("done" in transfer) {
+              signal.addEventListener("abort", transfer.abort, { once: true });
+              input.onTransferStart?.(transfer.abort);
+              return transfer.done;
+            }
+            return transfer;
+          },
+          catch: attachmentUploadError,
+        }),
+    }),
+  );
   try {
+    if (input.isCancelled?.()) throw new Error("Upload cancelled.");
     if (transferred.status !== "uploaded")
       throw transferred.status === "failed" ? transferred.error : new Error("Upload cancelled.");
-    if (input.isCancelled?.()) throw new Error("Upload cancelled.");
     const result = await runAtomCommand(
       input.registry,
       input.publish,

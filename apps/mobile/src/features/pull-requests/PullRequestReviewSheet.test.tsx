@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   review: vi.fn(),
   refreshActivity: vi.fn(),
   goBack: vi.fn(),
+  flush: vi.fn<() => Promise<boolean>>(),
 }));
 vi.mock("react-native", () => ({
   Alert: { alert: vi.fn() },
@@ -87,7 +88,7 @@ vi.mock("./usePullRequestReviewDraft", () => ({
     refreshActivity: mocks.refreshActivity,
     update: () => {},
     complete: () => {},
-    flush: async () => true,
+    flush: mocks.flush,
   }),
 }));
 
@@ -101,6 +102,7 @@ function setup() {
   mocks.review.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   mocks.refreshActivity.mockClear();
   mocks.goBack.mockClear();
+  mocks.flush.mockReset().mockResolvedValue(true);
   const root = createRoot(document.createElement("div"));
   const route = {
     params: {
@@ -136,7 +138,13 @@ it("waits for a successful activity read and submits the discovered pending revi
   mocks.activityError = null;
   screen.render();
   expect(mocks.buttons.get("Submit review")!.disabled).toBe(false);
+  mocks.flush.mockResolvedValueOnce(false);
   await act(async () => mocks.buttons.get("Submit review")!.onPress());
+  expect(mocks.goBack).not.toHaveBeenCalled();
+  expect(mocks.buttons.get("Retry saving")!.disabled).toBe(false);
+  await act(async () => mocks.buttons.get("Retry saving")!.onPress());
+  expect(mocks.review).toHaveBeenCalledTimes(1);
+  expect(mocks.flush).toHaveBeenCalledTimes(2);
   expect(mocks.review).toHaveBeenCalledWith(
     expect.objectContaining({
       input: expect.objectContaining({ pendingReviewId: "private-review" }),

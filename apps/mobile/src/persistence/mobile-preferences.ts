@@ -138,6 +138,8 @@ const isPullRequestViewingPreferences = Schema.is(PullRequestViewingPreferences)
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
+  /** Whether pull requests or issues last held the tab bar slot they share. */
+  readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestViewing?: PullRequestViewingPreferences;
   readonly pullRequestHideTestFiles?: boolean;
   /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
@@ -233,6 +235,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
+    sharedSlotTab?: "pullRequests" | "issues";
     pullRequestViewing?: PullRequestViewingPreferences;
     pullRequestHideTestFiles?: boolean;
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
@@ -287,6 +290,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     );
   }
 
+  if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {
+    preferences.sharedSlotTab = parsed.sharedSlotTab;
+  }
   if (isPullRequestViewingPreferences(parsed.pullRequestViewing)) {
     preferences.pullRequestViewing = parsed.pullRequestViewing;
   }

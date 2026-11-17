@@ -1,3 +1,4 @@
+import { groupPendingReviewComments } from "@t3tools/client-runtime/review-editing";
 import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import type {
   EnvironmentId,
@@ -79,6 +80,7 @@ export function PullRequestGuideTab({
     environmentId,
     reference,
   );
+  const grouped = groupPendingReviewComments(detail.reviewThreads, reviewReady ? pending : []);
   const canQueueComment = reviewReady && canComment;
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =
@@ -97,8 +99,8 @@ export function PullRequestGuideTab({
               onBusyChange={onBusyChange}
             />
           ),
-          pending: reviewReady ? pending : [],
-          threads: detail.reviewThreads.filter((thread) =>
+          pending: grouped.pendingComments,
+          threads: grouped.threads.filter((thread) =>
             thread.comments.some((comment) => !comment.pendingReviewId),
           ),
           pendingCommentTarget: {

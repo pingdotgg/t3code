@@ -10,7 +10,6 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import {
@@ -24,18 +23,10 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  type NativeSyntheticEvent,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
-import { useContentTopInset } from "../../components/ui/useBarInset";
+import { RefreshControl } from "../../components/ui/RefreshControl";
+import { useContentTopInset, useSheetContentBottomInset } from "../../components/ui/useBarInset";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -338,8 +329,7 @@ export function ReviewSheet(
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const topContentInset = useContentTopInset();
   const toolbarInset = topContentInset;
-  const bottomContentInset =
-    Platform.OS === "ios" ? safeArea.bottom + 8 : Math.max(insets.bottom, 18) + 18;
+  const bottomContentInset = useSheetContentBottomInset();
 
   const memoryKey = workspaceThreadMemoryKey(String(environmentId), String(threadId));
   const [rememberedReview] = useState(() => readThreadReviewSelection(memoryKey));

@@ -129,11 +129,7 @@ describe("review attachments", () => {
     await expect(publishReviewAttachment({ ...input, isCancelled: () => true })).rejects.toThrow(
       "Upload cancelled",
     );
-    expect(calls).toEqual([
-      "mint:remote",
-      "transfer:https://remote.test/upload",
-      "remove:pending-image",
-    ]);
+    expect(calls).toEqual(["mint:remote", "remove:pending-image"]);
     input.registry.dispose();
   });
 });

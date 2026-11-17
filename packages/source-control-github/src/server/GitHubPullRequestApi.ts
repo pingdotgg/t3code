@@ -1,4 +1,8 @@
 import { isCommitSha, normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import {
+  diffFileSection,
+  truncateLongDiffLines,
+} from "@t3tools/source-control-core/server/diffFileRevisions";
 import * as Array from "effect/Array";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
@@ -463,9 +467,9 @@ const collect = Effect.fn("GitHubPullRequestApi.collect")(function* <Item, E>(
 
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
 
-const DIFF_FILES_PAGE_SIZE = 100;
+// Larger pages make GitHub drop patches and report those files as 0/0.
+const DIFF_FILES_PAGE_SIZE = 30;
 const FILES_VIEWED_MAX_PAGES = 30;
-// Large aliased mutations can exceed GitHub's resource limit even for a single chapter.
 const FILES_VIEWED_PER_REQUEST = 25;
 
 export const NODE_ID_CACHE_CAPACITY = 128;
@@ -1716,13 +1720,13 @@ export const make = Effect.gen(function* () {
   ) {
     const pending = yield* readPendingReview(input, false);
     if (!pending.review) return;
+    if (!pending.comments.some((comment) => comment.node_id === input.commentId)) return;
     if (pending.review.id !== input.reviewId)
       return yield* readError(
         input.cwd,
         "discardDraftComment",
         new Error("This comment is no longer in your pending review. Refresh the pull request."),
       );
-    if (!pending.comments.some((comment) => comment.node_id === input.commentId)) return;
     // Removing the final comment also removes an otherwise empty draft, so it does not block
     // a later review. Preserve a review summary and any other pending comments.
     const deleteReview = pending.comments.length === 1 && pending.review.body.trim().length === 0;

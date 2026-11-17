@@ -160,7 +160,7 @@ export function pullRequestTimelineRows(
   activity: PullRequestActivity,
   params: PullRequestParams,
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
-  newestFirst = false,
+  newestFirst: boolean,
 ) {
   const threads = pullRequestConversationThreads(activity);
   const discussionIds = new Set(
@@ -267,7 +267,7 @@ export function pullRequestTimelineRows(
         </TimelineEvent>
       ),
     })),
-  ].sort((a, b) => (Date.parse(a.date) || 0) - (Date.parse(b.date) || 0));
+  ].sort(byTimestamp(false));
   const events = groupReviewTimelineConversations(
     entries,
     (entry) => entry.remark !== undefined,
@@ -290,6 +290,7 @@ export function pullRequestTimelineRows(
       };
     },
   );
+  if (newestFirst) events.reverse();
   if (activity.commentsTruncated || activity.reviewThreadsTruncated)
     events.push({
       key: "truncated",

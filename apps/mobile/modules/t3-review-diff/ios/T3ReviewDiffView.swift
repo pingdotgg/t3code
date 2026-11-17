@@ -22,6 +22,12 @@ private struct ReviewDiffNativeRow: Decodable, Sendable {
   let commentPending: Bool?
   let commentResolvedSummary: String?
   let commentSectionTitle: String?
+  /** A notice drawn in the warning colors. */
+  let tone: String?
+  /** A notice that reports taps through `onPressNotice`. */
+  let actionable: Bool?
+  /** Where a cut line's note starts in `content`, in UTF-16 units. */
+  let noteStart: Int?
   let hunkAction: String?
   let hunkActionDisabled: Bool?
   let hunkRevertAction: Bool?

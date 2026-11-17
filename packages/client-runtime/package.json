@@ -695,6 +695,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/mdast": "^4.0.4",
     "@types/react": "~19.3.0",
     "@types/three": "0.180.0",
     "react": "catalog:",

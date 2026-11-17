@@ -23,6 +23,7 @@ import {
   MERGE_METHODS,
   PR_ACTION_ICONS,
   pullRequestActionLabel,
+  resolveMergeMethod,
   pullRequestMergeConfirmationAction,
 } from "./pullRequestActions";
 import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequestStack";

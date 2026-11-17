@@ -255,23 +255,21 @@ function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const statuses = new Map<string, NonNullable<ReviewDiffFileStat["status"]>>();
   for (let index = 0; index < fields.length; index++) {
     const field = fields[index]!;
-    const raw = /^:[0-7]{6} [0-7]{6} [\da-f]+ [\da-f]+ ([A-Z])\d*$/.exec(field);
-    if (raw) {
-      const kind = raw[1];
-      const firstPath = fields[++index];
-      const path = kind === "R" || kind === "C" ? fields[++index] : firstPath;
-      if (path !== undefined) {
-        statuses.set(
-          path,
-          kind === "A" || kind === "C"
-            ? "added"
-            : kind === "D"
-              ? "deleted"
-              : kind === "R"
-                ? "renamed"
-                : "modified",
-        );
-      }
+    if (field.startsWith(":")) {
+      const status = field.slice(field.lastIndexOf(" ") + 1);
+      if (/^[RC]/.test(status)) index++;
+      const path = fields[++index]!;
+      changeTypes.set(path, rawChangeType(status));
+      statuses.set(
+        path,
+        status[0] === "A" || status[0] === "C"
+          ? "added"
+          : status[0] === "D"
+            ? "deleted"
+            : status[0] === "R"
+              ? "renamed"
+              : "modified",
+      );
       continue;
     }
     const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(field);
@@ -3066,9 +3064,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    if (options?.stage !== undefined) {
-      yield* stageCommitChanges(cwd, options.stage.filePaths);
-    }
+    const partialCommitPaths =
+      options?.stage !== undefined
+        ? yield* stageCommitChanges(cwd, options.stage.filePaths)
+        : undefined;
     const args = ["commit", ...(options?.amend ? ["--amend"] : []), "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
@@ -4311,9 +4310,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked =
         input.trackedOnly || input.workingTreeScope === "staged"
-          ? { env: undefined }
+          ? { env: undefined, omitted: false }
           : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
-      const metadataOnly = input.metadataOnly === true && !input.file && untracked !== null;
+      // Untracked files left out make the file list partial, so the bounded patch is sent instead.
+      const complete = untracked !== null && !untracked.omitted;
+      const metadataOnly = input.metadataOnly === true && !input.file && complete;
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env, metadataOnly).pipe(

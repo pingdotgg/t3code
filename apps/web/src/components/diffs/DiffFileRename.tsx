@@ -13,7 +13,13 @@ function keyedRenameSegments(previous: string, path: string) {
 }
 
 /** Renames keep both names inline; narrow headers scroll instead of hiding path segments. */
-export function DiffFileRename({ file }: { file: FileDiffMetadata }) {
+export function DiffFileRename({
+  file,
+  workspaceRoot,
+}: {
+  file: FileDiffMetadata;
+  workspaceRoot?: string;
+}) {
   const previous = resolveFileDiffPreviousPath(file);
   const path = resolveFileDiffPath(file);
   if (previous === path) return null;
@@ -49,11 +55,11 @@ export function DiffFileRename({ file }: { file: FileDiffMetadata }) {
         <div className="flex max-w-xl flex-col gap-1 font-mono text-xs">
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 break-all">{previous}</span>
-            <DiffFilePathCopyButton filePath={previous} />
+            <DiffFilePathCopyButton filePath={previous} workspaceRoot={workspaceRoot} />
           </span>
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 break-all">{path}</span>
-            <DiffFilePathCopyButton filePath={path} />
+            <DiffFilePathCopyButton filePath={path} workspaceRoot={workspaceRoot} />
           </span>
         </div>
       </PopoverPopup>

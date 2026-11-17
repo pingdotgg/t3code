@@ -267,23 +267,26 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
-      uploadAttachmentBytes({
-        url,
-        file,
-        mimeType,
-        onProgress: (progress) => {
-          const step = Math.floor(progress * 20);
-          if (step === lastStep || job.cancelled) {
-            return;
-          }
-          lastStep = step;
-          setUploadState(job.image.id, {
-            status: "uploading",
-            environmentId: job.environmentId,
-            progress,
-            ...(job.previous ? { previous: job.previous } : {}),
-          });
-        },
+      Effect.tryPromise({
+        try: (signal) =>
+          uploadAttachmentBytes({
+            url,
+            file,
+            mimeType,
+            signal,
+            onProgress: (progress) => {
+              const step = Math.floor(progress * 20);
+              if (step === lastStep || signal.aborted) return;
+              lastStep = step;
+              setUploadState(job.image.id, {
+                status: "uploading",
+                environmentId: job.environmentId,
+                progress,
+                ...(job.previous ? { previous: job.previous } : {}),
+              });
+            },
+          }),
+        catch: attachmentUploadError,
       }),
   });
   if (result.status === "uploaded") {

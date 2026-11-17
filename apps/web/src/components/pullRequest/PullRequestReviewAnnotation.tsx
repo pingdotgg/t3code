@@ -644,6 +644,7 @@ export function ReviewThreadCard({
                         size="xs"
                         disabled={
                           speech.preparing ||
+                          uploading ||
                           pending ||
                           (!speech.blocksSubmission && reply.trim().length === 0)
                         }

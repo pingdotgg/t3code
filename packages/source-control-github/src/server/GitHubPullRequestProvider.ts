@@ -639,7 +639,7 @@ export const make = Effect.gen(function* () {
                   comment.body.trim().length > 0 ||
                   isReviewVerdict(comment.reviewState),
               ).length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
+            commentsTruncated: pullRequest.truncated || reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
               ...thread,

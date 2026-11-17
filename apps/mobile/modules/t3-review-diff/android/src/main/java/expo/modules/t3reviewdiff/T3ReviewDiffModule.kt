@@ -11,7 +11,10 @@ private val REVIEW_DIFF_EVENTS = arrayOf(
   "onToggleFile",
   "onToggleViewedFile",
   "onPressLine",
+  "onSelectLineRange",
   "onToggleComment",
+  "onPressHunk",
+  "onPressFileAction",
   "onPressNotice",
 )
 
@@ -22,17 +25,7 @@ class T3ReviewDiffModule : Module() {
     View(T3ReviewDiffView::class) {
       reviewProps()
 
-      Events(
-        "onDebug",
-        "onVisibleFileChange",
-        "onToggleFile",
-        "onToggleViewedFile",
-        "onPressLine",
-        "onSelectLineRange",
-        "onPressHunk",
-        "onPressFileAction",
-        "onToggleComment",
-      )
+      Events(REVIEW_DIFF_EVENTS)
 
       AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->
         view.scrollToFile(fileId, animated)

@@ -2646,6 +2646,10 @@ code {
   outline-offset: -2px;
 }
 
+.messages-timeline-scroll:focus-visible {
+  outline: none;
+}
+
 @keyframes guide-status-glimmer {
   from {
     background-position: 100% 0;

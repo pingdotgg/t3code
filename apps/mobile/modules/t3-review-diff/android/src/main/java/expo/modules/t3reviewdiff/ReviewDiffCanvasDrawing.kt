@@ -631,6 +631,26 @@ private object ReviewDiffTypefaces {
   }
 }
 
+/** Splits color runs where a cut line's note starts; the flag marks the note's runs. */
+private fun splitAtNote(runs: List<DiffToken>, noteStart: Int?): List<Pair<DiffToken, Boolean>> {
+  if (noteStart == null) return runs.map { it to false }
+  return buildList {
+    var offset = 0
+    for (run in runs) {
+      val end = offset + run.content.length
+      when {
+        end <= noteStart -> add(run to false)
+        offset >= noteStart -> add(run to true)
+        else -> {
+          val cut = noteStart - offset
+          add(run.copy(content = run.content.substring(0, cut)) to false)
+          add(run.copy(content = run.content.substring(cut)) to true)
+        }
+      }
+      offset = end
+    }
+  }
+}
 internal data class FileHeaderDrawingState(
   val collapsed: Boolean,
   val viewed: Boolean,

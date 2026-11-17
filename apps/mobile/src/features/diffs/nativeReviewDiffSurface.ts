@@ -53,6 +53,12 @@ export interface NativeReviewDiffRow {
   readonly commentPending?: boolean;
   readonly commentResolvedSummary?: string;
   readonly commentSectionTitle?: string;
+  /** A notice drawn in the warning colors. */
+  readonly tone?: "warning";
+  /** A notice that reports taps through `onPressNotice`. */
+  readonly actionable?: boolean;
+  /** Where a cut line's note starts in `content`. */
+  readonly noteStart?: number;
   readonly hunkAction?: "Stage hunk" | "Unstage hunk";
   readonly hunkActionDisabled?: boolean;
   readonly hunkRevertAction?: boolean;

@@ -1,8 +1,9 @@
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { reviewFileTreeRows, reviewFolderContains } from "@t3tools/client-runtime/review-workspace";
 import * as Clipboard from "expo-clipboard";
 import { useMemo, useState } from "react";
-import { Pressable, RefreshControl, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";

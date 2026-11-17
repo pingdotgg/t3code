@@ -4686,6 +4686,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           {
             path: "feature.txt",
             previousPath: null,
+            changeType: "new",
             additions: 1,
             deletions: 0,
             status: "added",

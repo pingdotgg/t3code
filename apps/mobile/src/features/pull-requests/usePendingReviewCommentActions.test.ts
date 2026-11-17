@@ -8,10 +8,12 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   alert: vi.fn(),
   refresh: vi.fn(),
+  copy: vi.fn(),
+  retired: new Set<string>(),
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => true }));
 vi.mock("react-native", () => ({ Alert: { alert: mocks.alert } }));
-vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
+vi.mock("expo-clipboard", () => ({ setStringAsync: mocks.copy }));
 vi.mock("../../state/pull-requests", () => ({
   composerPullRequests: {
     detail: () => null,
@@ -33,7 +35,11 @@ vi.mock("./usePullRequestDiff", () => ({
 }));
 vi.mock("./usePullRequestReviewDraft", () => ({
   readReviewDraft: () => mocks.draft!,
-  retireReviewDraftComments: mocks.retire,
+  retireReviewDraftComments: (...args: unknown[]) => {
+    mocks.retire(...args);
+    mocks.retired.add("hosted");
+  },
+  isReviewDraftCommentRetired: (_scope: unknown, id: string) => mocks.retired.has(id),
   setReviewDraftBusy: () => true,
   usePullRequestReviewDraftCommands: () => ({
     ready: true,
@@ -64,6 +70,8 @@ function setup() {
   mocks.retire.mockClear();
   mocks.alert.mockClear();
   mocks.refresh.mockClear();
+  mocks.copy.mockClear();
+  mocks.retired.clear();
   return {
     comment,
     actions: usePendingReviewCommentActions({
@@ -78,8 +86,8 @@ function setup() {
 it("keeps a hosted discard recoverable when device persistence fails", async () => {
   const { comment, actions } = setup();
   expect(await actions.discard(comment)).toBe(false);
-  expect(mocks.draft?.comments).toEqual([comment]);
-  expect(mocks.retire).not.toHaveBeenCalled();
+  expect(mocks.draft?.comments).toEqual([]);
+  expect(mocks.retire).toHaveBeenCalledOnce();
   expect(mocks.alert).toHaveBeenCalledWith(
     "Could not discard the pending comment",
     expect.stringContaining("this device could not save the draft"),
@@ -87,5 +95,23 @@ it("keeps a hosted discard recoverable when device persistence fails", async () 
   expect(await actions.discard(comment)).toBe(true);
   expect(mocks.draft?.comments).toEqual([]);
   expect(mocks.retire).toHaveBeenCalledOnce();
-  expect(mocks.remove).toHaveBeenCalledTimes(2);
+  expect(mocks.remove).toHaveBeenCalledTimes(1);
+});
+
+it("saves a hosted identity before copying its link and retries only local persistence", async () => {
+  const { comment, actions } = setup();
+  const { hostedComment, ...local } = comment;
+  mocks.draft = { ...mocks.draft!, comments: [local] };
+  mocks.remove.mockResolvedValue({ _tag: "Success", value: hostedComment });
+  await actions.copyLink(local);
+  expect(mocks.copy).not.toHaveBeenCalled();
+  expect(mocks.draft!.comments[0]?.hostedComment).toEqual(hostedComment);
+  expect(mocks.alert).toHaveBeenCalledWith(
+    "Could not copy the pending comment link",
+    expect.stringContaining("could not save"),
+  );
+  await actions.copyLink(local);
+  expect(mocks.remove).toHaveBeenCalledOnce();
+  expect(mocks.flush).toHaveBeenCalledTimes(2);
+  expect(mocks.copy).toHaveBeenCalledWith(hostedComment.url);
 });

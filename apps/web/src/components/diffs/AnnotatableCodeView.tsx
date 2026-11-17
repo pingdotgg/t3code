@@ -421,7 +421,8 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
         onPostRender: (node, _instance, phase, context) => {
           node.dataset.t3DiffFileKey = context.item.id;
           if (context.type === "diff")

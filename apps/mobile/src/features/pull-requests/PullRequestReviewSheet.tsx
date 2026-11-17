@@ -87,6 +87,7 @@ export function PullRequestReviewSheet({
   const permissions = usePullRequestPermissions(params, result.data);
   const submission = useActionSubmission(params);
   const [uploading, setUploading] = useState(false);
+  const [pendingLocalSave, setPendingLocalSave] = useState(false);
   const review = useAtomCommand(composerPullRequests.submitReview, { reportFailure: false });
   const comment = useAtomCommand(composerPullRequests.comment, { reportFailure: false });
   const navigation = useNavigation();
@@ -125,6 +126,14 @@ export function PullRequestReviewSheet({
       : permissions.canComment && body.trim().length > 0);
   const perform = () =>
     submission.submit(async () => {
+      if (pendingLocalSave) {
+        if (!store.isReady() || !(await store.flush()))
+          throw new Error(
+            "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+          );
+        setPendingLocalSave(false);
+        return;
+      }
       if (!canSubmit || !store.isReady())
         throw new Error("Add your feedback and check your permissions before submitting.");
       if (!setReviewDraftBusy(store.scope, true))
@@ -151,6 +160,7 @@ export function PullRequestReviewSheet({
               })
             : await comment({ ...target, input: { ...target.input, body } });
         if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        store.refreshActivity();
         if (reviewing)
           retireReviewDraftComments(
             store.scope,
@@ -162,7 +172,12 @@ export function PullRequestReviewSheet({
             ? clearSubmittedReview(current, submitted)
             : { ...current, comment: current.comment === submitted.comment ? "" : current.comment },
         );
-        await store.flush();
+        if (!(await store.flush())) {
+          setPendingLocalSave(true);
+          throw new Error(
+            "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+          );
+        }
       })().finally(async () => {
         setReviewDraftBusy(store.scope, false);
       });
@@ -211,16 +226,23 @@ export function PullRequestReviewSheet({
           <Button
             tone={reviewing ? "primary" : "secondary"}
             label={
-              submission.busy
-                ? reviewing
-                  ? "Submitting…"
-                  : "Posting…"
-                : reviewing
-                  ? "Submit review"
-                  : "Comment"
+              pendingLocalSave
+                ? "Retry saving"
+                : submission.busy
+                  ? reviewing
+                    ? "Submitting…"
+                    : "Posting…"
+                  : reviewing
+                    ? "Submit review"
+                    : "Comment"
             }
             loading={submission.busy}
-            disabled={!canSubmit || result.isPending || result.error !== null || submission.busy}
+            disabled={
+              (!pendingLocalSave && !canSubmit) ||
+              result.isPending ||
+              result.error !== null ||
+              submission.busy
+            }
             onPress={() => void perform()}
           />
         </View>

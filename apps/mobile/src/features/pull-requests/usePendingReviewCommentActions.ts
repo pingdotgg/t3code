@@ -9,6 +9,7 @@ import type { PendingReviewComment } from "./pullRequestReviewDrafts";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import {
   readReviewDraft,
+  isReviewDraftCommentRetired,
   retireReviewDraftComments,
   setReviewDraftBusy,
   usePullRequestReviewDraftCommands,
@@ -23,7 +24,9 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
   const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() || null : null;
   const scope = { ...params, viewer };
   const store = usePullRequestReviewDraftCommands(scope);
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = useEnvironmentQuery(
+    composerPullRequests.activity({ ...target, viewer: viewer ?? "" }),
+  );
   const canSave = useAtomValue(
     composerPullRequests.saveDraftComment.permissionAtom(target.environmentId),
   );
@@ -36,6 +39,13 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     if (!store.isReady() || detail.data === null || detail.error) return;
     const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
     if (comment.hostedComment) {
+      if (!(await store.flush())) {
+        Alert.alert(
+          "Could not copy the pending comment link",
+          "This device could not save the hosted identity. Retry to save it before copying.",
+        );
+        return;
+      }
       await Clipboard.setStringAsync(comment.hostedComment.url);
       return;
     }
@@ -49,7 +59,10 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
           entry.id === comment.id ? { ...entry, hostedComment: result.value } : entry,
         ),
       }));
-      await store.flush();
+      if (!(await store.flush()))
+        throw new Error(
+          "This device could not save the hosted identity. Retry to save it before copying.",
+        );
       await Clipboard.setStringAsync(result.value.url);
       detail.refresh();
       activity.refresh();
@@ -69,7 +82,10 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     const comment = readReviewDraft(scope).comments.find((entry) => entry.id === given.id) ?? given;
     if (!setReviewDraftBusy(scope, true)) return false;
     return await (async () => {
-      if (comment.hostedComment) {
+      const alreadyRemoved =
+        comment.hostedComment &&
+        isReviewDraftCommentRetired(scope, comment.hostedComment.commentId);
+      if (comment.hostedComment && !alreadyRemoved) {
         if (!canDiscard) throw new Error("This connection cannot discard saved review comments.");
         const result = await remove({
           ...target,
@@ -81,17 +97,11 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         ...draft,
         comments: draft.comments.filter((entry) => entry.id !== comment.id),
       }));
-      if (!(await store.flush())) {
-        store.complete((draft) =>
-          draft.comments.some((entry) => entry.id === comment.id)
-            ? draft
-            : { ...draft, comments: [...draft.comments, comment] },
-        );
+      if (!alreadyRemoved) retireReviewDraftComments(scope, [comment]);
+      if (!(await store.flush()))
         throw new Error(
           "The comment was removed from the host, but this device could not save the draft. Retry to finish discarding it.",
         );
-      }
-      retireReviewDraftComments(scope, [comment]);
       detail.refresh();
       activity.refresh();
       return true;

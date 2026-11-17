@@ -5,6 +5,7 @@ import {
   canPerformPullRequestAction,
   mergeUnavailableReason,
   pullRequestActionLabel,
+  resolveMergeMethod,
   pullRequestMergeConfirmationAction,
 } from "./pullRequestActions";
 

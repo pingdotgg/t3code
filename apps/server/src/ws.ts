@@ -3250,7 +3250,14 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGenerateCommitMessage]: (input) => review.generateCommitMessage(input),
         [WS_METHODS.reviewRevert]: (input) =>
           review.revert(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
+        [WS_METHODS.terminalOpen]: (input) =>
+          prepareTerminalLaunch(input).pipe(
+            Effect.flatMap((launch) =>
+              terminalManager
+                .open(launch.input)
+                .pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover)),
+            ),
+          ),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
           Stream.unwrap(
             prepareTerminalLaunch(input).pipe(

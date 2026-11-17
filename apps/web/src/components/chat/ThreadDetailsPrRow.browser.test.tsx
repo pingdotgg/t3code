@@ -251,7 +251,6 @@ it("resets admin permission consent after cancellation or lost access", async ()
       status={null}
       project={null}
       label="Test PR"
-      openAriaLabel="Open PR"
       onOpen={vi.fn()}
     />
   );
@@ -392,6 +391,69 @@ it.each([
   );
 });
 
+it("names a linked pull request row by its kind, number and title, not its URL", async () => {
+  await using screen = await setup();
+  state.projects = [repositoryProject];
+  state.pullRequests = [
+    {
+      host: "github.com",
+      repository: "owner/repo",
+      number: 1,
+      url: "https://github.com/owner/repo/pull/1",
+      source: "manual",
+      linkedAt: "2026-10-30T00:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    },
+  ];
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsThreadPrRows threadRef={threadRef} project={repositoryProject as never} />,
+    );
+  });
+  const row = [...screen.container.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Test PR"),
+  )!;
+  const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
+  expect(name).not.toContain("https://");
+  expect(name).toMatch(/pull request/i);
+  expect(name).toContain("#1");
+  expect(name).toContain("Test PR");
+});
+
+it("names a linked issue row by its kind, number and title, not its URL", async () => {
+  await using screen = await setup();
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsIssueRows
+        links={[
+          {
+            tracker: IssueTrackerKind.make("github"),
+            host: "github.com",
+            scope: "owner/repo",
+            key: "123",
+            projectId: ProjectId.make("repository"),
+            url: "https://github.com/owner/repo/issues/123",
+            source: "manual",
+            linkedAt: "2026-10-30T00:00:00.000Z",
+            displayKey: "#123",
+            title: "Sidebar flickers on resize",
+          },
+        ]}
+        onOpenLink={vi.fn()}
+      />,
+    );
+  });
+  const row = [...screen.container.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Sidebar flickers on resize"),
+  )!;
+  const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
+  expect(name).not.toContain("https://");
+  expect(name).toMatch(/issue/i);
+  expect(name).toContain("#123");
+  expect(name).toContain("Sidebar flickers on resize");
+});
+
 it("requires fresh confirmation when the project default merge method changes", async () => {
   await using screen = await setup();
   state.mergeMethods = ["merge", "squash"];
@@ -404,7 +466,6 @@ it("requires fresh confirmation when the project default merge method changes", 
       status={null}
       project={repositoryProject as never}
       label={label}
-      openAriaLabel="Open PR"
       onOpen={vi.fn()}
     />
   );

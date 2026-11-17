@@ -118,7 +118,7 @@ export function useReviewFilePatches({
             name: file.path,
             ...(file.previousPath ? { prevName: file.previousPath } : {}),
             type:
-              file.status === "added"
+              (file.changeType ?? file.status === "added")
                 ? "new"
                 : file.status === "deleted"
                   ? "deleted"

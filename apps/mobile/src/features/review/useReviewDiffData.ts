@@ -146,7 +146,7 @@ export function useReviewDiffData(input: {
   const scope = JSON.stringify([
     environmentId,
     cwd,
-    source?.kind,
+    lazySource?.kind,
     source?.baseRef,
     source?.diffHash,
     input.workingTreeScope,

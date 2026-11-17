@@ -1,10 +1,8 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useNavigation } from "@react-navigation/native";
-import { useState, type ReactNode } from "react";
-import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ScreenContent } from "../../components/ui/ScreenContent";
+import type { ReactNode } from "react";
+import { View } from "react-native";
+import { FitSheet } from "../../components/ui/FitSheet";
 
 export function PullRequestSheetContent(props: {
   readonly title: string;
@@ -16,82 +14,24 @@ export function PullRequestSheetContent(props: {
   readonly compact?: boolean;
 }) {
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
-  const android = Platform.OS === "android";
-  const compactIos = Platform.OS === "ios" && props.compact === true;
-  const pad = Platform.OS === "ios" && Platform.isPad;
-  const headerHeight = 84;
-  const [bodyHeight, setBodyHeight] = useState(144);
-  const [footerHeight, setFooterHeight] = useState(0);
-  const [maxSheetHeight, setMaxSheetHeight] = useState(windowHeight);
-  // On iOS 26 the native fit-to-contents wrapper contains a flex SafeAreaView. Bound the
-  // scene with a measured detent instead, so its header and scroll view can lay out normally.
-  // Detents are fractions of the sheet's maximum height, and an iPad form sheet's maximum is
-  // far below the window, so there it is measured back from the sheet's laid-out height.
-  const compactDetent = Math.min(
-    0.92,
-    Math.max(
-      0.25,
-      (headerHeight + bodyHeight + (props.footer ? footerHeight : 0) + 24) / maxSheetHeight,
-    ),
-  );
-  const footer = props.footer ? (
-    <View
-      onLayout={(event) => setFooterHeight(event.nativeEvent.layout.height)}
-      className={android ? "bg-sheet-solid pt-3" : "bg-sheet px-4 pt-3"}
-      style={{ paddingBottom: Math.max(insets.bottom, 16) }}
-    >
-      {android ? <View style={{ minHeight: 48 }}>{props.footer}</View> : props.footer}
-    </View>
-  ) : null;
   return (
-    // Material sheet drags follow the first nested-scrolling native view, and the inline
-    // header's Compose button is one, so Android renders content first and reverses the column.
-    <KeyboardAvoidingView
-      automaticOffset
-      behavior="padding"
-      collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
-      style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
-      onLayout={
-        compactIos && pad
-          ? (event) => {
-              const measured = event.nativeEvent.layout.height / compactDetent;
-              if (Math.abs(measured - maxSheetHeight) > 1) setMaxSheetHeight(measured);
-            }
-          : undefined
+    <FitSheet
+      avoidsKeyboard
+      header={
+        <SheetHeader
+          title={props.title}
+          subtitle={props.subtitle}
+          onCancel={() => navigation.goBack()}
+          dismissDisabled={props.busy}
+        />
       }
+      footer={props.footer}
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 20 }}
     >
-      <ScreenContent fitToContents={android}>
-        <ScrollView
-          nestedScrollEnabled
-          className="android:shrink android:grow-0 ios:flex-1"
-          contentInsetAdjustmentBehavior={compactIos ? "never" : "automatic"}
-          onContentSizeChange={(_width, height) => setBodyHeight(height)}
-          automaticallyAdjustKeyboardInsets={compactIos}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          contentContainerStyle={{
-            paddingHorizontal: 16,
-            paddingTop: compactIos ? 0 : 16,
-            paddingBottom: props.compact ? Math.max(insets.bottom, 12) : 20,
-          }}
-        >
-          <View className="gap-4" pointerEvents={props.busy ? "none" : "auto"}>
-            {props.children}
-            {/* Android partial-height sheets keep submit actions within the scrollable form. */}
-            {android ? footer : null}
-          </View>
-        </ScrollView>
-        {android ? null : footer}
-      </ScreenContent>
-      <SheetHeader
-        title={props.title}
-        subtitle={props.subtitle}
-        onCancel={() => navigation.goBack()}
-        dismissDisabled={props.busy}
-      />
-    </KeyboardAvoidingView>
+      <View className="gap-4" pointerEvents={props.busy ? "none" : "auto"}>
+        {props.children}
+      </View>
+    </FitSheet>
   );
 }

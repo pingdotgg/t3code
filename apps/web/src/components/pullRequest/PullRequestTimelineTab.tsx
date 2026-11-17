@@ -65,7 +65,7 @@ import {
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
+import { canReactPullRequestComment } from "@t3tools/client-runtime/review-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import {
   PullRequestActorAvatar,
@@ -929,7 +929,7 @@ export function PullRequestTimelineTab({
             workspaceRoot={detail.workspaceRoot}
             environmentId={environmentId}
             reference={reference}
-            canReact={reactions.canReact}
+            canReact={reactions.canReact(event)}
             onReacted={onRefresh}
             onAddToComposer={
               onAddThreadCommentToComposer

@@ -800,6 +800,7 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const linkedThreadRefreshes = yield* SubscriptionRef.make(0);
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
@@ -1972,6 +1973,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.rebaseRequired === undefined
+              ? {}
+              : { rebaseRequired: changeRequest.rebaseRequired }),
             ...(changeRequest.mergeRequirementsSatisfied === undefined
               ? {}
               : { mergeRequirementsSatisfied: changeRequest.mergeRequirementsSatisfied }),

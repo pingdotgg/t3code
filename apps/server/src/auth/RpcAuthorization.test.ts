@@ -7,7 +7,6 @@ import {
   AuthAccessWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
-  ProjectId,
   ProviderInstanceId,
   ProjectId,
   IssueTrackerKind,
