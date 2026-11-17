@@ -30,7 +30,8 @@ vocabulary gives these grants a familiar meaning.
 A device that exchanges a plain pairing link with a DPoP proof gets a one-hour
 token on a session that renews: presenting the token, even expired, with a
 proof from the same key moves the session's expiry 30 days out and returns a
-fresh token for the same session. Renewal stays in place rather than issuing a
+fresh token for the same session. The session itself must still be unexpired
+and unrevoked, so a device idle past the window pairs again. Renewal stays in place rather than issuing a
 successor, so live sockets keep their session, Sharing & access shows one row
 per device for its whole renewal window, and one revoke ends it. T3 Connect,
 CLI, desktop and peer sessions never renew, so unlinking Connect or rotating

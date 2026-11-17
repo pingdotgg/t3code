@@ -488,15 +488,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           "ServerAuthInvalidCredentialError",
         );
 
+        // Inside the renewed window, so only the revocation can refuse it.
+        expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
+        expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
         // Idle past the window, the device pairs again.
         const idle = yield* pair(key.thumbprint);
         yield* TestClock.adjust("31 days");
         expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
-
-        expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
-        expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
           "ServerAuthInvalidCredentialError",
         );
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
