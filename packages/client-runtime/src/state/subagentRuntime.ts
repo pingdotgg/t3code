@@ -8,6 +8,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive, isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { formatSubagentEffort } from "./threadExecution.ts";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -226,12 +227,25 @@ export function subagentModelSelection(
   );
 }
 
+/** The effort a subagent's recorded selection states, read without the provider catalog. */
+export function statedSubagentEffort(
+  subagent: Pick<OrchestrationV2Subagent, "model" | "modelSelection">,
+): string | null {
+  const selection = subagent.modelSelection;
+  return formatSubagentEffort({
+    modelSlug: subagent.model ?? selection?.model.trim() ?? null,
+    modelSelection: selection,
+    provider: undefined,
+  });
+}
+
 export function projectedSubagentsToRuntime(
   subagents: ReadonlyArray<{
     readonly id: string;
     readonly title: string | null;
     readonly prompt: string;
     readonly model: string | null;
+    readonly modelSelection?: ModelSelection | undefined;
     readonly status: OrchestrationV2Subagent["status"];
     readonly progress?: string | undefined;
     readonly childThreadId?: string | null | undefined;
@@ -254,7 +268,7 @@ export function projectedSubagentsToRuntime(
       title: subagent.title ?? promptTitle(subagent.prompt),
       role: null,
       model: subagent.model,
-      effort: null,
+      effort: statedSubagentEffort(subagent),
       status: subagent.status,
       activationCount: 1,
       usage: workflow === undefined ? null : workflowUsage(workflow),

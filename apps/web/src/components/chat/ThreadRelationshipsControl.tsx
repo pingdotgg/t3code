@@ -831,6 +831,9 @@ export function ThreadRelationshipsPanel(props: {
             {threadTitle}
           </span>
         </span>
+        {agent?.effort ? (
+          <span className="shrink-0 text-2xs text-muted-foreground">{agent.effort}</span>
+        ) : null}
         {agent ? null : (
           <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         )}

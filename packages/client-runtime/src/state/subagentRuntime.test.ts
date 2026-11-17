@@ -149,6 +149,13 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
         { modelSelection: saved },
       ),
     ).toBe(reported);
+
+    const [plain, otherModel] = projectedSubagentsToRuntime([
+      subagent({ id: "plain", model, modelSelection: saved }),
+      subagent({ id: "other", model: "new-model", modelSelection: saved }),
+    ]);
+    expect(plain?.effort).toBe("high");
+    expect(otherModel?.effort).toBeNull();
   });
 
   it("names a workflow by the model it runs on when the provider reports none", () => {
