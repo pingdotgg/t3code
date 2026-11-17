@@ -1,4 +1,4 @@
-import type { EnvironmentId, IssueListEntry } from "@t3tools/contracts";
+import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
 import { MessageSquareIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -15,10 +15,6 @@ import {
   PullRequestActorAvatar,
 } from "../pullRequest/pullRequestPresentation";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
-
-export interface EnvironmentIssueEntry extends IssueListEntry {
-  readonly environmentId: EnvironmentId;
-}
 
 export type IssueRowTarget = Pick<
   EnvironmentIssueEntry,
