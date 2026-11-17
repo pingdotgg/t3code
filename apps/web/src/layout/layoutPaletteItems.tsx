@@ -14,6 +14,7 @@ import {
   Maximize2Icon,
   MoveHorizontalIcon,
   RulerIcon,
+  Rows2Icon,
   PanelRightIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -91,7 +92,7 @@ const LAYOUT_ENTRIES: ReadonlyArray<{
   {
     command: "layout.splitDown",
     title: "New pane below",
-    icon: Columns2Icon,
+    icon: Rows2Icon,
     searchTerms: ["split"],
   },
   {
