@@ -9,6 +9,7 @@ import { themeServerEnvironmentThemesAtom } from "./state/server";
 import { environmentSession } from "./state/session";
 
 const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
 let shownKey: string | null = null;
 let loading: AbortController | null = null;
@@ -72,11 +73,10 @@ export function applyThemeBackground(themeId: string | undefined): void {
   if (environmentId === null || themeId === undefined || key === null) return;
   const controller = new AbortController();
   loading = controller;
-  const retryDelays = [1_000, 2_000, 4_000, 8_000];
   let retries = 0;
   const failed = () => {
     if (controller.signal.aborted) return;
-    const delay = retryDelays[retries++];
+    const delay = RETRY_DELAYS_MS[retries++];
     if (delay !== undefined) {
       // Transient HTTP failures may never produce a browser online event.
       const timer = setTimeout(load, delay);
@@ -84,7 +84,7 @@ export function applyThemeBackground(themeId: string | undefined): void {
       return;
     }
     loading = null;
-    // Lets the next repaint try again after the bounded retries are exhausted.
+    // Lets the next repaint or `online` event try again.
     shownKey = null;
   };
   const load = () => {

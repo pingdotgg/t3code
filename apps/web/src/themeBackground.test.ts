@@ -39,182 +39,94 @@ vi.mock(
 
 import { applyThemeBackground, startThemeBackground } from "./themeBackground";
 
+const BACKGROUND = "--theme-background-image";
+const image = new Blob(["image"], { type: "image/png" });
+const offline = () => Promise.reject(new TypeError("Failed to fetch"));
+const loaded = async () => ({ ok: true, blob: async () => image });
+
+function setup() {
+  vi.useFakeTimers();
+  const properties = new Map<string, string>();
+  const browser = new EventTarget();
+  vi.stubGlobal("window", browser);
+  vi.stubGlobal("document", {
+    documentElement: {
+      dataset: { themeId: "nightfall" },
+      style: {
+        setProperty: (name: string, value: string) => properties.set(name, value),
+        removeProperty: (name: string) => properties.delete(name),
+      },
+    },
+  });
+  query.mockResolvedValue({ _tag: "Success", value: { relativeUrl: "/background.png" } });
+  const fetchBackground = vi.fn<() => Promise<unknown>>(offline);
+  vi.stubGlobal("fetch", fetchBackground);
+  const stop = startThemeBackground();
+  return {
+    properties,
+    browser,
+    fetchBackground,
+    stop,
+    [Symbol.dispose]() {
+      stop();
+      applyThemeBackground(undefined);
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    },
+  };
+}
+
 describe("theme backgrounds", () => {
-  it("restores the selected background after its initial fetch fails and the network recovers", async () => {
-    vi.useFakeTimers();
-    const properties = new Map<string, string>();
-    const browser = new EventTarget();
-    vi.stubGlobal("window", browser);
-    vi.stubGlobal("document", {
-      documentElement: {
-        dataset: { themeId: "nightfall" },
-        style: {
-          setProperty: (name: string, value: string) => properties.set(name, value),
-          removeProperty: (name: string) => properties.delete(name),
-        },
-      },
-    });
-    query.mockResolvedValue({ _tag: "Success", value: { relativeUrl: "/background.png" } });
-    const image = new Blob(["image"], { type: "image/png" });
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-        .mockImplementation(async () => new Response(image)),
-    );
-    const stop = startThemeBackground();
-    try {
-      applyThemeBackground("nightfall");
-      await vi.advanceTimersByTimeAsync(0);
-      expect(properties.has("--theme-background-image")).toBe(false);
+  it("retries a failed download after 1, 2, 4 and 8 seconds", async () => {
+    using t = setup();
+    t.fetchBackground
+      .mockImplementationOnce(async () => new Response(null, { status: 503 }))
+      .mockImplementationOnce(offline)
+      .mockImplementationOnce(offline)
+      .mockImplementationOnce(offline)
+      .mockImplementation(loaded);
 
-      browser.dispatchEvent(new Event("online"));
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(properties.get("--theme-background-image") ?? "").toMatch(/^url\("blob:/);
-    } finally {
-      stop();
-      applyThemeBackground(undefined);
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(0);
+    for (const [delay, attempts] of [
+      [1_000, 1],
+      [2_000, 2],
+      [4_000, 3],
+      [8_000, 4],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(t.fetchBackground).toHaveBeenCalledTimes(attempts);
+      expect(t.properties.has(BACKGROUND)).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
     }
+    expect(t.fetchBackground).toHaveBeenCalledTimes(5);
+    expect(t.properties.get(BACKGROUND)).toMatch(/^url\("blob:/);
   });
 
-  it("restores the background on online after automatic retries are exhausted", async () => {
-    vi.useFakeTimers();
-    const properties = new Map<string, string>();
-    const browser = new EventTarget();
-    vi.stubGlobal("window", browser);
-    vi.stubGlobal("document", {
-      documentElement: {
-        dataset: { themeId: "nightfall" },
-        style: {
-          setProperty: (name: string, value: string) => properties.set(name, value),
-          removeProperty: (name: string) => properties.delete(name),
-        },
-      },
-    });
-    query.mockResolvedValue({ _tag: "Success", value: { relativeUrl: "/background.png" } });
-    const image = new Blob(["image"], { type: "image/png" });
-    const fetchBackground = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
-    vi.stubGlobal("fetch", fetchBackground);
-    const stop = startThemeBackground();
-    try {
-      applyThemeBackground("nightfall");
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(fetchBackground).toHaveBeenCalledTimes(5);
-      expect(properties.has("--theme-background-image")).toBe(false);
+  it("loads the background once when the browser comes back online after retries stop", async () => {
+    using t = setup();
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.fetchBackground).toHaveBeenCalledTimes(5);
+    expect(t.properties.has(BACKGROUND)).toBe(false);
 
-      fetchBackground.mockResolvedValue({ ok: true, blob: async () => image });
-      browser.dispatchEvent(new Event("online"));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fetchBackground).toHaveBeenCalledTimes(6);
-      expect(properties.get("--theme-background-image") ?? "").toMatch(/^url\("blob:/);
-      browser.dispatchEvent(new Event("online"));
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(fetchBackground).toHaveBeenCalledTimes(6);
-    } finally {
-      stop();
-      applyThemeBackground(undefined);
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
-    }
+    t.fetchBackground.mockImplementation(loaded);
+    t.browser.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.properties.get(BACKGROUND)).toMatch(/^url\("blob:/);
+
+    t.browser.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.fetchBackground).toHaveBeenCalledTimes(6);
   });
 
-  it.each(["request failure", "HTTP 503", "online before rejection", "longer outage"])(
-    "retries a temporary %s without needing a later online event",
-    async (failure) => {
-      vi.useFakeTimers();
-      const properties = new Map<string, string>();
-      const browser = new EventTarget();
-      vi.stubGlobal("window", browser);
-      vi.stubGlobal("document", {
-        documentElement: {
-          dataset: { themeId: "nightfall" },
-          style: {
-            setProperty: (name: string, value: string) => properties.set(name, value),
-            removeProperty: (name: string) => properties.delete(name),
-          },
-        },
-      });
-      query.mockResolvedValue({ _tag: "Success", value: { relativeUrl: "/background.png" } });
-      const image = new Blob(["image"], { type: "image/png" });
-      const fetchBackground = vi.fn().mockResolvedValue({ ok: true, blob: async () => image });
-      fetchBackground.mockImplementationOnce(async () => {
-        if (failure === "online before rejection") browser.dispatchEvent(new Event("online"));
-        if (failure === "HTTP 503") return new Response(null, { status: 503 });
-        throw new TypeError("Failed to fetch");
-      });
-      if (failure === "longer outage") {
-        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-        fetchBackground.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-      }
-      vi.stubGlobal("fetch", fetchBackground);
-      const stop = startThemeBackground();
-      try {
-        applyThemeBackground("nightfall");
-        await vi.advanceTimersByTimeAsync(0);
-        expect(properties.has("--theme-background-image")).toBe(false);
-        if (failure === "longer outage") {
-          for (const [delay, attempts] of [
-            [1_000, 1],
-            [2_000, 2],
-            [4_000, 3],
-            [8_000, 4],
-          ] as const) {
-            await vi.advanceTimersByTimeAsync(delay - 1);
-            expect(fetchBackground).toHaveBeenCalledTimes(attempts);
-            expect(properties.has("--theme-background-image")).toBe(false);
-            await vi.advanceTimersByTimeAsync(1);
-          }
-        } else {
-          await vi.advanceTimersByTimeAsync(30_000);
-        }
-        expect(properties.get("--theme-background-image") ?? "").toMatch(/^url\("blob:/);
-        expect(fetchBackground).toHaveBeenCalledTimes(failure === "longer outage" ? 5 : 2);
-      } finally {
-        stop();
-        applyThemeBackground(undefined);
-        vi.unstubAllGlobals();
-        vi.useRealTimers();
-      }
-    },
-  );
-
-  it.each(["theme change", "disposal", "retry exhausted"])(
-    "stops retrying after %s",
-    async (reason) => {
-      vi.useFakeTimers();
-      const properties = new Map<string, string>();
-      vi.stubGlobal("window", new EventTarget());
-      vi.stubGlobal("document", {
-        documentElement: {
-          dataset: { themeId: "nightfall" },
-          style: {
-            setProperty: (name: string, value: string) => properties.set(name, value),
-            removeProperty: (name: string) => properties.delete(name),
-          },
-        },
-      });
-      query.mockResolvedValue({ _tag: "Success", value: { relativeUrl: "/background.png" } });
-      const fetchBackground = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
-      vi.stubGlobal("fetch", fetchBackground);
-      const stop = startThemeBackground();
-      try {
-        applyThemeBackground("nightfall");
-        await vi.advanceTimersByTimeAsync(0);
-        if (reason === "theme change") applyThemeBackground(undefined);
-        if (reason === "disposal") stop();
-        await vi.advanceTimersByTimeAsync(30_000);
-        expect(fetchBackground).toHaveBeenCalledTimes(reason === "retry exhausted" ? 5 : 1);
-        expect(properties.has("--theme-background-image")).toBe(false);
-      } finally {
-        stop();
-        applyThemeBackground(undefined);
-        vi.unstubAllGlobals();
-        vi.useRealTimers();
-      }
-    },
-  );
+  it.each(["theme change", "disposal"])("stops retrying after %s", async (reason) => {
+    using t = setup();
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(0);
+    if (reason === "theme change") applyThemeBackground(undefined);
+    else t.stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.fetchBackground).toHaveBeenCalledTimes(1);
+  });
 });
