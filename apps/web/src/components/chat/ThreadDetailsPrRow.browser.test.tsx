@@ -74,14 +74,17 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
     select(AsyncResult.success(queryData()))) as never,
   useEnvironmentQueryIsNewer: () => true,
   useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
-  useEnvironmentQuery: (() => ({
-    data: {
-      code: { additions: 1, deletions: 0 },
-      tests: { additions: 0, deletions: 0 },
-      mocks: { additions: 0, deletions: 0 },
-      generated: { additions: 0, deletions: 0 },
-      docs: { additions: 7, deletions: 3 },
-    },
+  useEnvironmentQuery: ((atom: unknown) => ({
+    data:
+      atom === null
+        ? null
+        : {
+            code: { additions: 1, deletions: 0 },
+            tests: { additions: 0, deletions: 0 },
+            mocks: { additions: 0, deletions: 0 },
+            generated: { additions: 0, deletions: 0 },
+            docs: { additions: 7, deletions: 3 },
+          },
     isPending: false,
   })) as never,
 }));

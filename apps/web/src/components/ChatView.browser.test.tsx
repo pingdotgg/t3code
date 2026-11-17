@@ -27,6 +27,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
@@ -113,6 +114,10 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 
 it("opens a linked issue from an inactive thread's sidebar badge", async () => {
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
   const first = threadWithHistory("issue-first", 1);
   const linked = threadWithHistory("issue-linked", 1);
   const issue: ThreadIssueLink = {
@@ -133,14 +138,14 @@ it("opens a linked issue from an inactive thread's sidebar badge", async () => {
     Effect.succeed({
       ...issue,
       title: liveTitle,
-      author: null,
+      author: { login: "sam", name: null, avatarUrl: null },
       state: { category: "open", name: "Open" },
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
       assignees: [],
       labels: [],
-      commentCount: 0,
+      commentCount: 3,
       projectTitle: "render",
       writable: false,
       capabilities: {
@@ -185,10 +190,22 @@ it("opens a linked issue from an inactive thread's sidebar badge", async () => {
     router: false,
   });
   const name = "Issue #123: Add keyboard support";
-  await userEvent.click(page.getByRole("button", { name }));
-  await userEvent.click(
-    page.getByRole("region", { name: "Linked issues" }).getByRole("link", { name }),
-  );
+  const badge = page.getByRole("button", { name });
+  await userEvent.hover(badge);
+  const previewLink = page.getByRole("link", { name: `Issue #123: ${liveTitle}` });
+  await userEvent.hover(previewLink.getByText("sam", { exact: true }));
+  await expect.element(previewLink).toBeVisible();
+  const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(() => previewLink.element().dispatchEvent(contextMenu));
+  expect(contextMenu.defaultPrevented).toBe(false);
+  await userEvent.click(badge);
+  const issueRow = page
+    .getByRole("region", { name: "Linked issues" })
+    .getByRole("link", { name: `Issue #123: ${liveTitle}` });
+  await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
+  await expect.element(issueRow.getByText("example/project")).toBeVisible();
+  await userEvent.click(issueRow);
   expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
   await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
 });
