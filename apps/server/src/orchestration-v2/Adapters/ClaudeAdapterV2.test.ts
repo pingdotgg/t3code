@@ -6840,6 +6840,40 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
+  it.effect("sends MCP app model context with the next Claude turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-app-context"),
+          text: "What did the app report?",
+          attachments: [],
+        }),
+        appContext: [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }],
+      });
+
+      const content = harness.offeredMessages[0]?.message.content;
+      const text =
+        typeof content === "string"
+          ? content
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      assert.include(text, "Created Jira issue PROJ-42");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
     Effect.scoped(
       Effect.gen(function* () {
