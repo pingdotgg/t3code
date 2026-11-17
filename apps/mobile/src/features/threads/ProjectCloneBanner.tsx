@@ -4,6 +4,7 @@ import {
   projectCloneProgressSummary,
   type ProjectCloneSnapshot,
 } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -16,6 +17,7 @@ export function ProjectCloneBanner(props: {
   readonly onRetry: () => void;
   readonly onRemove: () => void;
 }) {
+  const gt = useGT();
   const { clone } = props;
   const name = projectCloneDisplayName(clone);
   if (clone.phase === "running") {
@@ -24,13 +26,15 @@ export function ProjectCloneBanner(props: {
         <AppActivityIndicator size="small" />
         <View className="min-w-0 flex-1">
           <Text className="font-t3-medium text-sm" numberOfLines={1}>
-            Cloning {name}
+            <T>
+              Cloning <Var>{name}</Var>
+            </T>
           </Text>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
             {projectCloneProgressSummary(clone)}
           </Text>
         </View>
-        <BannerAction label="Cancel" onPress={props.onCancel} />
+        <BannerAction label={gt("Cancel")} onPress={props.onCancel} />
       </View>
     );
   }
@@ -49,7 +53,9 @@ export function ProjectCloneBanner(props: {
         )}
         numberOfLines={1}
       >
-        {cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`}
+        {cancelled
+          ? gt("Cancelled cloning {name}", { name })
+          : gt("Failed to clone {name}", { name })}
       </Text>
       {clone.error ? (
         <Text className="mt-0.5 text-xs text-danger-foreground" numberOfLines={3}>
@@ -57,8 +63,8 @@ export function ProjectCloneBanner(props: {
         </Text>
       ) : null}
       <View className="mt-2 flex-row justify-end gap-2">
-        <BannerAction label="Remove project" onPress={props.onRemove} />
-        <BannerAction label="Retry" onPress={props.onRetry} />
+        <BannerAction label={gt("Remove project")} onPress={props.onRemove} />
+        <BannerAction label={gt("Retry")} onPress={props.onRetry} />
       </View>
     </View>
   );

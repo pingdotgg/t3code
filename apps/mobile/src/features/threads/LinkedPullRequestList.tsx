@@ -9,6 +9,7 @@ import {
   threadPullRequestKeyOf,
   type PullRequestListLine,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { useGT } from "gt-react-native";
 import { memo, useMemo } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 
@@ -63,6 +64,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   readonly openPullRequest: (url: string) => Promise<boolean>;
   readonly actions: LinkedPullRequestActions | null;
 }) {
+  const gt = useGT();
   const { link, depth, stack } = props.line;
   const snapshot = link.snapshot;
   const status = snapshot === null ? null : pullRequestStatus(snapshot);
@@ -87,12 +89,30 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const row = (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${capitalizeTerm(singular)} ${link.number}, ${snapshot?.title ?? "waiting for host state"}${status ? `, ${status.label}` : ""}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, ${link.repository}${stack ? `, stack of ${stack.size}` : ""}${watching ? ", watching" : ""}${checks ? `, checks ${snapshot?.checksState}` : ""}${review ? `, ${review.accessibleLabel}` : ""}`}
-      accessibilityHint={props.actions ? "Touch and hold for actions." : undefined}
+      accessibilityLabel={[
+        gt("{kind} {number}, {title}", {
+          kind: capitalizeTerm(singular),
+          number: link.number,
+          title: snapshot?.title ?? gt("waiting for host state"),
+        }),
+        status?.label,
+        conflict?.label.toLowerCase(),
+        link.repository,
+        stack ? gt("stack of {size}", { size: stack.size }) : undefined,
+        watching ? gt("watching") : undefined,
+        checks ? gt("checks {state}", { state: snapshot?.checksState }) : undefined,
+        review?.accessibleLabel,
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      accessibilityHint={props.actions ? gt("Touch and hold for actions.") : undefined}
       onPress={() => {
         void props.openPullRequest(link.url).then((opened) => {
           if (!opened)
-            Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
+            Dialog.alert(
+              gt("Unable to open {shortLabel}", { shortLabel }),
+              gt("The {singular} could not be opened.", { singular }),
+            );
         });
       }}
       style={{ paddingLeft: 16 + Math.min(depth, 3) * 16 }}
@@ -161,7 +181,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           numberOfLines={2}
           ellipsizeMode="tail"
         >
-          {snapshot?.title ?? "Waiting for host state"}
+          {snapshot?.title ?? gt("Waiting for host state")}
         </Text>
       </View>
     </Pressable>

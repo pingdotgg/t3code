@@ -10,6 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/subagent-display";
 import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { T, Var } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
@@ -77,7 +78,9 @@ export function SubagentRow(props: {
             </Text>
             {presentation.runsOn !== null ? (
               <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
-                on {presentation.runsOn}
+                <T>
+                  on <Var>{presentation.runsOn}</Var>
+                </T>
               </Text>
             ) : null}
           </View>
