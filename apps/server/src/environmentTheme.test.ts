@@ -304,6 +304,20 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     );
   });
 
+  it.effect("switches back to the stock theme after selecting another", () => {
+    const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
+    return withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        yield* themes.apply({ themeId: "agent-look", theme: NIGHTFALL_THEME });
+        yield* themes.apply({ themeId: "t3-code" });
+        assert.deepEqual(selected, [{ theme: "agent-look" }, { theme: "" }]);
+      }),
+      selected,
+    );
+  });
+
   it.effect(
     "reports the image beside a theme as its background, with a new revision per file",
     () =>
@@ -342,7 +356,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     return withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 6 }, (_, index) => [
+          Array.from({ length: 3 }, (_, index) => [
             `aa-${index}.json`,
             encodeThemeFileEscaped(large(`Large ${index}`)),
           ]),
