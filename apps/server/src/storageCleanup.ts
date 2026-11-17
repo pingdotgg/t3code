@@ -1040,6 +1040,7 @@ const make = Effect.gen(function* () {
     worktreePath: string,
     workspaceRoot: string,
     worktreesRoots: ReadonlyArray<string>,
+    projectWorkspaces: boolean,
   ) {
     const gitEntry = yield* fs.stat(path.join(worktreePath, ".git")).pipe(
       Effect.map((stat) => stat.type),
@@ -1058,6 +1059,7 @@ const make = Effect.gen(function* () {
           }
         : null;
     }
+    if (!projectWorkspaces) return null;
     const projectRoot = yield* fs
       .realPath(path.resolve(workspaceRoot))
       .pipe(Effect.orElseSucceed(() => null));
@@ -1111,6 +1113,7 @@ const make = Effect.gen(function* () {
   ) {
     const status = yield* git.statusDetailsLocal(repo);
     if (!status.isRepo || status.branch !== branch || status.hasWorkingTreeChanges) return null;
+    if ((yield* hiddenTrackedChange(repo)) !== null) return null;
     // Deleting a clone also deletes its submodules, including their ignored files and local history.
     const submodules = yield* submoduleRemoval(repo, { worktreeKeepWhen: "any-local-files" });
     if (submodules.reason !== null) return null;
@@ -1306,9 +1309,8 @@ const make = Effect.gen(function* () {
       const realParent = yield* fs.realPath(path.dirname(worktreePath));
       if (realPath !== path.join(realParent, path.basename(worktreePath)))
         return "worktree is a symbolic link";
-      return (yield* resolveCheckout(realPath, workspaceRoot, roots)) === null
-        ? "not a managed workspace"
-        : null;
+      const checkout = yield* resolveCheckout(realPath, workspaceRoot, roots, !isWorktreeDevHome);
+      return checkout === null ? "not a managed workspace" : null;
     });
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
@@ -1648,7 +1650,12 @@ const make = Effect.gen(function* () {
         if (yield* containsProjectRoot(worktreePaths, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
         const realPath = yield* fs.realPath(worktreePath);
-        const checkout = yield* resolveCheckout(realPath, project.workspaceRoot, roots);
+        const checkout = yield* resolveCheckout(
+          realPath,
+          project.workspaceRoot,
+          roots,
+          !isWorktreeDevHome,
+        );
         if (checkout === null) return keep("not a managed workspace");
         const clone = checkout.kind !== "linked";
         if (clone && Option.isNone(multiRepo)) return keep("clone cannot be safely restored");
