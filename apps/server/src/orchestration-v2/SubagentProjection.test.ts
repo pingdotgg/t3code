@@ -393,6 +393,64 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(afterMonitorEnded.resultRun?.id, ended.id);
 });
 
+it("keeps the report when a later queued run ends without assistant text", () => {
+  const { projection, run } = taskFixture();
+  const report = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "REPORT-OK",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  const notice = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("notice"),
+    turnItemId: TurnItemId.make("notice"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "user",
+    text: "1 command finished",
+    ordinal: 2,
+    now: childCreatedAt,
+  });
+  const wake: OrchestrationV2Run = {
+    ...run,
+    id: RunId.make("wake"),
+    ordinal: 2,
+    userMessageId: notice.message.id,
+    startedAt: DateTime.makeUnsafe("2026-07-24T10:00:00.000Z"),
+    completedAt: DateTime.makeUnsafe("2026-07-24T10:00:01.000Z"),
+  };
+  const child = {
+    ...projection,
+    runs: [run, wake],
+    messages: [
+      { ...report.message, runId: run.id },
+      {
+        ...notice.message,
+        runId: wake.id,
+        notification: {
+          source: { kind: "command" as const },
+          outcome: "completed" as const,
+          summary: "1 command finished",
+        },
+      },
+    ],
+    turnItems: [{ ...report.turnItem, runId: run.id }],
+  };
+  const progress = delegatedTaskProgress(child);
+  assert.equal(progress.state, "result_available");
+  assert.equal(subagentResultForRun(child, progress.resultRun!).text, "REPORT-OK");
+});
+
 it("exposes the provider failure rather than a progress message from the failed run", () => {
   const { projection, run } = taskFixture();
   const failedRun = { ...run, status: "failed" as const };
