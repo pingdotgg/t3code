@@ -70,10 +70,9 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   return load;
 }
 
-// Falls back to the validated HTTPS URL when the validating fetch fails: the
-// CDN serves no CORS headers, so the fetch is often blocked cross-origin while
-// native <img> loading still works. The object URL is shared per agent and
-// revoked when the last icon unmounts.
+// Only the official CDN gets a direct <img> fallback for network/CORS failures.
+// Custom hosts and rejected image responses keep the generic icon. Blob URLs
+// are shared per agent and revoked when the last icon unmounts.
 const acpRegistryIconSourceAtom = Atom.family((iconUrl: string) =>
   Atom.make((get) => {
     let disposed = false;
@@ -85,17 +84,17 @@ const acpRegistryIconSourceAtom = Atom.family((iconUrl: string) =>
     return Effect.promise(() =>
       loadCachedAcpRegistryIcon(iconUrl).then(
         (blob) => {
-          if (disposed) return iconUrl;
+          if (disposed) return null;
           objectUrl = URL.createObjectURL(blob);
           return objectUrl;
         },
-        () => iconUrl,
+        (error) => (error instanceof TypeError ? resolveOfficialAcpRegistryIconUrl(iconUrl) : null),
       ),
     );
   }).pipe(Atom.withLabel(`acp-registry-icon:${iconUrl}`)),
 );
 
-const NO_ICON_SOURCE_ATOM = Atom.make(AsyncResult.initial<string>());
+const NO_ICON_SOURCE_ATOM = Atom.make(AsyncResult.initial<string | null>());
 
 export function AcpRegistryAgentIcon({
   icon,
