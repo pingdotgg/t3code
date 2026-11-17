@@ -7507,11 +7507,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const gitDir = pathService.join(yield* makeTmpDir(), "metadata\u00a0");
+        yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]);
         yield* writeTextFile(cwd, ".gitignore", "node_modules\n");
         yield* git(cwd, ["add", ".gitignore"]);
         yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
         const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
         const outside = yield* makeTmpDir("git-worktree-link-target-");
         yield* writeTextFile(outside, "keep.txt", "keep\n");
         const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
@@ -7531,7 +7533,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         NodeFS.symlinkSync(outside, pathService.join(worktreePath, "shared"), "junction");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.provideService(HostProcess.Platform, "win32"));
 
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
         assert.equal(

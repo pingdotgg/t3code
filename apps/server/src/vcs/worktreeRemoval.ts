@@ -146,7 +146,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   );
   const commonDir = path.resolve(
     input.cwd,
-    (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).trim(),
+    (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).replace(/\n$/, ""),
   );
   const pointsBack = yield* fileSystem.readFileString(path.join(adminDir, "gitdir")).pipe(
     Effect.flatMap((gitdir) => samePath(path.resolve(adminDir, gitdir.trim()), gitFile)),
