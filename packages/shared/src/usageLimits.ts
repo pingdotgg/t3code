@@ -280,7 +280,8 @@ export interface LimitAccount {
     readonly environmentId: EnvironmentId;
     readonly label: string;
   }>;
-  readonly sourceKey: string | null;
+  /** The CLI Proxy hub that reports this account, kept through native merges for pooling. */
+  readonly hub: { readonly key: string; readonly label: string } | null;
   readonly sourceLabel: string | null;
   readonly redeem: {
     readonly environmentId: EnvironmentId;
@@ -350,7 +351,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
-      sourceKey: environments.length > 0 ? null : (previous.sourceKey ?? next.sourceKey),
+      hub: previous.hub ?? next.hub,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
         hubRedeems.get(key)?.redeem ??
@@ -383,7 +384,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         plan: provider.auth.label,
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
-        sourceKey: null,
+        hub: null,
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
         limits: provider.usageLimits,
@@ -415,7 +416,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           plan: account.plan,
           accentColor: undefined,
           environments: [],
-          sourceKey: hubIdentity(environmentId, source),
+          hub: { key: hubIdentity(environmentId, source), label: sourceLabel },
           sourceLabel,
           redeem: account.usageLimits.resetCredits?.nextCreditId
             ? {
@@ -546,18 +547,16 @@ export function collectLimitPools(
   const sourcesByDriver = new Map<ServerProvider["driver"], Set<string>>();
   if (options.splitSources ?? true) {
     for (const account of accounts) {
-      if (!account.sourceKey) continue;
+      if (!account.hub) continue;
       const sources = sourcesByDriver.get(account.driver) ?? new Set<string>();
-      sourcesByDriver.set(account.driver, sources.add(account.sourceKey));
+      sourcesByDriver.set(account.driver, sources.add(account.hub.key));
     }
   }
   const split = (account: LimitAccount) => (sourcesByDriver.get(account.driver)?.size ?? 0) > 1;
   const byPool = new Map<string, LimitAccount[]>();
   for (const account of accounts) {
     const key =
-      split(account) && account.sourceKey
-        ? `${account.driver}:${account.sourceKey}`
-        : account.driver;
+      split(account) && account.hub ? `${account.driver}:${account.hub.key}` : account.driver;
     const list = byPool.get(key);
     if (list) list.push(account);
     else byPool.set(key, [account]);
@@ -572,7 +571,7 @@ export function collectLimitPools(
   );
   return grouped.map(([key, members]) => {
     const driver = members[0]!.driver;
-    const label = split(members[0]!) ? (members[0]!.sourceLabel ?? null) : null;
+    const label = split(members[0]!) ? (members[0]!.hub?.label ?? null) : null;
     const orderWindow = members
       .flatMap((account) => account.limits.windows)
       .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];

@@ -1066,6 +1066,38 @@ describe("pools", () => {
     expect(new Set(pools.map((pool) => pool.key)).size).toBe(3);
     expect(pools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 43, 50]);
 
+    // A hub account that this environment also reports natively stays in its hub's pool.
+    const withNative = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...input.get(EnvironmentId.make("env-a"))!,
+          serverConfig: {
+            ...input.get(EnvironmentId.make("env-a"))!.serverConfig,
+            providers: [
+              provider({
+                driver: claude,
+                instanceId: ProviderInstanceId.make("claude"),
+                auth: { status: "authenticated", email: "a@example.com" },
+                usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 100 }] },
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(
+      collectLimitPools(collectLimitAccounts(withNative), now).map((pool) => [
+        pool.driver,
+        pool.label,
+        pool.accounts.length,
+      ]),
+    ).toEqual([
+      ["claudeAgent", "Main hub", 2],
+      ["claudeAgent", "Work hub", 2],
+      ["codex", null, 1],
+    ]);
+
     const combined = collectLimitPools(accounts, now, { splitSources: false });
     expect(combined.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
       ["claudeAgent", null, 4],
@@ -1222,7 +1254,7 @@ describe("pools", () => {
           plan: undefined,
           accentColor: undefined,
           environments: [],
-          sourceKey: null,
+          hub: null,
           sourceLabel: null,
           redeem: null,
           limits: {
@@ -1274,7 +1306,7 @@ describe("pooled account columns", () => {
     plan: undefined,
     accentColor: undefined,
     environments: [],
-    sourceKey: "hub",
+    hub: { key: "hub", label: "Hub" },
     sourceLabel: "Hub",
     redeem: null,
     limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
