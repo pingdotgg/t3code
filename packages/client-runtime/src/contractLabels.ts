@@ -5,6 +5,7 @@
 import {
   type BrowserImportFailureReason,
   isRuntimeModeAbove,
+  managedCapabilityDenial as contractsManagedCapabilityDenial,
   managedUpdatesDenial as contractsManagedUpdatesDenial,
   type ManagedPolicySummary,
   type ProjectCloneSnapshot,
@@ -163,13 +164,8 @@ export function managedCapabilityDenial(
   capability: ManagedCapability,
   resolve: MFunctionType = mFallback,
 ): string | undefined {
-  const limits = summary?.limits;
-  if (summary === undefined || limits === undefined) return undefined;
-  const denied =
-    capability === "remoteClients"
-      ? limits.clients !== undefined && !limits.clients.includes("remote")
-      : limits[capability] === false;
-  return denied
+  return summary !== undefined &&
+    contractsManagedCapabilityDenial(summary, capability) !== undefined
     ? managedCapabilityDeniedMessage(summary.organization, capability, resolve)
     : undefined;
 }
