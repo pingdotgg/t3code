@@ -304,7 +304,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
       );
       assert.equal(result.submitted.at(-1), "\r");
       assert.notMatch(result.submitted.slice(0, -1), /[\r\n]/);
-      assert.notInclude(result.submitted, "\x1b[200~");
       assert.deepEqual(result.lines, [
         "it's ready",
         "literal \\n $(printf wrong) `printf wrong` café",

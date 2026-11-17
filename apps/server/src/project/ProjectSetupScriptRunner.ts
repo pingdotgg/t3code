@@ -590,6 +590,7 @@ export const make = Effect.gen(function* () {
           : terminalManager.write({
               threadId: input.threadId,
               terminalId,
+              // macOS zsh garbles long typed-ahead multiline input; a live line editor takes it as one paste.
               data: projectScriptTerminalInput(
                 shell === "ready" && completionShell === "posix" && commandLine.includes("\r")
                   ? `\x1b[200~${commandLine.replaceAll("\r", "\n")}\x1b[201~`
