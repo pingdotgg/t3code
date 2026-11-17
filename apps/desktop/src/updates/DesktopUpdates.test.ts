@@ -748,6 +748,31 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("keeps the server running when Debian package authorization fails", () => {
+    const harness = makeHarness({ platform: "linux", packageType: "deb" });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        yield* updates.install;
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+        const { changes } = yield* updates.subscribe;
+        const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
+        yield* flushCallbacks;
+        harness.emit("error", new Error("Command pkexec exited with code 127"));
+        const state = Option.getOrThrow(yield* Fiber.join(recovered));
+        assert.include(state.message, "administrator");
+        assert.equal(state.downloadedVersion, "1.2.4");
+        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores only desired-running instances after an installer error event", () => {
     const starts: string[] = [];
     const stops: string[] = [];

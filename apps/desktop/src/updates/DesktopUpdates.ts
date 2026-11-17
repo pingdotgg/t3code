@@ -877,25 +877,27 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
-          // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
-          const instances = yield* pool.list;
-          // stop clears desiredRunning, so retain the recovery set beforehand.
-          const runningInstances = yield* Effect.filter(instances, (instance) =>
-            instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
-          );
-          yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.all(
-            [
-              Effect.forEach(
-                instances,
-                (instance) =>
-                  instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
-                { concurrency: "unbounded" },
-              ),
-              sshEnvironment.closeAllTunnels,
-            ],
-            { concurrency: "unbounded" },
-          );
+          if (!isDebPackage) {
+            // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
+            const instances = yield* pool.list;
+            // stop clears desiredRunning, so retain the recovery set beforehand.
+            const runningInstances = yield* Effect.filter(instances, (instance) =>
+              instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
+            );
+            yield* Ref.set(installRunningBackendsRef, runningInstances);
+            yield* Effect.all(
+              [
+                Effect.forEach(
+                  instances,
+                  (instance) =>
+                    instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+                  { concurrency: "unbounded" },
+                ),
+                sshEnvironment.closeAllTunnels,
+              ],
+              { concurrency: "unbounded" },
+            );
+          }
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -1068,7 +1070,15 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
-      yield* recoverFailedInstall(error.message);
+      const needsAuthorization =
+        isDebPackage &&
+        cause instanceof Error &&
+        /^Command pkexec exited with code 12[67]$/.test(cause.message);
+      yield* recoverFailedInstall(
+        needsAuthorization
+          ? "The Debian package update needs administrator approval on this machine. Retry and approve the prompt on its desktop."
+          : error.message,
+      );
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
         cause: describeUpdateErrorCause(error.cause),
@@ -1221,6 +1231,7 @@ export const make = Effect.gen(function* () {
 
       const settings = yield* desktopSettings.get;
       const disabledReason = yield* resolveDisabledReason;
+      yield* Ref.set(desktopState.isDebPackage, isDebPackage);
       // A blocked nightly channel still lets the user switch back to stable, so it stays updatable.
       yield* Ref.set(desktopState.canInstallUpdates, Option.isNone(disabledReason));
       yield* setState(
