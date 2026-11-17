@@ -84,8 +84,23 @@ export const InferenceProxyStatus = Schema.Struct({
   routing: Schema.optionalKey(InferenceRouting),
   problem: Schema.NullOr(Schema.String),
   accounts: Schema.Array(
-    Schema.Struct({ name: Schema.String, provider: Schema.String, status: Schema.String }),
+    Schema.Struct({
+      name: Schema.String,
+      provider: Schema.String,
+      status: Schema.String,
+      availability: Schema.optionalKey(
+        Schema.Literals([
+          "available",
+          "authenticationError",
+          "rateLimited",
+          "unavailable",
+          "disabled",
+        ]),
+      ),
+      retryAfter: Schema.optionalKey(Schema.String),
+    }),
   ),
+  availableDrivers: Schema.optionalKey(Schema.Array(InferenceDriver)),
   consumers: Schema.Array(InferenceConsumer),
   routes: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, label: Schema.String })),
 });
@@ -96,7 +111,18 @@ export function inferenceRouteIssue(host: InferenceProxyStatus | null, local: bo
   if (!host.enabled) return "Enable inference hosting on this environment first.";
   if (!host.running) return host.problem ?? "The inference host is stopped.";
   if (!local && !host.sharing) return "Enable sharing on the host first.";
-  if (!host.accounts.length) return "Add a provider account on the host first.";
+  if (!host.accounts.length && !host.availableDrivers?.length)
+    return "Add a provider account on the host first.";
+  if (host.availableDrivers?.length === 0) return "All hosted accounts are unavailable.";
+  if (
+    host.availableDrivers === undefined &&
+    !host.accounts.some(
+      (account) =>
+        account.availability === "available" ||
+        (account.availability === undefined && account.status === "active"),
+    )
+  )
+    return "All hosted accounts are unavailable.";
   return null;
 }
 

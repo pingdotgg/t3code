@@ -19,6 +19,13 @@ import { SettingsRow } from "./settingsLayout";
 
 const { inferenceProxy } = serverEnvironment;
 const everyUpstream = Object.keys(INFERENCE_UPSTREAMS) as ReadonlyArray<InferenceUpstream>;
+const accountStatus = {
+  available: "Active",
+  authenticationError: "Authentication or access rejected",
+  rateLimited: "Rate limited",
+  unavailable: "Unavailable",
+  disabled: "Disabled",
+} as const;
 
 export function InferenceProviderAccounts({
   environmentId,
@@ -107,7 +114,14 @@ export function InferenceProviderAccounts({
           <SettingsRow
             key={account.name}
             title={account.name}
-            description={`${account.provider} · ${account.status}`}
+            description={`${account.provider} · ${account.availability ? accountStatus[account.availability] : account.status}`}
+            status={
+              account.availability === "rateLimited" && account.retryAfter ? (
+                <time dateTime={account.retryAfter}>
+                  Retry after {new Date(account.retryAfter).toLocaleString()}
+                </time>
+              ) : undefined
+            }
             control={
               <Button
                 size="sm"

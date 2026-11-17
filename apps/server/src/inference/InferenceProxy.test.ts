@@ -93,6 +93,10 @@ it.effect(
         };
         let serving = false;
         let poolUnavailable = false;
+        let keepRuntimeAvailable = false;
+        let listedAccountRuntimeOnly = false;
+        let poolStatusMessage: string | undefined;
+        let poolRetryAfter: string | undefined;
         let lan = false;
         let rejectNextLaunch = false;
         let currentExit: Deferred.Deferred<void> | undefined;
@@ -228,7 +232,8 @@ it.effect(
                 HttpClientResponse.fromWeb(request, Response.json({ environmentId: peerId })),
               );
             }
-            remoteCatalogKeys.push(request.headers.authorization);
+            if (!request.url.endsWith("/health"))
+              remoteCatalogKeys.push(request.headers.authorization);
             if (staleLinkedCatalog && request.url.startsWith("http://127.0.0.1:34567/"))
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(null, { status: 502 })),
@@ -242,26 +247,34 @@ it.effect(
             HttpClientResponse.fromWeb(
               request,
               Response.json(
-                request.url.endsWith("auth-files")
+                request.url.endsWith("/health")
                   ? {
-                      files: [
-                        {
-                          name: "codex:api-key:fixture",
-                          provider: "codex",
-                          status: "active",
-                          unavailable: poolUnavailable,
-                          runtime_only: true,
-                        },
-                        {
-                          name: "one.json",
-                          provider: "codex",
-                          status: "active",
-                          unavailable: poolUnavailable,
-                          refresh_token: "must stay local",
-                        },
-                      ],
+                      availableDrivers: poolUnavailable ? [] : ["codex", "opencode", "pi"],
+                      models: catalog.map((model) => model.id),
                     }
-                  : { data: catalog },
+                  : request.url.endsWith("auth-files")
+                    ? {
+                        files: [
+                          {
+                            name: "codex:api-key:fixture",
+                            provider: "codex",
+                            status: "active",
+                            unavailable: poolUnavailable && !keepRuntimeAvailable,
+                            runtime_only: true,
+                          },
+                          {
+                            name: "one.json",
+                            provider: "codex",
+                            status: "active",
+                            unavailable: poolUnavailable,
+                            runtime_only: listedAccountRuntimeOnly,
+                            status_message: poolStatusMessage,
+                            next_retry_after: poolRetryAfter,
+                            refresh_token: "must stay local",
+                          },
+                        ],
+                      }
+                    : { data: catalog },
               ),
             ),
           );
@@ -652,7 +665,34 @@ it.effect(
             serving = true;
             yield* startSharing;
             const { accounts } = yield* proxy.status;
-            expect(accounts).toEqual([{ name: "one.json", provider: "codex", status: "active" }]);
+            expect(accounts).toEqual([
+              { name: "one.json", provider: "codex", status: "active", availability: "available" },
+            ]);
+            listedAccountRuntimeOnly = true;
+            expect((yield* proxy.status).accounts).toEqual([]);
+            expect((yield* proxy.status).availableDrivers).toContain("codex");
+            listedAccountRuntimeOnly = false;
+            poolUnavailable = true;
+            poolStatusMessage = "HTTP 429 quota exhausted";
+            poolRetryAfter = "2026-11-17T20:00:00Z";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "rateLimited",
+              retryAfter: poolRetryAfter,
+            });
+            poolStatusMessage = "Failed to authenticate. API Error: 403 status code (no body)";
+            poolRetryAfter = undefined;
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "authenticationError",
+            });
+            poolStatusMessage = undefined;
+            poolRetryAfter = "1960-01-01T00:00:00Z";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "unavailable",
+            });
+            expect((yield* proxy.status).accounts[0]).not.toHaveProperty("retryAfter");
+            poolUnavailable = false;
+            poolStatusMessage = undefined;
+            poolRetryAfter = undefined;
             yield* proxy.manage({ operation: "setRouting", strategy: "fill-first" });
             yield* proxy.manage({ operation: "setRouting", sessionAffinity: false });
             const readConfig = fs
@@ -675,6 +715,9 @@ it.effect(
             ]);
             poolUnavailable = true;
             expect((yield* proxy.health(issued.key))?.availableDrivers).toEqual([]);
+            keepRuntimeAvailable = true;
+            expect((yield* proxy.health(issued.key))?.availableDrivers).toContain("codex");
+            keepRuntimeAvailable = false;
             poolUnavailable = false;
             expect((yield* proxy.health(issued.key))?.availableDrivers).toContain("codex");
             const connect = { grant: local, driver: "codex" as const, hostLabel: "Host" };
@@ -690,6 +733,11 @@ it.effect(
               { id: "codex-pool-work", owned_by: "openai" },
               { id: "claude-pool-sonnet", owned_by: "anthropic" },
             ];
+            poolUnavailable = true;
+            expect((yield* proxy.connect(connect).pipe(Effect.flip)).message).toContain(
+              "no available accounts",
+            );
+            poolUnavailable = false;
             expect(
               (yield* proxy
                 .connect({ ...connect, grant: { ...local, key: "expired-local-key" } })

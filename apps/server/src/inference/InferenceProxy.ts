@@ -87,6 +87,8 @@ const Files = Schema.Struct({
       status: Schema.String,
       disabled: Schema.optionalKey(Schema.Boolean),
       unavailable: Schema.optionalKey(Schema.Boolean),
+      status_message: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      next_retry_after: Schema.optionalKey(Schema.NullOr(Schema.String)),
       runtime_only: Schema.optionalKey(Schema.Boolean),
     }),
   ),
@@ -155,6 +157,35 @@ const isClaudeAccount = Schema.is(ClaudeAccount);
 const isProxyClaudeAuth = Schema.is(ProxyClaudeAuth);
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+function accountAvailability(account: (typeof Files.Type)["files"][number], now: number) {
+  if (account.disabled) return "disabled" as const;
+  if (account.status === "active" && !account.unavailable) return "available" as const;
+  const reason = account.status_message ?? "";
+  if (
+    /\b(?:401|403)\b|auth(?:entication)?[_ -]?fail|invalid[_ -]?grant|invalid[_ -]?credential/i.test(
+      reason,
+    )
+  )
+    return "authenticationError" as const;
+  if (
+    /\b429\b|rate[_ -]?limit|quota|cooldown|exhausted/i.test(reason) ||
+    (account.next_retry_after && Date.parse(account.next_retry_after) > now)
+  )
+    return "rateLimited" as const;
+  return "unavailable" as const;
+}
+
+function availableDrivers(files: (typeof Files.Type)["files"]) {
+  const available = files.filter(
+    (account) => account.status === "active" && !account.disabled && !account.unavailable,
+  );
+  return INFERENCE_DRIVERS.filter((driver) =>
+    available.some(
+      (account) => INFERENCE_HARNESSES[driver].accounts?.includes(account.provider) ?? true,
+    ),
+  );
+}
 
 function jwtClaims(token: string): Record<string, unknown> | null {
   const payload = token.split(".")[1];
@@ -816,6 +847,7 @@ const make = Effect.gen(function* () {
             ];
           }),
           routing: state.routing ?? defaultInferenceRouting,
+          availableDrivers: [],
           version: state.release?.version ?? proxyVersion,
           enabled: state.enabled,
           sharing: state.sharing,
@@ -831,12 +863,27 @@ const make = Effect.gen(function* () {
             runtime.management,
             Files,
           );
+          const now = yield* Clock.currentTimeMillis;
           return {
             ...summary,
             running: true,
+            availableDrivers: availableDrivers(files),
             accounts: files
               .filter((file) => !file.runtime_only)
-              .map(({ name, provider, status }) => ({ name, provider, status })),
+              .map((file) => {
+                const availability = accountAvailability(file, now);
+                return {
+                  name: file.name,
+                  provider: file.provider,
+                  status: file.status,
+                  availability,
+                  ...(availability === "rateLimited" &&
+                  file.next_retry_after &&
+                  Date.parse(file.next_retry_after) > now
+                    ? { retryAfter: file.next_retry_after }
+                    : {}),
+                };
+              }),
             problem: routeProblem ?? sync.problem,
           };
         }).pipe(
@@ -1238,15 +1285,8 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     );
-    const available = files.filter(
-      (account) => account.status === "active" && !account.disabled && !account.unavailable,
-    );
     return {
-      availableDrivers: INFERENCE_DRIVERS.filter((driver) =>
-        available.some(
-          (account) => INFERENCE_HARNESSES[driver].accounts?.includes(account.provider) ?? true,
-        ),
-      ),
+      availableDrivers: availableDrivers(files),
       models: data.map((model) => model.id),
     };
   });
@@ -1333,6 +1373,11 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+      const health = local
+        ? yield* mutex.withPermit(localHealth())
+        : yield* jsonRequest(baseUrl + "/health", grant.key, InferenceRouteHealth);
+      if (!health.availableDrivers.includes(driver))
+        return yield* failure("The inference host has no available accounts for this provider.");
       const models = modelsForDriver(data, driver);
       if (!models.length)
         return yield* failure("Sign in to an account for this provider on the host, then retry.");

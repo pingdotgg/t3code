@@ -22,7 +22,13 @@ function setup() {
     data: {
       enabled: true,
       accounts: [
-        { name: "work.json", provider: "codex", status: "active" },
+        {
+          name: "work.json",
+          provider: "codex",
+          status: "error",
+          availability: "rateLimited",
+          retryAfter: "2099-01-01T00:00:00Z",
+        },
         { name: "personal.json", provider: "claude", status: "active" },
       ],
     },
@@ -44,6 +50,8 @@ describe("inference provider accounts", () => {
       <InferenceProviderAccounts environmentId={host} driver="codex" />,
     );
     await expect.element(screen.getByText("work.json")).toBeVisible();
+    await expect.element(screen.getByText("codex · Rate limited")).toBeVisible();
+    await expect.element(screen.getByText(/Retry after/)).toBeVisible();
     await expect.element(screen.getByText("personal.json")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Codex", exact: true }));
     expect(state.run).toHaveBeenLastCalledWith({
