@@ -258,6 +258,21 @@ describe("IssueService", () => {
         host: "gitea.test",
       });
 
+      const defaultPortOnly = yield* makeService({
+        projects: [
+          project({ id: "plain", repository: "acme/web", provider: "forgejo", host: "gitea.test" }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(
+        yield* defaultPortOnly
+          .resolveUrl("https://gitea.test:8443/acme/web/issues/3")
+          .pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
+      });
+
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
       expect(elsewhere).toMatchObject({
