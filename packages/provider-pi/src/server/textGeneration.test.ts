@@ -143,7 +143,7 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
 );
 
 it.effect(
-  "blind evaluation disables tools and context loading and rejects custom prompt injection",
+  "blind evaluation and the standing check disable tools and context loading and reject custom prompts",
   () =>
     Effect.gen(function* () {
       const pi = yield* makeFakePi(
@@ -218,10 +218,35 @@ it.effect(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner),
         );
         assert.notInclude(custom.supportedOperations, "generateModelEvaluation");
+        assert.notInclude(custom.supportedOperations, "checkFactStanding");
         const error = yield* custom.generateModelEvaluation(input).pipe(Effect.flip);
         assert.include(error.detail, "cannot isolate");
       }
       assert.equal(pi.launchArguments.length, 1);
+
+      // The standing check is just as blind.
+      const checking = yield* makeFakePi(
+        JSON.stringify({ results: [{ ref: 1, verdict: "standing", selfContained: true }] }),
+      );
+      const checker = yield* makePiTextGeneration(settings, {}).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, checking.spawner),
+      );
+      assert.include(checker.supportedOperations, "checkFactStanding");
+      yield* checker.checkFactStanding({
+        cwd: "/empty-check-directory",
+        modelSelection: input.modelSelection,
+        statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+      });
+      for (const flag of [
+        "--no-tools",
+        "--no-extensions",
+        "--no-context-files",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--system-prompt",
+        "--append-system-prompt",
+      ])
+        assert.include(checking.launchArguments[0]!, flag);
 
       const rejected = yield* makeFakePi("", {
         set_thinking_level: "Unsupported thinking level for this model",

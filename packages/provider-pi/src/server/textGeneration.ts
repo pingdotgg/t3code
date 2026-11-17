@@ -33,6 +33,8 @@ const piTurnErrorDetail = (errorMessage: string | undefined) => {
     : `Pi could not generate text: the model provider returned HTTP ${status}.`;
 };
 
+const PI_BLIND_ARGS = ["--no-context-files", "--no-skills", "--no-prompt-templates"] as const;
+
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -125,16 +127,23 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           operation === "generateModelEvaluation"
             ? [
                 ...launch.args,
-                "--no-context-files",
-                "--no-skills",
-                "--no-prompt-templates",
+                ...PI_BLIND_ARGS,
                 // Explicit sources suppress discovery of global SYSTEM.md and APPEND_SYSTEM.md.
                 "--system-prompt",
                 "You evaluate anonymous task outcomes using the supplied rubric and evidence.",
                 "--append-system-prompt",
                 "Use only the supplied evidence. Do not identify the candidate or use tools.",
               ]
-            : launch.args,
+            : operation === "checkFactStanding"
+              ? [
+                  ...launch.args,
+                  ...PI_BLIND_ARGS,
+                  "--system-prompt",
+                  "You classify the supplied statements.",
+                  "--append-system-prompt",
+                  "Use only the supplied statements. Do not use tools.",
+                ]
+              : launch.args,
         cwd,
         env: launch.env,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
