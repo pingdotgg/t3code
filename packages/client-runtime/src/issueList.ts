@@ -139,9 +139,8 @@ export function groupIssues(
       )
         continue;
       // Environments holding the same repository answer the same issue; the first one keeps it.
-      const issueKey = `${key}\u0000${entry.scope.toLowerCase()}\u0000${entry.key}`;
-      if (listed.has(issueKey)) continue;
-      listed.add(issueKey);
+      if (listed.has(entry.url)) continue;
+      listed.add(entry.url);
       group.rows.push({ ...entry, environmentId });
     }
     for (const error of page.errors) {

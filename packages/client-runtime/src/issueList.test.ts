@@ -185,4 +185,40 @@ describe("groupIssues", () => {
     const [group] = groupIssues(held, "", []);
     expect(group!.rows.map((row) => row.displayKey)).toEqual(["#1", "#2"]);
   });
+
+  it("keeps same-keyed issues from two Linear workspaces apart", () => {
+    const linear = {
+      tracker: "linear",
+      host: "linear.app",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const inWorkspace = (workspace: string) =>
+      answer({
+        trackers: [linear],
+        entries: [
+          entry({
+            tracker: "linear" as IssueTrackerKind,
+            host: "linear.app",
+            scope: "ENG",
+            key: "ENG-1",
+            url: `https://linear.app/${workspace}/issue/ENG-1`,
+          }),
+        ],
+      });
+    const held = holdIssuePages(
+      [
+        [environmentId, inWorkspace("acme")],
+        ["env-2" as EnvironmentId, inWorkspace("globex")],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.url)).toEqual([
+      "https://linear.app/acme/issue/ENG-1",
+      "https://linear.app/globex/issue/ENG-1",
+    ]);
+  });
 });
