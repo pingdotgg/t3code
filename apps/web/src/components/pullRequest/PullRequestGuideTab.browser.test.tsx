@@ -26,13 +26,12 @@ function setup() {
   identity.viewer = "alice";
   identity.ready = true;
   vi.mocked(useReviewGuideWriter).mockReset();
-  vi.mocked(useGuideDiffFiles).mockReset();
+  vi.mocked(useGuideDiffFiles)
+    .mockReset()
+    .mockReturnValue({ files: new Map(), loading: false, error: null, retry: () => {} });
 }
 
 vi.mock(import("./guide/useReviewGuideWriter"), () => ({ useReviewGuideWriter: vi.fn() }));
-vi.mock(import("./guide/useGuideDiffFiles"), () => ({
-  useGuideDiffFiles: () => ({ files: new Map(), loading: false, error: null, retry: () => {} }),
-}));
 
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
@@ -177,6 +176,7 @@ it("keeps excerpt files out of full-file panels and reveals their excerpt from t
     />,
     { container },
   );
+  await vi.waitFor(() => expect(container.querySelector("diffs-container")).not.toBeNull());
   await expect.element(screen.getByText("after()", { exact: true })).toBeVisible();
   await expect
     .element(screen.getByText("outside_excerpt()", { exact: true }))
@@ -260,6 +260,7 @@ it("scopes mounted guide drafts to the current ready account", async () => {
   );
   await using screen = await render(ui(), { container });
   const select = async () => {
+    await vi.waitFor(() => expect(container.querySelector("diffs-container")).not.toBeNull());
     await expect.element(screen.getByText("after()", { exact: true })).toBeVisible();
     const root = screen.getByText("after()", { exact: true }).element().getRootNode() as ShadowRoot;
     await userEvent.click(
@@ -287,6 +288,7 @@ it("scopes mounted guide drafts to the current ready account", async () => {
 });
 
 it("steps with J and K beside a chat, also after a stop button or while the chat is maximized away", async () => {
+  setup();
   vi.mocked(useReviewGuideWriter).mockReturnValue({
     query: { isPending: false, error: null } as never,
     data: { guide: threeStopGuide, run: null, currentHeadSha: "head" },
@@ -337,7 +339,7 @@ it("steps with J and K beside a chat, also after a stop button or while the chat
   await userEvent.click(screen.getByText("Prose for the second stop."));
   await userEvent.keyboard("k");
   await expect.element(screen.getByText("Prose for the first stop.")).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Next stop" }));
+  await userEvent.click(screen.getByRole("button", { name: "Next chapter" }));
   await userEvent.keyboard("j");
   await expect.element(screen.getByText("Prose for the third stop.")).toBeVisible();
   await userEvent.keyboard("k");

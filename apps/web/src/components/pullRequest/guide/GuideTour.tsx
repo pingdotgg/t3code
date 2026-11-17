@@ -135,7 +135,11 @@ export function GuideTour({
 
   return (
     // Each pane owns its scroll, so reading the diff leaves the chapter context in place.
-    <div className="@container/guide flex h-full min-h-0 flex-col">
+    <div
+      tabIndex={-1}
+      aria-keyshortcuts="J K"
+      className="@container/guide flex h-full min-h-0 flex-col"
+    >
       {viewControlsTarget ? createPortal(<DiffDisplayControls />, viewControlsTarget) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <GuideChapterPanel>
