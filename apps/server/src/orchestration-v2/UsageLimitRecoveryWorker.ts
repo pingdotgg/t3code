@@ -21,8 +21,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
-/** The one place a limited thread's recovery policy is resolved. */
-export function resolveLimitRecoveryPolicy(
+function resolveLimitRecoveryPolicy(
   settings: ServerSettingsValue,
   thread: Pick<ProjectionStore.ProjectionLimitRecoveryCandidate, "projectId">,
 ): { readonly autoResume: boolean; readonly snooze: boolean } {

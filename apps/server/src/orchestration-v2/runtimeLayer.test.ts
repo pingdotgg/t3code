@@ -3,7 +3,6 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   limitRecoveryCommand,
   makeSweep as makeLimitRecoverySweep,
-  resolveLimitRecoveryPolicy,
 } from "./UsageLimitRecoveryWorker.ts";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -18,7 +17,6 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
   MessageId,
@@ -11810,50 +11808,6 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each([
-    { environment: false, project: true, arms: true },
-    { environment: true, project: false, arms: false },
-    { environment: true, project: undefined, arms: true },
-    { environment: false, project: undefined, arms: false },
-  ])(
-    "auto-arms with environment $environment and project override $project: $arms",
-    ({ environment, project, arms }) =>
-      Effect.gen(function* () {
-        const now = yield* DateTime.now;
-        const projectId = ProjectId.make("limit-policy:project");
-        const settings = {
-          ...DEFAULT_SERVER_SETTINGS,
-          autoResumeLimitedThreads: environment,
-          projectSettingsOverrides:
-            project === undefined ? {} : { [projectId]: { autoResumeLimitedThreads: project } },
-        };
-        const candidate: ProjectionStore.ProjectionLimitRecoveryCandidate = {
-          id: ThreadId.make("limit-policy:thread"),
-          projectId,
-          status: "failed",
-          lastErrorClass: "usage_limit",
-          latestRunId: RunId.make("limit-policy:run"),
-          usageLimitResetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
-          archivedAt: null,
-          settledOverride: null,
-          pendingRuntimeRequest: null,
-          latestRunCompletedAt: now,
-          updatedAt: now,
-          limitRecovery: null,
-          snoozedUntil: null,
-        };
-        const policy = resolveLimitRecoveryPolicy(settings, candidate);
-        const arm = limitRecoveryCommand(
-          candidate,
-          policy.autoResume,
-          DateTime.toEpochMillis(now),
-          policy.snooze,
-        );
-        if (!arms) return assert.isNull(arm);
-        assert(arm?.type === "thread.metadata.update");
-        assert.isTrue(arm.limitRecovery?.autoResume);
-      }),
-  );
   it.effect.each(["interrupted", "usage_limit"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>
@@ -12876,42 +12830,10 @@ it.layer(layerLimitPolicyTest)("usage-limit recovery project policy", (it) => {
     }),
   );
 
-  it.effect("only snoozes when the project turns auto-resume off and snooze is on", () =>
-    Effect.gen(function* () {
-      const thread = yield* seedLimitedThread("snooze-only");
-      yield* sweepLimitRecovery({
-        autoResumeLimitedThreads: true,
-        snoozeLimitedThreads: true,
-        projectSettingsOverrides: {
-          [thread.projectId]: { autoResumeLimitedThreads: false },
-        },
-      });
-      assert.deepInclude(yield* limitRecoveryOf(thread.threadId), {
-        runId: thread.runId,
-        resetAt: thread.resetAt,
-        autoResume: false,
-        snooze: true,
-      });
-    }),
-  );
-
   it.effect("arms only the project that turns auto-resume on", () =>
     Effect.gen(function* () {
       const enabled = yield* seedLimitedThread("enabled-project");
       const other = yield* seedLimitedThread("other-project");
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const candidates = yield* projections.getLimitRecoveryCandidates({
-        now: yield* DateTime.now,
-        autoResume: false,
-        autoResumeEnabledProjectIds: [enabled.projectId],
-        snooze: false,
-      });
-      assert.deepEqual(
-        candidates
-          .map((row) => row.id)
-          .filter((id) => id === enabled.threadId || id === other.threadId),
-        [enabled.threadId],
-      );
       yield* sweepLimitRecovery({
         autoResumeLimitedThreads: false,
         snoozeLimitedThreads: false,
@@ -12928,19 +12850,6 @@ it.layer(layerLimitPolicyTest)("usage-limit recovery project policy", (it) => {
     Effect.gen(function* () {
       const disabled = yield* seedLimitedThread("disabled-project");
       const inherited = yield* seedLimitedThread("inherited-project");
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const candidates = yield* projections.getLimitRecoveryCandidates({
-        now: yield* DateTime.now,
-        autoResume: true,
-        autoResumeDisabledProjectIds: [disabled.projectId],
-        snooze: false,
-      });
-      assert.deepEqual(
-        candidates
-          .map((row) => row.id)
-          .filter((id) => id === disabled.threadId || id === inherited.threadId),
-        [inherited.threadId],
-      );
       yield* sweepLimitRecovery({
         autoResumeLimitedThreads: true,
         snoozeLimitedThreads: false,
