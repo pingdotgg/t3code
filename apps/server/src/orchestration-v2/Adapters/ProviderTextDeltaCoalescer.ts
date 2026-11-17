@@ -31,6 +31,7 @@ interface BufferedProviderText {
   readonly itemId: string;
   readonly text: string;
   readonly dirty: boolean;
+  readonly schedule: symbol | undefined;
 }
 
 // Every flush resends the whole text, so the delay grows with it past this length; per item,
@@ -48,7 +49,6 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
     readonly emit: (update: ProviderTextDeltaUpdate) => Effect.Effect<void>;
   }): Effect.fn.Return<ProviderTextDeltaCoalescer, never, Scope.Scope> {
     const buffered = yield* Ref.make(new Map<string, BufferedProviderText>());
-    const flushScheduled = yield* Ref.make(false);
     const flushLock = yield* Semaphore.make(1);
     const coalescerScope = yield* Effect.scope;
 
@@ -56,7 +56,6 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
       readonly predicate: (message: BufferedProviderText) => boolean;
       readonly completed: boolean;
       readonly onlyDirty: boolean;
-      readonly releaseSchedule?: boolean;
     }) =>
       flushLock.withPermit(
         Effect.gen(function* () {
@@ -73,10 +72,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
               completed: options.completed,
             });
           }
-          const emitUpdates = Effect.forEach(updates, input.emit, { discard: true });
-          yield* options.releaseSchedule === true
-            ? emitUpdates.pipe(Effect.ensuring(Ref.set(flushScheduled, false)))
-            : emitUpdates;
+          yield* Effect.forEach(updates, input.emit, { discard: true });
           yield* Ref.update(buffered, (current) => {
             const next = new Map(current);
             for (const [key, message] of current) {
@@ -86,7 +82,7 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
               if (options.completed) {
                 next.delete(key);
               } else {
-                next.set(key, { ...message, dirty: false });
+                next.set(key, { ...message, dirty: false, schedule: undefined });
               }
             }
             return next;
@@ -94,33 +90,28 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
         }),
       );
 
-    const flushDirty = drain({
-      predicate: () => true,
-      completed: false,
-      onlyDirty: true,
-      releaseSchedule: true,
-    });
-
     return {
       append: ({ turnId, itemId, delta }) =>
         delta.length === 0
           ? Effect.void
           : Effect.uninterruptible(
               Effect.gen(function* () {
-                const { shouldSchedule, textLength } = yield* flushLock.withPermit(
-                  Effect.gen(function* () {
-                    const textLength = yield* Ref.modify(buffered, (current) => {
-                      const key = providerTextBufferKey(turnId, itemId);
-                      const text = `${current.get(key)?.text ?? ""}${delta}`;
-                      const next = new Map(current);
-                      next.set(key, { turnId, itemId, text, dirty: true });
-                      return [text.length, next];
-                    });
-                    const shouldSchedule = yield* Ref.modify(flushScheduled, (scheduled) => [
-                      !scheduled,
-                      true,
-                    ]);
-                    return { shouldSchedule, textLength };
+                const { shouldSchedule, textLength, schedule } = yield* flushLock.withPermit(
+                  Ref.modify(buffered, (current) => {
+                    const key = providerTextBufferKey(turnId, itemId);
+                    const existing = current.get(key);
+                    const text = `${existing?.text ?? ""}${delta}`;
+                    const schedule = existing?.schedule ?? Symbol();
+                    const next = new Map(current);
+                    next.set(key, { turnId, itemId, text, dirty: true, schedule });
+                    return [
+                      {
+                        shouldSchedule: existing?.schedule === undefined,
+                        textLength: text.length,
+                        schedule,
+                      },
+                      next,
+                    ];
                   }),
                 );
                 if (shouldSchedule) {
@@ -130,7 +121,14 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                       Math.max(1, textLength / FULL_RATE_TEXT_LENGTH),
                   );
                   yield* Effect.sleep(Duration.millis(delayMs)).pipe(
-                    Effect.andThen(flushDirty),
+                    Effect.andThen(
+                      drain({
+                        // A completed item can reuse its key before its old timer wakes.
+                        predicate: (message) => message.schedule === schedule,
+                        completed: false,
+                        onlyDirty: true,
+                      }),
+                    ),
                     Effect.interruptible,
                     Effect.forkIn(coalescerScope),
                   );
