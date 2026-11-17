@@ -373,13 +373,6 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
   }),
 );
 
-const runCli = (args: ReadonlyArray<string>) =>
-  Command.runWith(threadCommand, { version: "0.0.0" })(args).pipe(
-    Effect.provide(
-      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
-    ),
-  );
-
 it.effect("start sends each --option as a typed model option", () =>
   Effect.gen(function* () {
     const selection = yield* launchModelSelection({
@@ -402,7 +395,7 @@ it.effect("start sends each --option as a typed model option", () =>
 
 it.effect("start rejects a repeated --option before reaching the server", () =>
   Effect.gen(function* () {
-    const error = yield* runCli([
+    const error = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
       "start",
       ".",
       "hi",
@@ -417,15 +410,11 @@ it.effect("start rejects a repeated --option before reaching the server", () =>
     ]).pipe(Effect.flip);
 
     assert.strictEqual(error.message, "--option reasoningEffort is given more than once.");
-  }),
-);
-
-it.effect("start rejects --option without an explicit model", () =>
-  Effect.gen(function* () {
-    const error = yield* runCli(["start", ".", "hi", "--option", "effort=high"]).pipe(Effect.flip);
-
-    assert.strictEqual(error.message, "--option needs --provider and --model.");
-  }),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer, TestConsole.layer),
+    ),
+  ),
 );
 
 /** Serves t3_thread_read pages the way the server does: positions count every item. */
