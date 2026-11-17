@@ -2,6 +2,7 @@ import {
   type ProviderInstanceConfig,
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
+  type ServerProviderUsageWindow,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
@@ -39,11 +40,19 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  applyModelAlias,
+  attributeWeeklyThreads,
+  canonicalModelFilter,
+  resolveModelAliases,
+  UsageAggregator,
+} from "./usageAggregation.ts";
+import { sessionKey, UsageWeeklyContext } from "./UsageWeeklyContext.ts";
 import {
   createOverrideRateTable,
   isUnlistedModel,
   parseRateTable,
+  priceUsage,
   type RateTable,
 } from "./usagePricing.ts";
 import {
@@ -81,6 +90,20 @@ const STALE_TEMP_DIRECTORY_MS = 60 * 60 * 1000;
 
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
+const WEEKLY_THREADS_PER_ACCOUNT = 20;
+const WEEK_MINS = 7 * 24 * 60;
+
+function weeklyWindowRange(window: ServerProviderUsageWindow) {
+  // accountWeeklyWindow only keeps windows that carry resetsAt.
+  const resetsAt = window.resetsAt ?? "";
+  const endMs = Date.parse(resetsAt);
+  return {
+    startMs: endMs - (window.windowDurationMins ?? WEEK_MINS) * 60_000,
+    endMs,
+    resetsAt,
+  };
+}
+
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
 );
@@ -101,6 +124,9 @@ const transcriptFormats = new Map(
 
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
+  readonly driver: string;
+  /** Instances whose transcripts land in this directory; an alias or shared home adds more. */
+  readonly instanceIds: ProviderInstanceId[];
   readonly format: TranscriptUsageFormat<unknown>;
   readonly dir: string;
   readonly volumeId: string;
@@ -397,9 +423,16 @@ export const make = Effect.gen(function* () {
       const { provider, format } = reader;
       const directories = yield* Effect.forEach(
         yield* usageInstances(driver, settings),
-        (instance) => reader.directories(instance, { awaitRefresh }),
+        (instance) =>
+          reader
+            .directories(instance, { awaitRefresh })
+            .pipe(
+              Effect.map((found) =>
+                found.map((entry) => ({ ...entry, instanceId: instance.instanceId })),
+              ),
+            ),
       );
-      for (const { dir: directory, fileName, refreshing } of directories.flat()) {
+      for (const { dir: directory, fileName, refreshing, instanceId } of directories.flat()) {
         if (refreshing) {
           const key = `${provider}\0${directory}`;
           if (seen.has(key)) continue;
@@ -431,11 +464,18 @@ export const make = Effect.gen(function* () {
           cacheDirty = true;
         }
         const key = `${provider}\0${dir}`;
-        if (seen.has(key)) continue;
+        if (seen.has(key)) {
+          const existing = dirs.find((source) => coverageKey(source) === key);
+          if (existing !== undefined && !existing.instanceIds.includes(instanceId))
+            existing.instanceIds.push(instanceId);
+          continue;
+        }
         seen.add(key);
         const sourceId = yield* physicalSourceId(dir);
         dirs.push({
           provider,
+          driver: driver.driverKind,
+          instanceIds: [instanceId],
           format,
           dir,
           volumeId,
@@ -693,6 +733,7 @@ export const make = Effect.gen(function* () {
     /** Every transcript path the walk listed, in walk order, whatever its mtime. */
     readonly walked?: readonly string[];
     readonly refreshing?: true;
+    readonly source?: TranscriptSource;
   }
 
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
@@ -706,6 +747,7 @@ export const make = Effect.gen(function* () {
       dir,
       volumeId,
       ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
+      source,
     };
     const exists = yield* fileSystem
       .exists(dir)
@@ -860,6 +902,8 @@ export const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
+    // Read from the caller's context: the provider registry and database are built above this service.
+    const weeklyContext = yield* Effect.serviceOption(UsageWeeklyContext);
 
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
@@ -868,8 +912,19 @@ export const make = Effect.gen(function* () {
         detail: `sinceDay '${input.sinceDay}' is not a valid date`,
       });
     }
-    const windowStartMs =
-      (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    // A window that already reset is a stale snapshot; its percent no longer describes this week.
+    const weeklyWindows = new Map(
+      Option.isSome(weeklyContext)
+        ? [...(yield* weeklyContext.value.weeklyWindows)].filter(
+            ([, window]) => weeklyWindowRange(window).endMs > startedAtMs,
+          )
+        : [],
+    );
+    // Weekly-limit attribution reads from each weekly window's start, whatever period was asked for.
+    const windowStartMs = Math.min(
+      (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS,
+      ...[...weeklyWindows.values()].map((window) => weeklyWindowRange(window).startMs),
+    );
 
     const retentionCutoffMs =
       settings.usageHistoryRetentionDays === "unlimited"
@@ -996,6 +1051,8 @@ export const make = Effect.gen(function* () {
 
     const summaryPricing = pricing();
 
+    const rateModel = (provider: UsageProviderKind, model: string) =>
+      providerRateModels.get(provider)?.(model);
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -1005,7 +1062,7 @@ export const make = Effect.gen(function* () {
       rates,
       priceOverrides,
       modelAliases,
-      rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
+      rateModel,
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
@@ -1053,6 +1110,19 @@ export const make = Effect.gen(function* () {
       }
     }
     const crossFileSessions = sharedSessions(filesByDir.flat());
+    // One weekly window per directory; a home shared by accounts with different windows is skipped.
+    const weeklyByIndex = new Map<number, ServerProviderUsageWindow>();
+    for (const [index, { source }] of scannedDirs.entries()) {
+      const windows = new Map(
+        (source?.instanceIds ?? []).flatMap((id) => {
+          const window = weeklyWindows.get(id);
+          return window === undefined ? [] : [[`${window.resetsAt}:${window.usedPercent}`, window]];
+        }),
+      );
+      const [window] = windows.values();
+      if (windows.size === 1 && window !== undefined) weeklyByIndex.set(index, window);
+    }
+    const weeklyRecords = new Map<number, UsageRecord[]>();
 
     for (const [
       index,
@@ -1075,6 +1145,7 @@ export const make = Effect.gen(function* () {
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
       let counted = false;
+      if (weeklyByIndex.has(index)) weeklyRecords.set(index, []);
 
       for (const file of filesByDir[index] ?? []) {
         malformedRecords += file.malformedRecords;
@@ -1103,6 +1174,7 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
+          weeklyRecords.get(index)?.push(usageRecord);
           if (aggregator.add(usageRecord, dir)) {
             counted = true;
             if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
@@ -1168,6 +1240,44 @@ export const make = Effect.gen(function* () {
       );
 
     const aggregated = aggregator.finish();
+    const weeklyThreads =
+      weeklyByIndex.size === 0 || Option.isNone(weeklyContext)
+        ? undefined
+        : yield* Effect.gen(function* () {
+            const ranges = new Map(
+              [...weeklyByIndex].map(([index, window]) => [index, weeklyWindowRange(window)]),
+            );
+            const sinceMs = Math.min(...[...ranges.values()].map((range) => range.startMs));
+            const threads = yield* weeklyContext.value.threadsBySession(
+              DateTime.formatIso(DateTime.makeUnsafe(sinceMs)),
+            );
+            return attributeWeeklyThreads(
+              [...weeklyByIndex].flatMap(([index, window]) => {
+                const scanned = scannedDirs[index];
+                const range = ranges.get(index);
+                if (scanned?.source === undefined || range === undefined) return [];
+                const { driver } = scanned.source;
+                return [
+                  {
+                    provider: scanned.provider,
+                    sourcePath: scanned.dir,
+                    ...range,
+                    usedPercent: window.usedPercent,
+                    records: weeklyRecords.get(index) ?? [],
+                    threadForSession: (sessionId: string) =>
+                      threads.get(sessionKey(driver, sessionId)),
+                  },
+                ];
+              }),
+              (record) =>
+                priceUsage(
+                  rates,
+                  applyModelAlias({ rates, modelAliases, rateModel }, record),
+                  priceOverrides,
+                ).costUsd,
+              WEEKLY_THREADS_PER_ACCOUNT,
+            );
+          });
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
@@ -1182,6 +1292,7 @@ export const make = Effect.gen(function* () {
       pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      ...(weeklyThreads === undefined ? {} : { weeklyThreads }),
     } satisfies UsageSummary;
     return { summary, fromMemory };
   });

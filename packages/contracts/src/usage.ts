@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  IsoDateTime,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -148,6 +154,25 @@ export const UsageSummaryInput = Schema.Struct({
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
+/**
+ * An estimate of one T3 thread's share of an account's current weekly limit: the thread's share of
+ * that account's priced usage since the window started, times the window's used percent. `basis`
+ * is `tokens` when none of the window's usage could be priced.
+ */
+export const UsageWeeklyThread = Schema.Struct({
+  provider: UsageProviderKind,
+  /** Transcript directory of the account whose limit this is a share of. */
+  sourcePath: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  title: Schema.String,
+  limitPercent: Schema.Number,
+  basis: Schema.Literals(["cost", "tokens"]),
+  costUsd: Schema.Number,
+  tokens: NonNegativeInt,
+  windowResetsAt: IsoDateTime,
+});
+export type UsageWeeklyThread = typeof UsageWeeklyThread.Type;
+
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
   readAt: Schema.String,
@@ -160,6 +185,8 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
   /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
   modelFilter: Schema.optional(UsageModelFilter),
+  /** Top threads per account by estimated weekly-limit share; absent when no account reports a weekly window. */
+  weeklyThreads: Schema.optional(ForwardCompatibleArray(UsageWeeklyThread)),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 
