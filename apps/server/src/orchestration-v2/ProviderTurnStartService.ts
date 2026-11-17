@@ -1100,7 +1100,7 @@ export const layer: Layer.Layer<
                     !coveredItemIds.has(item.id) &&
                     historicalMessage(item) !== null,
                 );
-          const retryHandoff =
+          const handoffs =
             missedItems.length === 0
               ? []
               : [
@@ -1122,7 +1122,11 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          return retryHandoff;
+          // The handoff carries only text; images the provider never received ride on this turn.
+          const attachments = missedItems.flatMap((item) =>
+            item.type === "user_message" ? item.attachments : [],
+          );
+          return { handoffs, attachments };
         },
       );
       const prepareRecoveryHandoff = Effect.fn("ProviderTurnStartService.prepareRecoveryHandoff")(
@@ -1181,7 +1185,7 @@ export const layer: Layer.Layer<
           ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
         ];
       };
-      let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
+      let resumedRetryHandoff: Effect.Success<ReturnType<typeof prepareRetryHandoff>> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
@@ -1421,7 +1425,7 @@ export const layer: Layer.Layer<
           resumedHandoffContext = context;
           resumedRetryHandoff = yield* prepareRetryHandoff(context);
           const fits = yield* deliverContextHandoffs({
-            handoffs: [...handoffs, ...resumedRetryHandoff],
+            handoffs: [...handoffs, ...resumedRetryHandoff.handoffs],
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
@@ -1468,7 +1472,7 @@ export const layer: Layer.Layer<
           }
         }
         resumedHandoffContext = undefined;
-        resumedRetryHandoff = [];
+        resumedRetryHandoff = { handoffs: [], attachments: [] };
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
         // Another client is still writing to the native thread. A fresh
         // session here would silently split the conversation from it.
@@ -1793,7 +1797,7 @@ export const layer: Layer.Layer<
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
             budget,
@@ -1832,6 +1836,19 @@ export const layer: Layer.Layer<
                   message: {
                     ...turnInput.message,
                     text,
+                    ...(compact || goalCommand || retryHandoff.attachments.length === 0
+                      ? {}
+                      : {
+                          attachments: [
+                            ...retryHandoff.attachments.filter(
+                              (missed) =>
+                                !turnInput.message.attachments.some(
+                                  (current) => current.id === missed.id,
+                                ),
+                            ),
+                            ...turnInput.message.attachments,
+                          ],
+                        }),
                   },
                   ...(text === userText
                     ? {}
@@ -1892,7 +1909,7 @@ export const layer: Layer.Layer<
       );
       const deliverySession =
         effectiveHandoffs.length === 0 &&
-        retryHandoff.length === 0 &&
+        retryHandoff.handoffs.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
         !noteContinuation
