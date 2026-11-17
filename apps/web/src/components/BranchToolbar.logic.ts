@@ -3,6 +3,7 @@ import type {
   EnvironmentMachineKind,
   VcsRef,
   ProjectId,
+  ThreadId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
@@ -300,6 +301,58 @@ export function resolveConfirmedSelectedRef(
     freshRead?.refs.some((ref) => ref.name === listedRef.name && !ref.isRemote && ref.current) ??
     false;
   return checkedOut ? listedRef : { ...listedRef, worktreePath: null };
+}
+
+/**
+ * Unsettled threads that share this checkout and expect its current branch. A ref switch moves
+ * them too, so their next turns would run on the new branch.
+ */
+export function resolveThreadsMovedByCheckoutSwitch(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId | null;
+  readonly worktreePath: string | null;
+  readonly currentBranch: string | null;
+  readonly nextBranch: string;
+  readonly threads: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+    readonly archivedAt: string | null;
+    readonly settledAt: string | null;
+    readonly settledOverride: "settled" | "active" | null;
+  }>;
+}): ReadonlyArray<string> {
+  if (input.currentBranch === null || input.currentBranch === input.nextBranch) return [];
+  return input.threads
+    .filter(
+      (thread) =>
+        thread.environmentId === input.environmentId &&
+        thread.projectId === input.projectId &&
+        thread.id !== input.threadId &&
+        thread.worktreePath === input.worktreePath &&
+        thread.branch === input.currentBranch &&
+        thread.archivedAt === null &&
+        thread.settledAt === null &&
+        thread.settledOverride !== "settled",
+    )
+    .map((thread) => thread.title);
+}
+
+export function describeCheckoutSwitchImpact(input: {
+  readonly titles: ReadonlyArray<string>;
+  readonly currentBranch: string;
+  readonly nextBranch: string;
+}): string {
+  const quoted = input.titles.map((title) => `"${title}"`);
+  const names =
+    quoted.length <= 2
+      ? quoted.join(" and ")
+      : `${quoted.slice(0, 2).join(", ")} and ${quoted.length - 2} more`;
+  return `${names} ${quoted.length === 1 ? "also works" : "also work"} on ${input.currentBranch} in this checkout. Switching to ${input.nextBranch} moves ${quoted.length === 1 ? "it" : "them"} too. Use a worktree to keep branches apart.\n\nSwitch anyway?`;
 }
 
 export function resolveBranchSelectionTarget(input: {

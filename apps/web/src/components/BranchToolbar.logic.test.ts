@@ -1,4 +1,11 @@
-import { EnvironmentId, ProviderInstanceId, RunId, type VcsRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type VcsRef,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
@@ -12,6 +19,8 @@ import {
   resolveDefaultWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
+  resolveThreadsMovedByCheckoutSwitch,
+  describeCheckoutSwitchImpact,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   isBranchHoldCurrent,
@@ -92,6 +101,84 @@ describe("resolveLocalCheckoutBranchMismatch", () => {
         currentGitBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveThreadsMovedByCheckoutSwitch", () => {
+  const environmentId = EnvironmentId.make("env-a");
+  const projectId = ProjectId.make("project-a");
+  const thread = (
+    title: string,
+    overrides: Partial<{
+      environmentId: EnvironmentId;
+      projectId: ProjectId;
+      branch: string | null;
+      worktreePath: string | null;
+      archivedAt: string | null;
+      settledAt: string | null;
+      settledOverride: "settled" | "active" | null;
+    }> = {},
+  ) => ({
+    environmentId,
+    id: ThreadId.make(title),
+    projectId,
+    title,
+    branch: "feature/a",
+    worktreePath: null,
+    archivedAt: null,
+    settledAt: null,
+    settledOverride: null,
+    ...overrides,
+  });
+
+  it("names open threads on the current branch of the same checkout", () => {
+    expect(
+      resolveThreadsMovedByCheckoutSwitch({
+        environmentId,
+        projectId,
+        threadId: ThreadId.make("active"),
+        worktreePath: null,
+        currentBranch: "feature/a",
+        nextBranch: "feature/b",
+        threads: [
+          thread("active"),
+          thread("same checkout"),
+          thread("other branch", { branch: "feature/b" }),
+          thread("own worktree", { worktreePath: "/worktrees/a" }),
+          thread("other project", { projectId: ProjectId.make("project-b") }),
+          thread("other environment", { environmentId: EnvironmentId.make("env-b") }),
+          thread("archived", { archivedAt: "2026-01-01T00:00:00.000Z" }),
+          thread("settled", { settledAt: "2026-01-01T00:00:00.000Z" }),
+          thread("settled by user", { settledOverride: "settled" }),
+        ],
+      }),
+    ).toEqual(["same checkout"]);
+  });
+
+  it("ignores a switch to the branch already checked out", () => {
+    expect(
+      resolveThreadsMovedByCheckoutSwitch({
+        environmentId,
+        projectId,
+        threadId: null,
+        worktreePath: null,
+        currentBranch: "feature/a",
+        nextBranch: "feature/a",
+        threads: [thread("same checkout")],
+      }),
+    ).toEqual([]);
+  });
+
+  it("describes the moved threads", () => {
+    expect(
+      describeCheckoutSwitchImpact({
+        titles: ["A", "B", "C"],
+        currentBranch: "feature/a",
+        nextBranch: "feature/b",
+      }),
+    ).toBe(
+      '"A", "B" and 1 more also work on feature/a in this checkout. Switching to feature/b moves them too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+    );
   });
 });
 
