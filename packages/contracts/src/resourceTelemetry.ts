@@ -31,7 +31,6 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
-  memoryPressure: Schema.optionalKey(HostMemoryPressure),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

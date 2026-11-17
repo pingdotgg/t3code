@@ -308,7 +308,6 @@ const make = Effect.fn("makeHostResources")(function* () {
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
-      memoryPressure: yield* sampleMemoryPressure(),
     };
   });
 

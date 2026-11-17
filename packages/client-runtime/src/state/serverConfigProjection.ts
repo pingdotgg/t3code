@@ -117,9 +117,10 @@ export function applyServerConfigProjection(
         ? current.value.config.usageLimitSources
         : undefined;
       // A server without the event would never clear carried pressure.
+      const heldPressure = Option.isSome(current) ? current.value.config.memoryPressure : undefined;
       const carriedPressure =
-        Option.isSome(current) && event.config.environment.capabilities.memoryPressure === true
-          ? current.value.config.memoryPressure
+        heldPressure !== undefined && event.config.environment.capabilities.memoryPressure === true
+          ? heldPressure
           : undefined;
       const config: ServerConfig = {
         ...event.config,
