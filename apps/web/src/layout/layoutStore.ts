@@ -290,6 +290,12 @@ interface LayoutStoreState {
   onScreenThreadKeys: ReadonlySet<string>;
   setOnScreenThreadKeys: (keys: ReadonlySet<string>) => void;
   /**
+   * Active tabs the strip holds but has scrolled mostly out of the window, written
+   * with `onScreenThreadKeys`. Empty when nothing scrolls. Session only.
+   */
+  scrolledOffTabIds: ReadonlySet<string>;
+  setScrolledOffTabIds: (tabIds: ReadonlySet<string>) => void;
+  /**
    * Panes an agent opened that you have not seen yet (pen uQRYP): while off
    * screen, the strip's edge shows a dot. Session only.
    */
@@ -439,6 +445,15 @@ export const useLayoutStore = create<LayoutStoreState>()(
               return state;
             }
             return { onScreenThreadKeys: keys };
+          }),
+        scrolledOffTabIds: new Set(),
+        setScrolledOffTabIds: (tabIds) =>
+          set((state) => {
+            const current = state.scrolledOffTabIds;
+            if (current.size === tabIds.size && [...tabIds].every((id) => current.has(id))) {
+              return state;
+            }
+            return { scrolledOffTabIds: tabIds };
           }),
         unseenTabIds: new Set(),
         markTabUnseen: (tabId) =>
