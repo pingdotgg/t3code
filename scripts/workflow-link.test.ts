@@ -45,6 +45,16 @@ it("links new skills, drops removed ones, and leaves foreign entries alone", () 
   expect(NodeFS.lstatSync(NodePath.join(f.target, "mine")).isDirectory()).toBe(true);
 });
 
+it("leaves a target that opted out untouched", () => {
+  using f = fixture();
+  f.addSkill("ak", "keep");
+  NodeFS.mkdirSync(f.target, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(f.target, ".no-workflow-skills"), "");
+
+  expect(linkWorkflowSkills(f.skillsRoot, [f.target]).linked).toEqual([]);
+  expect(NodeFS.readdirSync(f.target)).toEqual([".no-workflow-skills"]);
+});
+
 it("refuses two skills with the same folder name", () => {
   using f = fixture();
   f.addSkill("ak", "dup");

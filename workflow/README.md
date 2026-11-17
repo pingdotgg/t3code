@@ -30,4 +30,6 @@ It symlinks every skill into `~/.claude/skills`, `~/.agents/skills`, and `~/.cod
 
 `vp run workflow:map` rewrites `skills/ak/ak-help/skill-map.md`, the chart of which skill names which. Rerun it and commit the result when skills change.
 
+To keep one folder out, for example a `~/.claude` that other tools on that machine share, put an empty `.no-workflow-skills` file in it.
+
 The script only touches symlinks that point into `workflow/skills`. A real file or folder with the same name as one of our skills is left alone and reported as skipped.

@@ -4,6 +4,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+/** A target folder holding this file is left alone, e.g. a Claude home shared with other tools. */
+export const OPT_OUT_FILE = ".no-workflow-skills";
+
 export interface LinkReport {
   readonly linked: ReadonlyArray<string>;
   readonly removed: ReadonlyArray<string>;
@@ -47,6 +50,7 @@ export function linkWorkflowSkills(skillsRoot: string, targets: ReadonlyArray<st
   const skipped: string[] = [];
 
   for (const target of targets) {
+    if (NodeFS.existsSync(NodePath.join(target, OPT_OUT_FILE))) continue;
     NodeFS.mkdirSync(target, { recursive: true });
     for (const entry of NodeFS.readdirSync(target)) {
       const path = NodePath.join(target, entry);

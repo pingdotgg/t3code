@@ -5,13 +5,13 @@ description: Update Leo's T3 Code from source (~/Projects/T3/t3code), rebuild it
 
 # T3 Code from source: update and run
 
-Leo runs T3 Code from his clone at `~/Projects/T3/t3code` instead of the installed release. Reply to him in Portuguese.
+Leo runs T3 Code from his clone at `~/Projects/T3/t3code` instead of the installed release, on more than one machine (omarchy, distilo). Check which one you are on with `hostname` and read its own drop-in and `service.env` rather than assuming the values below. The normal update path is the app's Update / Rebuild button, which runs `scripts/self-update.sh`; the steps below are the manual equivalent. Reply to him in Portuguese.
 
 ## Setup
 
 - **Production service:** the systemd user unit `t3code.service` has the drop-in `~/.config/systemd/user/t3code.service.d/source.conf`. It runs `node apps/server/dist/bin.mjs serve --base-dir ~/.t3 --no-browser`, with `EnvironmentFile=~/.t3/service.env` (`T3CODE_HOST=127.0.0.1`, `T3CODE_PORT=3773`).
 - **Real data:** `~/.t3/userdata`. The service log is `~/.t3/userdata/logs/boot-service.log`.
-- **Tailnet:** `tailscale serve` maps `https://omarchy.taimen-pirarucu.ts.net` and `:3773` to `127.0.0.1:3773`.
+- **Tailnet:** `tailscale serve` maps this machine's tailnet name (`tailscale serve status`) to `127.0.0.1:3773`.
 - **The release's own updater is out of the loop.** `t3 update` and the release service launcher are not used. Never repoint the unit back at `~/.t3/runtime/versions/*`.
 - **`vp` (Vite+) is not on PATH by default.** Prefix commands with `. ~/.config/vite-plus/env &&`.
 
@@ -65,5 +65,5 @@ vp run dev --share --home-dir /home/christinoleo/Projects/T3/t3code/.t3
 ```
 
 - Confirm the `[dev-runner]` line shows `baseDir=/home/christinoleo/Projects/T3/t3code/.t3`. If it shows `~/.t3`, stop the dev stack immediately.
-- Wait for the `pairingUrl:` line and give that URL to Leo. The dev web port is 5733 and the server is on 13773, shared at `https://omarchy.taimen-pirarucu.ts.net:5733/`.
+- Wait for the `pairingUrl:` line and give that URL to Leo. The dev web port is 5733 and the server is on 13773, shared at port 5733 of this machine's tailnet name.
 - UI changes in `apps/web` hot-reload in dev. They reach the service only after `vp run --filter t3 build` and `systemctl --user restart t3code`.
