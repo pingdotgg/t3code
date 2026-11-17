@@ -199,6 +199,7 @@ import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { useThreadAutomations } from "./ThreadAutomationsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
@@ -498,6 +499,11 @@ function ThreadDetailBody(
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
+  const automationCount = useThreadAutomations(
+    props.draftMode
+      ? null
+      : { environmentId: props.environmentId, threadId: props.selectedThread.id },
+  ).tasks.length;
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
@@ -843,6 +849,7 @@ function ThreadDetailBody(
     showWorkingControl ||
     queuedCount > 0 ||
     agentsSegment !== null ||
+    automationCount > 0 ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0;
   const selectedThreadFeed = props.selectedThreadFeed;
@@ -1570,6 +1577,14 @@ function ThreadDetailBody(
                     onOpenAgents={() => {
                       Keyboard.dismiss();
                       navigation.navigate("ThreadAgents", {
+                        environmentId: props.environmentId,
+                        threadId: props.selectedThread.id,
+                      });
+                    }}
+                    automationCount={automationCount}
+                    onOpenAutomations={() => {
+                      Keyboard.dismiss();
+                      navigation.navigate("ThreadAutomations", {
                         environmentId: props.environmentId,
                         threadId: props.selectedThread.id,
                       });

@@ -68,6 +68,8 @@ export function FloatingWorkingControl(props: {
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
+  readonly automationCount: number;
+  readonly onOpenAutomations: () => void;
   readonly queuedCount: number;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
@@ -88,6 +90,8 @@ export function FloatingWorkingControl(props: {
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
   const hasAgents = agents !== null;
+  const [automationsWidth, setAutomationsWidth] = useState(0);
+  const hasAutomations = props.automationCount > 0;
   // Only reserve the scroll button's slot while it is visible.
   const reservedWidth = props.showScrollToEnd ? CONTROL_HEIGHT + 32 : 16;
   const availableLabelWidth = Math.max(
@@ -97,6 +101,7 @@ export function FloatingWorkingControl(props: {
       (action !== null ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
+      (hasAutomations ? automationsWidth : 0) -
       (hasPreview ? previewWidth : 0),
   );
   const labelWidth = Math.max(
@@ -134,7 +139,7 @@ export function FloatingWorkingControl(props: {
     capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
+  const hasCapsule = hasStatus || hasQueue || hasAgents || hasAutomations || hasPreview;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the Reanimated capsule width value and measured width when the status goes away
   useEffect(() => {
     if (!hasStatus) {
@@ -156,6 +161,7 @@ export function FloatingWorkingControl(props: {
   const previewCompact =
     hasStatus ||
     hasAgents ||
+    hasAutomations ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
@@ -168,6 +174,7 @@ export function FloatingWorkingControl(props: {
     action !== null ||
     hasQueue ||
     hasAgents ||
+    hasAutomations ||
     hasPreview;
   const statusContent =
     props.status !== null ? (
@@ -263,6 +270,28 @@ export function FloatingWorkingControl(props: {
           </Text>
         </Pressable>
       ) : null}
+      {hasAutomations ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open automations, ${props.automationCount} scheduled`}
+          accessibilityHint="Opens the scheduled tasks that run in this thread"
+          onPress={props.onOpenAutomations}
+          onLayout={(event) => setAutomationsWidth(settleWidth(event.nativeEvent.layout.width))}
+          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
+        >
+          {hasStatus || hasPreview || hasAgents ? (
+            <View className="absolute left-0 h-4 w-px bg-border" />
+          ) : null}
+          <SymbolView
+            name="calendar.badge.clock"
+            size={13}
+            tintColorClassName="accent-foreground"
+          />
+          <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
+            {props.automationCount}
+          </Text>
+        </Pressable>
+      ) : null}
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
@@ -273,7 +302,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview || hasAgents ? (
+          {hasStatus || hasPreview || hasAgents || hasAutomations ? (
             <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
