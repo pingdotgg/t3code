@@ -1,0 +1,14 @@
+[project]
+name = "t3-fork"
+version = "0.1.0"
+description = "Keep this T3 Code fork on the nightly it runs against, and install its web UI over the stock AUR app"
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = []
+
+[project.scripts]
+t3-fork = "t3_fork:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
