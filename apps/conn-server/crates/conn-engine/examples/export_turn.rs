@@ -98,6 +98,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
         .await
         .unwrap();
     read(&mut follow, &mut items, run_ended).await;
+    read_checkpoint(&mut follow, &mut items, 1).await;
     engine
         .dispatch(
             from_json(json!({
@@ -113,6 +114,7 @@ async fn checkpoint_scenario(dir: &std::path::Path) -> (Vec<Value>, Vec<Value>, 
         run_ended(item) && item["event"]["payload"]["id"] == "run:thread-cp:2"
     })
     .await;
+    read_checkpoint(&mut follow, &mut items, 2).await;
     drain(&mut follow, &mut items).await;
     // Rewind the conversation to the first turn (a root thread keeps its files).
     let projection = engine
@@ -221,6 +223,25 @@ async fn next<T: serde::Serialize, E: serde::Serialize>(
     };
     out.push(item.clone());
     Some(item)
+}
+
+/// Reads until checkpoint `ordinal` is captured: an event, or a snapshot already read that
+/// holds it. Capture runs after the turn ends, so `run_ended` alone can miss it.
+async fn read_checkpoint<T: serde::Serialize, E: serde::Serialize>(
+    stream: &mut Subscription<T, E>,
+    out: &mut Vec<Value>,
+    ordinal: u64,
+) {
+    let captured = |item: &Value| {
+        (item["event"]["type"] == "checkpoint.captured"
+            && item["event"]["payload"]["appRunOrdinal"] == ordinal)
+            || item["projection"]["checkpoints"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["appRunOrdinal"] == ordinal))
+    };
+    if !out.iter().any(captured) {
+        read(stream, out, captured).await;
+    }
 }
 
 fn run_ended(item: &Value) -> bool {

@@ -1,23 +1,14 @@
 name: Conn Server CI
 
-# The Conn Server (apps/conn-server, Rust). Runner labels and action pins follow Conn's own
-# workflows (GitHub-hosted `ubuntu-24.04`).
-#
-# Jobs:
-# - rust: format, clippy with warnings as errors, tests (with the SDK host installed, so its
-#   tests run), the recordings decode check.
-# - deny: cargo-deny (advisories, licences, bans, sources).
-# - musl: the x86_64-unknown-linux-musl release binary that Orbit runs; prints its size.
-# The checks against the rest of the monorepo run in conn-server-checks.yml.
-#
-# Pull requests and main/sync pushes run these jobs when the Rust tree or this workflow
-# changes. The monorepo comparisons have their own broader paths in conn-server-checks.yml.
+# The production x86_64-unknown-linux-musl binary that Orbit runs, on a GitHub-hosted runner.
+# Format, Clippy, tests, cargo-deny and the canary run once in conn-server-checks.yml.
 
 on:
   pull_request:
     paths: &paths
       - apps/conn-server/**
       - .github/workflows/conn-server-ci.yml
+      - .github/workflows/conn-server-checks.yml
   push:
     branches:
       - main
@@ -42,116 +33,6 @@ defaults:
     working-directory: apps/conn-server
 
 jobs:
-  rust:
-    name: Format, Clippy, Tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    env:
-      # The test build of the whole workspace filled the runner's disk on 2026-11-14 ("No space
-      # left on device" in the Tests step). Smaller debug info and no incremental data keep
-      # `target` small; the tests do not need more.
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          sparse-checkout: |
-            /apps/conn-server/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: rustfmt, clippy
-
-      - name: Disk space at the start
-        run: df -h /
-
-      - name: Restore Cargo
-        id: cargo-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            apps/conn-server/target
-          # No restore-keys: a cache restored from another lock file keeps its old artifacts,
-          # so `target` only grows from run to run.
-          key: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-      # Without the SDK host's dependencies its tests in conn-provider-claude skip quietly.
-      # Node as the T3 server pins it (helpers/sdk-host/README.md).
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: "26.12.1"
-
-      - name: Install the SDK host
-        working-directory: apps/conn-server/helpers/sdk-host
-        run: npm ci --no-audit --no-fund --ignore-scripts
-
-      # Every binary cargo runs goes through the sealed runner (.cargo/config.toml), which
-      # needs node; CONN_UNSEALED, its way out for hand runs, must never be set here.
-      - name: Tests
-        # --no-fail-fast: one run shows every failing crate, not only the first.
-        run: |
-          if [ -n "${CONN_UNSEALED:-}" ]; then echo "::error::CONN_UNSEALED is set"; exit 1; fi
-          cargo test --locked --workspace --no-fail-fast
-
-      - name: Sealed hand runs
-        run: node tools/sealed-run-check.mjs
-
-      - name: Disk space after the tests
-        if: ${{ !cancelled() }}
-        run: df -h / && du -sh target
-
-      # Independent of the tests above: runs even when they fail.
-      - name: Recordings decode
-        if: ${{ !cancelled() }}
-        run: cargo test --locked --manifest-path fixtures/decode-check/Cargo.toml
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/apps/conn-server/target
-
-      - name: Save Cargo on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            apps/conn-server/target
-          key: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-
-  deny:
-    name: cargo-deny
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          sparse-checkout: |
-            /apps/conn-server/
-          sparse-checkout-cone-mode: false
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-deny@0.20.2
-
-      - name: cargo deny check
-        run: cargo deny --locked check
-
   musl:
     name: Linux musl release build
     runs-on: ubuntu-24.04
@@ -205,7 +86,7 @@ jobs:
         with:
           name: conn-server-x86_64-unknown-linux-musl
           path: apps/conn-server/target/x86_64-unknown-linux-musl/release/conn-server
-          retention-days: 14
+          retention-days: 1
       - name: Save Cargo on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
