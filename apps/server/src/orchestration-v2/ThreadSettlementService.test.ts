@@ -2135,7 +2135,9 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           ...DEFAULT_SERVER_SETTINGS,
           closeRunningTerminalsOnSettle: enabled,
           projectSettingsOverrides:
-            override === undefined ? {} : { [PROJECT_ID]: { closeRunningTerminalsOnSettle: override } },
+            override === undefined
+              ? {}
+              : { [PROJECT_ID]: { closeRunningTerminalsOnSettle: override } },
         },
         currentThreads: [shared, missing, worktree],
         existingWorktreePaths: ["/worktrees/thread"],
