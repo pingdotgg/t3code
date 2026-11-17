@@ -268,11 +268,11 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
     /**
      * GitLab writes assignees by numeric id, which the candidates carry as a global id. An issue
      * names the people it already has by username, so a kept assignee is looked up. A bare number
-     * is a kept username only when the issue holds it; otherwise it is a candidate id from before
-     * candidates carried global ids, and guessing which account it means could assign the wrong one.
+     * may instead be a candidate id from before candidates carried global ids; it is written only
+     * when it can mean one account, a username the issue holds that is no member's id.
      */
     const assigneeIds = Effect.fn("GitLabIssueTracker.assigneeIds")(function* (
-      input: { readonly cwd: string; readonly host: string },
+      input: { readonly cwd: string; readonly host: string; readonly scope: string },
       operation: string,
       assignees: ReadonlyArray<string>,
       issue: string | null,
@@ -288,6 +288,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               decode: decodeIssueAssigneeIdsJson,
             }),
       );
+      const stale = refused(operation, "The assignee list is out of date. Pick assignees again.");
       return yield* Effect.forEach(assignees, (assignee) => {
         const picked = /^gid:\/\/gitlab\/User\/([1-9]\d*)$/.exec(assignee);
         if (picked !== null) return Effect.succeed(Number(picked[1]));
@@ -295,11 +296,19 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           return held.pipe(
             Effect.flatMap((ids) => {
               const id = ids.get(assignee);
-              return id === undefined
-                ? Effect.fail(
-                    refused(operation, "The assignee list is out of date. Pick assignees again."),
-                  )
-                : Effect.succeed(id);
+              if (id === undefined) return Effect.fail(stale);
+              if (id === Number(assignee)) return Effect.succeed(id);
+              return read({
+                cwd: input.cwd,
+                host: input.host,
+                operation,
+                path: `projects/${projectPath(input.scope)}/members/all?${query([["user_ids[]", assignee]])}`,
+                decode: decodeUserIdsJson,
+              }).pipe(
+                Effect.flatMap((members) =>
+                  members.length === 0 ? Effect.succeed(id) : Effect.fail(stale),
+                ),
+              );
             }),
           );
         }

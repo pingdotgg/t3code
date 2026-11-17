@@ -282,9 +282,16 @@ describe("GitLabIssueTracker", () => {
         }
         if (path === "projects/acme%2Fweb/labels?per_page=100&page=1") return "[]";
         if (path === "projects/acme%2Fweb/issues/42" && !args.includes("PUT")) {
-          return encode({ ...ISSUE, assignees: [{ id: 2, username: "12345" }] });
+          const assignees = [
+            { id: 2, username: "12345" },
+            { id: 42, username: "7" },
+          ];
+          return encode({ ...ISSUE, assignees });
         }
-        if (path === "users?username=7") return encode([{ id: 42, username: "7" }]);
+        if (path === "projects/acme%2Fweb/members/all?user_ids[]=7") {
+          return encode([{ id: 7, username: "teammate" }]);
+        }
+        if (path.startsWith("projects/acme%2Fweb/members/all?user_ids")) return "[]";
         if (path.startsWith("users?username=")) return "[]";
         return "{}";
       });
@@ -294,15 +301,21 @@ describe("GitLabIssueTracker", () => {
       calls.length = 0;
       // The issue's own assignee comes back by login, even an all-digit one; a newly picked one by id.
       yield* api.update!({ ...target, assignees: ["12345", candidates.assignees[0]!.id] });
-      expect(calls).toEqual(["projects/acme%2Fweb/issues/42", "projects/acme%2Fweb/issues/42"]);
+      expect(calls).toEqual([
+        "projects/acme%2Fweb/issues/42",
+        "projects/acme%2Fweb/members/all?user_ids[]=12345",
+        "projects/acme%2Fweb/issues/42",
+      ]);
       expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
       const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));
       expect(error.reason).toBe("failed");
-      // A picker opened before candidates carried global ids still holds a bare id: it is refused,
-      // never written as the account whose username is that number.
+      // A picker opened before candidates carried global ids still holds bare ids. One the issue
+      // does not hold, or one that is also a member's id, is refused rather than guessed at.
       bodies.length = 0;
-      const stale = yield* Effect.flip(api.update!({ ...target, assignees: ["7"] }));
-      expect(stale.reason).toBe("failed");
+      for (const stale of ["99", "7"]) {
+        const error = yield* Effect.flip(api.update!({ ...target, assignees: [stale] }));
+        expect(error.reason).toBe("failed");
+      }
       expect(bodies).toEqual([]);
     }),
   );
