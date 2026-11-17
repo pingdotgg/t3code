@@ -75,6 +75,7 @@ const DETAIL_RESPONSE = JSON.stringify({
           nodes: [{ name: "bug", color: "d73a4a" }, null],
         },
         body: "Typing in the composer drops focus after a paste.",
+        locked: false,
         viewerCanUpdate: false,
         viewerCanClose: false,
         viewerCanReopen: true,
@@ -165,7 +166,11 @@ function transport(httpClient: HttpClient.HttpClient) {
   );
 }
 
-function tracker(onRequest: (variables: unknown) => void, templateRepository?: unknown) {
+function tracker(
+  onRequest: (variables: unknown) => void,
+  templateRepository?: unknown,
+  detailResponse = DETAIL_RESPONSE,
+) {
   return GitHubIssueTracker.make.pipe(
     Effect.provide(
       transport(
@@ -194,7 +199,7 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
                       },
                     },
                   })
-                : DETAIL_RESPONSE;
+                : detailResponse;
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -382,6 +387,25 @@ describe("GitHubIssueTracker", () => {
         "AddReaction",
         "RemoveReaction",
       ]);
+    }),
+  );
+
+  it.effect("withholds comment permission on a locked issue from an outside reader", () =>
+    Effect.gen(function* () {
+      const response = DETAIL_RESPONSE.replace(
+        '"viewerPermission":"TRIAGE"',
+        '"viewerPermission":"READ"',
+      )
+        .replace('"locked":false', '"locked":true')
+        .replace('"viewerCanReopen":true', '"viewerCanReopen":false');
+      const api = yield* tracker(() => {}, undefined, response);
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(issue.viewerPermissions.comment).toBe(false);
     }),
   );
 
