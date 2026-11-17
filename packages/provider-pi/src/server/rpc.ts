@@ -86,6 +86,17 @@ export function resolvePiModelSlug(
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
 }
 
+/** T3 Code runs Anthropic models only through its Claude provider, never through Pi. */
+export function isAnthropicPiModel(provider: string, modelId: string): boolean {
+  return /anthropic|claude/i.test(`${provider}/${modelId}`);
+}
+
+/** Why a Pi model may not run, when it is an Anthropic model. */
+export function piAnthropicModelRefusal(provider: string, modelId: string): string | undefined {
+  if (!isAnthropicPiModel(provider, modelId)) return undefined;
+  return `Pi's model ${provider}/${modelId} is an Anthropic model. T3 Code runs Anthropic models only through Claude: start the thread with Claude, or choose a non-Anthropic Pi model.`;
+}
+
 export interface PiRpcSpawnOptions {
   readonly command: string;
   readonly args: ReadonlyArray<string>;

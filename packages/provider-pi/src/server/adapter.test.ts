@@ -828,7 +828,7 @@ describe("PiAdapterV2", () => {
         yield* startTurn(
           runtime,
           providerThread,
-          "anthropic/other-model",
+          "acme/other-model",
           [],
           "Hello again",
           undefined,
@@ -2262,14 +2262,14 @@ describe("PiAdapterV2", () => {
         const providerThread = yield* Fiber.join(registering);
         assert.equal(providerThread.id, persisted.id);
         assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
-        yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+        yield* startTurn(runtime, providerThread, "acme/acme-sonnet");
         assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({ type: "agent_settled" });
         yield* takeEvent((event) => event.type === "turn.terminal");
 
         const resumed = yield* runtime.resumeThread({ providerThread });
-        yield* startTurn(runtime, resumed, "anthropic/claude-sonnet", [], "Continue", undefined, 2);
+        yield* startTurn(runtime, resumed, "acme/acme-sonnet", [], "Continue", undefined, 2);
         assert.equal((yield* fake.takeRequest("prompt"))["message"], "Continue");
         assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
         assert.equal(
@@ -2322,7 +2322,7 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+      yield* startTurn(runtime, providerThread, "acme/acme-sonnet");
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
@@ -2353,7 +2353,7 @@ describe("PiAdapterV2", () => {
         .pipe(Effect.result);
       assert.equal(failedRead._tag, "Failure");
 
-      yield* startTurn(runtime, resumed, "anthropic/claude-sonnet", [], "Continue", undefined, 2);
+      yield* startTurn(runtime, resumed, "acme/acme-sonnet", [], "Continue", undefined, 2);
       assert.equal((yield* fake.takeRequest("prompt"))["message"], "Continue");
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
@@ -2634,14 +2634,38 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { selected: "amazon-bedrock/us.anthropic.claude-opus-5-5", piDefault: "acme/large" },
+    { selected: "default", piDefault: "anthropic/claude-sonnet-5" },
+  ])("refuses to run Anthropic model $selected through Pi", ({ selected, piDefault }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const [provider, id] = piDefault.split("/");
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE, model: { provider, id } });
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection(selected),
+        runtimePolicy,
+      });
+      const error = yield* startTurn(runtime, providerThread, selected).pipe(Effect.flip);
+      assert.include(String(error.cause), "T3 Code runs Anthropic models only through Claude");
+      assert.isFalse(
+        fake
+          .allRequests()
+          .some((request) => request.type === "prompt" || request.type === "set_model"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("budgets legacy native history with Pi's selected model capacity", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       fake.queueState({
         sessionFile: FAKE_SESSION_FILE,
-        model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+        model: { provider: "acme", id: "large", contextWindow: 1_000_000 },
       });
-      fake.queueModels([{ provider: "anthropic", id: "small", contextWindow: 32_000 }]);
+      fake.queueModels([{ provider: "acme", id: "small", contextWindow: 32_000 }]);
       const { runtime } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
@@ -2658,19 +2682,19 @@ describe("PiAdapterV2", () => {
           modelContextWindow: runtime.getModelContextWindow?.(modelSelection(model)),
         });
       assert.equal(budget("default"), 16_000);
-      assert.equal(budget("anthropic/large"), 16_000);
-      assert.equal(runtime.getModelContextWindow?.(modelSelection("anthropic/small")), 32_000);
-      assert.equal(budget("anthropic/small"), 0);
-      assert.isUndefined(runtime.getModelContextWindow?.(modelSelection("anthropic/unknown")));
+      assert.equal(budget("acme/large"), 16_000);
+      assert.equal(runtime.getModelContextWindow?.(modelSelection("acme/small")), 32_000);
+      assert.equal(budget("acme/small"), 0);
+      assert.isUndefined(runtime.getModelContextWindow?.(modelSelection("acme/unknown")));
       assert.isUndefined(
         runtime.getModelContextWindow?.({
           instanceId: ProviderInstanceId.make("other-pi"),
-          model: "anthropic/large",
+          model: "acme/large",
         }),
       );
       fake.queueState({
         sessionFile: "/fake/replacement.jsonl",
-        model: { provider: "anthropic", id: "small", contextWindow: 32_000 },
+        model: { provider: "acme", id: "small", contextWindow: 32_000 },
       });
       yield* runtime.ensureThread({
         threadId: THREAD_ID,
@@ -2754,7 +2778,7 @@ describe("PiAdapterV2", () => {
       // A provider registered after the session started, e.g. by an extension reload.
       fake.queueModels([
         { provider: "openrouter", id: "openrouter/auto" },
-        { provider: hub, id: "claude-haiku-4-5" },
+        { provider: hub, id: "acme-haiku-4-5" },
       ]);
       yield* startTurn(
         runtime,
@@ -2762,24 +2786,24 @@ describe("PiAdapterV2", () => {
         "default",
         [],
         "Second",
-        modelSelection(`${hub}/claude-haiku-4-5`),
+        modelSelection(`${hub}/acme-haiku-4-5`),
         2,
       );
       const hubRequest = yield* fake.takeRequest("set_model");
       assert.deepEqual(
         { provider: hubRequest["provider"], modelId: hubRequest["modelId"] },
-        { provider: hub, modelId: "claude-haiku-4-5" },
+        { provider: hub, modelId: "acme-haiku-4-5" },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each(["anthropic/model-b", "default"])(
+  it.effect.each(["acme/model-b", "default"])(
     "preserves explicit thinking when switching models to %s in the same runtime",
     (targetModel) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         fake.queueState({
-          model: { provider: "anthropic", id: "model-b" },
+          model: { provider: "acme", id: "model-b" },
           thinkingLevel: "high",
           sessionFile: FAKE_SESSION_FILE,
         });
@@ -2801,7 +2825,7 @@ describe("PiAdapterV2", () => {
           "default",
           [],
           "First",
-          selection("anthropic/model-a"),
+          selection("acme/model-a"),
         );
         yield* fake.takeRequest("prompt");
         yield* fake.emit({ type: "agent_start" });
@@ -3002,11 +3026,11 @@ describe("PiAdapterV2", () => {
 
         yield* startTurn(runtime, providerThread, "default", [], "Hello pi", {
           instanceId: PI_INSTANCE_ID,
-          model: "anthropic/model-a",
+          model: "acme/model-a",
           options: [{ id: "thinking", value: "high" }],
         });
         const modelRequest = yield* fake.takeRequest("set_model");
-        assert.equal(modelRequest["provider"], "anthropic");
+        assert.equal(modelRequest["provider"], "acme");
         assert.equal(modelRequest["modelId"], "model-a");
         const levelRequest = yield* fake.takeRequest("set_thinking_level");
         assert.equal(levelRequest["level"], "high");
@@ -3043,7 +3067,7 @@ describe("PiAdapterV2", () => {
           "Hello pi",
           {
             instanceId: PI_INSTANCE_ID,
-            model: failFirstRestore === "previous" ? "anthropic/model-a" : "default",
+            model: failFirstRestore === "previous" ? "acme/model-a" : "default",
             ...(failFirstRestore === "previous"
               ? { options: [{ id: "thinking", value: "high" }] }
               : {}),
@@ -3056,16 +3080,13 @@ describe("PiAdapterV2", () => {
           failFirstRestore === "previous" ? "high" : "medium",
         ]);
         assert.deepEqual(fake.promptModels, [
-          "anthropic/model-a",
-          failFirstRestore === "previous" ? "anthropic/model-a" : "xai/grok-4.6",
+          "acme/model-a",
+          failFirstRestore === "previous" ? "acme/model-a" : "xai/grok-4.6",
         ]);
         const replayModel = fake
           .allRequests()
           .findLast((request) => request["type"] === "set_model")!;
-        assert.equal(
-          replayModel["provider"],
-          failFirstRestore === "previous" ? "anthropic" : "xai",
-        );
+        assert.equal(replayModel["provider"], failFirstRestore === "previous" ? "acme" : "xai");
         assert.equal(
           replayModel["modelId"],
           failFirstRestore === "previous" ? "model-a" : "grok-4.6",
@@ -3130,7 +3151,7 @@ describe("PiAdapterV2", () => {
         startedAt: null,
         completedAt: null,
       });
-      yield* startTurn(runtime, source, "anthropic/claude-sonnet");
+      yield* startTurn(runtime, source, "acme/acme-sonnet");
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
@@ -3166,16 +3187,7 @@ describe("PiAdapterV2", () => {
         fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
       );
       const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
-      yield* startTurn(
-        runtime,
-        adopted,
-        "anthropic/claude-sonnet",
-        [],
-        "Continue",
-        undefined,
-        1,
-        target,
-      );
+      yield* startTurn(runtime, adopted, "acme/acme-sonnet", [], "Continue", undefined, 1, target);
       yield* fake.takeRequest("prompt");
       assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 2);
       yield* fake.emit({ type: "agent_start" });
@@ -3843,7 +3855,7 @@ describe("PiAdapterV2", () => {
         updatedAt: 2_000,
         activity: { currentTool: "bash", turnCount: 1, toolCount: 1 },
         agent: "scout",
-        model: "anthropic/claude-haiku-5-5",
+        model: "acme/acme-haiku-5-5",
       });
       const emitSnapshot = (state: string, alpha: string, beta: string) =>
         fake.emit({
@@ -4228,7 +4240,7 @@ describe("PiAdapterV2", () => {
         const { runtime, takeEvent } = yield* openRuntime(fake);
         const selection: ModelSelection = {
           instanceId: PI_INSTANCE_ID,
-          model: "anthropic/model-a",
+          model: "acme/model-a",
           options: [{ id: "thinking", value: "high" }],
         };
         const providerThread = yield* runtime.ensureThread({
@@ -4236,23 +4248,16 @@ describe("PiAdapterV2", () => {
           modelSelection: selection,
           runtimePolicy,
         });
-        yield* startTurn(
-          runtime,
-          providerThread,
-          "anthropic/model-a",
-          [],
-          "/preset fast",
-          selection,
-        );
+        yield* startTurn(runtime, providerThread, "acme/model-a", [], "/preset fast", selection);
         yield* fake.takeRequest("prompt");
         yield* fake.emit({ type: "agent_start" });
         fake.changeNatively(change);
         yield* fake.emit({ type: "agent_settled" });
         yield* takeEvent((event) => event.type === "turn.terminal");
 
-        yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
+        yield* startTurn(runtime, providerThread, "acme/model-a", [], "Next", selection, 2);
         yield* fake.takeRequest("prompt");
-        assert.deepEqual(fake.promptModels, ["anthropic/model-a", "anthropic/model-a"]);
+        assert.deepEqual(fake.promptModels, ["acme/model-a", "acme/model-a"]);
         assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
         assert.equal(
           fake.allRequests().filter((request) => request["type"] === "set_model").length,
@@ -4278,7 +4283,7 @@ describe("PiAdapterV2", () => {
         type: "message_end",
         message: {
           role: "assistant",
-          provider: "anthropic",
+          provider: "acme",
           model: "model-b",
           content: [{ type: "text", text: "done" }],
           stopReason: "stop",
@@ -4291,7 +4296,7 @@ describe("PiAdapterV2", () => {
       );
       assert.equal(
         turn.type === "provider_turn.updated" ? turn.providerTurn.model : null,
-        "anthropic/model-b",
+        "acme/model-b",
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

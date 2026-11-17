@@ -14,7 +14,13 @@ import {
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 import type { PiSettings } from "../settings.ts";
 
-import { makePiRpcConnection, piRecordField, piRecordString, resolvePiModelSlug } from "./rpc.ts";
+import {
+  makePiRpcConnection,
+  piAnthropicModelRefusal,
+  piRecordField,
+  piRecordString,
+  resolvePiModelSlug,
+} from "./rpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { isPiThinkingLevel } from "./modelCapabilities.ts";
@@ -91,7 +97,20 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         env: launch.env,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
-      if (modelSelection.model !== "default") {
+      if (modelSelection.model === "default") {
+        const defaultModel = piRecordField(
+          yield* connection.request({ type: "get_state" }),
+          "model",
+        );
+        const provider = piRecordString(defaultModel, "provider");
+        const modelId = piRecordString(defaultModel, "id");
+        const refusal =
+          provider === undefined || modelId === undefined
+            ? undefined
+            : piAnthropicModelRefusal(provider, modelId);
+        if (refusal !== undefined)
+          return yield* new TextGenerationError({ operation, detail: refusal });
+      } else {
         // Reject unusable custom slugs; silently using Pi's default would misreport the requested model.
         const inventory = yield* connection
           .request({ type: "get_available_models" })
@@ -103,6 +122,9 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             detail: `Pi model '${modelSelection.model}' must use provider/model format.`,
           });
         }
+        const refusal = piAnthropicModelRefusal(parsed.provider, parsed.modelId);
+        if (refusal !== undefined)
+          return yield* new TextGenerationError({ operation, detail: refusal });
         yield* connection
           .request({ type: "set_model", provider: parsed.provider, modelId: parsed.modelId })
           .pipe(

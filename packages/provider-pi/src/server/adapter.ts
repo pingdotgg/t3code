@@ -66,6 +66,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   findReportedPiModel,
   makePiRpcConnection,
+  piAnthropicModelRefusal,
   resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -3285,6 +3286,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           appliedThinking = recordString(state, "thinkingLevel") ?? null;
         }
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
+          const refusal =
+            baselineModel === null
+              ? undefined
+              : piAnthropicModelRefusal(baselineModel.provider, baselineModel.modelId);
+          if (refusal !== undefined) return yield* protocolError(refusal);
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
             appliedThinking = null;
@@ -3317,6 +3323,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               `Pi model '${modelSelection.model}' must use provider/model format`,
             );
           }
+          const refusal = piAnthropicModelRefusal(parsed.provider, parsed.modelId);
+          if (refusal !== undefined) return yield* protocolError(refusal);
           const selectedModel = yield* request({
             type: "set_model",
             provider: parsed.provider,

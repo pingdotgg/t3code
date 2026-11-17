@@ -22,6 +22,7 @@ const makeFakePi = (
   models?: ReadonlyArray<Record<string, unknown>>,
   version = "0.84.3",
   thinkingError?: string,
+  defaultModel?: Record<string, unknown>,
 ) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -44,6 +45,8 @@ const makeFakePi = (
             yield* emit({ type: "agent_settled" });
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
+          } else if (record["type"] === "get_state" && defaultModel !== undefined) {
+            yield* emit({ ...response, success: true, data: { model: defaultModel } });
           } else if (record["type"] === "get_available_models" && models !== undefined) {
             yield* emit({ ...response, success: true, data: { models } });
           } else if (record["type"] === "set_model" && setModelError !== undefined) {
@@ -317,7 +320,7 @@ it.effect.each([
       assert.deepEqual(
         pi.received.map((record) => record["type"]),
         [
-          ...(model === "default" ? [] : ["get_available_models", "set_model"]),
+          ...(model === "default" ? ["get_state"] : ["get_available_models", "set_model"]),
           ...(expected === undefined ? [] : ["set_thinking_level"]),
           "prompt",
           "get_last_assistant_text",
@@ -328,6 +331,42 @@ it.effect.each([
         expected,
       );
     }),
+);
+
+it.effect.each([
+  { model: "amazon-bedrock/global.anthropic.claude-haiku-5-5", defaultModel: undefined },
+  { model: "default", defaultModel: { provider: "anthropic", id: "claude-haiku-5-5" } },
+])("refuses to generate text with Anthropic model $model", ({ model, defaultModel }) =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi(
+      JSON.stringify({ subject: "Update README", body: "" }),
+      undefined,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      defaultModel,
+    );
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+
+    const error = yield* textGeneration
+      .generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "main",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("pi"), model),
+      })
+      .pipe(Effect.flip);
+
+    assert.include(error.detail, "T3 Code runs Anthropic models only through Claude");
+    assert.isFalse(
+      pi.received.some((record) => record["type"] === "prompt" || record["type"] === "set_model"),
+    );
+  }),
 );
 
 it.effect("generates at Pi's default level when Pi rejects the saved thinking level", () =>
