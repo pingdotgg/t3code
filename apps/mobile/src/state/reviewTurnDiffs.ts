@@ -2,11 +2,12 @@ import type { EnvironmentId, OrchestrationGetTurnDiffResult, ThreadId } from "@t
 import * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
-const EMPTY_TURN_DIFFS = Object.freeze<Readonly<Record<number, string>>>({});
+import {
+  MAX_CACHED_REVIEW_DIFFS,
+  MAX_CACHED_REVIEW_SOURCE_CHARACTERS,
+} from "../features/review/reviewState";
 
-// The review caches the parsed diffs within a budget; the raw ones it keeps are the same text.
-const MAX_CACHED_REVIEW_TURN_DIFFS = 8;
-const MAX_CACHED_REVIEW_TURN_DIFF_CHARACTERS = 4 * 1024 * 1024;
+const EMPTY_TURN_DIFFS = Object.freeze<Readonly<Record<number, string>>>({});
 
 // The last answered diff of each single turn, keyed by its turn count, so review keeps showing
 // turns it already loaded while the environment is disconnected and no turn query is mounted.
@@ -21,7 +22,7 @@ export function lastReviewTurnDiffsAtom(environmentId: EnvironmentId, threadId: 
   return lastTurnDiffsFamily(JSON.stringify([environmentId, threadId]));
 }
 
-/** Drops the oldest turn diffs until the cache fits its budget. */
+// Integer keys enumerate in ascending order, so the lowest turn counts are evicted first.
 const pruneTurnDiffs = (diffs: Readonly<Record<number, string>>) => {
   const turnCounts = Object.keys(diffs).map((key) => Number(key));
   let characters = turnCounts.reduce(
@@ -30,8 +31,8 @@ const pruneTurnDiffs = (diffs: Readonly<Record<number, string>>) => {
   );
   let dropped = 0;
   while (
-    turnCounts.length - dropped > MAX_CACHED_REVIEW_TURN_DIFFS ||
-    characters > MAX_CACHED_REVIEW_TURN_DIFF_CHARACTERS
+    turnCounts.length - dropped > MAX_CACHED_REVIEW_DIFFS ||
+    characters > MAX_CACHED_REVIEW_SOURCE_CHARACTERS
   ) {
     const oldest = turnCounts[dropped];
     if (oldest === undefined) break;

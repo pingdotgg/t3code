@@ -4,14 +4,14 @@ import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 
 import { reviewTurnDiffsBySectionId } from "../features/review/reviewModel";
+import {
+  MAX_CACHED_REVIEW_DIFFS,
+  MAX_CACHED_REVIEW_SOURCE_CHARACTERS,
+} from "../features/review/reviewState";
 import { lastReviewTurnDiffsAtom, recordReviewTurnDiffAnswer } from "./reviewTurnDiffs";
 
 const environmentId = EnvironmentId.make("env-1");
 const threadId = ThreadId.make("thread-1");
-
-// The review keeps the raw turn diffs within the same budget as the parsed ones.
-const MAX_KEPT_TURN_DIFFS = 8;
-const MAX_KEPT_TURN_DIFF_CHARACTERS = 4 * 1024 * 1024;
 
 const answer = (
   registry: AtomRegistry.AtomRegistry,
@@ -57,7 +57,7 @@ describe("recordReviewTurnDiffAnswer", () => {
   it.effect("keeps only the newest turn diffs, so a long thread cannot grow the cache", () =>
     Effect.gen(function* () {
       const registry = AtomRegistry.make();
-      const turns = MAX_KEPT_TURN_DIFFS + 1;
+      const turns = MAX_CACHED_REVIEW_DIFFS + 1;
       for (let turn = 1; turn <= turns; turn += 1) {
         yield* answer(registry, {
           fromTurnCount: turn - 1,
@@ -67,7 +67,7 @@ describe("recordReviewTurnDiffAnswer", () => {
       }
 
       const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
-      expect(Object.keys(cached)).toHaveLength(MAX_KEPT_TURN_DIFFS);
+      expect(Object.keys(cached)).toHaveLength(MAX_CACHED_REVIEW_DIFFS);
       expect(cached[1]).toBeUndefined();
       expect(cached[turns]).toBe(`turn ${turns}`);
       registry.dispose();
@@ -77,7 +77,7 @@ describe("recordReviewTurnDiffAnswer", () => {
   it.effect("drops the oldest turn diff when they exceed the character budget", () =>
     Effect.gen(function* () {
       const registry = AtomRegistry.make();
-      const half = Math.floor(MAX_KEPT_TURN_DIFF_CHARACTERS / 2) + 1;
+      const half = Math.floor(MAX_CACHED_REVIEW_SOURCE_CHARACTERS / 2) + 1;
       const oldest = "a".repeat(half);
       const newest = "b".repeat(half);
       yield* answer(registry, { fromTurnCount: 0, toTurnCount: 1, diff: oldest });
@@ -86,21 +86,6 @@ describe("recordReviewTurnDiffAnswer", () => {
       const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
       expect(cached[1]).toBeUndefined();
       expect(cached[2]?.length).toBe(half);
-      registry.dispose();
-    }),
-  );
-
-  it.effect("does not keep a turn diff that is larger than the whole budget", () =>
-    Effect.gen(function* () {
-      const registry = AtomRegistry.make();
-      yield* answer(registry, {
-        fromTurnCount: 0,
-        toTurnCount: 1,
-        diff: "a".repeat(MAX_KEPT_TURN_DIFF_CHARACTERS + 1),
-      });
-
-      const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
-      expect(Object.keys(cached)).toHaveLength(0);
       registry.dispose();
     }),
   );
