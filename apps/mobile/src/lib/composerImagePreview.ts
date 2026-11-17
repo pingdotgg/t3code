@@ -61,6 +61,7 @@ export function releaseComposerImagePreviewFile(uri: string): void {
 async function deletePreviewFile(uri: string): Promise<void> {
   try {
     const { Directory, File, Paths } = await import("expo-file-system");
+    if (previewFileHolders.has(uri)) return;
     const file = new File(
       new Directory(Paths.cache, PREVIEW_CACHE_DIRECTORY),
       uri.slice(uri.lastIndexOf("/") + 1),

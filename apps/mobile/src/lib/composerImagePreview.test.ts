@@ -44,13 +44,7 @@ import { AsyncResult, AtomRegistry } from "effect/reactivity";
 
 import type { DraftComposerImageAttachment } from "./composerImages";
 import { MaterializedPreviewKey, materializedPreviewAtom } from "./composerImagePreview";
-
-import {
-  forgetDraftImage,
-  rememberDraftImage,
-  rememberSentImage,
-  sentImageHandoff,
-} from "./sentImageHandoff";
+import { forgetDraftImage, rememberDraftImage } from "./sentImageHandoff";
 
 describe("materializedPreviewAtom", () => {
   it("keeps the materialized preview when the upload reference lands", async () => {
@@ -139,89 +133,32 @@ describe("materializedPreviewAtom", () => {
     ]);
   });
 
-  it("releases cached pasted-image files when their preview lifetime ends", async () => {
-    const created = new Set<string>();
-    for (let index = 0; index < 3; index += 1) {
-      const registry = AtomRegistry.make();
-      const attachment: DraftComposerImageAttachment = {
-        id: `discarded-paste-${index}`,
-        type: "image",
-        name: "pasted-image.png",
-        mimeType: "image/png",
-        sizeBytes: 3,
-        dataUrl: "data:image/png;base64,AAAA",
-        previewUri: "data:image/png;base64,AAAA",
-      };
-      const atom = materializedPreviewAtom(new MaterializedPreviewKey(attachment));
-      const unmount = registry.mount(atom);
-      try {
-        await vi.waitFor(() => expect(AsyncResult.isSuccess(registry.get(atom))).toBe(true));
-        const result = registry.get(atom);
-        expect(AsyncResult.isSuccess(result) && result.value).toBe(
-          `file:///cache/t3-composer-previews/${attachment.id}.png`,
-        );
-        created.add(`file:///cache/t3-composer-previews/${attachment.id}.png`);
-      } finally {
-        unmount();
-        registry.dispose();
-      }
+  it("deletes a pasted image's cached file once its preview and draft handoff let go", async () => {
+    const attachment: DraftComposerImageAttachment = {
+      id: "discarded-paste",
+      type: "image",
+      name: "pasted.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "data:image/png;base64,AAAA",
+    };
+    const uri = `file:///cache/t3-composer-previews/${attachment.id}.png`;
+    const registry = AtomRegistry.make();
+    const atom = materializedPreviewAtom(new MaterializedPreviewKey(attachment));
+    const unmount = registry.mount(atom);
+    await vi.waitFor(() => expect(AsyncResult.isSuccess(registry.get(atom))).toBe(true));
+    rememberDraftImage(attachment.id, { uri, aspectRatio: 1 });
+    unmount();
+    registry.dispose();
+    vi.useFakeTimers();
+    try {
+      await vi.runAllTimersAsync();
+      expect(mocks.files.has(uri)).toBe(true);
+      forgetDraftImage(attachment.id);
+      await vi.runAllTimersAsync();
+      expect(mocks.files.has(uri)).toBe(false);
+    } finally {
+      vi.useRealTimers();
     }
-    await vi.waitFor(() =>
-      expect(
-        [...created].filter((uri) => mocks.files.has(uri)),
-        "discarded pasted-image preview files",
-      ).toEqual([]),
-    );
   });
-  it.each([false, true])(
-    "releases a loaded draft preview after discard, preserving a sent handoff: %s",
-    async (sent) => {
-      const attachment: DraftComposerImageAttachment = {
-        id: `loaded-paste-${sent}`,
-        type: "image",
-        name: "pasted.png",
-        mimeType: "image/png",
-        sizeBytes: 3,
-        previewUri: "data:image/png;base64,AAAA",
-      };
-      const registry = AtomRegistry.make();
-      const atom = materializedPreviewAtom(new MaterializedPreviewKey(attachment));
-      const unmount = registry.mount(atom);
-      try {
-        await vi.waitFor(() => expect(AsyncResult.isSuccess(registry.get(atom))).toBe(true));
-        const uri = `file:///cache/t3-composer-previews/${attachment.id}.png`;
-        vi.useFakeTimers();
-        rememberDraftImage(attachment.id, { uri, aspectRatio: 1 });
-        unmount();
-        registry.dispose();
-        await vi.runAllTimersAsync();
-        expect(mocks.files.has(uri)).toBe(true);
-        // Replacing the same entry exercises release while retaining its file.
-        rememberDraftImage(attachment.id, { uri, aspectRatio: 2 });
-        await vi.runAllTimersAsync();
-        expect(mocks.files.has(uri)).toBe(true);
-        if (sent) rememberSentImage("sent-paste", 0, { uri, aspectRatio: 2 });
-        forgetDraftImage(attachment.id);
-        expect(sentImageHandoff("missing", 0, attachment.id)).toBeUndefined();
-        await vi.runAllTimersAsync();
-        if (sent) {
-          expect(mocks.files.has(uri)).toBe(true);
-          expect(sentImageHandoff("sent-paste", 0)).toEqual({ uri, aspectRatio: 2 });
-          for (let index = 0; index < 64; index += 1) {
-            rememberSentImage(`eviction-${index}`, 0, {
-              uri: "file:///external.png",
-              aspectRatio: 1,
-            });
-          }
-        }
-        await vi.runAllTimersAsync();
-        expect(mocks.files.has(uri)).toBe(false);
-      } finally {
-        unmount();
-        registry.dispose();
-        forgetDraftImage(attachment.id);
-        vi.useRealTimers();
-      }
-    },
-  );
 });

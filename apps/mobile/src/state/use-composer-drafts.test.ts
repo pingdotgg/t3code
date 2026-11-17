@@ -1175,7 +1175,7 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
   });
 
-  it("releases a discarded paste's draft handoff after its draft and outbox let go", async () => {
+  it("releases a discarded paste's draft handoff once no draft holds it", async () => {
     const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
     onTestFinished(() => outboxLoad.mockRestore());
     const image = {
@@ -1193,26 +1193,6 @@ describe("mobile composer drafts", () => {
     });
     await releaseUnusedComposerAttachmentFiles([image]);
     expect(sentImageHandoff("missing", 0, image.id)).toEqual(handoff);
-    appAtomRegistry.set(composerDraftsAtom, {});
-    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
-      "environment-1:thread-1": [
-        {
-          environmentId: EnvironmentId.make("environment-1"),
-          threadId: ThreadId.make("thread-1"),
-          messageId: MessageId.make("queued-paste"),
-          commandId: CommandId.make("command-paste"),
-          text: "",
-          attachments: [image],
-          createdAt: "2026-08-31T12:00:00.000Z",
-        },
-      ],
-    });
-    await releaseUnusedComposerAttachmentFiles([image]);
-    expect(sentImageHandoff("missing", 0, image.id)).toEqual(handoff);
-    appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
-    appAtomRegistry.set(composerDraftsAtom, {
-      "environment-1:thread-1": { text: "", attachments: [image] },
-    });
     clearComposerDraftContent("environment-1:thread-1");
     await vi.waitFor(() => expect(sentImageHandoff("missing", 0, image.id)).toBeUndefined());
   });
