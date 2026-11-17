@@ -134,7 +134,7 @@ it.effect(
       yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
 
-      // A script cannot answer the app's checklist, so the flags track what it would offer.
+      // Repositories inside the folder are found; `--track` adds one from outside it.
       const shared = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-project-shared-"));
       NodeFS.mkdirSync(NodePath.join(workspaceRoot, "api", ".git"), { recursive: true });
       NodeFS.mkdirSync(NodePath.join(workspaceRoot, "notes"));
@@ -142,17 +142,14 @@ it.effect(
         "project",
         "add",
         workspaceRoot,
-        "--track-repos",
         "--track",
         `${shared}${NodePath.sep}`,
-        "--track",
-        NodePath.join(workspaceRoot, "api"),
         "--base-dir",
         baseDir,
       ]);
       assert.deepEqual((yield* readProjects(baseDir)).projects[0]?.trackedFolders, [
+        { path: NodePath.join(workspaceRoot, "api"), name: "api", discovered: true },
         { path: shared, name: NodePath.basename(shared) },
-        { path: NodePath.join(workspaceRoot, "api"), name: "api" },
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

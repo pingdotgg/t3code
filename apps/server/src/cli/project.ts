@@ -3,7 +3,6 @@ import {
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
-  isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectMutation,
   type ProjectSnapshot,
@@ -43,7 +42,7 @@ import {
   clearPersistedServerRuntimeState,
   readLiveServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { scanFolders } from "../workspace/WorkspaceFolders.ts";
+import { discoverFolders } from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -476,15 +475,9 @@ const projectAddCommand = Command.make("add", {
     Argument.withDescription("Workspace root to add as a project."),
   ),
   title: Flag.String("title").pipe(Flag.withDescription("Optional project title."), Flag.optional),
-  trackRepos: Flag.Boolean("track-repos").pipe(
-    Flag.withDescription(
-      "Also track the repositories directly inside the path and the folders its .code-workspace file lists.",
-    ),
-    Flag.withDefault(false),
-  ),
   track: Flag.String("track").pipe(
     Flag.withDescription(
-      "Another folder the project works in, or a rule such as src/* that follows every repository there. Repeat for more.",
+      "A folder outside the path that the project also works in. Repositories inside the path are found on their own. Repeat for more.",
     ),
     Flag.atLeast(0),
   ),
@@ -516,22 +509,17 @@ const projectAddCommand = Command.make("add", {
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         const path = yield* Path.Path;
-        // Scanned here, not by a running server: this command runs on the server's machine.
-        const scanned = flags.trackRepos ? (yield* scanFolders({ workspaceRoot })).folders : [];
+        // Found here, not by a running server: this command runs on the server's machine.
+        const found = yield* discoverFolders(workspaceRoot);
         const named = flags.track.map((folder) => {
           const resolved = path.resolve(folder);
-          // A rule is named by its last two segments: `src/*` says more than `*`.
-          const name = isTrackedFolderRule(resolved)
-            ? resolved.split(path.sep).slice(-2).join("/")
-            : path.basename(resolved);
-          return { path: resolved, name: name || resolved };
+          return { path: resolved, name: path.basename(resolved) || resolved };
         });
-        const trackedFolders = [...named, ...scanned]
+        const trackedFolders = [...found, ...named]
           .filter(
             (folder, index, all) => all.findIndex((other) => other.path === folder.path) === index,
           )
-          .slice(0, PROJECT_TRACKED_FOLDERS_MAX)
-          .map((folder) => ({ path: folder.path, name: folder.name }));
+          .slice(0, PROJECT_TRACKED_FOLDERS_MAX);
         const projectId = ProjectId.make(yield* projectCommandUuid);
         yield* dispatch({
           type: "project.create",
@@ -543,9 +531,9 @@ const projectAddCommand = Command.make("add", {
         });
         const added = `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
         if (trackedFolders.length > 0) {
-          return `${added} Tracking ${trackedFolders.length} other ${trackedFolders.length === 1 ? "folder" : "folders"}.`;
+          return `${added} It also covers ${trackedFolders.length} other ${trackedFolders.length === 1 ? "folder" : "folders"}.`;
         }
-        return flags.trackRepos ? `${added} Found no other folders to track.` : added;
+        return added;
       }),
     ),
   ),

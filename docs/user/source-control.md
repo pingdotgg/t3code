@@ -20,7 +20,7 @@ comparison and uncommitted changes read one repository at a time, chosen from th
 The thread details panel lists each repository the thread has changed, most recent first, with its
 branch and uncommitted changes. Expand one to commit, push, or open a pull request in that
 repository; a pull request opened there, or already open for its branch when a turn ends, is linked
-to the thread. **Other repositories...** adds any other tracked repository to the list until you
+to the thread. **Other repositories...** adds any other repository of the project to the list until you
 reload. A thread in its own worktree does not list them.
 
 On web and desktop, open the Diff pane source picker and choose **Commits** to review one local

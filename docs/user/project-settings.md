@@ -48,8 +48,8 @@ and other phone-only settings ignore the filter.
 
 ## Projects with several repositories
 
-A project can track more than one repository. Manage the list under **Settings → Projects →
-Repositories**; see [Projects with several repositories](multi-repo-projects.md).
+A project covers every repository inside its folder, and any folder you add under **Settings →
+Projects → Repositories**; see [Projects with several repositories](multi-repo-projects.md).
 
 ## Pin and archive projects
 

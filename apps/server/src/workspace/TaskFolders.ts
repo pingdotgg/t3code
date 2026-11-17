@@ -40,7 +40,7 @@ import {
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
-import { expandTrackedFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
+import { projectFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 
 // Each worktree is a checkout: enough at once to finish four repositories together, few enough
@@ -200,9 +200,10 @@ const make = Effect.gen(function* () {
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
   const isRepository = (folder: string) => exists(path.join(folder, ".git"));
   const trackedFolders = (project: {
+    readonly workspaceRoot: string;
     readonly trackedFolders: ReadonlyArray<ProjectTrackedFolder>;
   }) =>
-    expandTrackedFolders(project.trackedFolders).pipe(
+    projectFolders(project).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );

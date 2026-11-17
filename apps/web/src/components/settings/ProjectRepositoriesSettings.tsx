@@ -5,9 +5,8 @@ import {
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
-  followedTrackedFolders,
   getBrowseParentPath,
-  isFollowedByRule,
+  suggestedTrackedFolders,
 } from "@t3tools/client-runtime/state/projects";
 import {
   AuthOrchestrationOperateScope,
@@ -15,9 +14,6 @@ import {
   type EnvironmentId,
   type ProjectTrackedFolder,
   type WorkspaceFolderState,
-  type WorkspaceScanFoldersResult,
-  type WorkspaceScannedFolder,
-  isTrackedFolderRule,
 } from "@t3tools/contracts";
 import { FolderIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
@@ -29,16 +25,9 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/file
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
-import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { getEnvironmentBrowsePlatform } from "../CommandPalette.logic";
-import { TrackedFoldersDialog } from "../TrackedFoldersDialog";
-import {
-  mergeScannedTrackedFolders,
-  resolveTrackedFolderInput,
-  trackedFolderDisplayPath,
-  untrackedScannedPaths,
-} from "../TrackedFoldersDialog.logic";
+import { resolveTrackedFolderInput, trackedFolderDisplayPath } from "./trackedFolders.logic";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -52,7 +41,6 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 const NO_TRACKED_FOLDERS: ReadonlyArray<ProjectTrackedFolder> = [];
@@ -89,42 +77,41 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const canEdit = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const access = useFilesystemReadAccess(environmentId);
   const tracked = member.trackedFolders ?? NO_TRACKED_FOLDERS;
-  // The project carries the list; this query only says what each folder is on disk right now.
+  // Read from disk: the project's own copy of the list can be a moment behind a clone.
   const listQuery = useEnvironmentQuery(
-    access.canReadFiles && tracked.length > 0
+    access.canReadFiles
       ? filesystemEnvironment.listFolders({ environmentId, input: { projectId: member.id } })
       : null,
   );
-  const stateByPath = new Map(
-    (listQuery.data?.folders ?? []).map((folder) => [folder.path, folder.state]),
+  const folders: ReadonlyArray<ProjectTrackedFolder & { state?: WorkspaceFolderState }> =
+    listQuery.data?.folders ?? tracked;
+  // Only a workspace file's folders are offered: the rest is found without asking.
+  const scanQuery = useEnvironmentQuery(
+    access.canReadFiles
+      ? filesystemEnvironment.scanFolders({
+          environmentId,
+          input: { workspaceRoot: member.workspaceRoot },
+        })
+      : null,
   );
-  // A rule's row counts the repositories it matches right now.
-  const followedBy = (rule: ProjectTrackedFolder) =>
-    (listQuery.data?.folders ?? []).filter(
-      (folder) =>
-        isFollowedByRule([rule], folder.path) &&
-        !tracked.some((entry) => entry.path === folder.path),
-    );
+  const suggested = suggestedTrackedFolders(folders, scanQuery.data?.folders ?? []);
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
-  const scanFolders = useAtomQueryRunner(filesystemEnvironment.scanFolders, {
-    reportFailure: false,
-    reportDefect: false,
-    refresh: true,
-  });
   const [isSaving, setIsSaving] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [rescan, setRescan] = useState<WorkspaceScanFoldersResult | null>(null);
   const [isAddingFolder, setIsAddingFolder] = useState(false);
   const disabled = !canEdit || !isConnected || isSaving;
+  const added = folders.filter((folder) => folder.discovered !== true);
 
   const save = async (next: ReadonlyArray<ProjectTrackedFolder>, failureTitle: string) => {
     if (checkProjectAccess([member], failureTitle)) return false;
     setIsSaving(true);
     const result = await updateProject({
       environmentId,
-      input: { projectId: member.id, trackedFolders: next },
+      input: {
+        projectId: member.id,
+        trackedFolders: next.map(({ path, name }) => ({ path, name })),
+      },
     });
     setIsSaving(false);
     if (result._tag === "Failure") {
@@ -135,60 +122,9 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
     return true;
   };
 
-  const runRescan = async () => {
-    setIsScanning(true);
-    const result = await scanFolders({
-      environmentId,
-      input: { workspaceRoot: member.workspaceRoot },
-    });
-    setIsScanning(false);
-    if (result._tag === "Failure") {
-      reportProjectFailure("Failed to scan for repositories", result);
-      return;
-    }
-    // A folder a rule follows is tracked already; offering it again would track it twice.
-    const folders = result.value.folders.filter(
-      (folder) => !isFollowedByRule(tracked, folder.path),
-    );
-    if (folders.length === 0) {
-      const followed = result.value.folders.length;
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: followed === 0 ? "No repositories found" : "Nothing new found",
-          description:
-            followed === 0
-              ? `Nothing to track inside ${member.workspaceRoot}.`
-              : `This project already follows every repository in ${member.workspaceRoot}.`,
-        }),
-      );
-      return;
-    }
-    setRescan({ ...result.value, folders });
-  };
-
-  const saveRescan = async (
-    scan: WorkspaceScanFoldersResult,
-    checked: ReadonlyArray<WorkspaceScannedFolder>,
-    follow: boolean,
-  ) => {
-    // Following replaces the scanned folders' own entries with the rules that cover them.
-    const next = follow
-      ? [
-          ...mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked: [] }),
-          ...followedTrackedFolders({ scanned: checked }).filter(
-            (folder) => !tracked.some((entry) => entry.path === folder.path),
-          ),
-        ]
-      : mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked });
-    if (await save(next, "Failed to save repositories")) setRescan(null);
-  };
-
   const addFolder = async (folder: ProjectTrackedFolder) => {
-    if (await save([...tracked, folder], "Failed to add folder")) setIsAddingFolder(false);
+    if (await save([...added, folder], "Failed to add folder")) setIsAddingFolder(false);
   };
-
-  const scannedButUntracked = rescan ? untrackedScannedPaths(tracked, rescan.folders) : null;
 
   return (
     <>
@@ -196,107 +132,98 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
         title={member.environmentLabel ?? "Environment"}
         description={member.workspaceRoot}
         control={
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled || isScanning || !access.canReadFiles}
-              onClick={() => void runRescan()}
-            >
-              {isScanning ? "Scanning…" : "Rescan"}
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={disabled || tracked.length >= PROJECT_TRACKED_FOLDERS_MAX}
-              onClick={() => setIsAddingFolder(true)}
-            >
-              <PlusIcon className="size-3.5" />
-              Add folder
-            </Button>
-          </div>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={disabled || folders.length >= PROJECT_TRACKED_FOLDERS_MAX}
+            onClick={() => setIsAddingFolder(true)}
+          >
+            <PlusIcon className="size-3.5" />
+            Add folder
+          </Button>
         }
       />
-      {tracked.length === 0 ? (
+      {folders.length === 0 ? (
         <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
-          Track a repository to give it its own changes and review, and to let agents work across it
-          and this folder.
+          Repositories inside this folder are part of the project as soon as they are there. Add a
+          folder to bring in one from somewhere else.
         </p>
       ) : (
-        tracked.map((folder) => {
-          const state = stateByPath.get(folder.path);
-          return (
-            <SettingsRow
-              key={folder.path}
-              className="py-2"
-              title={
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 truncate">{folder.name}</span>
-                  {isTrackedFolderRule(folder.path) ? (
-                    <Badge size="sm" variant="info">
-                      {followedBy(folder).length} followed
-                    </Badge>
-                  ) : state ? (
-                    <Badge size="sm" variant={state === "missing" ? "warning" : "outline"}>
-                      {FOLDER_STATE_LABELS[state]}
-                    </Badge>
-                  ) : null}
-                </span>
-              }
-              description={
-                <code className="block max-w-full truncate font-mono">
-                  {[
-                    trackedFolderDisplayPath(folder.path, member.workspaceRoot),
-                    ...(isTrackedFolderRule(folder.path)
-                      ? [
-                          followedBy(folder)
-                            .map((followed) => followed.name)
-                            .join(", "),
-                        ]
-                      : []),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </code>
-              }
-              control={
+        folders.map((folder) => (
+          <SettingsRow
+            key={folder.path}
+            className="py-2"
+            title={
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 truncate">{folder.name}</span>
+                {folder.state ? (
+                  <Badge size="sm" variant={folder.state === "missing" ? "warning" : "outline"}>
+                    {FOLDER_STATE_LABELS[folder.state]}
+                  </Badge>
+                ) : null}
+              </span>
+            }
+            description={
+              <code className="block max-w-full truncate font-mono">
+                {trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
+              </code>
+            }
+            control={
+              // A repository inside the project folder is there for as long as it is on disk.
+              folder.discovered === true ? null : (
                 <Button
                   size="xs"
                   variant="ghost"
                   disabled={disabled}
-                  aria-label={`Stop tracking ${folder.name}`}
+                  aria-label={`Remove ${folder.name} from the project`}
                   onClick={() =>
                     void save(
-                      tracked.filter((candidate) => candidate.path !== folder.path),
-                      "Failed to remove repository",
+                      added.filter((candidate) => candidate.path !== folder.path),
+                      "Failed to remove folder",
                     )
                   }
                 >
                   Remove
                 </Button>
-              }
-            />
-          );
-        })
+              )
+            }
+          />
+        ))
       )}
+      {suggested.map((folder) => (
+        <SettingsRow
+          key={folder.path}
+          className="py-2"
+          title={
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate text-muted-foreground">{folder.name}</span>
+              <Badge size="sm" variant="outline">
+                In workspace file
+              </Badge>
+            </span>
+          }
+          description={
+            <code className="block max-w-full truncate font-mono">
+              {trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
+            </code>
+          }
+          control={
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={disabled}
+              aria-label={`Add ${folder.name} to the project`}
+              onClick={() => void save([...added, folder], "Failed to add folder")}
+            >
+              Add
+            </Button>
+          }
+        />
+      ))}
       {listQuery.error ? (
         <p role="alert" className="px-3 py-2 text-xs text-warning-foreground sm:px-4">
           {listQuery.error}
         </p>
-      ) : null}
-      {rescan && scannedButUntracked ? (
-        <TrackedFoldersDialog
-          mode="edit"
-          scan={rescan}
-          maxChecked={
-            PROJECT_TRACKED_FOLDERS_MAX -
-            (tracked.length - (rescan.folders.length - scannedButUntracked.size))
-          }
-          newPaths={scannedButUntracked}
-          busy={isSaving}
-          onConfirm={(checked, follow) => void saveRescan(rescan, checked, follow)}
-          onClose={() => setRescan(null)}
-        />
       ) : null}
       {isAddingFolder ? (
         <AddTrackedFolderDialog

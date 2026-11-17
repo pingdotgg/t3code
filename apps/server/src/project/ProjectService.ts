@@ -10,6 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -40,6 +41,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
+import { projectFolders, sameProjectFolders } from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -175,6 +177,8 @@ export class ProjectService extends Context.Service<
   }
 >()("t3/project/ProjectService") {}
 
+const FOLDER_SYNC_INTERVAL_MS = 30_000;
+
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -191,6 +195,7 @@ export const make = Effect.gen(function* () {
   const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
     Effect.provide(ProcessRunner.layer),
   );
+  const scope = yield* Effect.scope;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -216,7 +221,29 @@ export const make = Effect.gen(function* () {
     deletedAt: row.deletedAt,
   });
 
+  // Clients read `trackedFolders` off the project, so the stored list is brought back in step
+  // with the disk when a project is read, at most this often. Server work reads the disk itself.
+  const folderSyncDue = new Map<ProjectId, number>();
+  const syncFolders = Effect.fn("ProjectService.syncFolders")(function* (
+    row: ProjectStore.ProjectRow,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    if ((folderSyncDue.get(row.projectId) ?? 0) > now) return;
+    folderSyncDue.set(row.projectId, now + FOLDER_SYNC_INTERVAL_MS);
+    const trackedFolders = yield* withDiscovered(row.workspaceRoot, row.trackedFolders);
+    if (sameProjectFolders(trackedFolders, row.trackedFolders)) return;
+    yield* commit({
+      type: "project.meta.update",
+      commandId: CommandId.make(`project-folders:${row.projectId}:${now}`),
+      projectId: row.projectId,
+      trackedFolders,
+    });
+  });
+
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
+    if (row.deletedAt === null) {
+      yield* syncFolders(row).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
+    }
     const enrichment =
       row.deletedAt === null
         ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
@@ -265,6 +292,12 @@ export const make = Effect.gen(function* () {
     });
   });
   // A folder may be missing from disk: it shows as missing until it is restored or removed.
+  const withDiscovered = (workspaceRoot: string, added: ReadonlyArray<ProjectTrackedFolder>) =>
+    projectFolders({ workspaceRoot, trackedFolders: added }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
   const normalizeTrackedFolders = (
     projectId: ProjectId,
     workspaceRoot: string,
@@ -272,7 +305,8 @@ export const make = Effect.gen(function* () {
   ) => {
     const invalid = (detail: string) => Effect.fail(new ProjectInvalidError({ projectId, detail }));
     const normalized: Array<ProjectTrackedFolder> = [];
-    for (const folder of folders) {
+    // The server finds the repositories inside the project folder itself; callers add the rest.
+    for (const folder of folders.filter((entry) => entry.discovered !== true)) {
       if (!path.isAbsolute(folder.path)) {
         return invalid(`Tracked folder '${folder.path}' must be an absolute path.`);
       }
@@ -289,7 +323,7 @@ export const make = Effect.gen(function* () {
       }
       normalized.push({ path: folderPath, name: folder.name });
     }
-    return Effect.succeed(normalized);
+    return withDiscovered(workspaceRoot, normalized);
   };
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
@@ -432,10 +466,11 @@ export const make = Effect.gen(function* () {
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
       yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
-      const trackedFolders =
-        input.trackedFolders === undefined
-          ? undefined
-          : yield* normalizeTrackedFolders(input.projectId, workspaceRoot, input.trackedFolders);
+      const trackedFolders = yield* normalizeTrackedFolders(
+        input.projectId,
+        workspaceRoot,
+        input.trackedFolders ?? [],
+      );
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -443,7 +478,7 @@ export const make = Effect.gen(function* () {
         title: input.title,
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        ...(trackedFolders === undefined ? {} : { trackedFolders }),
+        trackedFolders,
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);

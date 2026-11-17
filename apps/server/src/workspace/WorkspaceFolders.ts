@@ -1,5 +1,4 @@
 import {
-  isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectId,
   type ProjectTrackedFolder,
@@ -14,6 +13,8 @@ import {
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -142,47 +143,6 @@ const folderProbes = Effect.gen(function* () {
   return { exists, realPath, classify, ownsHistory, childFolders };
 });
 
-/**
- * A project's tracked folders with each rule replaced by the repositories it matches now. A
- * folder listed by name keeps its place and name.
- */
-export const expandTrackedFolders = Effect.fn("WorkspaceFolders.expandTrackedFolders")(function* (
-  tracked: ReadonlyArray<ProjectTrackedFolder>,
-): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
-  if (!tracked.some((folder) => isTrackedFolderRule(folder.path))) return tracked;
-  const path = yield* Path.Path;
-  const { ownsHistory, childFolders } = yield* folderProbes;
-  const matches = Effect.fnUntraced(function* (rule: string) {
-    const [first = "", ...rest] = rule.split(path.sep);
-    let folders: ReadonlyArray<string> = [first === "" ? path.sep : first];
-    for (const segment of rest) {
-      folders =
-        segment === "*"
-          ? (yield* Effect.forEach(folders, childFolders, {
-              concurrency: DETECTION_CONCURRENCY,
-            })).flat()
-          : folders.map((folder) => path.join(folder, segment));
-    }
-    return yield* Effect.filter(folders, ownsHistory, { concurrency: DETECTION_CONCURRENCY });
-  });
-  const seen = new Set(
-    tracked.flatMap((folder) => (isTrackedFolderRule(folder.path) ? [] : [folder.path])),
-  );
-  const expanded: ProjectTrackedFolder[] = [];
-  for (const folder of tracked) {
-    if (!isTrackedFolderRule(folder.path)) {
-      expanded.push(folder);
-      continue;
-    }
-    for (const match of yield* matches(path.resolve(folder.path))) {
-      if (seen.has(match)) continue;
-      seen.add(match);
-      expanded.push({ path: match, name: path.basename(match) });
-    }
-  }
-  return expanded.slice(0, PROJECT_TRACKED_FOLDERS_MAX);
-});
-
 const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFolders")(function* (
   root: string,
   fileName: string,
@@ -202,10 +162,9 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
 });
 
 /**
- * Finds the folders worth tracking beside `workspaceRoot`. Exported for the CLI, which scans in
- * its own process: it runs on the server's machine and may have no server to ask.
+ * Finds the repositories under `workspaceRoot` and the folders its `.code-workspace` file lists.
  */
-export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
+const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   input: WorkspaceScanFoldersInput,
 ): Effect.fn.Return<
   WorkspaceScanFoldersResult,
@@ -296,6 +255,81 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   };
 });
 
+/**
+ * The repositories inside a project folder, read from disk: the ones a scan finds there, less
+ * those the project's `t3.json` leaves out. A folder outside it is never found this way, since
+ * tracking one grants agents a place they could not reach before.
+ */
+export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* (
+  workspaceRoot: string,
+): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { realPath } = yield* folderProbes;
+  const scan = yield* scanFolders({ workspaceRoot }).pipe(Effect.option);
+  if (Option.isNone(scan)) return [];
+  const root = scan.value.workspaceRoot;
+  const realRoot = yield* realPath(root);
+  const ignored = (
+    parseT3ProjectFile(
+      yield* fileSystem
+        .readFileString(path.join(root, T3_PROJECT_FILE_NAME))
+        .pipe(Effect.orElseSucceed(() => "")),
+    )?.ignoreRepositories ?? []
+  ).map((entry) => path.resolve(root, entry));
+  const inside = yield* Effect.filter(
+    scan.value.folders.filter(
+      (folder) =>
+        folder.isGitRepository &&
+        !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
+    ),
+    // A link to a repository elsewhere is not inside the project, whatever its name says.
+    (folder) =>
+      realPath(folder.path).pipe(
+        Effect.map((real) => real !== realRoot && isWithinRoot(path, real, realRoot)),
+      ),
+    { concurrency: DETECTION_CONCURRENCY },
+  );
+  return inside.map((folder) => ({ path: folder.path, name: folder.name, discovered: true }));
+});
+
+/**
+ * Every folder a project works in besides its own: the repositories found inside it now, then
+ * the folders someone added. Read from disk each time, so a clone or a removal shows at once.
+ */
+export const projectFolders = Effect.fn("WorkspaceFolders.projectFolders")(function* (project: {
+  readonly workspaceRoot: string;
+  readonly trackedFolders: ReadonlyArray<ProjectTrackedFolder>;
+}): Effect.fn.Return<
+  ReadonlyArray<ProjectTrackedFolder>,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  const discovered = yield* discoverFolders(project.workspaceRoot);
+  const found = new Set(discovered.map((folder) => folder.path));
+  return [
+    ...discovered,
+    ...project.trackedFolders.filter(
+      (folder) => folder.discovered !== true && !found.has(folder.path),
+    ),
+  ].slice(0, PROJECT_TRACKED_FOLDERS_MAX);
+});
+
+/** Whether two tracked lists name the same folders in the same order. */
+export const sameProjectFolders = (
+  left: ReadonlyArray<ProjectTrackedFolder>,
+  right: ReadonlyArray<ProjectTrackedFolder>,
+) =>
+  left.length === right.length &&
+  left.every((folder, index) => {
+    const other = right[index]!;
+    return (
+      folder.path === other.path &&
+      folder.name === other.name &&
+      (folder.discovered === true) === (other.discovered === true)
+    );
+  });
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -323,8 +357,11 @@ const make = Effect.gen(function* () {
 
   const classifyAll = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
     Effect.forEach(folders, classify, { concurrency: DETECTION_CONCURRENCY });
-  const expand = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
-    expandTrackedFolders(folders).pipe(
+  const foldersOf = (project: {
+    readonly workspaceRoot: string;
+    readonly trackedFolders: ReadonlyArray<ProjectTrackedFolder>;
+  }) =>
+    projectFolders(project).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
@@ -421,8 +458,9 @@ const make = Effect.gen(function* () {
         : yield* forTaskFolder(input.worktreePath, taskFolder);
     }
     const project = yield* readProject(input.projectId);
-    if (project.trackedFolders.length === 0) return EMPTY_WORKSPACE;
-    const folders = (yield* classifyAll(yield* expand(project.trackedFolders))).flatMap((folder) =>
+    const tracked = yield* foldersOf(project);
+    if (tracked.length === 0) return EMPTY_WORKSPACE;
+    const folders = (yield* classifyAll(tracked)).flatMap((folder) =>
       folder.state === "missing"
         ? []
         : [{ name: folder.name, path: folder.path, isGitRepository: folder.state === "git" }],
@@ -466,7 +504,7 @@ const make = Effect.gen(function* () {
   const list: WorkspaceFolders["Service"]["list"] = Effect.fn("WorkspaceFolders.list")(
     function* (input) {
       const project = yield* readProject(input.projectId);
-      return { folders: yield* classifyAll(yield* expand(project.trackedFolders)) };
+      return { folders: yield* classifyAll(yield* foldersOf(project)) };
     },
   );
 

@@ -487,12 +487,13 @@ it.live("selects every tracked repository up to eight and none beyond", () =>
     Effect.gen(function* () {
       const { fileSystem, path, tmp } = yield* fixture;
       const taskFolders = yield* TaskFolders.TaskFolders;
-      const folders = Array.from({ length: 9 }, (_, index) => path.join(tmp, "shop", `r${index}`));
+      // Outside the project folder, so the stored list alone says which are tracked.
+      const folders = Array.from({ length: 9 }, (_, index) => path.join(tmp, "repos", `r${index}`));
       for (const folder of folders) {
         yield* fileSystem.makeDirectory(path.join(folder, ".git"), { recursive: true });
       }
       const plain = path.join(tmp, "shop", "notes");
-      yield* fileSystem.makeDirectory(plain);
+      yield* fileSystem.makeDirectory(plain, { recursive: true });
       state.workspaceRoot = path.join(tmp, "shop");
 
       state.trackedFolders = tracked(plain);
@@ -531,17 +532,17 @@ it.live("adds a repository to an existing task folder on the thread's branch", (
       const shop = path.join(tmp, "shop");
       const api = yield* repository("shop/api");
       const web = yield* repository("shop/web");
-      const late = yield* repository("shop/tools/late");
-      const taken = yield* repository("shop/taken");
+      yield* fileSystem.makeDirectory(path.join(shop, "tools"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(shop, "taken"), { recursive: true });
       yield* fileSystem.writeFileString(path.join(shop, "tools", "run.sh"), "#!/bin/sh\n");
       state.workspaceRoot = shop;
-      // `late` and `taken` are tracked only after the task folder exists.
-      state.trackedFolders = tracked(api, web);
       const { taskFolder } = yield* create("feature", [{ path: api }]);
       const root = taskFolder.root;
       assert.isTrue(yield* isLink(path.join(root, "tools")));
       state.thread = { worktreePath: root, branch: "feature" };
-      state.trackedFolders = tracked(api, web, late, taken);
+      // `late` and `taken` become repositories only after the task folder exists.
+      const late = yield* repository("shop/tools/late");
+      const taken = yield* repository("shop/taken");
 
       const withWeb = yield* taskFolders.addRepository({ threadId, repositoryPath: web });
       assert.deepEqual(

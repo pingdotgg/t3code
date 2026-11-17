@@ -137,20 +137,28 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }).pipe(Effect.provide(layerFor())),
   );
 
-  it.effect("reads a rule's repositories from disk each time", () =>
+  it.effect("finds the repositories inside a project folder from disk each time", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tmp = yield* makeTempDir;
       const workspaceRoot = path.join(tmp, "wrapper");
+      const outside = path.join(tmp, "outside");
       const repository = (name: string) => path.join(workspaceRoot, "src", name);
-      for (const folder of ["src/api/.git", "src/notes", "docs/.git"]) {
+      for (const folder of ["src/api/.git", "src/notes", "docs/.git", "vendor/big/.git"]) {
         yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
       }
+      yield* fileSystem.makeDirectory(path.join(outside, ".git"), { recursive: true });
+      // A link to a repository elsewhere is not inside the project.
+      yield* fileSystem.symlink(outside, path.join(workspaceRoot, "linked"));
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "t3.json"),
+        JSON.stringify({ ignoreRepositories: ["vendor/big"] }),
+      );
+      // The stored list is only trusted for what someone added.
       const trackedFolders = [
-        { path: path.join(workspaceRoot, "docs"), name: "Docs" },
-        { path: path.join(workspaceRoot, "src", "*"), name: "src/*" },
-        { path: path.join(workspaceRoot, "*"), name: "*" },
+        { path: path.join(workspaceRoot, "gone"), name: "gone", discovered: true },
+        { path: outside, name: "Outside" },
       ];
 
       yield* Effect.gen(function* () {
@@ -159,14 +167,16 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           folders.map((folder) => [folder.name, folder.path]),
         );
         assert.deepEqual(yield* listed, [
-          ["Docs", path.join(workspaceRoot, "docs")],
+          ["docs", path.join(workspaceRoot, "docs")],
           ["api", repository("api")],
+          ["Outside", outside],
         ]);
         yield* fileSystem.makeDirectory(path.join(repository("web"), ".git"), { recursive: true });
         yield* fileSystem.remove(repository("api"), { recursive: true });
         assert.deepEqual(yield* listed, [
-          ["Docs", path.join(workspaceRoot, "docs")],
+          ["docs", path.join(workspaceRoot, "docs")],
           ["web", repository("web")],
+          ["Outside", outside],
         ]);
       }).pipe(Effect.provide(layerFor({ workspaceRoot, trackedFolders })));
     }),

@@ -10,6 +10,8 @@ export const WorkspaceFolder = Schema.Struct({
   name: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
   state: WorkspaceFolderState,
+  /** Found inside the project folder by the server, not added by someone. */
+  discovered: Schema.optional(Schema.Boolean),
 });
 export type WorkspaceFolder = typeof WorkspaceFolder.Type;
 
@@ -19,7 +21,7 @@ export const WorkspaceListFoldersInput = Schema.Struct({
 export type WorkspaceListFoldersInput = typeof WorkspaceListFoldersInput.Type;
 
 export const WorkspaceListFoldersResult = Schema.Struct({
-  /** The project's tracked folders, in their stored order. */
+  /** The repositories found inside the project folder now, then the folders someone added. */
   folders: Schema.Array(WorkspaceFolder),
 });
 export type WorkspaceListFoldersResult = typeof WorkspaceListFoldersResult.Type;

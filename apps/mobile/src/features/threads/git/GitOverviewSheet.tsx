@@ -1,5 +1,4 @@
 import * as Dialog from "../../../components/ui/Dialog";
-import { isTrackedFolderRule } from "@t3tools/contracts";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -124,9 +123,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const isRepo = gitStatus.data?.isRepo ?? true;
   // A plain folder that tracks repositories has no branch of its own; its turns still have diffs.
   const projectRepositoryCount = selectedThreadProject?.trackedFolders?.length ?? 0;
-  const tracksByRule = (selectedThreadProject?.trackedFolders ?? []).some((folder) =>
-    isTrackedFolderRule(folder.path),
-  );
   const trackedRepositoryCount = isRepo || repository !== undefined ? 0 : projectRepositoryCount;
   // A worktree thread reaches tracked repositories only through its own task folder.
   const taskFolderQuery = useEnvironmentQuery(
@@ -159,10 +155,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : taskFolder !== null && trackedRepositoryCount > 0
         ? `${taskFolder.repositories.length} repository ${taskFolder.repositories.length === 1 ? "worktree" : "worktrees"}`
         : trackedRepositoryCount > 0
-          ? // A rule stands for however many repositories it matches, so it is not counted.
-            tracksByRule
-            ? "Tracked repositories"
-            : `${trackedRepositoryCount} tracked ${trackedRepositoryCount === 1 ? "repository" : "repositories"}`
+          ? `${trackedRepositoryCount} ${trackedRepositoryCount === 1 ? "repository" : "repositories"}`
           : statusSummary(gitStatus.data);
   const currentWorktreePath = repository === undefined ? selectedThreadWorktreePath : null;
   const gitOperationLabel = gitState.gitOperationLabel;

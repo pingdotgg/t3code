@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -55,27 +56,18 @@ export const PROJECT_TRACKED_FOLDERS_MAX = 128;
 export const ProjectTrackedFolder = Schema.Struct({
   path: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  /**
+   * The server found this repository inside the project folder and keeps the entry in step with
+   * the disk. Absent on a folder someone added.
+   */
+  discovered: Schema.optional(Schema.Boolean),
 });
 export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
 
-/**
- * A tracked folder whose path holds a `*` segment is a rule: it stands for every repository at a
- * matching place, read from disk each time, so the project follows clones and removals.
- */
-export function isTrackedFolderRule(folderPath: string): boolean {
-  return folderPath.split(/[\\/]/).includes("*");
-}
-
-/** Whether `candidate` is, or lies inside, a folder that a tracked folder or rule names. */
-export function trackedFolderCovers(folderPath: string, candidate: string): boolean {
-  const segments = (value: string) => value.split(/[\\/]/).filter((segment) => segment !== "");
-  const expected = segments(folderPath);
-  const actual = segments(candidate);
-  return (
-    actual.length >= expected.length &&
-    expected.every((segment, index) => segment === "*" || segment === actual[index])
-  );
-}
+/** The folders a caller adds to a project. Which repositories sit inside it is the server's to say. */
+export const ProjectAddedFolders = Schema.Array(
+  ProjectTrackedFolder.mapFields(Struct.omit(["discovered"])),
+).check(Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX));
 
 export const ProjectTrackedFolders = Schema.Array(ProjectTrackedFolder).check(
   Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX),
@@ -220,7 +212,7 @@ export const ProjectCreatePayload = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  trackedFolders: Schema.optional(ProjectTrackedFolders),
+  trackedFolders: Schema.optional(ProjectAddedFolders),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
@@ -234,7 +226,7 @@ export const ProjectUpdatePayload = Schema.Struct({
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   trackedFolders: Schema.optional(
-    ProjectTrackedFolders.annotate({
+    ProjectAddedFolders.annotate({
       description: "Extra folders by absolute path. Replaces the whole list.",
     }),
   ),

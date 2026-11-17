@@ -9,44 +9,49 @@ fits three common setups:
 
 The project folder does not have to be a Git repository itself.
 
-## Track repositories
+## Which repositories a project covers
 
-When you add a folder as a project, T3 Code looks for repositories one level down, and one level
-further inside folders that are not repositories themselves, such as `src` or `packages`. It also
-reads a `.code-workspace` file if there is one. It then asks which of them to track. Worktrees of
-another repository are not offered.
+There is no list to keep. A project covers every repository inside its folder: T3 Code looks one
+level down, and one level further inside folders that are not repositories themselves, such as
+`src` or `packages`. It reads the disk each time, so a repository you clone there is part of the
+project straight away, and one you delete is gone from it. Worktrees of another repository are left
+out.
 
-To change the list later, open **Settings → Projects**, choose the project, and look under
-**Repositories**:
+**Settings → Projects → Repositories** shows what the project covers on each machine.
 
-- **Rescan** looks again and offers what is new.
-- **Add folder**, on web and desktop, takes any folder on that machine, including one outside the
-  project folder.
-- **Remove** stops tracking a folder. It never deletes files.
+### Folders outside the project
 
-A project can track up to 128 folders. The list belongs to one machine: the same project on
-another machine has its own.
+A repository somewhere else on the machine has to be added, because adding it lets agents work in a
+place they could not reach before.
 
-From a script, `t3 project add <path> --track-repos` tracks every repository it finds, and
-`--track <folder>` adds one by path.
+- On web and desktop, use **Add folder** under **Repositories**.
+- If the project folder has a `.code-workspace` file, the folders it lists outside the project are
+  offered there with an **Add** button, on mobile too.
+- From a script, `t3 project add <path> --track <folder>` adds one.
 
-### Follow a folder
+**Remove** takes an added folder out of the project. It never deletes files. Added folders are
+paths on one machine, so the same project on another machine has its own. A project can cover up to
+128 folders.
 
-A tracked list is a snapshot. To have it follow the disk instead, turn on **Keep following this
-folder** when you add the project or rescan. It needs every found repository selected. Repositories
-cloned into that folder later are tracked without a rescan, and removed ones drop out.
+### Leave a repository out
 
-Following is stored as a rule: a path with a `*` segment, such as `/work/shop/src/*`, which tracks
-every repository at a matching place. You can also type a rule into **Add folder**, or pass one to
-the command line with `--track 'src/*'`. Worktrees of another repository and submodules never match
-a rule. Repositories that a `.code-workspace` file lists stay tracked by name.
+To keep a repository inside the project folder out of the project, name it in the `t3.json` in the
+project folder, relative to that folder:
+
+```json
+{
+  "ignoreRepositories": ["vendor/big"]
+}
+```
+
+It is then not reviewed on its own and gets no worktree. Because the file is checked in, the choice
+applies on every machine.
 
 ### Submodules
 
 Submodules need no setup. A thread that changes one shows it as its own repository, with its own
-diff and Git actions, while the repository that holds it shows the changed pin. A submodule is never
-offered for tracking and never gets a worktree of its own, because its parent repository decides
-where it is checked out.
+diff and Git actions, while the repository that holds it shows the changed pin. A submodule never
+gets a worktree of its own, because its parent repository decides where it is checked out.
 
 ## Review changes
 
@@ -64,7 +69,7 @@ Git actions run in one repository at a time.
 
 - **Web and desktop:** the thread details panel lists the repositories the thread changed, most
   recent first, each with its branch and uncommitted changes. Expand one to commit, push, or open a
-  pull request there. **Other repositories...** adds any other tracked repository.
+  pull request there. **Other repositories...** adds any other repository of the project.
 - **Mobile:** open **Git controls** in the thread. The sheet lists the repositories under
   **Repositories**; tap one for its own commit, push, and pull request actions.
 
@@ -77,7 +82,7 @@ project's.
 project, and each repository you choose gets a worktree there, all on the thread's branch.
 
 Choose the repositories with the repositories control next to the workspace picker before you send.
-Every tracked repository is included when the project tracks eight or fewer; with more, none is
+Every repository is included when the project covers eight or fewer; with more, none is
 included until you choose. On web and desktop, your last choice is remembered for the project in
 that browser. To bring another repository into a running thread, pick it under **Other
 repositories** in the thread details panel or the mobile Git sheet.
@@ -115,11 +120,11 @@ place. It receives these environment variables:
 | `T3_WORKTREE_BRANCH`       | The thread's branch name.                           |
 | `T3_WORKTREE_BASE`         | The base branch, or empty when the thread has none. |
 
-Every tracked repository the command checks out at the same relative place becomes the thread's
+Every repository of the project that the command checks out at the same relative place becomes the thread's
 checkout of it. The repositories control is ignored for such a project. `remove` is optional and
 runs before T3 Code removes whatever is left.
 
-A project that tracks no other repository can declare a layout too. This example gives each thread
+A project with no other repository can declare a layout too. This example gives each thread
 a worktree with its submodules checked out:
 
 ```json
@@ -133,7 +138,7 @@ a worktree with its submodules checked out:
 ## Limits
 
 - One Git action runs in one repository. There is no commit or push across several at once.
-- Only the project folder's `t3.json` is read. Setup scripts and actions inside a tracked
-  repository are not picked up.
+- Only the project folder's `t3.json` is read. Setup scripts and actions inside one of its
+  repositories are not picked up.
 - The Diff pane's repository picker and the base branch field for a plain folder are on web and
   desktop only.
