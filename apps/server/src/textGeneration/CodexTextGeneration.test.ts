@@ -62,6 +62,7 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  forbidInstructions?: string;
   requireIsolatedHome?: boolean;
   requireMcpServersOff?: ReadonlyArray<string>;
 }
@@ -81,6 +82,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     requiredCwd: input.requiredCwd ?? null,
     requireInstructions: input.requireInstructions ?? null,
+    forbidInstructions: input.forbidInstructions ?? null,
     requireIsolatedHome: input.requireIsolatedHome ?? false,
     requireMcpServersOff: input.requireMcpServersOff ?? [],
     stderr: input.stderr ?? null,
@@ -183,6 +185,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
+        'if (check.forbidInstructions !== null && instructions.includes(check.forbidInstructions)) fail("inherited developer instructions", 11);',
         'for (const arg of check.requiredArgs) if (!originalArgs.includes(` ${arg} `)) fail("missing arg: " + arg, 8);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
@@ -578,21 +581,66 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             messages: [{ ref: "M1", role: "user", text: "Use the shared test runner." }],
           }),
       );
-      yield* withFakeCodexEnv(
+    }),
+  );
+
+  it.effect.each(["file login", "tool activity", "keyring login"] as const)(
+    "checks fact standing blind (%s)",
+    (state) => {
+      const keyring = state === "keyring login";
+      const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
+      return withFakeCodexEnv(
         {
-          ...isolation,
-          output: JSON.stringify({
-            results: [{ ref: 1, verdict: "standing", selfContained: true }],
-          }),
+          output: JSON.stringify(answer),
+          configToml: `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+          ...(keyring
+            ? {
+                launchArgs: "--config 'developer_instructions=\"Do not inherit\"'",
+                mcpServers: [{ name: "augmenter", enabled: true }],
+                requireMcpServersOff: ["augmenter"],
+                forbidInstructions: "Do not inherit",
+              }
+            : { requireIsolatedHome: true }),
+          requireArg: "--config project_doc_max_bytes=0",
+          disabledFeatures: [
+            "plugins",
+            "apps",
+            "shell_tool",
+            "unified_exec",
+            "hooks",
+            "view_image",
+          ],
+          events: [
+            {
+              type: "item.completed",
+              item:
+                state === "tool activity"
+                  ? { type: "command_execution", command: "cat /secret" }
+                  : { type: "agent_message", text: JSON.stringify(answer) },
+            },
+          ],
         },
         (textGeneration) =>
-          textGeneration.checkFactStanding({
-            cwd: process.cwd(),
-            modelSelection,
-            statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+          Effect.gen(function* () {
+            const exit = yield* textGeneration
+              .checkFactStanding({
+                cwd: process.cwd(),
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("codex"),
+                  "gpt-6-luna",
+                ),
+                statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+              })
+              .pipe(Effect.exit);
+            if (state === "tool activity")
+              expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+                "tool activity",
+              );
+            else
+              expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual({ verdicts: ["standing"] });
           }),
       );
-    }),
+    },
   );
 
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
