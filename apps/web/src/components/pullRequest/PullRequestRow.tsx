@@ -15,6 +15,7 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
@@ -122,9 +123,8 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
         checksState={entry.checksState}
         environmentId={entry.environmentId}
         reference={{
-          projectId: entry.projectId,
-          repository: entry.repository,
-          number: entry.number,
+          ...pullRequestPanelReference({ ...entry, host: entry.host.toLowerCase() }),
+          allowStale: false,
         }}
         label={<span className={cn("truncate", toneClassName)}>{prefix + label}</span>}
       />

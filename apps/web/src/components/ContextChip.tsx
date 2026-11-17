@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const contextChipVariants = cva(
-  "inline-flex max-w-full items-center gap-[0.2em] font-medium leading-[normal] text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-accent)] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm disabled:cursor-default",
+  "inline-flex max-w-full items-center gap-[0.2em] font-medium leading-[normal] text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-message-ink,var(--context-chip-accent))] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm disabled:cursor-default",
   {
     defaultVariants: { kind: "neutral" },
     variants: {
@@ -30,7 +30,9 @@ const contextChipVariants = cva(
         thread: "[--context-chip-accent:var(--info-foreground)]",
         environment: "[--context-chip-accent:var(--success-foreground)]",
         citation: "[--context-chip-accent:var(--info-foreground)]",
-        "doc-pdf": "[--context-chip-accent:var(--error-foreground)]",
+        // PDF red reads as the invalid state, so only the icon carries it.
+        "doc-pdf":
+          "[--context-chip-accent:var(--error-foreground)] [--context-chip-ink:var(--context-chip-message-ink,currentColor)] [--document-icon-stroke:var(--context-chip-message-ink,var(--context-chip-accent))]",
         "doc-word": "[--context-chip-accent:var(--info-foreground)]",
         "doc-spreadsheet": "[--context-chip-accent:var(--success-foreground)]",
         "doc-slides": "[--context-chip-accent:var(--warning-foreground)]",
@@ -42,7 +44,8 @@ const contextChipVariants = cva(
       },
       state: {
         unresolved: "data-[state=unresolved]:[--context-chip-accent:currentColor]",
-        invalid: "data-[state=invalid]:[--context-chip-accent:var(--error-foreground)]",
+        invalid:
+          "data-[state=invalid]:[--context-chip-accent:var(--error-foreground)] data-[state=invalid]:[--context-chip-ink:var(--context-chip-message-ink,var(--context-chip-accent))]",
       },
     },
   },

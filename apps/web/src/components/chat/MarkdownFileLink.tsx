@@ -1,3 +1,4 @@
+import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
@@ -44,6 +45,7 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  resolveDragPath: () => Promise<string>;
   resolvePanelPath: (panelPath: string) => string | Promise<string | null>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
@@ -77,7 +79,9 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   onReveal,
   revealLabel,
   resolveCopyPaths,
+  resolveDragPath,
 }: MarkdownFileLinkProps) {
+  const nativeDrag = useNativeFileDrag(environmentId, resolveDragPath);
   const handleOpenInEditor = () => {
     if (!onOpen) {
       return;
@@ -325,7 +329,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
-  const layoutDragThreadRef = threadRef && panelPath && !useBrowserPrimaryAction ? threadRef : null;
+  const layoutDragThreadRef =
+    threadRef && panelPath && !useBrowserPrimaryAction && !nativeDrag.draggable ? threadRef : null;
 
   return (
     <Tooltip>
@@ -333,6 +338,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         render={
           hasPrimaryAction ? (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
               render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
@@ -379,6 +385,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             </ContextChip>
           ) : (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
               render={<button type="button" />}
@@ -436,6 +443,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
     previous.resolveCopyPaths === next.resolveCopyPaths &&
+    previous.resolveDragPath === next.resolveDragPath &&
     previous.revealLabel === next.revealLabel
   );
 }

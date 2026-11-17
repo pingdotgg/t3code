@@ -95,6 +95,8 @@ function PopoverPopup({
           className={cn(
             "kbd-in-popover relative flex w-(--popup-width,auto) origin-(--transform-origin) rounded-card text-popover-foreground outline-none transition-[width,scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
             variant !== "panel" && !tooltipStyle && "surface-popover",
+            // Without it, Chromium re-snaps text after the scale-in at fractional zoom, so hovered rows jump a pixel.
+            "will-change-[scale]",
             // Electron drag hit-testing ignores z-index; popups over a drag region would swallow hover.
             "[-webkit-app-region:no-drag]",
             tooltipStyle && "surface-tooltip kbd-in-popover w-fit rounded-item text-meta",

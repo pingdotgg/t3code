@@ -1,3 +1,5 @@
+import { useNativeFileDrag } from "../../useNativeFileDrag";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
@@ -69,11 +71,15 @@ function UserMessageMentionChip(props: {
   copyMarkdown: string;
 }) {
   const ctx = use(TimelineRowCtx);
+  const nativeDrag = useNativeFileDrag(ctx.activeThreadEnvironmentId, () =>
+    resolvePathLinkTarget(props.record.path, ctx.workspaceRoot ?? ""),
+  );
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <ContextChip
+            {...nativeDrag}
             kind={documentChipKindForFileName(props.record.path) ?? "mention"}
             render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}
@@ -83,7 +89,7 @@ function UserMessageMentionChip(props: {
                 useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
             }}
             onPointerDown={(event) => {
-              if (!ctx.threadRef) return;
+              if (!ctx.threadRef || nativeDrag.draggable) return;
               beginLayoutContentDrag(event, {
                 kind: "surface",
                 threadRef: ctx.threadRef,
