@@ -2292,9 +2292,9 @@ it.effect("recall skips facts the check set aside, which search still finds", ()
     const sql = yield* SqlClient.SqlClient;
     const projectId = ProjectId.make("recall-set-aside");
     yield* createProject(projectId);
-    const [standing, setAside, unchecked] = ["standing", "set-aside", "unchecked"].map((id) =>
-      ProjectFactId.make(id),
-    );
+    const standing = ProjectFactId.make("standing");
+    const setAside = ProjectFactId.make("set-aside");
+    const unchecked = ProjectFactId.make("unchecked");
     for (const factId of [standing, setAside, unchecked])
       yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
     for (const [factId, verdict] of [

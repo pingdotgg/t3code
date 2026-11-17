@@ -375,6 +375,7 @@ function createTextGeneration(
     generateKnowledgeCandidates: (input) => implementation.generateKnowledgeCandidates(input),
     generateConversationSummary: (input) => implementation.generateConversationSummary(input),
     generateModelEvaluation: (input) => implementation.generateModelEvaluation(input),
+    checkFactStanding: (input) => implementation.checkFactStanding(input),
     generateTranscriptionPostProcessing: (input) =>
       implementation.generateTranscriptionPostProcessing(input),
   };
