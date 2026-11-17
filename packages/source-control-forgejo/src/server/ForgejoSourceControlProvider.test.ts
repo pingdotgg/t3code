@@ -2270,6 +2270,66 @@ it.effect(
     }),
 );
 
+it.effect.each([
+  { remoteUrl: "", status: "authenticated", probedHosts: ["https://old.test", "https://new.test"] },
+  {
+    remoteUrl: "https://old.test/maria/project.git",
+    status: "unauthenticated",
+    probedHosts: ["https://old.test"],
+  },
+] as const)(
+  "tries other saved fj logins only when no remote picks one (remote $remoteUrl)",
+  ({ remoteUrl, status, probedHosts }) => {
+    const hosts: Array<string> = [];
+    return Effect.gen(function* () {
+      const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+      assert.strictEqual(spec.type, "managed-cli");
+      if (spec.type !== "managed-cli") return;
+      const result = yield* spec.probe("/repo");
+      assert.strictEqual(result.executable, "fj");
+      assert.strictEqual(result.auth.status, status);
+      if (status === "authenticated") {
+        assert.deepStrictEqual(result.auth.account, Option.some("maria"));
+        assert.deepStrictEqual(result.auth.host, Option.some("new.test"));
+      }
+      assert.deepStrictEqual(hosts, [...probedHosts]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            getAccount: (input) => {
+              assert.strictEqual(input.baseUrl, "https://new.test");
+              return Effect.succeed("maria");
+            },
+            listLogins: () =>
+              Effect.succeed([
+                { name: "old.test", url: "https://old.test", user: "", default: "true" },
+                { name: "new.test", url: "https://new.test", user: "", default: "false" },
+              ]),
+          }),
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                if (input.command === "git") return Effect.succeed(processOutput(remoteUrl));
+                assert.strictEqual(input.command, "fj");
+                if (input.args[0] === "version") return Effect.succeed(processOutput("fj 0.10.0"));
+                const host = input.args[1] ?? "";
+                hosts.push(host);
+                return Effect.succeed(
+                  processOutput("", {
+                    exitCode: ChildProcessSpawner.ExitCode(host === "https://new.test" ? 0 : 1),
+                  }),
+                );
+              },
+            },
+          }),
+        ),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+    );
+  },
+);
+
 it.effect("explains a slow fj instead of advising an install when tea is absent", () =>
   Effect.gen(function* () {
     const spec = yield* ForgejoSourceControlProvider.makeDiscovery;

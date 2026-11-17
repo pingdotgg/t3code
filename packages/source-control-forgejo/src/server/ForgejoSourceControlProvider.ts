@@ -95,12 +95,14 @@ export const makeDiscovery = Effect.gen(function* () {
       const logins = Result.isSuccess(credentials) ? credentials.success : [];
       const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
       const matchingLogin = remote && ForgejoCli.matchForgejoLogin(logins, remote);
-      const preferredLogin = matchingLogin || logins.find((entry) => entry.default === "true");
-      const loginCandidates = preferredLogin
-        ? matchingLogin
-          ? [matchingLogin]
-          : [preferredLogin, ...logins.filter((entry) => entry !== preferredLogin)]
-        : logins;
+      const defaultLogin = logins.find((entry) => entry.default === "true") ?? logins[0];
+      // A login matching the remote is the only one that can serve it; otherwise any saved
+      // login can, so a rejected default falls through to the next.
+      const candidates = matchingLogin
+        ? [matchingLogin]
+        : defaultLogin
+          ? [defaultLogin, ...logins.filter((entry) => entry !== defaultLogin)]
+          : [undefined];
       const homeDirectory = yield* HostProcess.HomeDirectory;
       const probeLogin = (login: (typeof logins)[number] | undefined) =>
         probeSourceControlProvider({
@@ -138,17 +140,20 @@ export const makeDiscovery = Effect.gen(function* () {
                       }),
           },
         });
-      const probes = [];
-      for (const candidate of loginCandidates.length > 0 ? loginCandidates : [undefined]) {
+      const authRank = { authenticated: 2, unknown: 1, unauthenticated: 0 } as const;
+      let login = candidates[0];
+      let fj = yield* probeLogin(login);
+      for (const candidate of candidates.slice(1)) {
+        if (fj.status === "missing" || fj.auth.status === "authenticated") break;
         const probe = yield* probeLogin(candidate);
-        probes.push(probe);
-        if (probe.status === "missing" || probe.auth.status === "authenticated") break;
+        if (
+          probe.status === "available" &&
+          authRank[probe.auth.status] > authRank[fj.auth.status]
+        ) {
+          login = candidate;
+          fj = probe;
+        }
       }
-      const authenticatedIndex = probes.findIndex((probe) => probe.auth.status === "authenticated");
-      const unknownIndex = probes.findIndex((probe) => probe.auth.status === "unknown");
-      const selectedIndex = authenticatedIndex >= 0 ? authenticatedIndex : unknownIndex;
-      const login = selectedIndex >= 0 ? loginCandidates[selectedIndex] : loginCandidates[0];
-      const fj = probes[selectedIndex >= 0 ? selectedIndex : 0]!;
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
         if (login && fj.auth.status === "authenticated" && cli.getAccount) {
           const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
