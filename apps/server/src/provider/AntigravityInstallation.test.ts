@@ -390,40 +390,53 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
-  it.effect("retries a release check interrupted by a provider refresh", () =>
-    Effect.gen(function* () {
-      const manifestEntered = yield* Deferred.make<void>();
-      const releaseManifest = yield* Deferred.make<void>();
-      const manifestRequests = yield* Ref.make(0);
-      const beforeManifest = Ref.updateAndGet(manifestRequests, (count) => count + 1).pipe(
-        Effect.flatMap((count) =>
-          count === 1
-            ? Deferred.succeed(manifestEntered, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseManifest)),
-              )
-            : Effect.void,
-        ),
-      );
-      const { installation, requests } = yield* makeHarness({
-        native: true,
-        archive: Buffer.from(serverContents),
-        platform: "win32",
-        previous: true,
-        previousVersion: "1.5.6",
-        beforeManifest,
-      });
-      const firstCheck = yield* installation.checkForUpdate.pipe(Effect.forkScoped);
-      yield* Deferred.await(manifestEntered);
-      yield* Fiber.interrupt(firstCheck);
+  it.effect.each(["platform probe", "manifest request", "compatibility check"] as const)(
+    "retries a release check interrupted during %s",
+    (stage) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const manifestEntered = yield* Deferred.make<void>();
+        const releaseManifest = yield* Deferred.make<void>();
+        const manifestRequests = yield* Ref.make(0);
+        const beforeManifest = Ref.updateAndGet(manifestRequests, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Deferred.succeed(manifestEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseManifest)),
+                )
+              : Effect.void,
+          ),
+        );
+        const { installation, requests } = yield* makeHarness({
+          native: true,
+          archive: Buffer.from(serverContents),
+          platform: stage === "platform probe" ? "linux" : "win32",
+          beforeManifest: stage === "manifest request" ? beforeManifest : Effect.void,
+          manifest: (stage === "compatibility check" ? beforeManifest : Effect.void).pipe(
+            Effect.as(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          ),
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            exists: (target) =>
+              target.startsWith("/lib/libc.musl")
+                ? beforeManifest.pipe(Effect.as(false))
+                : fs.exists(target),
+          }),
+        });
+        const firstCheck = yield* installation.checkForUpdate.pipe(Effect.forkScoped);
+        yield* Deferred.await(manifestEntered);
+        yield* Fiber.interrupt(firstCheck);
 
-      yield* installation.checkForUpdate;
+        yield* installation.checkForUpdate;
 
-      expect(requests.filter((url) => url.includes("/manifests/"))).toHaveLength(2);
-      expect(yield* installation.state).toMatchObject({
-        version: "1.5.7",
-        installedVersion: "1.5.6",
-      });
-    }),
+        expect(requests.filter((url) => url.includes("/manifests/"))).toHaveLength(
+          stage === "platform probe" ? 1 : 2,
+        );
+        expect(yield* installation.state).toMatchObject({
+          version: "1.5.7",
+          installedVersion: null,
+        });
+      }),
   );
 
   it.effect("keeps withdrawn native releases from activating or launching", () =>

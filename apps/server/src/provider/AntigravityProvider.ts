@@ -359,6 +359,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       }),
     );
   const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const enrich = Effect.fn("AntigravityProvider.enrich")(function* (
+    candidate: ServerProvider,
+    versionSettings: { readonly enableProviderUpdateChecks: boolean },
+  ) {
+    return yield* maintenanceCapabilities.pipe(
+      Effect.flatMap((capabilities) =>
+        enrichProviderSnapshotWithVersionAdvisory(candidate, capabilities, {
+          enableProviderUpdateChecks: versionSettings.enableProviderUpdateChecks,
+        }),
+      ),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+    );
+  });
+  const readSnapshot = Effect.fn("AntigravityProvider.readSnapshot")(function* () {
+    const versionSettings = yield* snapshotSettings.getSettings.pipe(Effect.orDie);
+    return yield* getSnapshot.pipe(Effect.flatMap((snapshot) => enrich(snapshot, versionSettings)));
+  });
   const enrichSnapshot = Effect.fn("AntigravityProvider.enrichSnapshot")(function* ({
     settings: versionSettings,
     snapshot,
@@ -368,23 +386,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     readonly snapshot: ServerProvider;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) {
-    const enrich = (candidate: ServerProvider) =>
-      maintenanceCapabilities.pipe(
-        Effect.flatMap((capabilities) =>
-          enrichProviderSnapshotWithVersionAdvisory(candidate, capabilities, {
-            enableProviderUpdateChecks: versionSettings.enableProviderUpdateChecks,
-          }),
-        ),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-      );
     const changes = yield* Stream.toPull(SubscriptionRef.changes(metadata));
-    yield* enrich(snapshot).pipe(Effect.flatMap(publishSnapshot));
+    yield* enrich(snapshot, versionSettings).pipe(Effect.flatMap(publishSnapshot));
     yield* Stream.fromPull(Effect.succeed(changes)).pipe(
       Stream.runForEach((state) =>
-        options
-          .stampIdentity(state.draft)
-          .pipe(Effect.flatMap(enrich), Effect.flatMap(publishSnapshot)),
+        options.stampIdentity(state.draft).pipe(
+          Effect.flatMap((snapshot) => enrich(snapshot, versionSettings)),
+          Effect.flatMap(publishSnapshot),
+        ),
       ),
     );
   }, Effect.scoped);
@@ -550,7 +559,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : state,
       );
     }
-    const snapshot = yield* getSnapshot;
+    const snapshot = yield* readSnapshot();
     const workspace = snapshot.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
     const resolvedSkills = skills ?? workspace?.skills ?? discoveredSkills.get(cwd) ?? [];
     return workspace
@@ -559,7 +568,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: { ...managed, getSnapshot: readSnapshot() },
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
