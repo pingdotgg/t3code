@@ -88,12 +88,18 @@ export function createIssueEnvironmentAtoms<R, E>(
     { environmentId, input }: { readonly environmentId: EnvironmentId; readonly input: IssueRef },
     registry: AtomRegistry.AtomRegistry,
   ) => Effect.sync(() => registry.refresh(detail({ environmentId, input: detailRef(input) })));
+  const listing = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:list",
+    tag: WS_METHODS.issuesList,
+    staleTimeMs: 30_000,
+  });
   return {
-    list: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:list",
-      tag: WS_METHODS.issuesList,
-      staleTimeMs: 30_000,
-    }),
+    /** An issue must carry every label asked, so the same labels in any order are one listing. */
+    list: ({ environmentId, input }: Parameters<typeof listing>[0]) =>
+      listing({
+        environmentId,
+        input: input.labels === undefined ? input : { ...input, labels: [...input.labels].sort() },
+      }),
     /**
      * A continuation of the listing, run as a command rather than read as a query: a page is
      * asked for once and laid over the rows held, and a refresh of the first page forgets it.
