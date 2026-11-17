@@ -115,6 +115,19 @@ function requestMetadata(body: Uint8Array, encoding: string | undefined) {
   }
 }
 
+const grantDenied = () =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      type: "error",
+      error: {
+        type: "permission_error",
+        message:
+          "T3 inference access was denied. Check sharing and reconnect the route in Inference accounts.",
+      },
+    },
+    { status: 403, headers: { "cache-control": "no-store" } },
+  );
+
 const handler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const targetPath = inferenceTarget(request.method, request.url);
@@ -126,7 +139,7 @@ const handler = Effect.gen(function* () {
   if (targetPath.path === "/health") {
     const health = yield* host.health(key, targetPath.environmentId, targetPath.driver);
     return health === null
-      ? HttpServerResponse.empty({ status: 403 })
+      ? grantDenied()
       : HttpServerResponse.jsonUnsafe(health, { headers: { "cache-control": "no-store" } });
   }
   const canReplay = yield* host.hasFallback(key, targetPath.environmentId, targetPath.driver);
@@ -159,7 +172,7 @@ const handler = Effect.gen(function* () {
     model,
     targetPath.path === "/v1/models",
   );
-  if (candidates === null) return HttpServerResponse.empty({ status: 403 });
+  if (candidates === null) return grantDenied();
   if (!candidates.length) return HttpServerResponse.empty({ status: 503 });
   const eligible = model
     ? candidates.filter((candidate) => candidate.models.includes(model))
@@ -255,6 +268,9 @@ const handler = Effect.gen(function* () {
         model,
         status: result.status,
         ...(result.headers["retry-after"] ? { retryAfter: result.headers["retry-after"] } : {}),
+        ...(result.headers["retry-after-ms"]
+          ? { retryAfterMs: result.headers["retry-after-ms"] }
+          : {}),
       });
     if (targetPath.path === "/v1/models") {
       if (result.status >= 200 && result.status < 300) {
@@ -300,6 +316,9 @@ const handler = Effect.gen(function* () {
         ? { "x-codex-turn-state": result.headers["x-codex-turn-state"] }
         : {}),
       ...(result.headers["retry-after"] ? { "retry-after": result.headers["retry-after"] } : {}),
+      ...(result.headers["retry-after-ms"]
+        ? { "retry-after-ms": result.headers["retry-after-ms"] }
+        : {}),
     },
   });
 }).pipe(

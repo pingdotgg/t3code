@@ -157,6 +157,7 @@ export function createInferenceProxyAtoms<R, E>(
             const grant = yield* requestGuarded(WS_METHODS.inferenceGrant, {
               environmentId: input.consumer.environmentId,
               label: input.consumer.label,
+              ...(input.fallback ? { automatic: true } : {}),
             });
             const supervisor = yield* EnvironmentSupervisor;
             return { grant, prepared: yield* SubscriptionRef.get(supervisor.prepared) };

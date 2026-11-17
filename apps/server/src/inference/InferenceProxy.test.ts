@@ -7,10 +7,12 @@ import {
   EnvironmentId,
   ProviderInstanceId,
   ProviderDriverKind,
+  isInferenceProviderConfig,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as Fiber from "effect/Fiber";
@@ -255,10 +257,12 @@ it.effect(
               request,
               Response.json(
                 request.url.endsWith("/health")
-                  ? {
-                      availableDrivers: poolUnavailable ? [] : ["codex", "opencode", "pi"],
-                      models: catalog.map((model) => model.id),
-                    }
+                  ? new URL(request.url).pathname === "/health"
+                    ? { status: "ok" }
+                    : {
+                        availableDrivers: poolUnavailable ? [] : ["codex", "opencode", "pi"],
+                        models: catalog.map((model) => model.id),
+                      }
                   : request.url.endsWith("auth-files")
                     ? {
                         files: [
@@ -343,6 +347,38 @@ it.effect(
           Layer.fresh,
         );
         const settings = yield* ServerSettings.ServerSettingsService;
+        const legacyRoutes = [
+          {
+            driver: "codex" as const,
+            hostId,
+            baseUrl: "http://127.0.0.1:23456",
+            key: "legacy-local-key",
+          },
+          {
+            driver: "claudeAgent" as const,
+            hostId: EnvironmentId.make("offline-host"),
+            baseUrl: "http://192.168.1.44:12345/api/inference",
+            key: "legacy-lan-key",
+          },
+        ];
+        for (const route of legacyRoutes)
+          yield* settings.updateProviderInstance({
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make(route.driver),
+            instance: {
+              driver: ProviderDriverKind.make(route.driver),
+              enabled: false,
+              config: {
+                inferenceEnabled: true,
+                inferenceHostId: route.hostId,
+                inferenceHostLabel: "",
+                inferenceBaseUrl: route.baseUrl,
+                inferenceKey: route.key,
+                inferenceModels: [route.driver === "codex" ? "gpt-legacy" : "claude-legacy"],
+                inferenceHomePath: home,
+              },
+            },
+          });
         const cliHome = home + "/.codex";
         const claudeHome = home + "/.claude";
         const claudeAuthFile = claudeHome + "/.credentials.json";
@@ -421,6 +457,36 @@ it.effect(
           Effect.gen(function* () {
             const proxy = yield* InferenceProxy.InferenceProxy;
             expect((yield* proxy.status).enabled).toBe(false);
+            yield* proxy.bindRoutes(45678);
+            expect(remoteCatalogKeys).toEqual([]);
+            for (const route of legacyRoutes) {
+              const current = (yield* settings.getSettings).providerInstances[
+                ProviderInstanceId.make(route.driver)
+              ];
+              expect(current?.config).toMatchObject({
+                inferenceBaseUrl: `http://127.0.0.1:45678/api/inference/linked/${route.driver}/${route.hostId}`,
+                inferenceKey: route.key,
+              });
+            }
+            const migrated = yield* state.get("inference-proxy-state");
+            expect(Option.isSome(migrated)).toBe(true);
+            if (Option.isSome(migrated)) {
+              const saved = JSON.parse(new TextDecoder().decode(migrated.value)) as {
+                routePools: { driver: string; primary: { baseUrl: string; key: string } }[];
+              };
+              for (const route of legacyRoutes)
+                expect(
+                  saved.routePools.find((pool) => pool.driver === route.driver)?.primary,
+                ).toMatchObject({
+                  baseUrl: route.baseUrl,
+                  key: route.key,
+                });
+            }
+            for (const route of legacyRoutes)
+              yield* proxy.manage({
+                operation: "removeRoute",
+                instanceId: ProviderInstanceId.make(route.driver),
+              });
             const startSharing = proxy.manage({
               operation: "configure",
               enabled: true,
@@ -823,7 +889,7 @@ it.effect(
               instance: native,
             });
             yield* proxy.connect(connect);
-            const configured = (yield* settings.getSettings).providerInstances[
+            let configured = (yield* settings.getSettings).providerInstances[
               ProviderInstanceId.make("codex")
             ];
             expect(configured).toMatchObject({
@@ -838,17 +904,36 @@ it.effect(
                 ],
                 inferenceHostLabel: "",
                 inferenceEnabled: true,
+                inferenceBaseUrl: "http://127.0.0.1:12345/api/inference/linked/codex/host",
               },
             });
             expect((yield* proxy.status).routes).toEqual([{ instanceId: "codex", label: "Codex" }]);
             expect(activeCodexConfig).toMatchObject({
               setupMode: "inference",
               homePath: expect.stringContaining("/providers/inference/codex"),
+              inferenceBaseUrl: "http://127.0.0.1:12345/api/inference/linked/codex/host",
+            });
+            if (!isInferenceProviderConfig(configured?.config))
+              throw new Error("Expected a local inference route");
+            expect(yield* proxy.health(local.key, hostId, "codex")).toMatchObject({
+              availableDrivers: ["codex"],
+              models: expect.arrayContaining(["codex-auto-review"]),
+            });
+            expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
             });
             yield* proxy.bindRoutes(45678);
-            expect(
-              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
-            ).toEqual(configured);
+            configured = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ];
+            expect(configured?.config).toMatchObject({
+              inferenceBaseUrl: "http://127.0.0.1:45678/api/inference/linked/codex/host",
+            });
+            if (!isInferenceProviderConfig(configured?.config))
+              throw new Error("Expected a rebound inference route");
+            expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
+            });
             yield* settings.updateProviderInstance({
               operation: "upsert",
               instanceId: ProviderInstanceId.make("codex"),
@@ -894,7 +979,20 @@ it.effect(
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
-            ).toMatchObject({ inferenceBaseUrl: expect.stringContaining("192.168.1.12") });
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect((yield* proxy.authorize(issued.key, hostId, "codex"))?.baseUrl).toContain(
+              "192.168.1.12",
+            );
+            const directConfig = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ]?.config;
+            if (!isInferenceProviderConfig(directConfig))
+              throw new Error("Expected a direct inference route");
+            expect(yield* proxy.routeHealth(directConfig, issued.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
+            });
             tailnetCatalogDown = false;
             connectionDown = true;
             tailnetCatalogDown = true;
@@ -906,7 +1004,12 @@ it.effect(
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
-            ).toMatchObject({ inferenceBaseUrl: expect.stringContaining("192.168.1.12") });
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect((yield* proxy.authorize(issued.key, hostId, "codex"))?.baseUrl).toContain(
+              "192.168.1.12",
+            );
             connectionDown = false;
             tailnetCatalogDown = false;
             const linkedGrant = { ...issued, baseUrl: "t3-environment:host", alternates: [] };
@@ -1062,6 +1165,87 @@ it.effect(
             expect(
               yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
             ).toHaveLength(2);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "1200000",
+              retryAfter: "60",
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            const date = DateTime.toDateUtc(
+              DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + 30 * 60_000),
+            ).toUTCString();
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: " ",
+              retryAfter: date,
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "-100",
+              retryAfter: "1200",
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "-100",
+              retryAfter: "-1",
+            });
+            yield* TestClock.adjust("29 seconds");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* TestClock.adjust("1 second");
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
             peerId = EnvironmentId.make("other-host");
             yield* proxy.connect({
               ...connect,
@@ -1133,7 +1317,12 @@ it.effect(
             yield* proxy.manage({ operation: "revoke", environmentId: peer.environmentId });
             expect(yield* proxy.authorize(grant.key)).toBeNull();
             expect(yield* proxy.health(grant.key)).toBeNull();
-            expect((yield* proxy.grant(peer)).key).not.toBe(grant.key);
+            expect(
+              yield* proxy.grant({ ...peer, automatic: true }).pipe(Effect.result),
+            ).toMatchObject({ _tag: "Failure" });
+            const restored = yield* proxy.grant(peer);
+            expect(restored.key).not.toBe(grant.key);
+            expect((yield* proxy.grant({ ...peer, automatic: true })).key).toBe(restored.key);
             expectRecovery = true;
             yield* Deferred.succeed(currentExit!, undefined);
             yield* TestClock.adjust("1 second");

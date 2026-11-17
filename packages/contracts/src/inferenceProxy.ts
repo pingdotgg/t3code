@@ -65,6 +65,12 @@ export const inferenceHarness = (driver: string): InferenceHarness | undefined =
 export const InferenceConsumer = Schema.Struct({ environmentId: EnvironmentId, label: Label });
 export type InferenceConsumer = typeof InferenceConsumer.Type;
 
+export const InferenceGrantInput = Schema.Struct({
+  ...InferenceConsumer.fields,
+  automatic: Schema.optionalKey(Schema.Boolean),
+});
+export type InferenceGrantInput = typeof InferenceGrantInput.Type;
+
 const Strategy = Schema.Literals(["round-robin", "fill-first"]);
 export const InferenceRouting = Schema.Struct({
   strategy: Strategy,

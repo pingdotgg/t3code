@@ -637,6 +637,7 @@ describe("OpenCodeAdapterV2", () => {
 
   it.effect("classifies APIError 429 as a usage limit", () =>
     Effect.gen(function* () {
+      const observedAt = yield* DateTime.now;
       const nativeEvents = asyncEventStream();
       const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -664,6 +665,7 @@ describe("OpenCodeAdapterV2", () => {
                 message: "Provider rejected request",
                 statusCode: 429,
                 isRetryable: true,
+                responseHeaders: { "Retry-After": "2" },
               },
             },
           },
@@ -674,6 +676,10 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
+      assert.equal(
+        terminal?.failure?.resetAt,
+        DateTime.formatIso(DateTime.add(observedAt, { seconds: 2 })),
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 

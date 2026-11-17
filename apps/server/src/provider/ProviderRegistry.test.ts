@@ -1119,6 +1119,9 @@ it.layer(
         Effect.gen(function* () {
           let proxyStatus = 503;
           let poolAvailable = true;
+          const mixedCatalog = driver === "pi" || driver === "opencode";
+          const routedSlug = mixedCatalog ? "t3proxy/claude-fixture" : "claude-fixture";
+          const offlineSlug = mixedCatalog ? "t3proxy/claude-offline" : "claude-offline";
           const instanceId = ProviderInstanceId.make(driver);
           const driverKind = ProviderDriverKind.make(driver);
           const provider = decodeServerProvider({
@@ -1131,9 +1134,34 @@ it.layer(
             auth: { status: "authenticated" },
             checkedAt: "2026-06-10T00:00:00.000Z",
             models: [
-              { slug: "claude-fixture", name: "Fixture", capabilities: null, isCustom: false },
-              { slug: "claude-offline", name: "Offline", capabilities: null, isCustom: false },
+              { slug: routedSlug, name: "Fixture", capabilities: null, isCustom: false },
+              { slug: offlineSlug, name: "Offline", capabilities: null, isCustom: false },
+              ...(mixedCatalog
+                ? [{ slug: "morph/native", name: "Native", capabilities: null, isCustom: false }]
+                : []),
             ],
+            ...(mixedCatalog
+              ? {
+                  workspaceSnapshots: [
+                    {
+                      cwd: "/project",
+                      checkedAt: "2026-06-10T00:00:00.000Z",
+                      slashCommands: [],
+                      skills: [],
+                      models: [
+                        { slug: routedSlug, name: "Fixture", capabilities: null, isCustom: false },
+                        { slug: offlineSlug, name: "Offline", capabilities: null, isCustom: false },
+                        {
+                          slug: "morph/project",
+                          name: "Project",
+                          capabilities: null,
+                          isCustom: false,
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
             supportsTextGeneration: true,
             textGenerationOperations: ["generateReviewGuide"],
           });
@@ -1171,17 +1199,63 @@ it.layer(
             for (const status of [503, 429, 200]) {
               proxyStatus = status;
               const providers = yield* registry.refresh();
-              expect(providers[0]?.availability).toBe(status === 200 ? undefined : "unavailable");
-              expect(providers[0]?.status).toBe(status === 200 ? "ready" : "error");
-              if (status === 200)
-                expect(providers[0]?.models.map((model) => model.slug)).toEqual(["claude-fixture"]);
+              const usable = status === 200 || mixedCatalog;
+              expect(providers[0]?.availability).toBe(usable ? undefined : "unavailable");
+              expect(providers[0]?.status).toBe(usable ? "ready" : "error");
+              expect(providers[0]?.models.map((model) => model.slug)).toEqual(
+                status === 200
+                  ? [routedSlug, ...(mixedCatalog ? ["morph/native"] : [])]
+                  : mixedCatalog
+                    ? ["morph/native"]
+                    : [routedSlug, offlineSlug],
+              );
+              if (mixedCatalog) {
+                expect(
+                  providers[0]?.workspaceSnapshots?.[0]?.models?.map((model) => model.slug),
+                ).toEqual(status === 200 ? [routedSlug, "morph/project"] : ["morph/project"]);
+                const merged = ProviderRegistry.mergeProviderSnapshot(
+                  provider,
+                  (({ workspaceSnapshots: _workspaceSnapshots, ...rest }) => rest)(providers[0]!),
+                  true,
+                );
+                expect(merged.workspaceSnapshots?.[0]?.models?.map((model) => model.slug)).toEqual(
+                  status === 200 ? [routedSlug, "morph/project"] : ["morph/project"],
+                );
+                const rescanned = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+                  providers[0]!,
+                  "/project",
+                  {
+                    ...providers[0]!,
+                    workspaceModels: [
+                      { slug: routedSlug, name: "Fixture", capabilities: null, isCustom: false },
+                      {
+                        slug: "morph/project",
+                        name: "Project",
+                        capabilities: null,
+                        isCustom: false,
+                      },
+                    ],
+                  },
+                  true,
+                );
+                expect(
+                  rescanned.workspaceSnapshots?.[0]?.models?.map((model) => model.slug),
+                ).toEqual(status === 200 ? [routedSlug, "morph/project"] : ["morph/project"]);
+              }
             }
             poolAvailable = false;
             yield* TestClock.adjust("16 seconds");
-            expect((yield* registry.getProviders)[0]?.availability).toBe("unavailable");
+            expect((yield* registry.getProviders)[0]?.availability).toBe(
+              mixedCatalog ? undefined : "unavailable",
+            );
             poolAvailable = true;
             yield* TestClock.adjust("16 seconds");
             expect((yield* registry.getProviders)[0]?.availability).toBeUndefined();
+            if (mixedCatalog)
+              expect((yield* registry.getProviders)[0]?.models.map((model) => model.slug)).toEqual([
+                routedSlug,
+                "morph/native",
+              ]);
           }).pipe(
             Effect.provide(
               ProviderRegistry.layer.pipe(

@@ -94,6 +94,21 @@ export const OPENCODE_NATIVE_CHILD_INSTRUCTIONS =
   "Use `delegate_task` for child work using project memory, conversation summaries, or code graph; native OpenCode subagents do not inherit T3's session instructions.";
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
+const retryAfterResetAt = (
+  headers: Readonly<Record<string, string>> | undefined,
+  observedAt: DateTime.Utc,
+): string | null => {
+  const value = Object.entries(headers ?? {})
+    .find(([name]) => name.toLowerCase() === "retry-after")?.[1]
+    ?.trim();
+  if (!value) return null;
+  const nowMs = DateTime.toEpochMillis(observedAt);
+  const resetMs = /^\d+$/.test(value) ? nowMs + Number(value) * 1_000 : Date.parse(value);
+  if (!Number.isSafeInteger(resetMs) || resetMs <= nowMs) return null;
+  const reset = DateTime.make(resetMs);
+  return Option.isSome(reset) ? DateTime.formatIso(reset.value) : null;
+};
+
 const makeOpenCodeMessageId = Effect.fnUntraced(function* (
   clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
 ) {
@@ -3210,6 +3225,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 message: openCodeErrorMessage(event),
                 code: error?.name ?? null,
                 class: usageLimit ? "usage_limit" : "provider_error",
+                ...(usageLimit
+                  ? {
+                      resetAt: retryAfterResetAt(
+                        error?.name === "APIError" ? error.data.responseHeaders : undefined,
+                        yield* DateTime.now,
+                      ),
+                    }
+                  : {}),
               });
               if (
                 !isMessageAbortedError(event) &&

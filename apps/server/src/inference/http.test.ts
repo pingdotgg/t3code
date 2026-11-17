@@ -32,7 +32,10 @@ it("streams an authorized request with a host key, then denies the revoked consu
       if (throttled)
         return HttpClientResponse.fromWeb(
           request,
-          new Response("quota", { status: 429, headers: { "retry-after": "60" } }),
+          new Response("quota", {
+            status: 429,
+            headers: { "retry-after": "60", "retry-after-ms": "1200000" },
+          }),
         );
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -129,6 +132,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
     const limited = await handler(request("v1/messages?beta=true", "consumer"));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
+    expect(limited.headers.get("retry-after-ms")).toBe("1200000");
     expect(await limited.text()).toBe("quota");
     const health = await handler(
       new Request("http://t3.test/api/inference/linked/codex/host/health", {
@@ -140,7 +144,11 @@ it("streams an authorized request with a host key, then denies the revoked consu
     expect(await health.json()).toEqual({ availableDrivers: ["codex"], models: ["gpt-fixture"] });
     expect(linkedHost).toBe("host");
     active = false;
-    expect((await handler(request("v1/messages", "consumer"))).status).toBe(403);
+    const denied = await handler(request("v1/messages", "consumer"));
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({
+      error: { type: "permission_error", message: expect.stringContaining("T3 inference") },
+    });
     expect(
       (
         await handler(
@@ -158,6 +166,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
 
 it("tries another authorized host for the same model after an upstream auth failure", async () => {
   const calls: string[] = [];
+  let recordedRetry: unknown;
   let primaryStatus = 403;
   let backupStatus = 200;
   const client = HttpClient.make((request) =>
@@ -170,7 +179,11 @@ it("tries another authorized host for the same model after an upstream auth fail
         request.url.startsWith("http://primary.test") && primaryStatus !== 200
           ? new Response(null, { status: primaryStatus })
           : request.url.startsWith("http://backup.test") && backupStatus !== 200
-            ? new Response(null, { status: backupStatus })
+            ? new Response(null, {
+                status: backupStatus,
+                headers:
+                  backupStatus === 429 ? { "retry-after": "60", "retry-after-ms": "1200000" } : {},
+              })
             : request.url.endsWith("/v1/models")
               ? Response.json({
                   object: "list",
@@ -209,7 +222,10 @@ it("tries another authorized host for the same model after an upstream auth fail
               },
             ]),
           hasFallback: () => Effect.succeed(true),
-          recordRouteOutcome: () => Effect.void,
+          recordRouteOutcome: (input) =>
+            Effect.sync(() => {
+              if (input.status === 429) recordedRetry = input;
+            }),
         }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
@@ -274,6 +290,10 @@ it("tries another authorized host for the same model after an upstream auth fail
       "http://backup.test/v1/messages",
       "http://primary.test/v1/messages",
     ]);
+    expect(recordedRetry).toMatchObject({
+      retryAfter: "60",
+      retryAfterMs: "1200000",
+    });
     const rebound = await send();
     expect(rebound.status).toBe(200);
     expect(calls.slice(7)).toEqual(["http://primary.test/v1/messages"]);

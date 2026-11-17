@@ -156,6 +156,7 @@ describe("command permissions", () => {
         key: "scoped-inference-key",
       };
       let selected: InferenceRouteInput | undefined;
+      let automaticGrant: boolean | undefined;
       let selectedMethod: string | undefined;
       const host = {
         target,
@@ -172,7 +173,10 @@ describe("command permissions", () => {
         session: yield* SubscriptionRef.make(
           Option.some({
             client: {
-              [WS_METHODS.inferenceGrant]: () => Effect.succeed(issued),
+              [WS_METHODS.inferenceGrant]: (input: { automatic?: boolean }) => {
+                automaticGrant = input.automatic;
+                return Effect.succeed(issued);
+              },
             },
           } as unknown as RpcSession),
         ),
@@ -229,6 +233,7 @@ describe("command permissions", () => {
         }),
       );
       expect(result._tag).toBe("Success");
+      expect(automaticGrant).toBe(fallback || undefined);
       expect(selectedMethod).toBe(
         fallback ? WS_METHODS.inferenceRegisterFallback : WS_METHODS.inferenceConnect,
       );

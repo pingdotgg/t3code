@@ -667,6 +667,10 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
+const overloaded = (error: { readonly type: string; readonly message: string }) =>
+  /overload|capacity/i.test(error.type) ||
+  /\b(?:overloaded|overload|at capacity)\b/i.test(error.message);
+
 // OpenCode types an empty balance as provider.quota too, but it answers
 // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
 const isUsageLimit = (error: {
@@ -674,9 +678,19 @@ const isUsageLimit = (error: {
   readonly status?: number | undefined;
   readonly message: string;
 }) =>
-  (error.type === "provider.quota" && error.status !== 402) ||
-  error.type === "provider.rate-limit" ||
-  claudeUsageLimit(error.message) !== undefined;
+  error.status !== undefined && error.status >= 500 && overloaded(error)
+    ? false
+    : (error.type === "provider.quota" && error.status !== 402) ||
+      error.type === "provider.rate-limit" ||
+      (error.status === 429 && !overloaded(error)) ||
+      claudeUsageLimit(error.message) !== undefined;
+
+const retryResetAt = (created: number, retryAfterMs: number | undefined): string | null => {
+  if (retryAfterMs === undefined || !Number.isSafeInteger(retryAfterMs) || retryAfterMs <= 0)
+    return null;
+  const reset = DateTime.make(created + retryAfterMs);
+  return Option.isSome(reset) ? DateTime.formatIso(reset.value) : null;
+};
 
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
@@ -2952,13 +2966,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
+          const usageLimit = isUsageLimit(event.data.error);
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
-              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
+              class: usageLimit ? "usage_limit" : "provider_error",
+              resetAt: usageLimit
+                ? (claudeUsageLimit(message)?.resetAt ??
+                  retryResetAt(event.created, event.data.error.retryAfterMs))
+                : null,
             }),
           });
         }

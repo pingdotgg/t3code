@@ -8,6 +8,7 @@ import {
   INFERENCE_HARNESSES,
   inferenceHarness,
   InferenceConsumer,
+  type InferenceGrantInput,
   InferenceRouteHealth,
   InferenceDriver,
   type InferenceProviderConfig,
@@ -82,6 +83,7 @@ const Saved = Schema.Struct({
   port: Schema.Int,
   routing: Schema.optionalKey(InferenceRouting),
   release: Schema.optionalKey(Release),
+  revokedConsumers: Schema.optionalKey(Schema.Array(EnvironmentId)),
   grants: Schema.Array(Schema.Struct({ ...InferenceConsumer.fields, key: Schema.String })),
   routePools: Schema.optionalKey(
     Schema.Array(
@@ -1084,6 +1086,7 @@ const make = Effect.gen(function* () {
       yield* save({
         ...state,
         grants: state.grants.filter((g) => g.environmentId !== input.environmentId),
+        revokedConsumers: [...new Set([...(state.revokedConsumers ?? []), input.environmentId])],
       });
       return {};
     }
@@ -1186,7 +1189,7 @@ const make = Effect.gen(function* () {
   );
 
   const grant = Effect.fn("InferenceProxy.grant")(
-    function* (consumer: InferenceConsumer) {
+    function* ({ automatic, ...consumer }: InferenceGrantInput) {
       const state = yield* read;
       const runtime = yield* ensureWatched(state);
       const hostId = yield* environment.getEnvironmentId;
@@ -1195,12 +1198,19 @@ const make = Effect.gen(function* () {
         return { ...identity, baseUrl: runtime.baseUrl, key: runtime.key };
       if (sharingDenial) return yield* failure(sharingDenial);
       if (!state.sharing) return yield* failure("Enable sharing on the inference host first.");
+      if (automatic && state.revokedConsumers?.includes(consumer.environmentId))
+        return yield* failure(
+          "Sharing with this environment was revoked. Choose the host again to restore it.",
+        );
       const [baseUrl, ...alternates] = (yield* sharingUrls).slice(0, 33);
       const existing = state.grants.find((g) => g.environmentId === consumer.environmentId);
       const key = existing?.key ?? (yield* newKey);
       if (!existing || existing.label !== consumer.label)
         yield* save({
           ...state,
+          revokedConsumers: (state.revokedConsumers ?? []).filter(
+            (id) => id !== consumer.environmentId,
+          ),
           grants: [
             ...state.grants.filter((g) => g.environmentId !== consumer.environmentId),
             { ...consumer, key },
@@ -1215,16 +1225,66 @@ const make = Effect.gen(function* () {
   const bindRoutes = Effect.fn("InferenceProxy.bindRoutes")(
     function* (port: number) {
       const { providerInstances } = yield* settings.getSettings;
+      const state = yield* read;
+      const routePools = [...(state.routePools ?? [])];
+      const bindings: {
+        id: string;
+        driver: InferenceDriver;
+        hostId: EnvironmentId;
+        key: string;
+        baseUrl: string;
+      }[] = [];
+      let poolsChanged = false;
       for (const [id, instance] of Object.entries(providerInstances)) {
         if (!isInferenceProviderConfig(instance.config)) continue;
-        yield* settings.reviseProviderInstance(ProviderInstanceId.make(id), (current) => {
-          if (!current || !isInferenceProviderConfig(current.config))
-            return failure("The inference route changed.");
-          const url = /^http:\/\/127\.0\.0\.1:\d+\/api\/inference\/linked\//.test(
-            current.config.inferenceBaseUrl,
+        const driver = INFERENCE_DRIVERS.find(
+          (candidate) => ProviderDriverKind.make(candidate) === instance.driver,
+        );
+        if (!driver || id !== defaultInstanceIdForDriver(ProviderDriverKind.make(driver))) continue;
+        const config = instance.config;
+        if (typeof config.inferenceKey !== "string") continue;
+        bindings.push({
+          id,
+          driver,
+          hostId: config.inferenceHostId,
+          key: config.inferenceKey,
+          baseUrl: config.inferenceBaseUrl,
+        });
+        const index = routePools.findIndex((entry) => entry.driver === driver);
+        if (
+          index < 0 ||
+          routePools[index]!.primary.hostId !== config.inferenceHostId ||
+          routePools[index]!.primary.key !== config.inferenceKey
+        ) {
+          const pool = {
+            driver,
+            primary: {
+              hostId: config.inferenceHostId,
+              baseUrl: config.inferenceBaseUrl,
+              key: config.inferenceKey,
+              models: [...config.inferenceModels],
+              ...(config.inferenceConnection ? { connection: config.inferenceConnection } : {}),
+            },
+            alternates: [],
+          };
+          if (index < 0) routePools.push(pool);
+          else routePools[index] = pool;
+          poolsChanged = true;
+        }
+      }
+      if (poolsChanged) yield* save({ ...state, routePools });
+      for (const binding of bindings) {
+        const url = `http://127.0.0.1:${port}/api/inference/linked/${binding.driver}/${encodeURIComponent(binding.hostId)}`;
+        if (binding.baseUrl === url) continue;
+        yield* settings.reviseProviderInstance(ProviderInstanceId.make(binding.id), (current) => {
+          if (
+            !current ||
+            current.driver !== ProviderDriverKind.make(binding.driver) ||
+            !isInferenceProviderConfig(current.config) ||
+            current.config.inferenceHostId !== binding.hostId ||
+            current.config.inferenceKey !== binding.key
           )
-            ? `http://127.0.0.1:${port}/api/inference/linked/${current.driver}/${encodeURIComponent(current.config.inferenceHostId)}`
-            : current.config.inferenceBaseUrl;
+            return failure("The inference route changed.");
           return Effect.succeed({
             instance: { ...current, config: { ...current.config, inferenceBaseUrl: url } },
             result: undefined,
@@ -1263,7 +1323,8 @@ const make = Effect.gen(function* () {
     candidate: SavedRouteCandidate,
     ownId: EnvironmentId,
   ) {
-    if (candidate.hostId === ownId) return candidate.baseUrl;
+    if (candidate.hostId === ownId)
+      return (yield* mutex.withPermit(read.pipe(Effect.flatMap(ensureWatched)))).baseUrl;
     if (candidate.connection || !validateRouteUrl(candidate.baseUrl, false))
       return new URL("/api/inference", yield* peerAddress(candidate.hostId, candidate.connection))
         .href;
@@ -1389,6 +1450,7 @@ const make = Effect.gen(function* () {
     model: string;
     status: number;
     retryAfter?: string;
+    retryAfterMs?: string;
   }) {
     const key = `${input.driver}\0${input.hostId}\0${input.model}`;
     if (input.status >= 200 && input.status < 300) {
@@ -1397,13 +1459,26 @@ const make = Effect.gen(function* () {
     }
     if (![401, 403, 429, 502, 503].includes(input.status)) return;
     const now = yield* Clock.currentTimeMillis;
-    const seconds = Number(input.retryAfter);
-    const retryAt = Number.isFinite(seconds)
-      ? now + seconds * 1000
-      : Date.parse(input.retryAfter ?? "");
+    const numericDelay = (value: string | undefined, scale: number) => {
+      if (!value?.trim()) return undefined;
+      const amount = Number(value);
+      if (!Number.isFinite(amount) || amount < 0) return undefined;
+      const delay = amount * scale;
+      return Number.isSafeInteger(Math.ceil(delay)) ? Math.ceil(delay) : undefined;
+    };
+    const millis = numericDelay(input.retryAfterMs, 1);
+    const seconds = input.retryAfter?.trim() ? Number(input.retryAfter) : Number.NaN;
+    const standard = Number.isFinite(seconds)
+      ? numericDelay(input.retryAfter, 1000)
+      : input.retryAfter
+        ? Date.parse(input.retryAfter) - now
+        : undefined;
+    const retryDelay =
+      millis ??
+      (standard !== undefined && Number.isFinite(standard) && standard >= 0 ? standard : undefined);
     const duration =
-      input.status === 429 && Number.isFinite(retryAt)
-        ? Math.max(5_000, Math.min(600_000, retryAt - now))
+      input.status === 429 && retryDelay !== undefined
+        ? Math.max(5_000, Math.min(retryDelay, Number.MAX_SAFE_INTEGER - now))
         : input.status === 502 || input.status === 503
           ? 5_000
           : 30_000;
@@ -1489,8 +1564,7 @@ const make = Effect.gen(function* () {
             (entry) =>
               (driver === undefined || entry.driver === driver) &&
               entry.primary.hostId === hostId &&
-              entry.primary.key === key &&
-              entry.alternates.length > 0,
+              entry.primary.key === key,
           )
         : undefined;
       if (pool) {
@@ -1540,7 +1614,7 @@ const make = Effect.gen(function* () {
             const state = yield* read;
             if (!state.enabled) return yield* failure("Inference hosting is disabled.");
             const runtime = yield* ensureWatched(state);
-            if (runtime.baseUrl !== route.inferenceBaseUrl || runtime.key !== key)
+            if (runtime.key !== key)
               return yield* failure(
                 "Inference route credentials have changed. Connect the route again.",
               );
@@ -1548,8 +1622,9 @@ const make = Effect.gen(function* () {
           }),
         );
       }
-      const address =
-        route.inferenceConnection || route.inferenceBaseUrl.includes("/api/inference/linked/")
+      const address = pool
+        ? yield* candidateAddress(pool.primary, ownId)
+        : route.inferenceConnection || route.inferenceBaseUrl.includes("/api/inference/linked/")
           ? new URL(
               "/api/inference",
               yield* peerAddress(route.inferenceHostId, route.inferenceConnection),
@@ -1623,7 +1698,6 @@ const make = Effect.gen(function* () {
       const port = Option.isSome(active) ? active.value.port : config.port;
       const loopbackUrl = (host: EnvironmentId) =>
         `http://127.0.0.1:${port}/api/inference/linked/${driver}/${encodeURIComponent(host)}`;
-      const routeUrl = linked ? loopbackUrl(grant.hostId) : baseUrl;
       const candidate: SavedRouteCandidate = {
         hostId: grant.hostId,
         baseUrl,
@@ -1745,7 +1819,7 @@ const make = Effect.gen(function* () {
                   inferenceEnabled: true,
                   inferenceHostId: grant.hostId,
                   inferenceHostLabel: local ? "" : hostLabel,
-                  inferenceBaseUrl: alternates.length ? loopbackUrl(grant.hostId) : routeUrl,
+                  inferenceBaseUrl: loopbackUrl(grant.hostId),
                   inferenceKey: grant.key,
                   inferenceModels: [
                     ...new Set([...models, ...alternates.flatMap((entry) => entry.models)]),
@@ -1883,7 +1957,7 @@ export class InferenceProxy extends Context.Service<
       input: InferenceProxyAction,
     ) => Effect.Effect<InferenceProxyActionResult, InferenceProxyError>;
     readonly grant: (
-      input: InferenceConsumer,
+      input: InferenceGrantInput,
     ) => Effect.Effect<InferenceRouteGrant, InferenceProxyError>;
     readonly connect: (input: InferenceRouteInput) => Effect.Effect<void, InferenceProxyError>;
     readonly registerFallback: (
@@ -1921,6 +1995,7 @@ export class InferenceProxy extends Context.Service<
       model: string;
       status: number;
       retryAfter?: string;
+      retryAfterMs?: string;
     }) => Effect.Effect<void>;
   }
 >()("t3/inference/InferenceProxy") {}

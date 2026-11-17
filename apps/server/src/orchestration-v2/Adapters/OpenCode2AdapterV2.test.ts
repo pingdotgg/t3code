@@ -77,13 +77,14 @@ const event = (
   data: Record<string, unknown>,
   label?: string,
   version = 1,
+  created = 1,
 ): ProviderReplayEntry => ({
   type: "emit_inbound",
   frame: {
     type: "sdk.event",
     event: {
       id: `evt_${type.replaceAll(".", "")}0000`,
-      created: 1,
+      created,
       type,
       ...(type.startsWith("rpc.") ? { location: { directory: WORK } } : {}),
       data,
@@ -730,6 +731,100 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: error.message,
         retryable: null,
       });
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "a quota 429 with a retry hint",
+      error: {
+        type: "provider.quota",
+        status: 429,
+        message: "Quota reached",
+        retryAfterMs: 90_000,
+      },
+      failureClass: "usage_limit",
+      resetAt: "2026-11-17T12:01:30.000Z",
+    },
+    {
+      name: "an otherwise unknown 429 with a retry hint",
+      error: {
+        type: "provider.unknown",
+        status: 429,
+        message: "Rate limited",
+        retryAfterMs: 90_000,
+      },
+      failureClass: "usage_limit",
+      resetAt: "2026-11-17T12:01:30.000Z",
+    },
+    {
+      name: "OpenCode's temporary overloaded 429",
+      error: {
+        type: "provider.rate-limit",
+        status: 429,
+        message: "Service temporarily overloaded",
+        retryAfterMs: 2_000,
+      },
+      failureClass: "usage_limit",
+      resetAt: "2026-11-17T12:00:02.000Z",
+    },
+    {
+      name: "an overloaded 429 with a retry hint",
+      error: {
+        type: "provider.overloaded",
+        status: 429,
+        message: "Server overloaded",
+        retryAfterMs: 90_000,
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "a generic overloaded 503",
+      error: {
+        type: "provider.overloaded",
+        status: 503,
+        message: "Server overloaded",
+        retryAfterMs: 2_000,
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "an empty-balance 402 with a retry hint",
+      error: {
+        type: "provider.quota",
+        status: 402,
+        message: "Insufficient funds",
+        retryAfterMs: 90_000,
+      },
+      failureClass: "provider_error",
+      resetAt: null,
+    },
+    {
+      name: "a quota 429 with an unusable retry hint",
+      error: { type: "provider.quota", status: 429, message: "Quota reached", retryAfterMs: -1 },
+      failureClass: "usage_limit",
+      resetAt: null,
+    },
+  ] as const)("uses the terminal event time for $name", ({ error, failureClass, resetAt }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event(
+          "session.execution.failed",
+          { sessionID: SESSION, error },
+          undefined,
+          1,
+          Date.parse("2026-11-17T12:00:00.000Z"),
+        ),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.failure?.class, failureClass);
+      assert.equal(ended?.failure?.resetAt, resetAt);
     }),
   );
 

@@ -1,4 +1,7 @@
-import { makeInferenceProviderHealth } from "../inference/providerHealth.ts";
+import {
+  filterInferenceWorkspaceModels,
+  makeInferenceProviderHealth,
+} from "../inference/providerHealth.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import {
   defaultInstanceIdForDriver,
@@ -176,6 +179,7 @@ export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,
   cwd: string,
   scopedSnapshot: ProviderWorkspaceSnapshot,
+  routed = false,
 ): ServerProvider {
   const previousSnapshot = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
   const optionDescriptors = scopedSnapshot.optionDescriptors ?? previousSnapshot?.optionDescriptors;
@@ -194,12 +198,15 @@ export function upsertProviderWorkspaceSnapshot(
     ...(models === undefined ? {} : { models }),
     ...(scopedSnapshot.workspaceModelsPending ? { modelsPending: true } : {}),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
+  const workspaceSnapshots = [
+    ...(provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd !== cwd),
+    workspaceSnapshot,
+  ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER);
   return {
     ...provider,
-    workspaceSnapshots: [
-      ...(provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd !== cwd),
-      workspaceSnapshot,
-    ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER),
+    workspaceSnapshots: routed
+      ? filterInferenceWorkspaceModels(provider, workspaceSnapshots)
+      : workspaceSnapshots,
   };
 }
 
@@ -341,15 +348,18 @@ export const mergeProviderSnapshot = (
         ...snapshot,
         modelsPending: true,
       }));
+  const workspaceSnapshots = nextProvider.workspaceSnapshots ?? previousWorkspaceSnapshots;
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
-    ...(nextProvider.workspaceSnapshots !== undefined
-      ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousWorkspaceSnapshots !== undefined
-        ? { workspaceSnapshots: previousWorkspaceSnapshots }
-        : {}),
+    ...(workspaceSnapshots !== undefined
+      ? {
+          workspaceSnapshots: authoritativeModels
+            ? filterInferenceWorkspaceModels({ ...nextProvider, models }, workspaceSnapshots)
+            : workspaceSnapshots,
+        }
+      : {}),
     ...(nextProvider.workspaceRescannedAt === undefined &&
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
@@ -1166,6 +1176,9 @@ export const layer = Layer.effect(
       if (input.rescan && (input.rescan !== instance || (!runningScan && !scannedFrom))) {
         return providers;
       }
+      const routed = new Set<ProviderInstanceId>(yield* inferenceHealth.instanceIds).has(
+        input.instanceId,
+      );
       const token = yield* Deferred.make<void>();
       // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
@@ -1203,13 +1216,18 @@ export const layer = Layer.effect(
                   ) {
                     return candidate;
                   }
-                  const scanned = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                    ...scopedSnapshot,
-                    checkedAt: scannedAt,
-                    // Without driver command discovery, retain previous commands after failed health checks and retry.
-                    slashCommandsPending:
-                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                  });
+                  const scanned = upsertProviderWorkspaceSnapshot(
+                    candidate,
+                    input.cwd,
+                    {
+                      ...scopedSnapshot,
+                      checkedAt: scannedAt,
+                      // Without driver command discovery, retain previous commands after failed health checks and retry.
+                      slashCommandsPending:
+                        scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                    },
+                    routed,
+                  );
                   // Clients keep fetched snapshots, so a changed rescan must tell them to fetch again.
                   const rescanned = workspaceSnapshotOf(scanned);
                   const held = heldBeforeWait ?? scanBase;

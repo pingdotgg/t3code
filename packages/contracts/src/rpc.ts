@@ -1,5 +1,5 @@
 import {
-  InferenceConsumer,
+  InferenceGrantInput,
   InferenceProxyStatus,
   InferenceProxyAction,
   InferenceProxyActionResult,
@@ -962,7 +962,7 @@ const WsInferenceManageRpc = Rpc.make(WS_METHODS.inferenceManage, {
   error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
 });
 const WsInferenceGrantRpc = Rpc.make(WS_METHODS.inferenceGrant, {
-  payload: InferenceConsumer,
+  payload: InferenceGrantInput,
   success: InferenceRouteGrant,
   error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
 });
