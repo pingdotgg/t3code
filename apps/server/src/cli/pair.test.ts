@@ -497,7 +497,7 @@ describe("t3 pair", () => {
           if (Exit.isFailure(exit)) {
             assert.include(
               String(Cause.squash(exit.cause)),
-              `t3@0.0.45 pair --base-dir ${baseDir}`,
+              `npx @yjosh/t3@0.0.45 pair --base-dir ${baseDir}`,
             );
           }
         }),
