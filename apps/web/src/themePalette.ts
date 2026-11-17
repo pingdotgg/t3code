@@ -1581,6 +1581,19 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
   };
 }
 
+/** A copy of `theme` under `name` and the id it derives. The collection stays behind. */
+export function renameTheme(theme: ThemeDefinition, name: string): ThemeDefinition {
+  return parseThemeFile({
+    version: THEME_FILE_VERSION,
+    name,
+    appearance: theme.appearance,
+    colors: theme.colors,
+    ...(theme.variants ? { variants: theme.variants } : {}),
+    ...(theme.managed ? { managed: true } : {}),
+    ...(theme.css ? { css: theme.css } : {}),
+  });
+}
+
 export function serializeThemeFile(theme: ThemeDefinition): string {
   const canonicalTheme = canonicalizeThemeDefinition(theme);
   const file: ThemeFile = {
