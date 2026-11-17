@@ -13386,7 +13386,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               });
             });
+            // `offer` may call this twice; a second call must not restore notes compaction cleared.
+            let offerCommitted = false;
             const commitOffer = () => {
+              if (offerCommitted) return;
+              offerCommitted = true;
               pdfReservation.commit();
               if (appContextSent) {
                 context.appContextOffered = new Map(
