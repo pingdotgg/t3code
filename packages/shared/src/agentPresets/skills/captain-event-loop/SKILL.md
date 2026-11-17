@@ -1,6 +1,6 @@
 ---
 name: captain-event-loop
-description: "Captain's event loop for named children: arm one v2 listener per child (it follows background continuations and reports a question or approval within about a minute), sweep every child on every wake, answer approvals, take the next pipeline step, and never end a turn with a child unwatched. Read at the start of every Captain turn that launches, messages or checks a child, and after a PR merges for worktree and cache cleanup."
+description: "Captain's event loop for named children: arm one v2 listener per child (it follows background continuations and reports a question or approval within about a minute), sweep every child on every wake, answer approvals, take the next pipeline step, and never end a turn with a child unwatched. Read at the start of every Captain turn that launches, messages or checks a child, and after a PR merges."
 ---
 
 # Captain event loop
@@ -12,7 +12,8 @@ Since Ada nightly 20261016, a named child never wakes its parent on run end, idl
 1. a message from the user;
 2. a **profile-less `delegate_task` helper reaching any terminal state** (one batched "Delegated tasks … reached terminal states" message);
 3. `watch_pull_request` events;
-4. "Child thread … has a question": an interactive question in a child.
+4. "Child thread … has a question": an interactive question in a child;
+5. a background command Captain started finishing.
 
 These do **not** wake Captain:
 
@@ -36,6 +37,8 @@ So every running child needs the v2 listener below. It follows new runs and chec
 
 Arm one immediately after a launch, a `t3_thread_send`, answering a question, approving an action, or a resume. Never leave two listeners on one child.
 
+Every listener runs on Claude Haiku 5.5 (the target below), whichever provider Captain runs on. Never use Sonnet, Opus, Codex models or Captain's own inherited model. If Haiku is unavailable, tell the user rather than falling back. When the project has a deterministic background watcher script, it may replace the listener; it must return on a question, a pending approval or a real end of the child's run.
+
 ```
 delegate_task {
   title: "listen <child short name>",
@@ -53,7 +56,7 @@ On a tool error, retry that call once; on a second error reply `ERROR <exact tex
 }
 ```
 
-Listeners always run on Claude Haiku 5.5; there is no fallback model. If Haiku is unavailable, tell the user. The listener stays quiet through a child's turn end while background work is pending, and returns `WAITING-APPROVAL` within about a minute of an approval prompt. Record the listener's `taskId` against the child in the pipeline table. A wake means "look", not "the child stopped". The sweep decides.
+The listener stays quiet through a child's turn end while background work is pending, and returns `WAITING-APPROVAL` within about a minute of an approval prompt. Record the listener's `taskId` against the child in the pipeline table. A wake means "look", not "the child stopped". The sweep decides.
 
 ## Wake: sweep everything, then act
 
@@ -70,7 +73,7 @@ Listeners always run on Claude Haiku 5.5; there is no fallback model. If Haiku i
 
 A link that expires in minutes must reach the user in one hop, while they are likely to be there.
 
-- Before launching work that needs a cloud or SSO session, check that session yourself (for AWS, `aws sts get-caller-identity`). If it is missing or near expiry, do the sign-in with the user **first**, then launch the child.
+- Before launching work that needs a cloud or SSO session, check that session yourself as the project's AGENTS.md says (for AWS, `aws sts get-caller-identity` with the project's profile). If it is missing or near expiry, do the sign-in with the user **first**, then launch the child.
 - When a child reports a sign-in link or code, relay it in your very next message, together with what to paste back, and send `PushNotification` (one line, under 200 characters) so the user sees it away from the screen. If a link has expired, regenerate it yourself before asking the user again.
 
 ## Pipeline table
@@ -79,20 +82,11 @@ Keep the job's table in `.t3/captain/<job>/PIPELINE.md`: child id | role | step 
 
 ## Defaults instead of blocking on the user
 
-Decide reversible and routine choices yourself (order, naming, splitting PRs, re-running checks, resuming, approving routine in-scope commands, merging each PR once it meets the repository's PR rules), and list them under "Defaults taken". Ask the user only about production deploys or releases, architecture exceptions, product decisions they have not made, destructive data operations, spending, and outward-facing actions they have not approved.
+Decide reversible and routine choices yourself (order, naming, splitting PRs, resuming, approving routine in-scope commands, merging each PR as soon as the repo's PR skill allows), and list them under "Defaults taken". CI checks still apply, but they run locally through the repo's verification skill and nothing is rerun remotely. Never wait for a staging-deploy check before merging. Ask the user only about production deploys or releases, architecture exceptions, product decisions they have not made, destructive data operations, spending, and outward-facing actions they have not approved.
 
-## After a PR merges: reclaim task disk space
+## After a PR merges
 
-Cleanup of merged task worktrees and their regenerable build caches is routine. Treat it as the last pipeline step before declaring the task done; do not wait for disk pressure or another request. Include this requirement in implementation briefs. Preserve explicit handoff holds and stacked work that still depends on the checkout.
-
-1. Verify the PR is actually merged and the checkout's current HEAD landed: ancestry, patch equivalence, or the merged PR's exact head. A merged branch name alone is insufficient after extra commits or squash merges. Check tracked changes, untracked files and ignored state before removal.
-2. Confirm the checkout and any nested worktrees are idle: no active child/helper/background job, provider, terminal, build, database or dependent task uses them. Stop only task-owned disposable services through project teardown commands when their data is known to be regenerable. Do not infer that databases, ignored files, secrets, local notes or audit evidence are disposable. Preserve unique state outside the checkout or defer cleanup.
-3. For Ada-managed worktrees, use `t3_reclaim_worktree` dry-run then reclaim. Resolve eligibility refusals through supported lifecycle operations; never bypass a refusal with shell deletion. For unmanaged checkouts use `git worktree remove` without force after the same checks. Never remove primary checkouts, unmerged commits, dirty state or another task's live workspace. Branch deletion is separate and is not implied.
-4. Removing the checkout also removes its disposable local build outputs and dependency caches. Remove a task-specific cache outside it only when its exact path and ownership are known, nothing still references it, and every file is regenerable. Do not glob-delete temporary directories.
-5. Preserve shared caches across worktrees. Do not run `go clean -cache`, delete `GOCACHE`/`GOMODCACHE`, or symlink branch outputs together after each merge. If the machine already runs a shared-cache trim job, check that it is healthy and follow its configured policy for shared-cache pressure; do not create a duplicate job or copy its paths and thresholds to another host without inspection.
-6. Verify the checkout is absent and Git worktree metadata is consistent. Record removed paths, preserved state, reclaimed space when measured, and skipped reasons in PIPELINE.md. For active/stacked/held checkouts, record the owning task and exact release condition, and perform cleanup when its existing completion event arrives. Do not claim cleanup is complete while eligible work remains; report explicit holds separately.
-
-Use the existing child/listener lifecycle for delegated cleanup. A prompt rule is not a filesystem hook: this runs when Captain handles merge/completion events, while any installed cache-trim job maintains shared caches between turns.
+Clean up the task's worktree as the repo's AGENTS.md says first, then follow the worktree-cleanup-rule skill. Cleanup is the last pipeline step before the task is done; include it in implementation briefs.
 
 ## Reboots and Ada updates
 

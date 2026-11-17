@@ -14,4 +14,4 @@ For an audit, show affected files, evidence, proposed boundary/interface, tradeo
 
 For competing designs, read [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md). For an explicitly requested grilling session, ask one consequential question at a time, offer a recommendation, and inspect code for questions it can answer. Otherwise keep clarification proportional to the task.
 
-Record resolved domain concepts and consequential decisions when relevant to the requested work, following the project's convention or [CONTEXT-FORMAT.md](CONTEXT-FORMAT.md) and [ADR-FORMAT.md](ADR-FORMAT.md). Do not treat exploratory ideas as accepted decisions or turn an ordinary review into automatic documentation churn.
+Make the code tell the story: a clearer interface or name, a script that checks the rule, a test on the real call pattern, or a lint whose error names the fix. Do not write ADRs, CONTEXT.md entries, agent READMEs or other docs, and do not commit generated artifacts; propose vocabulary additions in your reply. Write a doc only when the user asks, following the project's convention.

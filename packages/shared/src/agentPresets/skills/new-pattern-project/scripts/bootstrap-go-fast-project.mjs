@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 const TEMPLATE_REPO = "https://github.com/jayleaton/go-fast-stack";
-const PROJECTS_DIR = "~/projects";
+const PROJECTS_DIR = "~/Documents/projects";
 
 function run(command, args, cwd) {
   console.log(`$ ${command} ${args.join(" ")}`);

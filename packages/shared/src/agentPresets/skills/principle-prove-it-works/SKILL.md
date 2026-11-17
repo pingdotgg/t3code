@@ -18,6 +18,6 @@ Check the real thing, not a proxy:
 
 ## Script the check when you can
 
-The strongest proof is a deterministic script that re-runs the same comparison, not a one-time eyeball. Write the script, run it, and keep its output as an artifact a reviewer can re-run instead of trusting your word.
+The strongest proof is a deterministic script, test or lint that re-runs the same comparison, not a one-time eyeball. Write it, run it, and show its output so a reviewer can re-run it instead of trusting your word. When the check guards lasting behavior, land it as a test or lint in the repo's own check targets; otherwise keep it out of the repo.
 
-Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration.
+Show the evidence in your reply or PR. Do not write docs, ADRs or agent READMEs to explain it, and do not commit generated artifacts, logs or screenshots unless the user asks.
