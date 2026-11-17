@@ -1,4 +1,7 @@
-import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
+import {
+  MICROPHONE_PERMISSION_ERROR,
+  RETAINED_RECORDING_ERROR,
+} from "@t3tools/client-runtime/voice-input";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 
@@ -19,6 +22,7 @@ const VOICE_ERROR_LABELS: Record<string, string> = {
   "Voice recording was interrupted.": "Recording interrupted",
   "Could not finish voice recording.": "Couldn’t finish",
   "Could not transcribe this recording.": "Transcription failed",
+  [RETAINED_RECORDING_ERROR]: "Transcription failed",
   "Voice transcription on this environment failed.": "Transcription failed",
   "The draft changed while voice input was running. The transcript was not added.": "Draft changed",
   "No speech was detected.": "No speech heard",
@@ -27,7 +31,7 @@ const VOICE_ERROR_LABELS: Record<string, string> = {
 };
 
 const RETRYABLE_TRANSCRIPTIONS = new Set([
-  "Could not transcribe this recording.",
+  RETAINED_RECORDING_ERROR,
   "Voice transcription on this environment failed.",
 ]);
 
