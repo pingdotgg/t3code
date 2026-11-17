@@ -89,25 +89,18 @@ export const layer = Layer.effect(
 
     let helper: string | undefined;
     if (environment.platform === "darwin") {
-      const relative = environment.path.join("apple-speech", "t3-apple-speech");
-      const candidates = environment.isPackaged
-        ? [environment.path.join(environment.resourcesPath, relative)]
-        : [
-            environment.path.join(
-              environment.rootDir,
-              "native",
-              "apple-speech",
-              "build",
-              environment.processArch,
-              "t3-apple-speech",
-            ),
-          ];
-      for (const candidate of candidates) {
-        if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-          helper = candidate;
-          break;
-        }
-      }
+      const candidate = environment.isPackaged
+        ? environment.path.join(environment.resourcesPath, "apple-speech", "t3-apple-speech")
+        : environment.path.join(
+            environment.rootDir,
+            "native",
+            "apple-speech",
+            "build",
+            environment.processArch,
+            "t3-apple-speech",
+          );
+      if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+        helper = candidate;
     }
 
     const run = (args: readonly string[], timeout: Duration.Input) =>
