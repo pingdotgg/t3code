@@ -203,6 +203,8 @@ export function parseElicitationForm(
     fields.set(id, parsed.field);
     parsedFields.push({ id, property, options: parsed.options });
   }
+  // A required key without a property can never be answered.
+  for (const key of required) if (!fields.has(key)) return undefined;
   // An optional `<id>__other` text field (OMP's ask dialog) is the free-text answer to
   // optional single choice `<id>`: ask them as one question and send custom text to the
   // companion. Multi-select keeps both fields, since it can answer with options and text.

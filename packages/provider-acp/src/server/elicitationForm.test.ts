@@ -122,4 +122,14 @@ describe("parseElicitationForm", () => {
       ["Code", "Question 2"],
     );
   });
+
+  it("rejects a form whose required key has no property", () => {
+    assert.strictEqual(
+      parseElicitationForm(
+        { type: "object", properties: { note: { type: "string" } }, required: ["code"] },
+        "Confirm",
+      ),
+      undefined,
+    );
+  });
 });
