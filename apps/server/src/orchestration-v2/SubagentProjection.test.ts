@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   type ModelSelection,
   NodeId,
   RunId,
@@ -9,6 +10,7 @@ import {
   EventId,
   TurnItemId,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   type OrchestrationV2AppThread,
   ProjectId,
   ProviderInstanceId,
@@ -26,7 +28,9 @@ import {
   makeSubagentConversationArtifacts,
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
+  PROVIDER_STOP_REASON_SIGNAL,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -82,10 +86,15 @@ function makeParentThread(): OrchestrationV2AppThread {
   };
 }
 
-it("keeps a subagent child awake when its parent thread is snoozed", () => {
+it("resets a subagent child's snooze, title job and remote delegation but keeps its workspace", () => {
   const parentThread: OrchestrationV2AppThread = {
     ...makeParentThread(),
     titleRegeneration: { requestId: CommandId.make("command:parent-title"), startedAt: snoozedAt },
+    delegatedFrom: {
+      environmentId: EnvironmentId.make("linked-environment"),
+      threadId: ThreadId.make("linked-parent"),
+      title: "Linked parent",
+    },
   };
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
   const parentNodeId = NodeId.make("node:subagent-parent");
@@ -105,6 +114,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   assert.isNull(childThread.snoozedUntil);
   assert.isNull(childThread.snoozedAt);
   assert.isNull(childThread.titleRegeneration);
+  assert.isUndefined(childThread.delegatedFrom);
   assert.equal(childThread.projectId, parentThread.projectId);
   assert.equal(childThread.runtimeMode, parentThread.runtimeMode);
   assert.equal(childThread.interactionMode, parentThread.interactionMode);
@@ -391,6 +401,36 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.equal(result.text, failure.message);
   assert.equal(result.turnItemId, artifacts.turnItem.id);
   assert.isNull(result.messageId);
+});
+
+it("reports a provider's stop reason for a completed run without an assistant result", () => {
+  const { projection, run } = taskFixture();
+  const notice = {
+    id: IdAllocator.derive.runSignalTurnItem({
+      runId: run.id,
+      signal: PROVIDER_STOP_REASON_SIGNAL,
+    }),
+    threadId: parentThreadId,
+    runId: run.id,
+    nodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 98,
+    status: "completed",
+    title: "Stopped by the provider",
+    startedAt: childCreatedAt,
+    completedAt: childCreatedAt,
+    updatedAt: childCreatedAt,
+    type: "system_notice",
+    level: "warning",
+    message: "sessionStart hook (user): Plugin guard blocked this session.",
+  } satisfies OrchestrationV2TurnItem;
+  assert.equal(
+    subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
+    `Child task completed without an assistant result.\n\n${notice.message}`,
+  );
 });
 
 it("keeps the final report of a run that failed after its turn ended", () => {

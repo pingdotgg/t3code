@@ -9,9 +9,9 @@ import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
 
-const withDatabase = <A, E>(
+const withDatabase = <A, E, R>(
   databasePath: string,
-  effect: Effect.Effect<A, E, SqlClient.SqlClient>,
+  effect: Effect.Effect<A, E, R | SqlClient.SqlClient>,
 ) => effect.pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
 
 const insertPeerLink = (sql: SqlClient.SqlClient) => sql`INSERT INTO peer_environment_links
@@ -111,9 +111,14 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
           (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
           VALUES (${`run-${threadId}`}, ${threadId}, 1, 'codex', ${runStatus}, '2026-08-01', '{}')`;
         yield* sql`INSERT INTO orchestration_events
-          (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
-          VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}')`;
+          (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json, application_event_version)
+          VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}', 2)`;
       }
+      // A V1 thread the server already imported must not trip the legacy guard.
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)
+        VALUES ('stopped-thread', 'project-kept', 'stopped-thread',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', '2026-08-01', '2026-08-01')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
         (provider_session_id, thread_id, provider, status, updated_at, payload_json)
         VALUES ('session-shared', 'running-thread', 'codex', 'stopped', '2026-08-01', '{}')`;
@@ -321,6 +326,61 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { sharedHome: sourceDir },
       );
       assert.include(result.executedMigrations, "55_OrchestrationV2");
+    }),
+  );
+
+  // The server imports V1 threads at boot, not in a migration, so a source can
+  // reach the V2 schema with its legacy threads still unimported.
+  it.effect.each([
+    { name: "a pre-V2 source", migrateToLatest: false },
+    { name: "a V2 source whose legacy threads were never imported", migrateToLatest: true },
+  ])("refuses $name", ({ migrateToLatest }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-v1-data-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "migrate-dev-db-v1-data-dest-",
+      });
+      const stateDir = path.join(sourceDir, "userdata");
+      const source = path.join(stateDir, "statev2.sqlite");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations({ toMigrationInclusive: 54 });
+          yield* sql`INSERT INTO projection_projects
+            (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+            VALUES ('project-legacy', 'Legacy', '/tmp/legacy', '[]', '2026-08-01', '2026-08-01')`;
+          yield* sql`INSERT INTO projection_threads
+            (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)
+            VALUES ('thread-legacy', 'project-legacy', 'Legacy thread',
+              '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', '2026-08-01', '2026-08-01')`;
+          if (migrateToLatest) yield* runMigrations();
+        }),
+      );
+
+      // A live destination connection keeps uncheckpointed rows in the WAL;
+      // the rejected run must leave those bytes alone.
+      const destination = yield* createFixtureSource(destDir);
+      yield* withDatabase(
+        destination,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
+          yield* sql`UPDATE projection_projects SET title = 'Edited' WHERE project_id = 'project-kept'`;
+          const walBefore = yield* fs.readFile(`${destination}-wal`);
+          assert.isAbove(walBefore.length, 0);
+
+          const error = yield* runMigrateDevDb(
+            { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+            { sharedHome: sourceDir },
+          ).pipe(Effect.flip);
+          assert.equal(error._tag, "MigrateDevDbLegacySourceError");
+          assert.deepStrictEqual(yield* fs.readFile(`${destination}-wal`), walBefore);
+        }),
+      );
     }),
   );
 
