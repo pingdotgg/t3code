@@ -121,6 +121,10 @@ export const Addresses = Context.Reference<Effect.Effect<ReadonlySet<string>>>(
   },
 );
 
+export const ProcessId = Context.Reference<number>("@t3tools/shared/HostProcess/ProcessId", {
+  defaultValue: () => process.pid,
+});
+
 export const UserId = Context.Reference<number | undefined>("@t3tools/shared/HostProcess/UserId", {
   defaultValue: () => process.getuid?.(),
 });
