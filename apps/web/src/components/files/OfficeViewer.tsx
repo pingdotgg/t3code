@@ -18,6 +18,7 @@ import {
 
 import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
+import { previewFailureText } from "./previewFailureMessages";
 
 const DocumentPages = lazy(() => import("./DocumentPages"));
 const NotebookPreview = lazy(() => import("./NotebookPreview"));
@@ -118,7 +119,7 @@ function ExtendedOfficeViewer(props: {
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
       const result = event.data;
-      if (result.type === "error") fail(result.message);
+      if (result.type === "error") fail(previewFailureText(result));
       else if (result.type === "document") {
         if (timerRef.current) clearTimeout(timerRef.current);
         setDocument(result);
@@ -183,6 +184,13 @@ function ExtendedOfficeViewer(props: {
   const documentPage = previewDocument?.pages[page];
   const navigation = workbook ? "sheet" : (previewDocument?.navigation ?? "slide");
   const documentCount = previewDocument?.pages.length ?? 0;
+  const sheetName = (index: number) =>
+    workbook?.sheets[index]?.name ?? gt("Sheet {number}", { number: String(index + 1) });
+  const pageTitle = (index: number) =>
+    previewDocument?.pages[index]?.title ??
+    (navigation === "chapter"
+      ? gt("Chapter {number}", { number: String(index + 1) })
+      : gt("Page {number}", { number: String(index + 1) }));
   const documentDetails =
     navigation === "chapter"
       ? gt("Chapter {page} of {count}", { page: String(page + 1), count: String(documentCount) })
@@ -236,12 +244,12 @@ function ExtendedOfficeViewer(props: {
                   aria-label={gt("Sheet", { $context: "noun, spreadsheet sheet picker" })}
                   size="xs"
                 >
-                  <SelectValue>{sheet?.name}</SelectValue>
+                  <SelectValue>{sheet ? sheetName(page) : undefined}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {workbook.sheets.map((item, index) => (
                     <SelectItem key={index} value={index}>
-                      {item.name}
+                      {item.name ?? sheetName(index)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -259,12 +267,12 @@ function ExtendedOfficeViewer(props: {
                   aria-label={gt("Chapter", { $context: "noun, book chapter picker" })}
                   size="xs"
                 >
-                  <SelectValue>{documentPage?.title}</SelectValue>
+                  <SelectValue>{documentPage ? pageTitle(page) : undefined}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {previewDocument.pages.map((item, index) => (
                     <SelectItem key={index} value={index}>
-                      {item.title}
+                      {item.title ?? pageTitle(index)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -314,7 +322,7 @@ function ExtendedOfficeViewer(props: {
           <Suspense fallback={<FileSurfaceLoading />}>
             <DocumentPages
               html={documentPage.html}
-              name={`${props.name}: ${documentPage.title}`}
+              name={`${props.name}: ${pageTitle(page)}`}
               details={`${documentDetails}${sizeDetails}`}
             />
           </Suspense>
@@ -339,7 +347,7 @@ function ExtendedOfficeViewer(props: {
           ) : (
             <VirtualTablePreview
               key={page}
-              name={`${props.name}: ${sheet.name}`}
+              name={`${props.name}: ${sheetName(page)}`}
               count={sheet.rowCount}
               columns={sheet.columns}
               getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}

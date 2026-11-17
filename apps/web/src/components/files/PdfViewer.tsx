@@ -14,6 +14,7 @@ import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import { readBoundedDocument } from "./readBoundedDocument";
+import { previewErrorText } from "./previewFailureMessages";
 import { openPdf } from "./pdfDocument";
 import {
   currentPdfPage,
@@ -212,7 +213,7 @@ export default function PdfViewer(props: {
       })
       .catch((cause: unknown) => {
         if (!disposed && !controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : m(msg("Unable to open PDF.")));
+          setError(previewErrorText(cause, m(msg("Unable to open PDF."))));
       })
       .finally(() => clearTimeout(timeout));
     return () => {

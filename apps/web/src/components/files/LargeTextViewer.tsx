@@ -6,6 +6,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { useClientSettings } from "~/hooks/useSettings";
 import { FileSurfaceFailure, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { PREVIEW_PAGE_ROWS, type TextPreviewResult } from "./largeTextProtocol";
+import { previewFailureText } from "./previewFailureMessages";
 import VirtualTablePreview from "./VirtualTablePreview";
 
 const FIRST_SCREEN_BYTES = 16 * 1024;
@@ -96,9 +97,9 @@ export default function LargeTextViewer(props: {
           copyPending.current?.resolve(result.text);
           copyPending.current = null;
         } else if (result.type === "error") {
-          copyPending.current?.reject(new Error(result.message));
+          copyPending.current?.reject(new Error(previewFailureText(result)));
           copyPending.current = null;
-          if (result.operation !== "copy") setError(result.message);
+          if (result.operation !== "copy") setError(previewFailureText(result));
         } else if (result.type === "meta") {
           indexed = true;
           if (prefetched) {

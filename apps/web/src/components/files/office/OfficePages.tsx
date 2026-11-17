@@ -25,7 +25,7 @@ export type PaintPage = (
 export function OfficePages(props: {
   pages: readonly PageSize[];
   paint: PaintPage;
-  label: "Slide" | "Page";
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   scrollRef?: RefObject<((index: number, y?: number) => void) | null>;
@@ -125,24 +125,13 @@ function OfficePage(props: {
   scale: number;
   rasterScale: number;
   paint: PaintPage;
-  label: "Slide" | "Page";
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   onError: (error: unknown) => void;
 }) {
-  const {
-    root,
-    rasterScale,
-    index,
-    onError,
-    page,
-    paint,
-    scale,
-    register,
-    label,
-    overlay,
-    footer,
-  } = props;
+  const { root, rasterScale, index, onError, page, paint, scale, register, kind, overlay, footer } =
+    props;
   const gt = useGT();
   const row = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -192,7 +181,7 @@ function OfficePage(props: {
         }}
         role="group"
         aria-label={
-          label === "Slide"
+          kind === "slide"
             ? gt("Slide {number}", { number: String(index + 1) })
             : gt("Page {number}", { number: String(index + 1) })
         }
