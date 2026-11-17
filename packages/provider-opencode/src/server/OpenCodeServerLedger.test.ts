@@ -143,6 +143,36 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
+  // OpenCode's bash tool starts each shell command in its own process group.
+  it.live("stops a shell command whose OpenCode server exited before restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const gate = path.join(stateDir, "gate");
+      const shellPidFile = path.join(stateDir, "shell-pid");
+      NodeChildProcess.execFileSync("mkfifo", [gate, shellPidFile]);
+      const server = yield* spawnGroup(
+        SERVE_ARGS,
+        `perl -e 'setpgrp(0, 0); open(F, ">", shift); print F "$$\\n"; close(F); exec @ARGV' '${shellPidFile}' sleep 600 & read _ < '${gate}'; exit 0`,
+      );
+      const shell = yield* Effect.acquireRelease(
+        fs.readFileString(shellPidFile).pipe(Effect.map((pid) => Number(pid.trim()))),
+        (pid) => killGroup(pid),
+      );
+      expect(shell).not.toBe(server.pid);
+      expect(groupExists(shell)).toBe(true);
+      yield* recordFromDeadServer(stateDir, server);
+      yield* fs.writeFileString(gate, "\n");
+      yield* server.exited;
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(shell)).toBe(false);
+    }).pipe(provideHost),
+  );
+
   it.live("records a group whose spawned wrapper already exited", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
