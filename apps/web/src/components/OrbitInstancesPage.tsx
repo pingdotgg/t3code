@@ -10,7 +10,7 @@ import {
   type OrbitInstanceWithThreads,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, isListedThreadLineage, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   CheckIcon,
@@ -61,7 +61,6 @@ function completionRunning(instanceId: number): boolean {
     (start) => start.instanceId === instanceId && orbitCompletionPhase(start) === "running",
   );
 }
-import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { SettingsPageContainer, SettingsSection } from "./settings/settingsLayout";
 import { Button } from "./ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
@@ -488,7 +487,7 @@ export function OrbitInstancesPage() {
           // Conn (C3, flag `connAttachedServers`): a held-off server's threads from the index.
           orbitListThreadInputs(
             threads
-              .filter((thread) => !isSidebarHiddenThread(thread))
+              .filter((thread) => isListedThreadLineage(thread.lineage))
               .map((thread) => ({
                 environmentId: thread.environmentId,
                 id: thread.id,

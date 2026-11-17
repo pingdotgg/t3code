@@ -4,6 +4,7 @@ import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
+import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -73,6 +74,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             className="relative flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--shell-modal-fill) backdrop-blur-(--shell-blur) backdrop-saturate-(--shell-saturate) max-sm:pt-safe max-sm:pb-safe text-foreground outline-none transition-[opacity,scale] duration-100 ease-out [-webkit-app-region:no-drag] data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 sm:max-h-[60rem] sm:max-w-[80rem] sm:rounded-(--window-radius) sm:border sm:shadow-2xl/40"
           >
             {children}
+            <GlobalVoiceInputIndicator />
           </DialogPrimitive.Popup>
         </DialogPrimitive.Viewport>
       </DialogPrimitive.Portal>

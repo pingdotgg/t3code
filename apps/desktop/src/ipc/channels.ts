@@ -166,3 +166,5 @@ export const PREVIEW_TAB_HOST_DISCONNECT_CHANNEL = "desktop:preview-tab-host-dis
 export const PREVIEW_HOST_DEVICE_NAME_CHANNEL = "desktop:preview-host-device-name";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

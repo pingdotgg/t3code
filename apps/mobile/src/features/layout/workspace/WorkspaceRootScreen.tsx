@@ -127,7 +127,6 @@ function WorkspaceRootContent() {
           optionsVersion={[
             settingsOpen,
             state.selectedTab,
-            state.selectionRevision,
             width,
             sidebarNavigation,
             enabled.length,
