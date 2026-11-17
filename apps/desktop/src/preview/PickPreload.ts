@@ -1934,17 +1934,21 @@ function startAnnotation(
 
   function unlisten(root: Document, view: Window): void {
     root.removeEventListener("load", onLoad, true);
-    view.removeEventListener("pointermove", onPointerMove, true);
-    view.removeEventListener("pointerdown", onPointerDown, true);
-    view.removeEventListener("pointerup", onPointerUp, true);
-    view.removeEventListener("pointerout", onPointerOut, true);
-    view.removeEventListener("click", onClick, true);
-    view.removeEventListener("keydown", onKeyDown, true);
-    view.removeEventListener("keyup", onVoiceKeyUp, true);
-    view.removeEventListener("scroll", repaint, true);
-    view.removeEventListener("resize", repaint);
-    view.removeEventListener("blur", onWindowBlur);
-    view.removeEventListener("focus", onWindowFocus);
+    // A frame that navigated cross-origin is a new window without our listeners, and its
+    // proxy throws SecurityError here; that must not abort teardown.
+    try {
+      view.removeEventListener("pointermove", onPointerMove, true);
+      view.removeEventListener("pointerdown", onPointerDown, true);
+      view.removeEventListener("pointerup", onPointerUp, true);
+      view.removeEventListener("pointerout", onPointerOut, true);
+      view.removeEventListener("click", onClick, true);
+      view.removeEventListener("keydown", onKeyDown, true);
+      view.removeEventListener("keyup", onVoiceKeyUp, true);
+      view.removeEventListener("scroll", repaint, true);
+      view.removeEventListener("resize", repaint);
+      view.removeEventListener("blur", onWindowBlur);
+      view.removeEventListener("focus", onWindowFocus);
+    } catch {}
   }
 
   // The preload runs only in the top frame, so input over a same-origin frame needs listeners there.
