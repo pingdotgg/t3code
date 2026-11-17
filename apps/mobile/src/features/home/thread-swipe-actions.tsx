@@ -236,6 +236,8 @@ interface ThreadSwipeableProps {
   /** Omitted uses Delete only with the built-in Delete secondary action; otherwise it uses primary. */
   readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeWidth: number;
+  /** The list animates item layout; collapse in one step so its transition moves siblings once. */
+  readonly listAnimatesLayout?: boolean;
   readonly onDelete: () => void;
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
@@ -248,6 +250,8 @@ interface ThreadSwipeableProps {
   readonly simultaneousWith?: ComponentProps<typeof ReanimatedSwipeable>["simultaneousWith"];
   readonly threadTitle: string;
 }
+
+const COLLAPSED_ROW_STYLE = { height: 0, overflow: "hidden" } as const;
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
@@ -269,6 +273,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   );
   const contentRef = useRef(content);
   const [isDismissing, setIsDismissing] = useState(false);
+  const [collapsedInList, setCollapsedInList] = useState(false);
   const dismissing = useSharedValue(false);
   const rowHeight = useSharedValue(0);
   const rowWidth = useSharedValue(props.fullSwipeWidth);
@@ -278,6 +283,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const primaryAction = props.primaryAction;
   const onDelete = props.onDelete;
   const onSwipeableClose = props.onSwipeableClose;
+  const listAnimatesLayout = props.listAnimatesLayout === true;
 
   const restoreRow = useCallback(() => {
     if (!mountedRef.current) return;
@@ -294,6 +300,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       dismissing.set(false);
     })(swipeableRef.current);
     setIsDismissing(false);
+    setCollapsedInList(false);
   }, [actionOpacity, collapse, dismissing, fallbackTranslation]);
 
   const finishDismiss = useCallback((id?: number) => {
@@ -302,6 +309,14 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     pendingDismissRef.current = null;
     pending.resolve();
   }, []);
+  const collapseInList = useCallback(
+    (id: number) => {
+      if (!mountedRef.current || pendingDismissRef.current?.id !== id) return;
+      setCollapsedInList(true);
+      finishDismiss(id);
+    },
+    [finishDismiss],
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the row's Reanimated animations and settles a pending dismissal on unmount
   useLayoutEffect(() => {
@@ -346,6 +361,12 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       translation.set(
         withTiming(Math.min(translation.value, -rowWidth.value), timing, (finished) => {
           if (!finished) return;
+          // LegendList re-measures rows only on React commits, so a UI-thread height animation
+          // reaches it in late jumps. Collapse through React and let its transition move rows.
+          if (listAnimatesLayout) {
+            runOnJS(collapseInList)(id);
+            return;
+          }
           collapse.set(
             withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
               if (collapsed) runOnJS(finishDismiss)(id);
@@ -354,7 +375,15 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         }),
       );
     },
-    [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
+    [
+      actionOpacity,
+      collapse,
+      collapseInList,
+      dismissing,
+      finishDismiss,
+      listAnimatesLayout,
+      rowWidth,
+    ],
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this row's animated dismissal in the module-level thread dismissal registry
   useLayoutEffect(
@@ -503,45 +532,47 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   );
 
   return (
-    <Animated.View style={dismissStyle}>
-      <View
-        onLayout={({ nativeEvent: { layout } }) => {
-          rowHeight.set(layout.height);
-          setMeasuredRowHeight(layout.height);
-          rowWidth.set(layout.width);
-        }}
-      >
-        <ReanimatedSwipeable
-          ref={swipeableRef}
-          animationOptions={THREAD_SWIPE_SPRING}
-          childrenContainerStyle={childrenContainerStyle}
-          containerStyle={swipeableContainerStyle}
-          dragOffsetFromRight={-8}
-          enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
-          enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
-          // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
-          failOffsetY={FAIL_OFFSET_Y}
-          friction={1}
-          onSwipeableClose={handleSwipeableClose}
-          onSwipeableRelease={handleRelease}
-          onSwipeableOpenStartDrag={handleWillOpen}
-          onSwipeableWillOpen={handleWillOpen}
-          overshootFriction={1}
-          overshootRight
-          renderRightActions={renderRightActions}
-          rightThreshold={actionsWidth * 0.42}
-          // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it
-          // lets a diagonal swipe scroll the list, which the scroll gate turns into a closed row.
-          simultaneousWith={Platform.OS === "ios" ? props.simultaneousWith : undefined}
+    <View style={collapsedInList ? COLLAPSED_ROW_STYLE : undefined}>
+      <Animated.View style={dismissStyle}>
+        <View
+          onLayout={({ nativeEvent: { layout } }) => {
+            rowHeight.set(layout.height);
+            setMeasuredRowHeight(layout.height);
+            rowWidth.set(layout.width);
+          }}
         >
-          {
-            /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */
-            props.children(close)
-            /* oxlint-enable react/refs */
-          }
-        </ReanimatedSwipeable>
-      </View>
-    </Animated.View>
+          <ReanimatedSwipeable
+            ref={swipeableRef}
+            animationOptions={THREAD_SWIPE_SPRING}
+            childrenContainerStyle={childrenContainerStyle}
+            containerStyle={swipeableContainerStyle}
+            dragOffsetFromRight={-8}
+            enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
+            enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
+            // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
+            failOffsetY={FAIL_OFFSET_Y}
+            friction={1}
+            onSwipeableClose={handleSwipeableClose}
+            onSwipeableRelease={handleRelease}
+            onSwipeableOpenStartDrag={handleWillOpen}
+            onSwipeableWillOpen={handleWillOpen}
+            overshootFriction={1}
+            overshootRight
+            renderRightActions={renderRightActions}
+            rightThreshold={actionsWidth * 0.42}
+            // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it
+            // lets a diagonal swipe scroll the list, which the scroll gate turns into a closed row.
+            simultaneousWith={Platform.OS === "ios" ? props.simultaneousWith : undefined}
+          >
+            {
+              /* oxlint-disable react/refs -- The render callback receives a close/open handler; only invoking that handler accesses the ref. */
+              props.children(close)
+              /* oxlint-enable react/refs */
+            }
+          </ReanimatedSwipeable>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
