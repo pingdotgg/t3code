@@ -7,6 +7,10 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
+  type FilePreviewScroll,
+  filePreviewRestoreScrollMessage,
+  isFilePreviewScrollRestored,
+  readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   htmlRenderThemeFragment,
@@ -186,7 +190,8 @@ const showRevision =
 const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
 
 // URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
-// revision loads beneath the page on screen and replaces it once painted, so no blank frame shows.
+// revision loads beneath the page on screen, takes its scroll position and replaces it once
+// painted, so no blank frame shows and the reader keeps their place.
 function FileDocument(props: {
   readonly documentKey: string;
   readonly src: string;
@@ -204,6 +209,32 @@ function FileDocument(props: {
     });
   }
   const { next } = frames;
+  const shownFrame = useRef<HTMLIFrameElement>(null);
+  const nextFrame = useRef<HTMLIFrameElement>(null);
+  // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
+  // scrolls there before it is uncovered.
+  const scroll = useRef<FilePreviewScroll | null>(null);
+  // Two frames let the browser paint the incoming page before it is uncovered.
+  const reveal = (revision: FileDocumentRevision) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
+  const onFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const position = readFilePreviewScroll(event.data);
+    if (position !== undefined) {
+      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+    } else if (
+      next !== null &&
+      event.source === nextFrame.current?.contentWindow &&
+      isFilePreviewScrollRestored(event.data)
+    ) {
+      reveal(next);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the frames' scroll reports
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => onFrameMessage(event);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
   useEffect(() => {
     if (next === null) return;
@@ -217,6 +248,7 @@ function FileDocument(props: {
         revision === null ? null : (
           <iframe
             key={revision.key}
+            ref={revision === next ? nextFrame : shownFrame}
             src={revision.src}
             title={props.title}
             className="absolute inset-0 size-full border-0"
@@ -226,11 +258,16 @@ function FileDocument(props: {
             aria-hidden={revision === next ? true : undefined}
             onLoad={
               revision === next
-                ? // Two frames let the browser paint the incoming page before it is uncovered.
-                  () =>
-                    requestAnimationFrame(() =>
-                      requestAnimationFrame(() => setFrames(showRevision(revision))),
-                    )
+                ? (event) => {
+                    if (scroll.current === null) {
+                      reveal(revision);
+                      return;
+                    }
+                    event.currentTarget.contentWindow?.postMessage(
+                      filePreviewRestoreScrollMessage(scroll.current),
+                      "*",
+                    );
+                  }
                 : undefined
             }
           />
