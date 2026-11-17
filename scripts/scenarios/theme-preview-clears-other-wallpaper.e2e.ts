@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the scenario installs theme files into the server home.
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
+// oxlint-disable t3code/namespace-node-imports -- the repro scenario is kept as filed.
+import { copyFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect } from "e2e";
 
@@ -38,10 +39,10 @@ test(
       "wallpaper-source.png": wallpaper,
     };
     const project = await t3.project("theme-preview", files);
-    const themesDir = NodePath.join(T3_HOME, "userdata", "themes");
-    await NodeFSP.mkdir(themesDir, { recursive: true });
+    const themesDir = join(T3_HOME, "userdata", "themes");
+    await mkdir(themesDir, { recursive: true });
     for (const name of Object.keys(files)) {
-      await NodeFSP.copyFile(NodePath.join(project, name), NodePath.join(themesDir, name));
+      await copyFile(join(project, name), join(themesDir, name));
     }
     await runPromise(makeState(T3_HOME).cli(["theme", "set", "wallpaper-source"]));
     await t3.open("/settings/appearance");
@@ -59,7 +60,8 @@ test(
 
     await screen.getByRole("button", "Duplicate Plain Draft", { exact: true }).tap();
     await expect
-      .poll(() => browser.evaluate(() => document.documentElement.dataset.themeId ?? null))
+      // @ts-expect-error -- an unset theme id serializes as undefined, which the poll reports as a mismatch.
+      .poll(() => browser.evaluate(() => document.documentElement.dataset.themeId))
       .toBe("__preview");
     await app.screenshot("draft-background");
     await expect
