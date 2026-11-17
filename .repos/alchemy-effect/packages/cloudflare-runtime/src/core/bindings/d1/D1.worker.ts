@@ -6,14 +6,19 @@
  * single worker.
  *
  * A single `d1` service hosts every database. The default export is the
- * entry `fetch` handler that the `cloudflare-internal:d1-api` wrapped
- * binding's `fetcher` targets: it reads the database id from `ctx.props`
- * (set on the binding's service designator) and forwards the request to the
+ * entrypoint that the `cloudflare-internal:d1-api` wrapped binding's
+ * `fetcher` targets: it reads the database id from `ctx.props` (set on the
+ * binding's service designator) and forwards the request to the
  * `D1DatabaseObject` Durable Object instance for that database. The Durable
  * Object speaks the D1 HTTP protocol (`POST /query` and `/execute` with JSON
  * queries); data lives in Durable Object SQLite, persisted via the
- * `d1:storage` disk service.
+ * `d1:storage` disk service. With the `d1_binding_jsrpc` compatibility flag,
+ * workerd calls the entrypoint's `query()` RPC method instead, which is
+ * adapted onto the same HTTP execution path (`workers/d1/entry.worker.ts`).
  */
+import { WorkerEntrypoint } from "cloudflare:workers";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpError } from "../../internal/shared.worker.ts";
 import type { D1ServiceProps } from "./D1Options.shared.ts";
 import { BINDING_D1_OBJECT } from "./D1Options.shared.ts";
@@ -22,13 +27,147 @@ interface Env {
   [BINDING_D1_OBJECT]: DurableObjectNamespace;
 }
 
-export default {
-  async fetch(request, env, ctx) {
-    const { databaseId } = (ctx as { props: D1ServiceProps }).props;
-    const stub = env[BINDING_D1_OBJECT].getByName(databaseId);
+/** Routes D1 HTTP and RPC requests to the same local SQLite database. */
+export default class D1Entry extends WorkerEntrypoint<Env, D1ServiceProps> {
+  /** Preserves the HTTP protocol used by bindings without the RPC flag. */
+  override async fetch(request: Request): Promise<Response> {
+    const stub = this.env[BINDING_D1_OBJECT].getByName(this.ctx.props.databaseId);
     return stub.fetch(request);
-  },
-} satisfies ExportedHandler<Env>;
+  }
+
+  /** Returns raw transactional results; query failures are thrown over RPC. */
+  async query(request: D1RpcRequest): Promise<D1RpcResponse> {
+    const { queries, bookmark } = parseD1RpcRequest(request);
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (bookmark) headers.set(D1_SESSION_COMMIT_TOKEN_HTTP_HEADER, bookmark);
+
+    // Reuse the HTTP execution path so transactions, validation, and metadata
+    // remain owned by the database object rather than duplicated for RPC.
+    const response = await this.fetch(
+      new Request("http://d1/query?resultsFormat=ROWS_AND_COLUMNS", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(queries),
+      }),
+    );
+    const body = parseD1QueryResponse(await response.json());
+
+    if ("success" in body) {
+      if (body.success) {
+        // Local exports return one dump row and no execution metadata. The
+        // HTTP wrapper exposes the row's array indices as column names;
+        // preserve that convention over RPC.
+        return {
+          results: [
+            {
+              meta: body.meta,
+              data: {
+                kind: "raw",
+                columns: body.results[0].map((_, index) => String(index)),
+                rows: body.results,
+              },
+            },
+          ],
+        };
+      }
+      const error = new Error(body.error);
+      error.name = "D1_ERROR";
+      throw error;
+    }
+
+    const result: D1RpcResponse = {
+      results: body.map(({ meta, results }) => ({ meta, data: { kind: "raw", ...results } })),
+    };
+    const responseBookmark = response.headers.get(D1_SESSION_COMMIT_TOKEN_HTTP_HEADER);
+    if (responseBookmark) result.bookmark = responseBookmark;
+    return result;
+  }
+}
+
+// JSON would turn `NaN`, `Infinity` and `undefined` parameters into `NULL`, so
+// the RPC request is validated before it is serialized onto the HTTP path.
+const D1ValueSchema = Schema.Union([
+  Schema.Finite,
+  Schema.String,
+  Schema.Null,
+  Schema.Array(Schema.Finite),
+]);
+
+/** RPC queries always contain a batch and may specify a session bookmark. */
+const D1RpcRequestSchema = Schema.Struct({
+  queries: Schema.Array(
+    Schema.Struct({
+      sql: Schema.String,
+      params: Schema.optional(D1ValueSchema.pipe(Schema.Array, Schema.NullOr)),
+    }),
+  ),
+  bookmark: Schema.optional(Schema.String),
+});
+type D1RpcRequest = typeof D1RpcRequestSchema.Type;
+
+const parseD1RpcRequest = (request: unknown): D1RpcRequest => {
+  const result = Schema.decodeUnknownResult(D1RpcRequestSchema)(request);
+  if (Result.isFailure(result)) {
+    throw new TypeError(`Invalid D1 query request: ${result.failure.message}`);
+  }
+  return result.success;
+};
+
+const D1MetaSchema: Schema.Codec<D1Meta> = Schema.Struct({
+  served_by: Schema.String,
+  served_by_primary: Schema.Boolean,
+  total_attempts: Schema.Number,
+  timings: Schema.Struct({ sql_duration_ms: Schema.Number }),
+  duration: Schema.Number,
+  changes: Schema.Number,
+  last_row_id: Schema.Number,
+  changed_db: Schema.Boolean,
+  size_after: Schema.Number,
+  rows_read: Schema.Number,
+  rows_written: Schema.Number,
+});
+
+/** What the database object's HTTP path answers a `ROWS_AND_COLUMNS` query with. */
+const D1QueryResponseSchema = Schema.Union([
+  Schema.Array(
+    Schema.Struct({
+      meta: D1MetaSchema,
+      results: Schema.Struct({
+        columns: Schema.Array(Schema.String),
+        rows: D1ValueSchema.pipe(Schema.Array, Schema.Array),
+      }),
+    }),
+  ),
+  Schema.Struct({ success: Schema.Literal(false), error: Schema.String }),
+  // Exports return one dump row and no execution metadata.
+  Schema.Struct({
+    success: Schema.Literal(true),
+    results: Schema.Tuple([Schema.Array(Schema.String)]),
+    meta: Schema.Struct({}),
+  }),
+]);
+
+const parseD1QueryResponse = (body: unknown) => {
+  const result = Schema.decodeUnknownResult(D1QueryResponseSchema)(body);
+  if (Result.isFailure(result)) {
+    throw new Error(`Invalid D1 query response: ${result.failure.message}`);
+  }
+  return result.success;
+};
+
+/** RPC successes return results directly; failures are thrown instead. */
+interface D1RpcResponse {
+  // Exports carry no execution metadata, so their `meta` is empty.
+  results: Array<{
+    meta: D1Meta | {};
+    data: {
+      kind: "raw";
+      columns: ReadonlyArray<string>;
+      rows: ReadonlyArray<ReadonlyArray<typeof D1ValueSchema.Type>>;
+    };
+  }>;
+  bookmark?: string;
+}
 
 // -----------------------------------------------------------------------------
 // Database object (`workers/d1/database.worker.ts`)
@@ -50,9 +189,7 @@ type D1ResultsFormat = "ARRAY_OF_OBJECTS" | "ROWS_AND_COLUMNS" | "NONE";
 
 function decodeResultsFormat(value: string | null): D1ResultsFormat {
   // Matches upstream's `z.enum([...]).catch("ARRAY_OF_OBJECTS")`
-  return value === "ROWS_AND_COLUMNS" || value === "NONE"
-    ? value
-    : "ARRAY_OF_OBJECTS";
+  return value === "ROWS_AND_COLUMNS" || value === "NONE" ? value : "ARRAY_OF_OBJECTS";
 }
 
 interface D1RowsAndColumns {
@@ -63,19 +200,25 @@ interface D1RowsAndColumns {
 type D1Results = D1RowsAndColumns | Array<Record<string, D1Value>> | undefined;
 
 const SERVED_BY = "miniflare.db";
+/** D1 query metadata; geography is omitted because local execution has no colo. */
+interface D1Meta {
+  served_by: string;
+  served_by_primary: boolean;
+  total_attempts: number;
+  /** SQL duration excludes request handling and result serialization. */
+  timings: { sql_duration_ms: number };
+  duration: number;
+  changes: number;
+  last_row_id: number;
+  changed_db: boolean;
+  size_after: number;
+  rows_read: number;
+  rows_written: number;
+}
 interface D1SuccessResponse {
   success: true;
   results: D1Results;
-  meta: {
-    served_by: string;
-    duration: number;
-    changes: number;
-    last_row_id: number;
-    changed_db: boolean;
-    size_after: number;
-    rows_read: number;
-    rows_written: number;
-  };
+  meta: D1Meta;
 }
 interface D1FailureResponse {
   success: false;
@@ -110,9 +253,7 @@ function convertParams(params: D1Query["params"]): Array<SqlStorageValue> {
   );
 }
 
-function convertRows(
-  rows: Array<Array<SqlStorageValue>>,
-): Array<Array<D1Value>> {
+function convertRows(rows: Array<Array<SqlStorageValue>>): Array<Array<D1Value>> {
   return rows.map((row) =>
     row.map((value) =>
       // If `value` is a buffer, convert it to a regular numeric array
@@ -125,9 +266,7 @@ function rowsToObjects(
   columns: Array<string>,
   rows: Array<Array<D1Value>>,
 ): Array<Record<string, D1Value>> {
-  return rows.map((row) =>
-    Object.fromEntries(columns.map((name, i) => [name, row[i]])),
-  );
+  return rows.map((row) => Object.fromEntries(columns.map((name, i) => [name, row[i]])));
 }
 
 export class D1DatabaseObject implements DurableObject {
@@ -146,15 +285,18 @@ export class D1DatabaseObject implements DurableObject {
   }
 
   #query = (format: D1ResultsFormat, query: D1Query): D1SuccessResponse => {
-    const beforeTime = performance.now();
-
     const beforeSize = this.#sql.databaseSize;
     const beforeChanges = this.#changes();
 
     const params = convertParams(query.params ?? []);
+    // Include cursor consumption in SQL time, but exclude metadata queries and
+    // blob/object conversion so duration has the same meaning as in D1.
+    const beforeTime = performance.now();
     const cursor = this.#sql.exec(query.sql, ...params);
     const columns = cursor.columnNames;
-    const rows = convertRows(Array.from(cursor.raw()));
+    const rawRows = Array.from(cursor.raw());
+    const duration = performance.now() - beforeTime;
+    const rows = convertRows(rawRows);
 
     let results: D1Results;
     if (format === "ROWS_AND_COLUMNS") results = { columns, rows };
@@ -162,11 +304,9 @@ export class D1DatabaseObject implements DurableObject {
     // Note that the "NONE" format behaviour here is inconsistent with workerd.
     // See comment: https://github.com/cloudflare/workers-sdk/pull/5917#issuecomment-2133313156
 
-    const afterTime = performance.now();
     const afterSize = this.#sql.databaseSize;
     const afterChanges = this.#changes();
 
-    const duration = afterTime - beforeTime;
     const changes = afterChanges.totalChanges - beforeChanges.totalChanges;
 
     const hasChanges = changes !== 0;
@@ -179,6 +319,9 @@ export class D1DatabaseObject implements DurableObject {
       results,
       meta: {
         served_by: SERVED_BY,
+        served_by_primary: true,
+        total_attempts: 1,
+        timings: { sql_duration_ms: duration },
         duration,
         changes,
         last_row_id: afterChanges.lastRowId,
@@ -190,23 +333,31 @@ export class D1DatabaseObject implements DurableObject {
     };
   };
 
-  #txn(
+  async #txn(
     queries: Array<D1Query>,
     format: D1ResultsFormat,
-  ): Array<D1SuccessResponse> {
+  ): Promise<{ results: Array<D1SuccessResponse>; commitToken: string }> {
     // Filter out queries that are just comments
-    queries = queries.filter(
-      (query) => query.sql.replace(/^\s+--.*/gm, "").trim().length > 0,
-    );
+    queries = queries.filter((query) => query.sql.replace(/^\s+--.*/gm, "").trim().length > 0);
     if (queries.length === 0) {
       const error = new Error("No SQL statements detected.");
       throw new D1Error(error);
     }
 
     try {
-      return this.state.storage.transactionSync(() =>
-        queries.map(this.#query.bind(this, format)),
-      );
+      // Roll back the queries if bookmark retrieval fails, so a catchable
+      // D1_ERROR never reports these writes as failed after committing them.
+      return await this.state.storage.transaction(async () => {
+        const results = queries.map(this.#query.bind(this, format));
+        let commitToken: string;
+        try {
+          commitToken = await this.state.storage.getCurrentBookmark();
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          throw new Error(`Failed to get session commit token: ${message}`, { cause: e });
+        }
+        return { results, commitToken };
+      });
     } catch (e) {
       throw new D1Error(e);
     }
@@ -215,10 +366,8 @@ export class D1DatabaseObject implements DurableObject {
   async fetch(req: Request): Promise<Response> {
     try {
       const url = new URL(req.url);
-      const isQueryPath =
-        url.pathname === "/query" || url.pathname === "/execute";
-      if (req.method !== "POST" || !isQueryPath)
-        return new Response(null, { status: 404 });
+      const isQueryPath = url.pathname === "/query" || url.pathname === "/execute";
+      if (req.method !== "POST" || !isQueryPath) return new Response(null, { status: 404 });
       return await this.#queryExecute(req, url);
     } catch (e) {
       if (e instanceof HttpError) return e.toResponse();
@@ -247,15 +396,12 @@ export class D1DatabaseObject implements DurableObject {
       return this.#doExportData(queries);
     }
 
-    const resultsFormat = decodeResultsFormat(
-      url.searchParams.get("resultsFormat"),
-    );
+    const resultsFormat = decodeResultsFormat(url.searchParams.get("resultsFormat"));
 
-    return Response.json(this.#txn(queries, resultsFormat), {
-      headers: {
-        [D1_SESSION_COMMIT_TOKEN_HTTP_HEADER]:
-          await this.state.storage.getCurrentBookmark(),
-      },
+    const { results, commitToken } = await this.#txn(queries, resultsFormat);
+
+    return Response.json(results, {
+      headers: { [D1_SESSION_COMMIT_TOKEN_HTTP_HEADER]: commitToken },
     });
   }
 
@@ -328,9 +474,7 @@ function* dumpSql(
       // exactly so writing it immediately like they do.
       if (!noSchema) yield `ANALYZE sqlite_schema;`;
     } else if (sql.startsWith(`CREATE VIRTUAL TABLE`)) {
-      throw new Error(
-        `D1 Export error: cannot export databases with Virtual Tables (fts5)`,
-      );
+      throw new Error(`D1 Export error: cannot export databases with Virtual Tables (fts5)`);
     } else if (table.startsWith("_cf_") || table.startsWith("sqlite_")) {
       continue;
     } else {
@@ -370,7 +514,7 @@ function* dumpSql(
           if (!Number.isFinite(cell)) {
             return (cell as number) > 0 ? "9e999" : "-9e999";
           }
-          return cell;
+          return (cell as number).toString();
         } else if (cellType === "string") {
           return outputQuotedEscapedString(cell);
         } else if (cell instanceof ArrayBuffer) {
