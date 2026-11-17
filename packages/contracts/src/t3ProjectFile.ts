@@ -114,7 +114,7 @@ export const T3ProjectFile = Schema.Struct({
       create: trimmedNonEmpty(
         {
           description:
-            "Shell command that lays out a thread's folder for a project tracking several repositories, in place of T3 Code's own worktrees and links. It runs in the project folder with T3_WORKTREE_ROOT (the folder to fill), T3_WORKTREE_PROJECT_PATH (where the project folder goes inside it), T3_WORKTREE_BRANCH, T3_WORKTREE_BASE and T3_PROJECT_ROOT set. Each tracked repository it checks out at the same relative place is adopted as the thread's checkout of it.",
+            "Shell command that lays out a thread's folder for a project tracking several repositories, in place of T3 Code's own worktrees and links. It runs in the project folder with T3_WORKTREE_ROOT (the folder to fill), T3_WORKTREE_PROJECT_PATH (where the project folder goes inside it), T3_WORKTREE_BRANCH, T3_WORKTREE_BASE, T3_WORKTREE_REPOSITORIES (the chosen repositories, one path per line) and T3_PROJECT_ROOT set. Each of the project's repositories it checks out at the same relative place is adopted as the thread's checkout of it, and must be a git worktree of that repository on T3_WORKTREE_BRANCH. It runs again when the folder goes missing, so it must cope with the branch already existing. It has ten minutes.",
         },
         T3_PROJECT_FILE_COMMAND_MAX_LENGTH,
       ),
@@ -122,7 +122,7 @@ export const T3ProjectFile = Schema.Struct({
         trimmedNonEmpty(
           {
             description:
-              "Shell command that takes the thread's folder down again, with the same variables. T3 Code removes whatever it leaves behind.",
+              "Shell command that takes the thread's folder down again, with the same variables. It can run on a folder that is partly gone, and should delete what create generated. T3 Code removes the checkouts it leaves behind.",
           },
           T3_PROJECT_FILE_COMMAND_MAX_LENGTH,
         ),

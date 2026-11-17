@@ -252,6 +252,7 @@ export const layer: Layer.Layer<
         // Cleanup can remove any of the folder's checkouts; the linked project folder has none.
         yield* taskFolders.restore({
           taskFolder,
+          branch,
           recreate: (checkout) =>
             gitWorkflow.pruneWorktrees({ cwd: checkout.repositoryPath }).pipe(
               Effect.andThen(

@@ -112,17 +112,34 @@ create the folder with its own command. Add this to the `t3.json` in the project
 `create` runs in the project folder and must leave the thread's copy of the project folder in
 place. It receives these environment variables:
 
-| Variable                   | Value                                               |
-| -------------------------- | --------------------------------------------------- |
-| `T3_PROJECT_ROOT`          | The project folder.                                 |
-| `T3_WORKTREE_ROOT`         | The empty folder to fill for this thread.           |
-| `T3_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.            |
-| `T3_WORKTREE_BRANCH`       | The thread's branch name.                           |
-| `T3_WORKTREE_BASE`         | The base branch, or empty when the thread has none. |
+| Variable                   | Value                                                      |
+| -------------------------- | ---------------------------------------------------------- |
+| `T3_PROJECT_ROOT`          | The project folder.                                        |
+| `T3_WORKTREE_ROOT`         | The empty folder to fill for this thread.                  |
+| `T3_WORKTREE_PROJECT_PATH` | Where the project folder goes inside it.                   |
+| `T3_WORKTREE_BRANCH`       | The thread's branch name.                                  |
+| `T3_WORKTREE_BASE`         | The base branch, or empty when the thread has none.        |
+| `T3_WORKTREE_REPOSITORIES` | The repositories chosen for the thread, one path per line. |
 
-Every repository of the project that the command checks out at the same relative place becomes the thread's
-checkout of it. The repositories control is ignored for such a project. `remove` is optional and
-runs before T3 Code removes whatever is left.
+Every repository of the project that the command checks out at the same relative place becomes the
+thread's checkout of it. `remove` is optional and runs before T3 Code removes whatever is left.
+
+What the commands can rely on, and what they must do:
+
+- **Checkouts are linked worktrees on the thread's branch.** Make each one with
+  `git worktree add` from the repository it belongs to, on `T3_WORKTREE_BRANCH`. T3 Code later
+  removes, restores, and renames these through Git, so it refuses a clone or a checkout on another
+  branch and the thread does not start.
+- **`create` can run more than once.** It runs again when a thread's folder has gone missing, by
+  which time the branch already exists. Check the branch out when it is there and create it
+  otherwise.
+- **`remove` can run on a folder that is partly gone**, such as after a failed `create` or an
+  earlier cleanup. Storage cleanup never deletes files that exist only in the thread's folder, so
+  `remove` should delete what `create` generated.
+- **A failed `create` is rolled back.** Checkouts it already made are removed.
+- **One command runs at a time per project**, so a command can update a shared file in the project
+  folder without its own locking.
+- **Each command has ten minutes.**
 
 A project with no other repository can declare a layout too. This example gives each thread
 a worktree with its submodules checked out:
@@ -130,10 +147,21 @@ a worktree with its submodules checked out:
 ```json
 {
   "worktreeLayout": {
-    "create": "git worktree add -b \"$T3_WORKTREE_BRANCH\" \"$T3_WORKTREE_PROJECT_PATH\" ${T3_WORKTREE_BASE:-HEAD} && git -C \"$T3_WORKTREE_PROJECT_PATH\" submodule update --init"
+    "create": "(git worktree add \"$T3_WORKTREE_PROJECT_PATH\" \"$T3_WORKTREE_BRANCH\" 2>/dev/null || git worktree add -b \"$T3_WORKTREE_BRANCH\" \"$T3_WORKTREE_PROJECT_PATH\" ${T3_WORKTREE_BASE:-HEAD}) && git -C \"$T3_WORKTREE_PROJECT_PATH\" submodule update --init"
   }
 }
 ```
+
+## Rewind
+
+Rewinding a thread restores its project folder and each repository it works in. Two cases are not
+restored:
+
+- **A plain project folder.** Only repositories have snapshots, so files that sit outside every
+  repository keep their current contents.
+- **A repository with no earlier snapshot.** If nothing was recorded for a repository before the
+  turns you discard, it keeps their changes. The rewind still completes and does not say so, so
+  check that repository's uncommitted changes afterwards.
 
 ## Limits
 

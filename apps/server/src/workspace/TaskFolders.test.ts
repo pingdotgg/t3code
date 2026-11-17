@@ -310,8 +310,10 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         JSON.stringify({
           worktreeLayout: {
             create:
-              'mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" "$T3_WORKTREE_BASE"',
-            remove: 'touch "$T3_PROJECT_ROOT/torn-down"',
+              'mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && printf %s "$T3_WORKTREE_REPOSITORIES" > "$T3_WORKTREE_PROJECT_PATH/chosen" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" "$T3_WORKTREE_BASE"',
+            // Cleanup never deletes files that exist only here, so the teardown clears its own.
+            remove:
+              'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_PROJECT_PATH/cache" "$T3_WORKTREE_PROJECT_PATH/chosen"',
           },
         }),
       );
@@ -326,15 +328,21 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
       ]);
       assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "cache")));
       assert.equal(
+        yield* fileSystem.readFileString(path.join(taskFolder.root, "chosen")),
+        `${api}\n${web}`,
+      );
+      assert.equal(
         yield* run(path.join(taskFolder.root, "api"), "symbolic-ref", "--short", "HEAD"),
         "feature",
       );
       assert.equal(yield* worktreeCount(web), 1);
 
+      // Storage cleanup inspects each checkout; the teardown runs once all of them may go.
       yield* (yield* TaskFolders.TaskFolders).remove({
         root: taskFolder.root,
         force: true,
         forget: true,
+        inspect: () => Effect.succeed({ keep: null, force: true }),
       });
       assert.isTrue(yield* fileSystem.exists(path.join(shop, "torn-down")));
       // What the teardown left is removed as usual.
@@ -342,6 +350,46 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
       assert.isFalse(yield* fileSystem.exists(taskFolder.root));
     }),
   ),
+);
+
+it.live(
+  "removes what a failed layout command checked out, and refuses a checkout it cannot own",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository, worktreeCount } = yield* fixture;
+        const shop = path.join(tmp, "shop");
+        const api = yield* repository("shop/api");
+        state.workspaceRoot = shop;
+        const taskFolders = yield* TaskFolders.TaskFolders;
+        const attempt = Effect.fnUntraced(function* (command: string) {
+          yield* fileSystem.writeFileString(
+            path.join(shop, "t3.json"),
+            JSON.stringify({ worktreeLayout: { create: command } }),
+          );
+          const plan = yield* taskFolders.plan({ projectId });
+          return yield* taskFolders
+            .create({
+              plan: plan!,
+              branch: "feature",
+              projectStart: { refName: "main", baseRefName: "main" },
+              startFromOrigin: false,
+            })
+            .pipe(Effect.flip);
+        });
+
+        yield* attempt(
+          'mkdir -p "$T3_WORKTREE_PROJECT_PATH" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" && exit 1',
+        );
+        assert.equal(yield* worktreeCount(api), 1);
+
+        // A clone has no worktree registration to remove, and no thread branch to rename.
+        const refused = yield* attempt(
+          'mkdir -p "$T3_WORKTREE_PROJECT_PATH" && git clone -q "$T3_PROJECT_ROOT/api" "$T3_WORKTREE_PROJECT_PATH/api"',
+        );
+        assert.include(refused.detail, "is not a Git worktree of");
+      }),
+    ),
 );
 
 it.live("runs the layout command of a project that tracks no other repository", () =>
@@ -354,7 +402,7 @@ it.live("runs the layout command of a project that tracks no other repository", 
         JSON.stringify({
           worktreeLayout: {
             create:
-              'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH" && touch "$T3_WORKTREE_PROJECT_PATH/prepared"',
+              '(git worktree add -q "$T3_WORKTREE_PROJECT_PATH" "$T3_WORKTREE_BRANCH" 2>/dev/null || git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH") && touch "$T3_WORKTREE_PROJECT_PATH/prepared"',
           },
         }),
       );
@@ -369,13 +417,21 @@ it.live("runs the layout command of a project that tracks no other repository", 
         yield* run(taskFolder.projectPath, "symbolic-ref", "--short", "HEAD"),
         "feature",
       );
-      assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.projectPath, "prepared")));
+      const prepared = path.join(taskFolder.projectPath, "prepared");
+      assert.isTrue(yield* fileSystem.exists(prepared));
 
-      yield* (yield* TaskFolders.TaskFolders).remove({
-        root: taskFolder.root,
-        force: true,
-        forget: true,
+      // A folder that went missing is rebuilt by the same command, not as a bare checkout.
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      yield* fileSystem.remove(taskFolder.root, { recursive: true });
+      yield* run(mono, "worktree", "prune");
+      yield* taskFolders.restore({
+        taskFolder,
+        branch: "feature",
+        recreate: () => Effect.die("the layout command rebuilds the folder"),
       });
+      assert.isTrue(yield* fileSystem.exists(prepared));
+
+      yield* taskFolders.remove({ root: taskFolder.root, force: true, forget: true });
       assert.equal(yield* worktreeCount(mono), 1);
     }),
   ),

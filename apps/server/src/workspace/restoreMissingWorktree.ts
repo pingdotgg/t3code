@@ -177,6 +177,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       return yield* taskFolders
         .restore({
           taskFolder,
+          branch,
           recreate: (checkout) =>
             Effect.logWarning("recreating missing worktree", {
               threadId: thread.id,
