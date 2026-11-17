@@ -116,6 +116,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
     id: input.event.slice("snooze:".length),
     now: input.now,
     ...presetOptions(input.presets),
+    resolve: m,
   });
   return preset ? { _tag: "selected", preset } : { _tag: "expired" };
 }

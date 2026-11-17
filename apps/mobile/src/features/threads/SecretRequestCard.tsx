@@ -85,7 +85,7 @@ function PendingSecretRequestForm(props: {
     reportDefect: false,
   });
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
-  const sources = secretRequestSources(config, config?.settings.secretProviders ?? {});
+  const sources = secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [secret, setSecret] = useState("");

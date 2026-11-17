@@ -165,6 +165,7 @@ function ThreadListV2Duration(props: {
   readonly startedAt: string | null;
   readonly leadingSpace: boolean;
 }) {
+  const messages = useMessages();
   const startedAtMs = Date.parse(props.startedAt ?? "");
   const nowMs = useVisibleSecondClock(Number.isFinite(startedAtMs));
   if (!Number.isFinite(startedAtMs)) return null;
@@ -172,7 +173,10 @@ function ThreadListV2Duration(props: {
     <>
       {props.leadingSpace ? " " : null}
       <RNText style={TABULAR_DURATION_STYLE}>
-        {formatWorkingDurationLabel(toServerClock(props.environmentId, nowMs) - startedAtMs)}
+        {formatWorkingDurationLabel(
+          toServerClock(props.environmentId, nowMs) - startedAtMs,
+          messages,
+        )}
       </RNText>
     </>
   );

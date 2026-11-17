@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useAudioPlayerStatus } from "expo-audio";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useContext, useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -31,6 +31,7 @@ type PreviewProps = {
 
 function FileCardHeader(props: PreviewProps) {
   const gt = useGT();
+  const messages = useMessages();
   return (
     <Pressable
       accessibilityRole="button"
@@ -48,7 +49,7 @@ function FileCardHeader(props: PreviewProps) {
         </Text>
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>
           {props.sizeBytes !== undefined
-            ? gt("Audio · {size}", { size: formatAttachmentSize(props.sizeBytes) })
+            ? gt("Audio · {size}", { size: formatAttachmentSize(props.sizeBytes, messages) })
             : gt("Audio")}
         </Text>
       </View>

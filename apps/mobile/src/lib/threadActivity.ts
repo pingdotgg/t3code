@@ -39,10 +39,10 @@ import {
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import {
   resolveT3McpToolDefinition,
-  resolveT3McpToolPresentation,
   type T3McpToolLogo,
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolPresentation } from "@t3tools/shared/t3McpToolPresentationCopy";
 import type {
   ChatAttachment,
   MessageId,
@@ -619,13 +619,16 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
   }
 }
 
-function itemToolPresentation(item: OrchestrationV2TurnItem): T3McpToolPresentation | null {
+function itemToolPresentation(
+  item: OrchestrationV2TurnItem,
+  resolve: MessageResolver,
+): T3McpToolPresentation | null {
   if (item.type !== "dynamic_tool") {
     return null;
   }
   return (
-    resolveT3McpToolPresentation(item.toolName, item.input) ??
-    resolveT3McpToolPresentation(item.title, item.input)
+    resolveT3McpToolPresentation(item.toolName, item.input, resolve) ??
+    resolveT3McpToolPresentation(item.title, item.input, resolve)
   );
 }
 
@@ -876,7 +879,7 @@ function toFeedActivity(
   resolve: MessageResolver,
 ): ThreadFeedActivity {
   const item = row.item;
-  const toolPresentation = itemToolPresentation(item);
+  const toolPresentation = itemToolPresentation(item, resolve);
   const summary = itemSummary(item, toolPresentation, resolve);
   const detail = item.type === "notification" ? null : itemPreview(item, resolve);
   const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);

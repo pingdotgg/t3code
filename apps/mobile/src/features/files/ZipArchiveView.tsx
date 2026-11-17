@@ -255,6 +255,7 @@ function ZipTreeRowView(props: {
   const { node, depth } = props.row;
   const entry = node.entry;
   const gt = useGT();
+  const messages = useMessages();
   const folder = entry ? null : zipFolderLabel(node.label);
   return (
     <Pressable
@@ -290,7 +291,7 @@ function ZipTreeRowView(props: {
       </Text>
       <Text className="text-xs text-foreground-muted">
         {entry
-          ? formatAttachmentSize(entry.sizeBytes)
+          ? formatAttachmentSize(entry.sizeBytes, messages)
           : props.collapsed
             ? gt("{count, plural, one {{count} file} other {{count} files}}", {
                 count: node.fileCount,
@@ -342,19 +343,20 @@ function ZipArchiveProgress(props: {
 }) {
   const { timeLeft } = props;
   const gt = useGT();
+  const messages = useMessages();
   return (
     <View className="flex-1 justify-center gap-3 bg-sheet px-8">
       <Text className="text-xl font-t3-semibold text-foreground">
         {props.totalBytes > 0 ? (
           <T>
-            <Var>{formatAttachmentSize(props.receivedBytes)}</Var>
+            <Var>{formatAttachmentSize(props.receivedBytes, messages)}</Var>
             <Text className="text-xl text-foreground-muted">
               {" "}
-              of <Var>{formatAttachmentSize(props.totalBytes)}</Var>
+              of <Var>{formatAttachmentSize(props.totalBytes, messages)}</Var>
             </Text>
           </T>
         ) : (
-          formatAttachmentSize(props.receivedBytes)
+          formatAttachmentSize(props.receivedBytes, messages)
         )}
       </Text>
       <Progress
@@ -516,6 +518,7 @@ export function ZipArchiveView(props: {
 }) {
   const { state, retry, cancel } = useZipArchive(props);
   const gt = useGT();
+  const messages = useMessages();
   const [selection, setSelection] = useState<{
     readonly archive: ZipArchive;
     readonly entry: ZipEntry;
@@ -537,7 +540,7 @@ export function ZipArchiveView(props: {
                     "{count, plural, one {{count} file · {size}} other {{count} files · {size}}}",
                     {
                       count: archive.fileCount,
-                      size: formatAttachmentSize(props.sizeBytes),
+                      size: formatAttachmentSize(props.sizeBytes, messages),
                     },
                   )
                 : gt("{count, plural, one {{count} file} other {{count} files}}", {
@@ -645,6 +648,7 @@ function ZipEntryView(props: {
 }) {
   const { entry, draftKey, maxAttachmentBytes } = props;
   const gt = useGT();
+  const messages = useMessages();
   const { mimeType } = entry;
   const previewKind = filePreviewKind({ name: entry.name, mimeType });
   const isText = previewKind === "text" || previewKind === "markdown" || previewKind === "html";
@@ -752,7 +756,7 @@ function ZipEntryView(props: {
     rendered,
   });
   const folders = entry.path.split("/").slice(0, -1);
-  const subtitle = `${[props.archiveName, ...folders].join(" / ")} · ${formatAttachmentSize(entry.sizeBytes)}`;
+  const subtitle = `${[props.archiveName, ...folders].join(" / ")} · ${formatAttachmentSize(entry.sizeBytes, messages)}`;
   return (
     <View className="flex-1 bg-sheet">
       <AppBar
@@ -806,7 +810,7 @@ function ZipEntryView(props: {
             detail={
               content.reason === "tooBig"
                 ? gt("Previews stop at {size}. Save the file to open it in another app.", {
-                    size: formatAttachmentSize(ARCHIVE_ENTRY_MAX_BYTES),
+                    size: formatAttachmentSize(ARCHIVE_ENTRY_MAX_BYTES, messages),
                   })
                 : (content.detail ?? gt("Could not read this file."))
             }

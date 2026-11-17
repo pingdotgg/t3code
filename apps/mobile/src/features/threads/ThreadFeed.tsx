@@ -708,6 +708,7 @@ function MessageAttachmentFile(props: {
   readonly available?: boolean;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const sourceIdentifier = useId();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
@@ -723,7 +724,7 @@ function MessageAttachmentFile(props: {
     ? "PDF"
     : (attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase() ??
       gt("File", { $context: "generic file type label" }));
-  const sizeLabel = formatAttachmentSize(attachment.sizeBytes);
+  const sizeLabel = formatAttachmentSize(attachment.sizeBytes, messages);
   const httpBaseUrl = Option.isSome(preparedConnection)
     ? preparedConnection.value.httpBaseUrl
     : null;

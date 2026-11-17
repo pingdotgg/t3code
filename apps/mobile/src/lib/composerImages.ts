@@ -59,7 +59,7 @@ export async function createPastedTextComposerAttachment(input: {
     throw new Error(m(msg("Clipboard is empty.")));
   }
   if (bytes > input.maxBytes) {
-    throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
+    throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes, m));
   }
 
   const { Directory, File, Paths } = await import("expo-file-system");
@@ -155,7 +155,7 @@ export async function persistComposerAttachmentFile(
             }
             copiedBytes += chunk.byteLength;
             if (copiedBytes > maxBytes) {
-              throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+              throw new Error(fileAttachmentTooLargeMessage(name, maxBytes, m));
             }
             await writer.writeBytes(chunk);
           }
@@ -175,7 +175,7 @@ export async function persistComposerAttachmentFile(
   }
 
   if (maxBytes !== undefined && sourceSize !== null && sourceSize > maxBytes) {
-    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes, m));
   }
   try {
     await source.copy(destination);
@@ -200,7 +200,7 @@ export async function persistComposerAttachmentFile(
     } catch (cleanupError) {
       console.warn("[composer-attachments] could not remove an oversized copy", cleanupError);
     }
-    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes));
+    throw new Error(fileAttachmentTooLargeMessage(name, maxBytes, m));
   }
   return destination.uri;
 }
@@ -229,7 +229,7 @@ export async function createComposerFileAttachment(input: {
   readonly maxBytes: number;
 }): Promise<DraftComposerFileAttachment> {
   if (input.sizeBytes !== null && input.sizeBytes > input.maxBytes) {
-    throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
+    throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes, m));
   }
   const { File } = await import("expo-file-system");
   const fileUri = await persistComposerAttachmentFile(input.uri, input.name, input.maxBytes);
@@ -239,7 +239,7 @@ export async function createComposerFileAttachment(input: {
       throw new Error(m(msg("''{name}'' is empty or could not be read.", { name: input.name })));
     }
     if (sizeBytes > input.maxBytes) {
-      throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
+      throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes, m));
     }
     return {
       id: uuidv4(),

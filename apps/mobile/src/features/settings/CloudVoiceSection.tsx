@@ -201,7 +201,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
   const sources =
     Constants.expoConfig?.extra?.secretsFeatureEnabled === true &&
     environment.serverConfig?.secretReferences
-      ? configuredSecretSources(environment.serverConfig.settings.secretProviders)
+      ? configuredSecretSources(environment.serverConfig.settings.secretProviders, messages)
       : [];
   const source = sources.find((candidate) => candidate.id === sourceId);
   const credential =

@@ -1,4 +1,5 @@
 import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-saved-views";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Alert } from "react-native";
 
@@ -17,6 +18,8 @@ export function PullRequestSavedViewsMenu({
   scope: PullRequestSavedViewScope;
   onApply: (view: PullRequestSavedView) => Promise<void>;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { views, ready, update } = usePullRequestSavedViews();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,7 +36,10 @@ export function PullRequestSavedViewsMenu({
       await onApply(view);
       setSelectedId(view.id);
     } catch {
-      Alert.alert("Could not apply PR view", "The device could not save your filters. Try again.");
+      Alert.alert(
+        gt("Could not apply PR view"),
+        gt("The device could not save your filters. Try again."),
+      );
     }
     setBusy(false);
   }
@@ -48,7 +54,10 @@ export function PullRequestSavedViewsMenu({
     try {
       await update(transform);
     } catch {
-      Alert.alert("Could not save PR views", "The device could not save your views. Try again.");
+      Alert.alert(
+        gt("Could not save PR views"),
+        gt("The device could not save your views. Try again."),
+      );
       saved = false;
     }
     setBusy(false);
@@ -57,15 +66,15 @@ export function PullRequestSavedViewsMenu({
 
   function editName(view?: PullRequestSavedView) {
     showTextInputDialog({
-      title: view ? "Rename PR view" : "Save PR view",
+      title: view ? gt("Rename PR view") : gt("Save PR view"),
       initialValue:
         view?.name ??
-        (scope.controls.involvement === "reviewing" ? "PRs Requesting My Review" : ""),
-      confirmText: "Save",
+        (scope.controls.involvement === "reviewing" ? gt("PRs Requesting My Review") : ""),
+      confirmText: gt("Save"),
       onConfirm: (value) => {
-        const error = pullRequestViewNameError(value, views, view?.id);
+        const error = pullRequestViewNameError(value, views, view?.id, messages);
         if (error) {
-          Alert.alert("Could not save view", error);
+          Alert.alert(gt("Could not save view"), error);
           return;
         }
         const id = view?.id ?? uuidv4();
@@ -87,21 +96,25 @@ export function PullRequestSavedViewsMenu({
       title: view.name,
       state: selectedView?.id === view.id && !modified ? ("on" as const) : ("off" as const),
     })),
-    { id: "save", title: "Save current view…" },
+    { id: "save", title: gt("Save current view…") },
     ...(selectedView
       ? [
-          ...(modified ? [{ id: "update", title: "Update saved view" }] : []),
-          { id: "rename", title: "Rename view…" },
-          { id: "delete", title: "Delete view", attributes: { destructive: true } },
+          ...(modified ? [{ id: "update", title: gt("Update saved view") }] : []),
+          { id: "rename", title: gt("Rename view…") },
+          { id: "delete", title: gt("Delete view"), attributes: { destructive: true } },
         ]
       : []),
   ];
 
   return (
     <ListFilterMenu
-      label={selectedView ? `${selectedView.name}${modified ? " *" : ""}` : "Views"}
+      label={
+        selectedView
+          ? `${selectedView.name}${modified ? " *" : ""}`
+          : gt("Views", { $context: "saved filter views menu" })
+      }
       active={selectedView !== undefined}
-      accessibilityLabel="Saved pull request views"
+      accessibilityLabel={gt("Saved pull request views")}
       actions={actions.map((action) => ({
         ...action,
         attributes: { ...action.attributes, disabled: !ready || busy },

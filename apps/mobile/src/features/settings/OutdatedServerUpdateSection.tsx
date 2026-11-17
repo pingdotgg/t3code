@@ -1,5 +1,6 @@
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useAtom, useAtomValue } from "@effect/atom-react";
+import { serverUpdateFailureText } from "@t3tools/client-runtime/state/server";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -30,6 +31,7 @@ export function OutdatedServerUpdateSection({
   readonly label: string;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const describe = useAtomCommand(describeOutdatedServer, { reportFailure: false });
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
   const state = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
@@ -102,7 +104,7 @@ export function OutdatedServerUpdateSection({
         </Text>
         {error || state.status === "failed" ? (
           <Text selectable accessibilityRole="alert" className="text-sm text-danger-foreground">
-            {error ?? (state.status === "failed" ? state.message : null)}
+            {error ?? (state.status === "failed" ? serverUpdateFailureText(state, messages) : null)}
           </Text>
         ) : null}
       </View>
