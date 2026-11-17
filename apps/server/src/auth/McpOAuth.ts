@@ -19,7 +19,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
-import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
+import { encodeOAuthScope, parseOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -66,6 +66,14 @@ const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/;
 
 const MCP_OAUTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+
+const requestedMaxAccess = (scope: string | undefined) => {
+  const requested = scope === undefined ? null : parseOAuthScope(scope);
+  return requested?.includes(AuthOrchestrationReadScope) &&
+    !requested.includes(AuthOrchestrationOperateScope)
+    ? "read-only"
+    : undefined;
+};
 
 export interface McpOAuthUrls {
   readonly issuer: string;
@@ -186,6 +194,7 @@ export interface AuthorizationRequest {
   readonly state: Redacted.Redacted<string> | undefined;
   readonly resource: string;
   readonly issuer: string;
+  readonly maxAccess: "read-only" | undefined;
 }
 
 interface PendingCode {
@@ -420,6 +429,7 @@ const make = Effect.gen(function* () {
       state,
       resource: urls.resource,
       issuer: urls.issuer,
+      maxAccess: requestedMaxAccess(request.scope),
     } satisfies AuthorizationRequest;
   });
 
@@ -466,7 +476,8 @@ const make = Effect.gen(function* () {
 
   const approve: McpOAuth["Service"]["approve"] = Effect.fn("McpOAuth.approve")(function* (input) {
     const { decision } = input;
-    let access = decision.access;
+    const { maxAccess } = input.authorization;
+    let access = maxAccess ?? decision.access;
     if (decision._tag === "pairing-code") {
       // An approval code is for one app's sign-in, never for linking another environment.
       if (input.authorization.client.peerLink && parseMcpApprovalCode(decision.code)) {
@@ -474,7 +485,7 @@ const make = Effect.gen(function* () {
           description: "Linking needs a plain pairing code, not an app approval code.",
         });
       }
-      access = yield* environmentAuth
+      const approvedAccess = yield* environmentAuth
         .consumeMcpApprovalCode(decision.code, decision.access, input.authorization.client.peerLink)
         .pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
@@ -489,12 +500,13 @@ const make = Effect.gen(function* () {
             ),
           ),
         );
+      access = maxAccess ?? approvedAccess;
     } else {
       const session = yield* approvingSession(input.request, input.authorization);
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
-        !mcpClientScopes(decision.access).every((scope) => session.scopes.includes(scope))
+        !mcpClientScopes(access).every((scope) => session.scopes.includes(scope))
       ) {
         return yield* new McpOAuthPageError({
           description: "Your session cannot approve this request. Enter a pairing code instead.",

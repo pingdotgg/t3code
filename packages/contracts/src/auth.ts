@@ -600,6 +600,7 @@ export const AuthMcpAuthorizationRequest = Schema.Struct({
   code_challenge_method: Schema.optionalKey(Schema.String),
   state: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
+  scope: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
@@ -612,6 +613,8 @@ export const AuthMcpApprovalDetails = Schema.Struct({
   csrfToken: Schema.optionalKey(Schema.String),
   /** Only scopes held by this session qualify; others need a pairing code. Absent with `csrfToken`. */
   oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+  /** Set when the client asked for read access only, so no higher level can be granted. */
+  maxAccess: Schema.optionalKey(Schema.Literal("read-only")),
   /** A managed policy's runtime-mode ceiling; the page loads without the server's config. */
   runtimeModeCeiling: Schema.optionalKey(
     Schema.Struct({ organization: Schema.String, maxRuntimeMode: RuntimeMode }),

@@ -251,7 +251,8 @@ export function McpConsent({
     access !== null &&
     resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
   // A code from "Use T3 Code in another app" names its level, so the page does not ask again.
-  const codeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  const typedCodeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  const codeAccess = typedCodeAccess && (details.maxAccess ?? typedCodeAccess);
   const approveLevel = codeAccess ?? access;
 
   return (
@@ -394,6 +395,9 @@ function ConnectAgentHeading({
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
 function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
+  if (details.maxAccess !== undefined && access !== details.maxAccess) {
+    return "The app asked for read access only.";
+  }
   const ceiling = details.runtimeModeCeiling;
   return ceiling === undefined ||
     access === "read-only" ||

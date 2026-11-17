@@ -753,6 +753,83 @@ it.effect(
     }),
 );
 
+it.live("a client that asks only for orchestration:read is granted read only access", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const signIn = (scope: string | undefined) =>
+        Effect.gen(function* () {
+          const params = {
+            ...authorizeParams(clientId),
+            ...(scope === undefined ? {} : { scope }),
+          };
+          const pairing = yield* auth.issuePairingCredential();
+          const approved = yield* decide(handler, params, {
+            _tag: "pairing-code",
+            access: "auto",
+            code: pairing.credential,
+          });
+          const tokenResponse = yield* handler(
+            at(
+              "/oauth/mcp/token",
+              form({
+                grant_type: "authorization_code",
+                code: new URL(approved.redirectTo!).searchParams.get("code")!,
+                redirect_uri: params.redirect_uri,
+                client_id: clientId,
+                code_verifier: verifier,
+                resource: `${ORIGIN}/mcp`,
+              }),
+            ),
+          );
+          const token = yield* json<{ access_token: string; scope: string }>(tokenResponse);
+          const client = yield* auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(
+              at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+            ),
+          );
+          return { scope: token.scope, access: client.access };
+        });
+
+      expect(yield* signIn("orchestration:read")).toEqual({
+        scope: "orchestration:read",
+        access: "read-only",
+      });
+      expect(yield* signIn("orchestration:read orchestration:operate")).toEqual({
+        scope: "orchestration:read orchestration:operate",
+        access: "auto",
+      });
+      expect(yield* signIn("offline_access")).toMatchObject({ access: "auto" });
+      expect(yield* signIn(undefined)).toMatchObject({ access: "auto" });
+
+      const readScoped = { ...authorizeParams(clientId), scope: "orchestration:read" };
+      const pairing = yield* auth.issuePairingCredential();
+      const cookie = (yield* handler(
+        at("/api/auth/browser-session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({ credential: pairing.credential }),
+        }),
+      )).headers
+        .getSetCookie()[0]!
+        .split(";", 1)[0]!;
+      const details = yield* handler(postJson("/oauth/mcp/approval", readScoped, cookie)).pipe(
+        Effect.flatMap(
+          json<{ csrfToken: string; oneClickAccess: ReadonlyArray<string>; maxAccess?: string }>,
+        ),
+      );
+      expect(details).toMatchObject({ oneClickAccess: ["read-only"], maxAccess: "read-only" });
+      const approved = yield* decide(
+        handler,
+        readScoped,
+        { _tag: "browser-session", access: "full-access", csrfToken: details.csrfToken },
+        cookie,
+      );
+      expect(new URL(approved.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+    }),
+  ),
+);
+
 it.live("one-click approves only access the browser session holds the scopes for", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
