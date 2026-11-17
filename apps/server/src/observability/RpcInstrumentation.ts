@@ -97,7 +97,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetSourceUpdateStatus]: "server",
   [WS_METHODS.serverRunSourceUpdate]: "server",
   [WS_METHODS.serverCancelSourceUpdate]: "server",
-  [WS_METHODS.serverPullUpstream]: "server",
   [WS_METHODS.serverGetUsageSummary]: "server",
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",

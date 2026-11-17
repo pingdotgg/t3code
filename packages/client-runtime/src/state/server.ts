@@ -9,6 +9,7 @@ import {
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
+  type ThreadId,
   type UsageSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -111,6 +112,14 @@ const sourceUpdateRunAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make<SourceUpdateRun | null>(null).pipe(
     Atom.keepAlive,
     Atom.withLabel(`environment-data:server:source-update-run:${environmentId}`),
+  ),
+);
+
+/** The agent thread resolving the upstream conflicts an Update from this client ran into. */
+const sourceUpdateConflictThreadAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make<ThreadId | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`environment-data:server:source-update-conflict-thread:${environmentId}`),
   ),
 );
 
@@ -1405,6 +1414,7 @@ export function createServerEnvironmentAtoms<R, E>(
     databaseCompactionRecommendations,
     sourceUpdateStatus,
     sourceUpdateRunAtom,
+    sourceUpdateConflictThreadAtom,
     runSourceUpdate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-source-update",
       tag: WS_METHODS.serverRunSourceUpdate,
@@ -1412,10 +1422,16 @@ export function createServerEnvironmentAtoms<R, E>(
       onSuccess: Effect.fn("SourceUpdate.onStarted")(function* (
         { environmentId },
         registry,
-        { runId },
+        result,
       ) {
-        const startedAtMs = yield* Clock.currentTimeMillis;
-        registry.set(sourceUpdateRunAtom(environmentId), { runId, startedAtMs });
+        if ("runId" in result) {
+          const startedAtMs = yield* Clock.currentTimeMillis;
+          registry.set(sourceUpdateRunAtom(environmentId), { runId: result.runId, startedAtMs });
+        }
+        registry.set(
+          sourceUpdateConflictThreadAtom(environmentId),
+          "upstreamConflict" in result ? result.upstreamConflict.threadId : null,
+        );
         registry.refresh(sourceUpdateStatus({ environmentId, input: {} }));
       }),
     }),
@@ -1425,11 +1441,6 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(sourceUpdateStatus({ environmentId, input: {} }))),
-    }),
-    pullUpstream: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:pull-upstream",
-      tag: WS_METHODS.serverPullUpstream,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     reclaimDatabaseSpace: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:reclaim-database-space",

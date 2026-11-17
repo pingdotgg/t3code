@@ -59,6 +59,7 @@ const makeService = (
     readonly unitActive?: boolean;
     readonly systemd?: boolean;
     readonly providers?: ReadonlyArray<ServerProvider>;
+    readonly upstreamConflicts?: boolean;
     /** Every fetch waits on this, so a test can hold one in flight. */
     readonly fetchGate?: Deferred.Deferred<void>;
   } = {},
@@ -94,6 +95,9 @@ const makeService = (
                 Effect.andThen(options.fetchGate ? Deferred.await(options.fetchGate) : Effect.void),
                 Effect.as(output("")),
               );
+            }
+            if (args.includes("merge-tree")) {
+              return Effect.succeed(output("tree\n", options.upstreamConflicts === true ? 1 : 0));
             }
             if (args.includes("log -1")) return Effect.succeed(output("abc1234\0Add a thing\n"));
             if (args.includes("HEAD..origin/main")) return Effect.succeed(output("3\n"));
@@ -253,9 +257,21 @@ describe("SourceUpdateService", () => {
       assert.equal(error.reason, "turns-running");
       assert.isFalse(calls.some((call) => call[0] === "systemd-run" && call.includes("--unit")));
 
-      const { runId } = yield* service.update({ force: true });
-      const started = calls.find((call) => call[0] === "systemd-run" && call.includes("--unit"));
+      const result = yield* service.update({ force: true });
+      assert.isTrue("runId" in result);
+      const runId = "runId" in result ? result.runId : "";
+      const startedAt = calls.findIndex(
+        (call) => call[0] === "systemd-run" && call.includes("--unit"),
+      );
+      const started = calls[startedAt];
       assert.isDefined(started);
+      // Upstream merged cleanly against what the script will fast-forward to, so the script runs.
+      const checkedAt = calls.findIndex(
+        (call) =>
+          call.join(" ") === `git -C ${CHECKOUT} merge-tree --write-tree origin/main upstream/main`,
+      );
+      assert.isTrue(checkedAt !== -1 && checkedAt < startedAt);
+      assert.isTrue(calls.slice(0, checkedAt).some((call) => call.includes("fetch")));
       assert.include(started, "t3code-source-update");
       assert.include(started, `--setenv=T3CODE_SOURCE_UPDATE_RUN_ID=${runId}`);
       assert.include(started, "RuntimeMaxSec=1800");
@@ -322,12 +338,20 @@ describe("SourceUpdateService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("starts a Claude thread in the checkout's project to merge upstream", () => {
-    const { layer, launches, bootstraps } = makeService();
+  it.effect("hands conflicting upstream to a Claude thread instead of running the script", () => {
+    const { layer, calls, launches, bootstraps } = makeService({ upstreamConflicts: true });
     return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // Nothing restarts, so a running turn does not block it.
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('run-1', 'thread-1', 1, 'claudeAgent', 'running', '2026-01-01T00:00:00Z', '{}')
+      `;
       const service = yield* SourceUpdateService.SourceUpdateService;
-      const result = yield* service.pullUpstream;
-      assert.deepEqual(result, { projectId, threadId });
+      const result = yield* service.update({});
+      assert.deepEqual(result, { upstreamConflict: { projectId, threadId } });
+      assert.isFalse(calls.some((call) => call[0] === "systemd-run" && call.includes("--unit")));
       assert.equal(bootstraps[0]?.workspaceRoot, CHECKOUT);
       assert.equal(launches.length, 1);
       assert.equal(launches[0]?.projectId, projectId);
@@ -336,8 +360,9 @@ describe("SourceUpdateService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("refuses Pull upstream without a working Claude provider", () => {
-    const { layer, launches } = makeService({
+  it.effect("refuses conflicting upstream without a working Claude provider", () => {
+    const { layer, calls, launches } = makeService({
+      upstreamConflicts: true,
       providers: [{ ...claude, installed: false }],
     });
     return Effect.gen(function* () {
@@ -347,9 +372,10 @@ describe("SourceUpdateService", () => {
         status.pullUpstreamUnavailableReason,
         "Claude Code is not installed on this server.",
       );
-      const error = yield* Effect.flip(service.pullUpstream);
+      const error = yield* Effect.flip(service.update({}));
       assert.equal(error.reason, "unavailable");
       assert.equal(launches.length, 0);
+      assert.isFalse(calls.some((call) => call[0] === "systemd-run" && call.includes("--unit")));
     }).pipe(Effect.provide(layer));
   });
 });

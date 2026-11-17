@@ -57,7 +57,6 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.serverGetSourceUpdateStatus,
       WS_METHODS.serverRunSourceUpdate,
       WS_METHODS.serverCancelSourceUpdate,
-      WS_METHODS.serverPullUpstream,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthEnvironmentMaintainScope);
     }

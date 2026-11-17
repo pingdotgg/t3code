@@ -1,4 +1,4 @@
-import type { ServerSourceUpdateStatus } from "@t3tools/contracts";
+import type { ServerConfig, ServerSourceUpdateStatus, ThreadId } from "@t3tools/contracts";
 import type { SourceUpdateRun } from "@t3tools/client-runtime/state/server";
 
 export type SourceUpdatePhase =
@@ -10,6 +10,8 @@ export type SourceUpdatePhase =
       /** Checkout commits the running server was not built from. */
       readonly unbuilt: number;
     }
+  /** Upstream conflicted, so Update started an agent thread to merge it instead. */
+  | { readonly kind: "resolving"; readonly threadId: ThreadId }
   /** `cancellable` once the server confirms the update is running. */
   | { readonly kind: "running"; readonly cancellable: boolean }
   | {
@@ -55,6 +57,8 @@ function settledRun(status: ServerSourceUpdateStatus | null): SettledPhase | nul
 export function resolveSourceUpdatePhase(input: {
   readonly status: ServerSourceUpdateStatus | null;
   readonly run: SourceUpdateRun | null;
+  /** The agent thread an Update from this client started for upstream conflicts. */
+  readonly conflictThreadId?: ThreadId | null;
   readonly dismissedRunId: string | null;
   readonly nowMs: number;
 }): SourceUpdatePhase {
@@ -74,40 +78,52 @@ export function resolveSourceUpdatePhase(input: {
   }
   if (status?.updateRunning) return { kind: "running", cancellable: true };
   if (run !== null && settled?.runId !== run.runId) return { kind: "running", cancellable: false };
+  // Once the agent merges upstream into the checkout, Update builds it like any other commit.
+  const conflictThreadId = input.conflictThreadId ?? null;
+  if (conflictThreadId !== null && (status?.upstreamAhead ?? 0) > 0) {
+    return { kind: "resolving", threadId: conflictThreadId };
+  }
   if (settled !== null && settled.runId !== input.dismissedRunId) return settled;
-  if (status === null) return IDLE;
-  const canUpdate = status.updateUnavailableReason === null;
-  const behindOrigin = canUpdate ? (status.behindOrigin ?? 0) : 0;
-  const unbuilt = canUpdate ? (status.unbuiltCommits ?? 0) : 0;
-  const upstreamAhead =
-    status.pullUpstreamUnavailableReason === null ? (status.upstreamAhead ?? 0) : 0;
+  if (status === null || status.updateUnavailableReason !== null) return IDLE;
+  const behindOrigin = status.behindOrigin ?? 0;
+  const unbuilt = status.unbuiltCommits ?? 0;
+  const upstreamAhead = status.upstreamAhead ?? 0;
   return behindOrigin > 0 || unbuilt > 0 || upstreamAhead > 0
     ? { kind: "available", behindOrigin, upstreamAhead, unbuilt }
     : IDLE;
 }
 
-export function newCommitsLabel(count: number): string {
-  return `${count} new commit${count === 1 ? "" : "s"}`;
+/** Whether T3's server Update action runs a source update on this environment. */
+export function supportsSourceUpdate(config: Pick<ServerConfig, "environment"> | undefined) {
+  return config?.environment.capabilities.sourceUpdate === true;
 }
 
-export function unbuiltCommitsLabel(count: number): string {
-  return `${count} commit${count === 1 ? "" : "s"} not built`;
+function commitsLabel(count: number): string {
+  return `${count} commit${count === 1 ? "" : "s"}`;
 }
 
-export function sourceUpdatePillLabel(phase: SourceUpdatePhase): string | null {
+/** What the source checkout needs, or how the last update went; null while there is nothing. */
+export function sourceUpdateSummary(phase: SourceUpdatePhase): string | null {
   switch (phase.kind) {
     case "idle":
+    case "resolving":
       return null;
     case "available":
-      if (phase.behindOrigin > 0) return `Update · ${newCommitsLabel(phase.behindOrigin)}`;
-      if (phase.unbuilt > 0) return `Rebuild · ${unbuiltCommitsLabel(phase.unbuilt)}`;
-      return `Upstream · ${newCommitsLabel(phase.upstreamAhead)}`;
+      return [
+        phase.behindOrigin > 0 ? `origin/main is ${commitsLabel(phase.behindOrigin)} ahead` : null,
+        phase.upstreamAhead > 0
+          ? `upstream/main is ${commitsLabel(phase.upstreamAhead)} ahead`
+          : null,
+        phase.unbuilt > 0 ? `${commitsLabel(phase.unbuilt)} not built` : null,
+      ]
+        .filter((part) => part !== null)
+        .join(" · ");
     case "running":
-      return "Updating…";
+      return "Updating from source…";
     case "succeeded":
-      return `Updated · ${phase.sha}`;
+      return phase.message || `Updated to ${phase.sha}`;
     case "failed":
-      return "Update failed";
+      return `Update failed: ${phase.message}`;
   }
 }
 
@@ -116,10 +132,7 @@ export function canRunSourceUpdate(
   phase: SourceUpdatePhase,
 ): boolean {
   if (status === null || status.updateUnavailableReason !== null) return false;
-  return (
-    (phase.kind === "available" && (phase.behindOrigin > 0 || phase.unbuilt > 0)) ||
-    phase.kind === "failed"
-  );
+  return phase.kind === "available" || phase.kind === "resolving" || phase.kind === "failed";
 }
 
 export function canCancelSourceUpdate(phase: SourceUpdatePhase): boolean {
@@ -128,24 +141,4 @@ export function canCancelSourceUpdate(phase: SourceUpdatePhase): boolean {
 
 export function isSourceUpdateSettled(phase: SourceUpdatePhase): phase is SettledPhase {
   return phase.kind === "succeeded" || phase.kind === "failed";
-}
-
-export function canPullUpstream(
-  status: ServerSourceUpdateStatus | null,
-  phase: SourceUpdatePhase,
-): boolean {
-  return (
-    phase.kind !== "running" &&
-    status?.pullUpstreamUnavailableReason === null &&
-    (status.upstreamAhead ?? 0) > 0
-  );
-}
-
-export function pickSourceUpdateEnvironment<Id extends string>(input: {
-  readonly primary: Id | null;
-  readonly candidates: ReadonlyArray<Id>;
-  readonly supportsSourceUpdate: (environmentId: Id) => boolean;
-}): Id | null {
-  if (input.primary !== null && input.supportsSourceUpdate(input.primary)) return input.primary;
-  return input.candidates.find(input.supportsSourceUpdate) ?? null;
 }

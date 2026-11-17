@@ -445,7 +445,7 @@ export const ServerSourceUpdateStatus = Schema.Struct({
   lastResult: Schema.NullOr(ServerSourceUpdateResult),
   /** Why Update cannot run on this server; null when it can. */
   updateUnavailableReason: Schema.NullOr(Schema.String),
-  /** Why Pull upstream cannot run on this server; null when it can. */
+  /** Why no agent can resolve upstream conflicts on this server; null when one can. */
   pullUpstreamUnavailableReason: Schema.NullOr(Schema.String),
 });
 export type ServerSourceUpdateStatus = typeof ServerSourceUpdateStatus.Type;
@@ -456,14 +456,12 @@ export const ServerRunSourceUpdateInput = Schema.Struct({
 });
 export type ServerRunSourceUpdateInput = typeof ServerRunSourceUpdateInput.Type;
 
-export const ServerRunSourceUpdateResult = Schema.Struct({ runId: Schema.String });
+/** The update started, or upstream conflicts and an agent thread is resolving them instead. */
+export const ServerRunSourceUpdateResult = Schema.Union([
+  Schema.Struct({ runId: Schema.String }),
+  Schema.Struct({ upstreamConflict: Schema.Struct({ projectId: ProjectId, threadId: ThreadId }) }),
+]);
 export type ServerRunSourceUpdateResult = typeof ServerRunSourceUpdateResult.Type;
-
-export const ServerPullUpstreamResult = Schema.Struct({
-  projectId: ProjectId,
-  threadId: ThreadId,
-});
-export type ServerPullUpstreamResult = typeof ServerPullUpstreamResult.Type;
 
 export const ServerSourceUpdateErrorReason = Schema.Literals([
   "unavailable",

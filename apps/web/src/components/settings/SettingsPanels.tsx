@@ -123,7 +123,6 @@ import { environmentSessionStatesAtom } from "~/state/session";
 import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer } from "../ServerUpdateAction";
 import { downloadLocalUpdate } from "../sidebar/SidebarUpdatePill";
-import { SourceUpdateSettingsRow } from "../sourceUpdate/SourceUpdateSettingsRow";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
@@ -2357,7 +2356,6 @@ export function AboutSettingsPanel() {
             />
           </>
         )}
-        <SourceUpdateSettingsRow />
         <MobileAppSettingsRow />
         {primaryEnvironmentId === null ? null : (
           <SettingsRow

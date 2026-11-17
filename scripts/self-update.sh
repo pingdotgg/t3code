@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fast-forwards a source checkout to origin/main, rebuilds the server, and restarts
-# its user service. The server starts this through systemd-run, outside its own
+# Fast-forwards a source checkout to origin/main, merges upstream/main into it and
+# pushes the merge, rebuilds the server, and restarts its user service. The server starts this through systemd-run, outside its own
 # cgroup, and reads the "[source-update]" lines of the log as the run's progress.
 #
 # T3CODE_SOURCE_UPDATE_SERVICE names the unit to restart; empty skips the restart
@@ -91,12 +91,33 @@ main() {
   branch="$(git symbolic-ref --quiet --short HEAD || true)"
   [ "$branch" = "main" ] || fail "The checkout is on '${branch:-a detached HEAD}', not main."
 
-  step="pulling origin/main"
+  step="fetching"
+  local has_upstream=""
   git fetch origin main
+  if git remote get-url upstream >/dev/null 2>&1; then
+    has_upstream=1
+    git fetch upstream main
+  fi
+
+  step="pulling origin/main"
   if ! git merge-base --is-ancestor HEAD origin/main; then
     fail "main has commits origin/main lacks, so it cannot fast-forward; push or reset them first."
   fi
   git merge --ff-only origin/main
+
+  # Merge, never rebase: main is published and other machines clone it.
+  if [ -n "$has_upstream" ] && ! git merge-base --is-ancestor upstream/main HEAD; then
+    step="merging upstream/main"
+    if ! git merge --no-edit upstream/main; then
+      git merge --abort || true
+      fail "upstream/main does not merge cleanly; press Update again to have an agent resolve it."
+    fi
+    step="pushing the merge to origin"
+    if ! git push origin main; then
+      git reset --hard origin/main
+      fail "Could not push the upstream merge to origin; the merge was undone."
+    fi
+  fi
 
   # Skills are not part of the server, so a linking problem never blocks the update.
   node scripts/workflow-link.ts || echo "Linking workflow skills failed; run vp run workflow:link." >&2

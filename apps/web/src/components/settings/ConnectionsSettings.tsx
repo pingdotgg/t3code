@@ -118,6 +118,8 @@ import {
   ServerUpdatesAction,
   type ServerUpdateTarget,
 } from "../ServerUpdateAction";
+import { SourceUpdateButton, SourceUpdateStatus } from "../sourceUpdate/SourceUpdateAction";
+import { useCanSourceUpdate } from "../sourceUpdate/useSourceUpdate";
 import {
   sortDesktopPairingLinks,
   summarizeAuthorizedClients,
@@ -382,6 +384,7 @@ function ConnectionsSettingsContent({
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
   );
+  const primarySourceUpdate = useCanSourceUpdate(primaryEnvironmentId);
   const [isAdvertisedEndpointListExpanded, setIsAdvertisedEndpointListExpanded] = useState(false);
   const defaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.defaultAdvertisedEndpointKey,
@@ -1247,7 +1250,9 @@ function ConnectionsSettingsContent({
               <SettingsRow
                 title="Version"
                 description={
-                  primaryServerUpdateState.status !== "idle" ? (
+                  primarySourceUpdate && primaryEnvironmentId !== null ? (
+                    <SourceUpdateStatus environmentId={primaryEnvironmentId} full />
+                  ) : primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
                   ) : (
                     [
@@ -1259,9 +1264,11 @@ function ConnectionsSettingsContent({
                   )
                 }
                 control={
-                  primaryVersionMismatch &&
-                  primaryEnvironmentId !== null &&
-                  primaryServerUpdateState.status !== "running" ? (
+                  primarySourceUpdate && primaryEnvironmentId !== null ? (
+                    <SourceUpdateButton environmentId={primaryEnvironmentId} size="sm" />
+                  ) : primaryVersionMismatch &&
+                    primaryEnvironmentId !== null &&
+                    primaryServerUpdateState.status !== "running" ? (
                     <ServerUpdateAction
                       size="sm"
                       environmentId={primaryEnvironmentId}

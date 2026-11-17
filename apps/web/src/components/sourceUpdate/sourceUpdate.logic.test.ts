@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerSourceUpdateStatus } from "@t3tools/contracts";
+import { type ServerSourceUpdateStatus, ThreadId } from "@t3tools/contracts";
 
 import {
   canCancelSourceUpdate,
-  canPullUpstream,
   canRunSourceUpdate,
   resolveSourceUpdatePhase,
   SOURCE_UPDATE_GIVE_UP_MS,
-  sourceUpdatePillLabel,
+  sourceUpdateSummary,
+  supportsSourceUpdate,
 } from "./sourceUpdate.logic";
 
 const status = (overrides: Partial<ServerSourceUpdateStatus> = {}): ServerSourceUpdateStatus => ({
@@ -64,7 +64,15 @@ describe("resolveSourceUpdatePhase", () => {
       { kind: "available", behindOrigin: 0, upstreamAhead: 4, unbuilt: 0 },
     ],
     [
-      "actions the server cannot run are not offered",
+      "upstream alone is an update, since Update merges it",
+      status({ upstreamAhead: 4, pullUpstreamUnavailableReason: "no Claude" }),
+      null,
+      null,
+      1_000,
+      { kind: "available", behindOrigin: 0, upstreamAhead: 4, unbuilt: 0 },
+    ],
+    [
+      "nothing is offered where Update cannot run",
       status({
         behindOrigin: 3,
         upstreamAhead: 2,
@@ -183,31 +191,50 @@ describe("resolveSourceUpdatePhase", () => {
       resolveSourceUpdatePhase({ status: input, run: current, dismissedRunId, nowMs }),
     ).toEqual(expected);
   });
+
+  it("points at the merge agent until upstream is merged into the checkout", () => {
+    const conflictThreadId = ThreadId.make("merge-thread");
+    const phase = (input: ServerSourceUpdateStatus) =>
+      resolveSourceUpdatePhase({
+        status: input,
+        run: null,
+        conflictThreadId,
+        dismissedRunId: null,
+        nowMs: 1_000,
+      });
+    expect(phase(status({ upstreamAhead: 2 }))).toEqual({
+      kind: "resolving",
+      threadId: conflictThreadId,
+    });
+    // The agent merged and pushed from the checkout; Update now builds it.
+    expect(phase(status({ unbuiltCommits: 3 }))).toEqual({
+      kind: "available",
+      behindOrigin: 0,
+      upstreamAhead: 0,
+      unbuilt: 3,
+    });
+  });
 });
 
 describe("source update actions", () => {
   it.each([
     [{ kind: "idle" }, null, false],
     [
-      { kind: "available", behindOrigin: 1, upstreamAhead: 0, unbuilt: 0 },
-      "Update · 1 new commit",
+      { kind: "available", behindOrigin: 1, upstreamAhead: 2, unbuilt: 0 },
+      "origin/main is 1 commit ahead · upstream/main is 2 commits ahead",
       true,
-    ],
-    [
-      { kind: "available", behindOrigin: 0, upstreamAhead: 5, unbuilt: 0 },
-      "Upstream · 5 new commits",
-      false,
     ],
     [
       { kind: "available", behindOrigin: 0, upstreamAhead: 0, unbuilt: 2 },
-      "Rebuild · 2 commits not built",
+      "2 commits not built",
       true,
     ],
-    [{ kind: "running", cancellable: true }, "Updating…", false],
-    [{ kind: "succeeded", runId: "r", sha: "def5678", message: "" }, "Updated · def5678", false],
-    [{ kind: "failed", runId: "r", message: "x" }, "Update failed", true],
-  ] as const)("%j labels %s", (phase, label, canUpdate) => {
-    expect(sourceUpdatePillLabel(phase)).toBe(label);
+    [{ kind: "resolving", threadId: ThreadId.make("t") }, null, true],
+    [{ kind: "running", cancellable: true }, "Updating from source…", false],
+    [{ kind: "succeeded", runId: "r", sha: "def5678", message: "" }, "Updated to def5678", false],
+    [{ kind: "failed", runId: "r", message: "x" }, "Update failed: x", true],
+  ] as const)("%j reads %s", (phase, summary, canUpdate) => {
+    expect(sourceUpdateSummary(phase)).toBe(summary);
     expect(canRunSourceUpdate(status(), phase)).toBe(canUpdate);
   });
 
@@ -223,19 +250,20 @@ describe("source update actions", () => {
     expect(canCancelSourceUpdate({ kind: "running", cancellable: false })).toBe(false);
   });
 
-  it("offers Pull upstream only while no update runs and Claude can run it", () => {
-    const ahead = status({ upstreamAhead: 2 });
-    const phase = resolveSourceUpdatePhase({
-      status: ahead,
-      run: null,
-      dismissedRunId: null,
-      nowMs: 0,
-    });
-    expect(canPullUpstream(ahead, phase)).toBe(true);
-    expect(canPullUpstream(ahead, { kind: "running", cancellable: true })).toBe(false);
-    expect(canPullUpstream(status(), { kind: "idle" })).toBe(false);
-    expect(
-      canPullUpstream(status({ upstreamAhead: 2, pullUpstreamUnavailableReason: "x" }), phase),
-    ).toBe(false);
+  it("swaps the Update action for every source-built environment, primary or remote", () => {
+    const config = (sourceUpdate?: boolean) =>
+      ({
+        environment: { capabilities: sourceUpdate === undefined ? {} : { sourceUpdate } },
+      }) as Parameters<typeof supportsSourceUpdate>[0];
+    const configs = new Map([
+      ["primary", config(true)],
+      ["remote-fork", config(true)],
+      ["remote-release", config()],
+    ]);
+    expect([...configs].filter(([, c]) => supportsSourceUpdate(c)).map(([id]) => id)).toEqual([
+      "primary",
+      "remote-fork",
+    ]);
+    expect(supportsSourceUpdate(undefined)).toBe(false);
   });
 });

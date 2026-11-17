@@ -67,6 +67,8 @@ import {
   ServerUpdateAction,
   ServerUpdateProgress,
 } from "../ServerUpdateAction";
+import { SourceUpdateButton, SourceUpdateStatus } from "../sourceUpdate/SourceUpdateAction";
+import { useCanSourceUpdate } from "../sourceUpdate/useSourceUpdate";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 
@@ -165,6 +167,7 @@ export function SavedBackendListRow({
   });
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
+  const sourceUpdate = useCanSourceUpdate(enabled && isConnected ? environmentId : null);
   const resumingServerUpdate =
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
   const status = savedBackendStatus(environment);
@@ -217,6 +220,7 @@ export function SavedBackendListRow({
     .join(" · ");
 
   const showUpdateAction =
+    !sourceUpdate &&
     enabled &&
     isConnected &&
     versionMismatch !== null &&
@@ -315,6 +319,11 @@ export function SavedBackendListRow({
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
           ) : null}
+          {sourceUpdate ? (
+            <div className="mt-1 max-w-md">
+              <SourceUpdateStatus environmentId={environmentId} />
+            </div>
+          ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">
               <ServerUpdateProgress state={serverUpdateState} />
@@ -364,6 +373,7 @@ export function SavedBackendListRow({
           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
         />
       ) : null}
+      {sourceUpdate ? <SourceUpdateButton environmentId={environmentId} appearance="icon" /> : null}
       {showUpdateAction ? (
         <ServerUpdateAction
           environmentId={environmentId}

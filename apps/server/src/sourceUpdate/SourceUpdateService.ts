@@ -6,7 +6,6 @@ import {
   ProviderDriverKind,
   ServerSourceUpdateError,
   type ServerProvider,
-  type ServerPullUpstreamResult,
   type ServerRunSourceUpdateInput,
   type ServerRunSourceUpdateResult,
   type ServerSourceUpdateResult,
@@ -52,14 +51,14 @@ const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 // No tty: a credential prompt would hang until the timeout, so git must fail instead.
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", LANGUAGE: "C" };
 
-export const PULL_UPSTREAM_PROMPT = `Merge upstream into this checkout. It is the source the T3 Code server you are running in is built from.
+export const PULL_UPSTREAM_PROMPT = `Merge upstream into this checkout. It is the source the T3 Code server you are running in is built from. Update stopped because \`upstream/main\` does not merge cleanly.
 
-1. \`git fetch --multiple origin upstream\` and make sure the working tree is clean and on \`main\`, up to date with \`origin/main\`.
-2. \`git merge upstream/main\`. Resolve every conflict so both sides' intent survives; read the upstream commits when a resolution is not obvious, and ask me when it is a real product decision.
+1. \`git fetch --multiple origin upstream\`, make sure the working tree is clean and on \`main\`, and fast-forward to \`origin/main\`.
+2. \`git merge --no-edit upstream/main\`. Never rebase: \`main\` is published. Resolve every conflict so both sides' intent survives; read the upstream commits when a resolution is not obvious, and ask me when it is a real product decision.
 3. Run \`vp i\` and \`vp run check:changed\`, and fix what fails.
 4. Push to \`origin main\`. Never push to \`upstream\` or open pull requests against it.
 
-Do not build or restart the server; I run Update from the app once this is pushed.`;
+Then stop. Do not build or restart the server; I press Update in the app once this is pushed.`;
 
 const STARTED_LINE = /^\[source-update\] started (\S+)$/;
 const RESULT_LINE = /^\[source-update\] (succeeded|failed) (\S+) (\S+)(?: (.*))?$/;
@@ -97,7 +96,7 @@ export const runsInSystemdUnit = (cgroup: string, service: string): boolean =>
   service.length > 0 &&
   cgroup.split("\n").some((line) => line.split("/").includes(`${service}.service`));
 
-/** Why Pull upstream cannot start a Claude thread here, or null when it can. */
+/** Why an agent cannot be started here to resolve upstream conflicts, or null when it can. */
 const claudeUnavailableReason = (provider: ServerProvider | undefined): string | null => {
   if (provider === undefined) return "Claude is not set up on this server.";
   if (!provider.enabled || provider.status === "disabled") {
@@ -131,7 +130,6 @@ export class SourceUpdateService extends Context.Service<
       input: ServerRunSourceUpdateInput,
     ) => Effect.Effect<ServerRunSourceUpdateResult, ServerSourceUpdateError>;
     readonly cancel: Effect.Effect<void, ServerSourceUpdateError>;
-    readonly pullUpstream: Effect.Effect<ServerPullUpstreamResult, ServerSourceUpdateError>;
   }
 >()("t3/sourceUpdate/SourceUpdateService") {}
 
@@ -166,7 +164,6 @@ const make = Effect.gen(function* () {
         return yield* unavailable;
       }),
       cancel: Effect.fail(unavailable),
-      pullUpstream: Effect.fail(unavailable),
     });
   }
   // Projects match on the resolved path, so a trailing slash or a symlink must not differ.
@@ -319,22 +316,77 @@ const make = Effect.gen(function* () {
     Effect.mapError(failed("Could not check for running turns.")),
   );
 
+  const startMergeAgent = Effect.gen(function* () {
+    const claudeReason = claudeUnavailableReason(yield* claudeProvider);
+    if (claudeReason !== null) {
+      return yield* new ServerSourceUpdateError({
+        reason: "unavailable",
+        detail: `Upstream has conflicts, and no agent can resolve them here: ${claudeReason}`,
+      });
+    }
+    const { project } = yield* projects
+      .bootstrap({
+        commandId: CommandId.make(yield* random.uuidV4()),
+        projectId: ProjectId.make(yield* random.uuidV4()),
+        title: path.basename(checkout) || "t3code",
+        workspaceRoot: checkout,
+      })
+      .pipe(Effect.mapError(failed(`Could not open the project at ${checkout}.`)));
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(failed("Could not read server settings.")),
+    );
+    const launched = yield* threadLaunch
+      .launch({
+        commandId: CommandId.make(yield* random.uuidV4()),
+        projectId: project.id,
+        title: "Merge upstream",
+        modelSelection: {
+          instanceId: defaultInstanceIdForDriver(CLAUDE_DRIVER),
+          model: DEFAULT_MODEL_BY_PROVIDER[CLAUDE_DRIVER]!,
+        },
+        runtimeMode: resolveProjectSettings(settings, project.id, project).settings
+          .defaultRuntimeMode,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        workspaceStrategy: { type: "root" },
+        initialMessage: { text: PULL_UPSTREAM_PROMPT, attachments: [] },
+        createdBy: "user",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError((error) => failed(error.message)(error)));
+    return { projectId: project.id, threadId: launched.threadId };
+  }).pipe(Effect.withSpan("SourceUpdateService.startMergeAgent"));
+
+  // The script merges upstream into origin/main, so that is the merge to try. `merge-tree
+  // --write-tree` exits 1 on conflicts and leaves the index and working tree alone.
+  const upstreamConflicts = Effect.gen(function* () {
+    yield* fetchRemotes;
+    const output = yield* git(["merge-tree", "--write-tree", "origin/main", "upstream/main"]).pipe(
+      Effect.mapError(failed("Could not check whether upstream merges cleanly.")),
+    );
+    // Other codes mean a missing ref; the script reports that itself.
+    return output.code === 1;
+  });
+
   const update: SourceUpdateService["Service"]["update"] = Effect.fn("SourceUpdateService.update")(
     function* (input) {
       const reason = yield* systemdUnavailableReason;
       if (reason !== null) {
         return yield* new ServerSourceUpdateError({ reason: "unavailable", detail: reason });
       }
-      if (input.force !== true && (yield* hasActiveRun)) {
-        return yield* new ServerSourceUpdateError({
-          reason: "turns-running",
-          detail: "Agents are working on this server. Updating restarts it and stops their turns.",
-        });
-      }
       if (yield* updateRunning) {
         return yield* new ServerSourceUpdateError({
           reason: "update-running",
           detail: "An update is already running.",
+        });
+      }
+      // Nothing restarts on a conflict, so running turns do not matter for it.
+      if (yield* upstreamConflicts) {
+        return { upstreamConflict: yield* startMergeAgent };
+      }
+      if (input.force !== true && (yield* hasActiveRun)) {
+        return yield* new ServerSourceUpdateError({
+          reason: "turns-running",
+          detail: "Agents are working on this server. Updating restarts it and stops their turns.",
         });
       }
       yield* fs
@@ -392,44 +444,7 @@ const make = Effect.gen(function* () {
     }
   }).pipe(Effect.withSpan("SourceUpdateService.cancel"));
 
-  const pullUpstream: SourceUpdateService["Service"]["pullUpstream"] = Effect.gen(function* () {
-    const claudeReason = claudeUnavailableReason(yield* claudeProvider);
-    if (claudeReason !== null) {
-      return yield* new ServerSourceUpdateError({ reason: "unavailable", detail: claudeReason });
-    }
-    const { project } = yield* projects
-      .bootstrap({
-        commandId: CommandId.make(yield* random.uuidV4()),
-        projectId: ProjectId.make(yield* random.uuidV4()),
-        title: path.basename(checkout) || "t3code",
-        workspaceRoot: checkout,
-      })
-      .pipe(Effect.mapError(failed(`Could not open the project at ${checkout}.`)));
-    const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError(failed("Could not read server settings.")),
-    );
-    const launched = yield* threadLaunch
-      .launch({
-        commandId: CommandId.make(yield* random.uuidV4()),
-        projectId: project.id,
-        title: "Merge upstream",
-        modelSelection: {
-          instanceId: defaultInstanceIdForDriver(CLAUDE_DRIVER),
-          model: DEFAULT_MODEL_BY_PROVIDER[CLAUDE_DRIVER]!,
-        },
-        runtimeMode: resolveProjectSettings(settings, project.id, project).settings
-          .defaultRuntimeMode,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        workspaceStrategy: { type: "root" },
-        initialMessage: { text: PULL_UPSTREAM_PROMPT, attachments: [] },
-        createdBy: "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.mapError((error) => failed(error.message)(error)));
-    return { projectId: project.id, threadId: launched.threadId };
-  }).pipe(Effect.withSpan("SourceUpdateService.pullUpstream"));
-
-  return SourceUpdateService.of({ status, update, cancel, pullUpstream });
+  return SourceUpdateService.of({ status, update, cancel });
 });
 
 export const layer = Layer.effect(SourceUpdateService, make);
