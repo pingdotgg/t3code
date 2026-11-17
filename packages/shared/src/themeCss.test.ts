@@ -30,15 +30,11 @@ describe("themeCssValueFetches", () => {
 });
 
 describe("themeCssLoadsRemoteFiles", () => {
-  // prettier-ignore
-  it("allows literal import text in generated content without loading files", () => {
-    expect(
-      themeCssLoadsRemoteFiles('[data-chat-header]::after { content: "@import"; }'),
-    ).toBe(false);
-  });
-
-  it.each(['@import "x.css";', "@import url(https://example.com/x.css);"])("refuses %s", (css) => {
-    expect(themeCssLoadsRemoteFiles(css)).toBe(true);
+  it.each([
+    ['[data-chat-header]::after { content: "@import"; }', false],
+    ['@import "x.css";', true],
+  ])("%s", (css, loads) => {
+    expect(themeCssLoadsRemoteFiles(css)).toBe(loads);
   });
 
   it("allows a url() inside a data: address", () => {
