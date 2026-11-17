@@ -59,7 +59,8 @@ export function pullRequestStackView(
   const data = query.isSuccess ? query.data : (query.data ?? saved);
   return {
     data,
-    isFresh: query.isSuccess,
+    // A settled read: one still out may be showing an answer restored from the device.
+    isFresh: query.isSuccess && !query.isPending,
     notice:
       data === null
         ? null
