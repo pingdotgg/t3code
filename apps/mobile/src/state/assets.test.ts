@@ -4,6 +4,7 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   ThreadId,
+  type AssetCreateUrlResult,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -61,6 +62,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
 import { refreshAssetUrl, useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { appAtomRegistry } from "./atom-registry";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -116,6 +118,20 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBeNull();
+});
+
+it("resolves an explicit refresh against the route current when minting finishes", async () => {
+  const connection = Atom.make({
+    _tag: "Some" as const,
+    value: { httpBaseUrl: "https://host.test" },
+  });
+  state.preparedConnectionAtom = connection;
+  const minted = Promise.withResolvers<AsyncResult.AsyncResult<AssetCreateUrlResult>>();
+  state.mint.mockReturnValueOnce(minted.promise);
+  const refreshed = useRefreshAssetUrl(environmentId, resource)();
+  appAtomRegistry.set(connection, { _tag: "Some", value: { httpBaseUrl: "https://relay.test" } });
+  minted.resolve(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
+  await expect(refreshed).resolves.toBe("https://relay.test/api/assets/image.png");
 });
 
 it("rejects with the server's error and resolves null only without a connection", async () => {
