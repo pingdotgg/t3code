@@ -7,8 +7,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 import type { SidebarProjectGroupMember } from "../sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "../state/entities";
 import { readEnvironment } from "../state/environments";
@@ -53,7 +55,11 @@ export function useProjectGroupUpdate() {
     if (unavailable) {
       return failWith(
         failureTitle,
-        `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+        m(
+          msg("Connect {environment} and try again.", {
+            environment: unavailable.environmentLabel ?? m(msg("the selected environment")),
+          }),
+        ),
       );
     }
     for (const member of members) {
@@ -73,7 +79,12 @@ export function useProjectGroupUpdate() {
       if (result._tag === "Failure") {
         reportProjectFailure(
           members.length > 1
-            ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            ? m(
+                msg("{title} on {environment}", {
+                  title: failureTitle,
+                  environment: member.environmentLabel ?? m(msg("the current environment")),
+                }),
+              )
             : failureTitle,
           result,
         );
@@ -115,7 +126,7 @@ export function useProjectPin() {
     void updateProjectGroup(
       group.memberProjects,
       { pinned },
-      pinned ? "Failed to pin project" : "Failed to unpin project",
+      pinned ? m(msg("Failed to pin project")) : m(msg("Failed to unpin project")),
     );
   };
   return {
@@ -136,7 +147,11 @@ export function checkProjectAccess(
   return denied
     ? failWith(
         failureTitle,
-        `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+        m(
+          msg("This connection cannot change projects in {environment}.", {
+            environment: denied.environmentLabel ?? m(msg("this environment")),
+          }),
+        ),
       )
     : null;
 }
@@ -148,7 +163,7 @@ export function reportProjectFailure(title: string, result: AtomCommandResult<un
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : m(msg("An error occurred.")),
     }),
   );
 }

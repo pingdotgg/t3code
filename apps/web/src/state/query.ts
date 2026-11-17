@@ -2,7 +2,10 @@ import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-reac
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg, useMessages } from "gt-react";
 import { useContext } from "react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
   Atom.withLabel("web-environment-query:empty"),
@@ -18,11 +21,14 @@ export interface EnvironmentQueryView<A, E = unknown> {
   readonly refresh: () => void;
 }
 
-export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string {
+export function formatEnvironmentQueryError(
+  cause: Cause.Cause<unknown>,
+  resolve: MessageResolver = m,
+): string {
   const error = Cause.squash(cause);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "The environment request failed.";
+    : resolve(msg("The environment request failed."));
 }
 
 function queryUpdatedAt(result: AsyncResult.AsyncResult<unknown, unknown>): number {
@@ -36,13 +42,14 @@ function queryUpdatedAt(result: AsyncResult.AsyncResult<unknown, unknown>): numb
 export function useEnvironmentQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
 ): EnvironmentQueryView<A, E> {
+  const resolve = useMessages();
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
   return {
     data: AsyncResult.getOrElse(result, () => null),
     dataUpdatedAt: queryUpdatedAt(result),
-    error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
+    error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause, resolve) : null,
     failure:
       result._tag === "Failure" ? Option.getOrNull(Cause.findErrorOption(result.cause)) : null,
     isPending: atom !== null && result.waiting,

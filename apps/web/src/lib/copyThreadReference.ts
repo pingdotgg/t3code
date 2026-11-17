@@ -3,9 +3,11 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
+import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { m } from "../i18n/messages";
 
 export async function copyThreadReference(target: ThreadReferenceCopyTarget): Promise<void> {
   const fragment = target.fragment ? encodeComposerContextFragment(target.fragment) : null;
@@ -21,7 +23,7 @@ export async function copyThreadReference(target: ThreadReferenceCopyTarget): Pr
       stackedThreadToast({
         type: "error",
         title: target.failureTitle,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
       }),
     );
   }

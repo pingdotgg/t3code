@@ -6,7 +6,9 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react";
 
+import { m } from "../i18n/messages";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
@@ -40,13 +42,13 @@ export function useResourceTelemetry(
   });
   const retry = async () => {
     if (environmentId === null) {
-      throw new Error("No environment is selected.");
+      throw new Error(m(msg("No environment is selected.")));
     }
     if (
       !readEnvironmentScope(environmentId, AuthEnvironmentMaintainScope) ||
       !readEnvironmentScope(environmentId, AuthDiagnosticsReadScope)
     ) {
-      throw new Error("This connection cannot restart the resource monitor.");
+      throw new Error(m(msg("This connection cannot restart the resource monitor.")));
     }
     const result = await retryCommand({ environmentId, input: {} });
     if (result._tag === "Failure") {

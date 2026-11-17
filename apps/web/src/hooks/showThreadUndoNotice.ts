@@ -30,22 +30,24 @@ type UndoNotice = {
 
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
-const UNDONE_ACTION = {
-  Settled: "settle",
-  Snoozed: "snooze",
-  Unpinned: "unpin",
-  Archived: "archive",
-  Discarded: "discard",
+const SUMMARY = {
+  Settled: msg("Settled {count, plural, one {{count} thread} other {{count} threads}}"),
+  Snoozed: msg("Snoozed {count, plural, one {{count} thread} other {{count} threads}}"),
+  Unpinned: msg("Unpinned {count, plural, one {{count} thread} other {{count} threads}}"),
+  Archived: msg("Archived {count, plural, one {{count} thread} other {{count} threads}}"),
+  Discarded: msg("Discarded {count, plural, one {{count} draft} other {{count} drafts}}"),
 } satisfies Record<UndoOptions["action"], string>;
 
-function countLabel(action: UndoOptions["action"], count: number) {
-  return action === "Discarded"
-    ? m(msg("{count, plural, one {{count} draft} other {{count} drafts}}", { count }))
-    : m(msg("{count, plural, one {{count} thread} other {{count} threads}}", { count }));
-}
+const UNDONE = {
+  Settled: msg("Undid settle of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Snoozed: msg("Undid snooze of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Unpinned: msg("Undid unpin of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Archived: msg("Undid archive of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Discarded: msg("Undid discard of {count, plural, one {{count} draft} other {{count} drafts}}"),
+} satisfies Record<UndoOptions["action"], string>;
 
 function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
-  return `${notice.action} ${countLabel(notice.action, notice.count)}`;
+  return m(SUMMARY[notice.action], { count: notice.count });
 }
 
 /** Components pass `useMessages()` so the label follows a language switch. */
@@ -69,7 +71,7 @@ function setNotice(notice: UndoNotice | null) {
   announcedSummary = summary;
   if (summary) {
     const label = threadUndoLabel(appAtomRegistry.get(primaryServerKeybindingsAtom));
-    announce(`${summary}, ${label}`, "thread-undo-notice");
+    announce(m(msg("{summary}, {label}", { summary, label })), "thread-undo-notice");
   } else {
     cancelAnnouncement("thread-undo-notice");
   }
@@ -131,7 +133,7 @@ function refreshNotice() {
       );
       // Failures already raise a toast, so only what was actually restored is spoken.
       if (undone > 0) {
-        announce(`Undid ${UNDONE_ACTION[latest.action]} of ${countLabel(latest.action, undone)}`);
+        announce(m(UNDONE[latest.action], { count: undone }));
       }
     },
   });

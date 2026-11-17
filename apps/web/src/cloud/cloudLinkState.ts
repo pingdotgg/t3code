@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { useGT } from "gt-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -41,6 +42,7 @@ export function readCachedCloudLinkState(target: CloudLinkTarget) {
 }
 
 export function useCloudLinkState(environmentId: EnvironmentId | null) {
+  const gt = useGT();
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const target: CloudLinkTarget | null = environmentId === null ? null : { environmentId };
   const atom =
@@ -54,7 +56,7 @@ export function useCloudLinkState(environmentId: EnvironmentId | null) {
   let error: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
-    error = cause instanceof Error ? cause.message : "Could not read T3 Connect link state.";
+    error = cause instanceof Error ? cause.message : gt("Could not read T3 Connect link state.");
   }
 
   return {
