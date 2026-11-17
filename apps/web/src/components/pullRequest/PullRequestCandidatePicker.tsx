@@ -33,7 +33,6 @@ export function PullRequestCandidatePicker<T>({
   truncated,
   truncatedLabel,
   candidateKey,
-  disabled,
   onSelect,
   groupLabel,
   footer,
@@ -58,7 +57,6 @@ export function PullRequestCandidatePicker<T>({
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  disabled: boolean;
   onSelect: (candidate: T) => void;
   /**
    * The heading of the group a candidate belongs to, such as "Suggested". The caller orders the
@@ -146,7 +144,7 @@ export function PullRequestCandidatePicker<T>({
                   {group !== null && (index === 0 || group !== previous) ? (
                     <p className="px-2 pt-2 pb-1 text-meta text-muted-foreground">{group}</p>
                   ) : null}
-                  <ComboboxItem hideIndicator index={index} value={keys[index]} disabled={disabled}>
+                  <ComboboxItem hideIndicator index={index} value={keys[index]}>
                     {children(candidate)}
                   </ComboboxItem>
                 </Fragment>
