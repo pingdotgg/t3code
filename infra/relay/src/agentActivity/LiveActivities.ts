@@ -224,6 +224,7 @@ const make = Effect.gen(function* () {
           push_token: relayMobileDevices.pushToken,
           push_to_start_token: relayMobileDevices.pushToStartToken,
           preferences_json: relayMobileDevices.preferencesJson,
+          environment_revealed_at: relayMobileDevices.environmentRevealedAt,
           activity_push_token: relayLiveActivities.activityPushToken,
           remote_start_queued_at: relayLiveActivities.remoteStartQueuedAt,
           remote_started_at: relayLiveActivities.remoteStartedAt,
@@ -244,9 +245,14 @@ const make = Effect.gen(function* () {
           Effect.flatMap((rows) =>
             Effect.forEach(
               rows,
-              (row) =>
+              ({ environment_revealed_at, ...row }) =>
                 Effect.all({
-                  preferences_json: encodeJsonValue(row.preferences_json),
+                  // Delivery decodes the relay's reveal times together with the device's settings.
+                  preferences_json: encodeJsonValue(
+                    environment_revealed_at
+                      ? { ...row.preferences_json, environmentRevealedAt: environment_revealed_at }
+                      : row.preferences_json,
+                  ),
                   last_aggregate_json:
                     row.last_aggregate_json === null
                       ? Effect.succeed(null)

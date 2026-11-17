@@ -493,6 +493,35 @@ describe("makeAggregateState", () => {
     expect(aggregate?.activities).toMatchObject([{ threadId: "thread-fresh" }]);
   });
 
+  it("leaves a device's turned-off environments off its card", () => {
+    const off = { ...state, environmentId: "env-off" as RelayAgentActivityState["environmentId"] };
+    const preferences = {
+      notificationsEnabled: true,
+      liveActivitiesEnabled: true,
+      notifyOnApproval: true,
+      notifyOnInput: true,
+      notifyOnCompletion: true,
+      notifyOnFailure: true,
+      mutedEnvironmentIds: [off.environmentId],
+    };
+    expect(
+      makeAggregateState({
+        activeStates: [state, off],
+        terminalState: null,
+        nowMs: 0,
+        preferences,
+      }),
+    ).toMatchObject({ activeCount: 1, activities: [{ environmentId: state.environmentId }] });
+    expect(
+      makeAggregateState({
+        activeStates: [off],
+        terminalState: { ...off, phase: "completed" },
+        nowMs: 0,
+        preferences,
+      }),
+    ).toBeNull();
+  });
+
   it("returns null when every row has expired and nothing terminal remains", () => {
     expect(
       makeAggregateState({

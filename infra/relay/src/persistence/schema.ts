@@ -32,6 +32,7 @@ export const relayMobileDevices = pgTable(
     pushToken: text("push_token"),
     pushToStartToken: text("push_to_start_token"),
     preferencesJson: jsonb("preferences_json").notNull().$type<RelayAgentAwarenessPreferences>(),
+    environmentRevealedAt: jsonb("environment_revealed_at").$type<Record<string, number>>(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },

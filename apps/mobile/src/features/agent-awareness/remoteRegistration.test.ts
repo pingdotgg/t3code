@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as Dpop from "../cloud/dpop";
@@ -36,6 +36,7 @@ import {
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
+  setAgentAwarenessMutedEnvironments,
   setAgentAwarenessRelayTokenProvider,
   subscribeAgentAwarenessRegistrationStatus,
   updateAgentAwarenessRegistrationPreferences,
@@ -576,7 +577,103 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         }),
       ).toMatchObject({ ok: true });
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      const disabled = EnvironmentId.make("env-disabled");
+      setAgentAwarenessMutedEnvironments([disabled]);
+      yield* runBackgroundOperations();
+      const mutedCalls = fetchMock.mock.calls.filter(([request]) =>
+        requestUrl(request).endsWith("/v1/mobile/devices"),
+      );
+      expect(mutedCalls).toHaveLength(2);
+      const [mutedRequest, mutedInit] = mutedCalls[1] as unknown as [
+        unknown,
+        RequestInit | undefined,
+      ];
+      const mutedBody = yield* Effect.promise(() =>
+        mutedRequest instanceof Request
+          ? mutedRequest.json()
+          : Promise.resolve(JSON.parse(String(mutedInit?.body))),
+      );
+      expect(mutedBody.preferences.mutedEnvironmentIds).toEqual([disabled]);
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("keeps toggles and Settings changes made while a registration is in flight", () => {
+    // The device request with a given index waits until released; `arrived` marks when it is sent.
+    const holds = new Map<number, { readonly release: () => void; readonly held: Promise<void> }>();
+    const arrived = new Map<number, () => void>();
+    const hold = (index: number) => {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      holds.set(index, { release, held });
+      return new Promise<void>((resolve) => arrived.set(index, resolve));
+    };
+    const deviceBodies: Array<Promise<{ preferences: Record<string, unknown> }>> = [];
+    const fetchMock = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+      const url = request instanceof Request ? request.url : String(request);
+      if (url.endsWith("/v1/client/dpop-token")) {
+        return Promise.resolve(
+          Response.json({
+            access_token: "relay-dpop-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          }),
+        );
+      }
+      if (!url.endsWith("/v1/mobile/devices")) return Promise.resolve(Response.json({ ok: true }));
+      deviceBodies.push(
+        request instanceof Request
+          ? request.clone().json()
+          : Promise.resolve(JSON.parse(String(init?.body))),
+      );
+      const index = deviceBodies.length - 1;
+      arrived.get(index)?.();
+      return (holds.get(index)?.held ?? Promise.resolve()).then(() => Response.json({ ok: true }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    const disabled = EnvironmentId.make("env-disabled");
+
+    return Effect.gen(function* () {
+      // A toggle made while the sign-in registration is in flight is still sent.
+      const signInArrived = hold(0);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+      const drain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => signInArrived);
+      setAgentAwarenessMutedEnvironments([disabled]);
+      holds.get(0)?.release();
+      yield* Fiber.join(drain);
+      yield* runBackgroundOperations();
+
+      // Settings saves its change locally only after its flow; a toggle in between keeps it.
+      const settingsArrived = hold(2);
+      const settings = yield* Effect.forkChild(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: false }),
+      );
+      yield* Effect.promise(() => settingsArrived);
+      setAgentAwarenessMutedEnvironments([]);
+      holds.get(2)?.release();
+      yield* Fiber.join(settings);
+      yield* runBackgroundOperations();
+
+      const bodies = yield* Effect.promise(() => Promise.all(deviceBodies));
+      expect(bodies.map((body) => body.preferences)).toMatchObject([
+        { liveActivitiesEnabled: true },
+        { liveActivitiesEnabled: true, mutedEnvironmentIds: [disabled] },
+        { liveActivitiesEnabled: false, mutedEnvironmentIds: [disabled] },
+        { liveActivitiesEnabled: false },
+      ]);
+      expect(bodies[0]?.preferences.mutedEnvironmentIds).toBeUndefined();
+      expect(bodies[3]?.preferences.mutedEnvironmentIds).toBeUndefined();
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {

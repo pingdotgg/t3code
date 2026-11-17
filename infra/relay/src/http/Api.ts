@@ -777,13 +777,13 @@ export const layerMobileApi = HttpApiBuilder.group(
       )
       .handle(
         "getAgentActivitySnapshot",
-        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* () {
+        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* ({ query }) {
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
-          return yield* registrations.getAgentActivitySnapshot({ userId });
+          return yield* registrations.getAgentActivitySnapshot({ userId, ...query });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
       .handle(

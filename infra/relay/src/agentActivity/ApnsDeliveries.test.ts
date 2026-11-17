@@ -30,6 +30,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -1005,6 +1006,80 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect(
+    "rebuilds a queued card without an environment turned off since, keeping its alert",
+    () => {
+      const requests: HttpClientRequest.HttpClientRequest[] = [];
+      const markedDeliveries: Array<
+        Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+      > = [];
+      const waiting = { ...state, phase: "waiting_for_approval" as const };
+      const off = {
+        ...state,
+        environmentId: "env-off" as RelayAgentActivityState["environmentId"],
+      };
+      const queued = makeAggregateState({
+        activeStates: [waiting, off],
+        terminalState: null,
+        nowMs: 0,
+      });
+      const signed = signApnsDeliveryJob({
+        secret: config.apnsDeliveryJobSigningSecret,
+        payload: makeApnsDeliveryJobPayload({
+          kind: "live_activity_update",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "activity-token",
+          aggregate: queued,
+          alert: { title: "Thread", body: "Approval: Project" },
+          createdAt: state.updatedAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-queued-before-turned-off",
+        }),
+      });
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.processSignedJob(yield* signed);
+        expect(markedDeliveries[0]?.aggregate?.activities).toMatchObject([
+          { environmentId: state.environmentId, phase: "waiting_for_approval" },
+        ]);
+        const body = requests[0]?.body;
+        expect(body?._tag).toBe("Uint8Array");
+        if (body?._tag === "Uint8Array") {
+          const { aps } = JSON.parse(new TextDecoder().decode(body.body));
+          expect(JSON.parse(aps["content-state"].props)).toMatchObject({ activeCount: 1 });
+          expect(aps.alert).toBeDefined();
+        }
+      }).pipe(
+        Effect.provide(
+          layerFor({
+            attempts: [],
+            config: signingConfig,
+            markedDeliveries,
+            currentTargets: [
+              {
+                ...target,
+                preferences_json: JSON.stringify({
+                  ...JSON.parse(enabledPreferences),
+                  mutedEnvironmentIds: [off.environmentId],
+                }),
+                last_aggregate_json: JSON.stringify(
+                  makeAggregateState({ activeStates: [state, off], terminalState: null, nowMs: 0 }),
+                ),
+              },
+            ],
+            activityStates: [waiting, off],
+            execute: (request) =>
+              Effect.sync(() => {
+                requests.push(request);
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("retries an in-flight device's jobs without cancelling other devices", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
@@ -1331,6 +1406,28 @@ describe("fast completion delivery", () => {
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect("ends a freshly armed card whose only rows are from an environment turned off", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const muted = JSON.stringify({
+      ...JSON.parse(enabledPreferences),
+      mutedEnvironmentIds: [state.environmentId],
+    });
+    const armed = { ...target, last_aggregate_json: JSON.stringify(aggregate) };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      // Within the grace period an empty replay keeps a card that is still waiting for content.
+      yield* deliveries.sendForTarget({ target: armed, aggregate: null, nowMs: 0, replay: true });
+      expect(queuedJobs).toHaveLength(0);
+      yield* deliveries.sendForTarget({
+        target: { ...armed, preferences_json: muted },
+        aggregate: null,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs.map((job) => job.payload.kind)).toEqual(["live_activity_end"]);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 });

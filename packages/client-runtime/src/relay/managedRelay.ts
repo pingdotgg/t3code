@@ -316,6 +316,7 @@ export class ManagedRelayClient extends Context.Service<
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getAgentActivitySnapshot: (input: {
       readonly clerkToken: string;
+      readonly deviceId?: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
@@ -502,7 +503,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     }),
     getAgentActivitySnapshot: (): DpopProofTarget => ({
       method: RelayAgentActivitySnapshotEndpoint.method,
-      url: urlBuilder.mobile.getAgentActivitySnapshot(),
+      url: urlBuilder.mobile.getAgentActivitySnapshot({ query: {} }),
     }),
     registerLiveActivity: (): DpopProofTarget => ({
       method: RelayRegisterLiveActivityEndpoint.method,
@@ -960,6 +961,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
             client.mobile
               .getAgentActivitySnapshot({
                 headers: dpopHeaders(authorization),
+                query: input.deviceId ? { deviceId: input.deviceId } : {},
               })
               .pipe(
                 Effect.mapError(relayRequestError("read relay agent activity snapshot")),

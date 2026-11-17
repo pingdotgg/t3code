@@ -1,0 +1,37 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "55d16a65-4ebf-48e1-92d2-d1e147d1aaf9",
+  "prevIds": ["4413755a-63f1-4f93-bdc9-d1357283c23e"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_mobile_devices", "environment_revealed_at"],
+      "writes": [
+        "s|col|public.relay_mobile_devices.environment_revealed_at",
+        "n|col|public.relay_mobile_devices.environment_revealed_at",
+        "e|col|public.relay_mobile_devices.environment_revealed_at"
+      ],
+      "reads": ["n|tbl|public.relay_mobile_devices", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "environment_revealed_at",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

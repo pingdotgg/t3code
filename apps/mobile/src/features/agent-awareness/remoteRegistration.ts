@@ -97,6 +97,9 @@ let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let lastNativePushToken: string | null = null;
 let registeredWithPushToken = false;
+let mutedEnvironmentIds: ReadonlyArray<EnvironmentId> = [];
+// Settings changes the relay accepted, kept until local storage catches up with them.
+let acceptedPreferenceOverride: Partial<Preferences> = {};
 let nativePushTokenRotations = 0;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
@@ -187,6 +190,20 @@ function shouldRegisterAgentAwarenessDeviceForProvider(
   return identity === undefined || identity !== previousIdentity;
 }
 
+/** Environments turned off on this device; the relay leaves them out of its alerts and cards. */
+export function setAgentAwarenessMutedEnvironments(ids: Iterable<EnvironmentId>): void {
+  const next = [...new Set(ids)].sort();
+  if (next.join(",") === mutedEnvironmentIds.join(",")) return;
+  mutedEnvironmentIds = next;
+  if (!relayTokenProvider) return;
+  // Queue even behind an in-flight registration: it may already have sent the old list.
+  pendingDeviceRegistration ??= {
+    input: {},
+    context: "device registration after environment toggle failed",
+  };
+  startPendingDeviceRegistration();
+}
+
 export function setAgentAwarenessRelayTokenProvider(
   provider: (() => Promise<string | null>) | null,
   identity?: string,
@@ -204,6 +221,7 @@ export function setAgentAwarenessRelayTokenProvider(
     }
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
+    acceptedPreferenceOverride = {};
     activeDeviceRegistration = null;
     pendingDeviceRegistration = null;
     registeredActivityPushTokens.clear();
@@ -249,6 +267,7 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
+  acceptedPreferenceOverride = {};
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   androidDeviceReplayedAt = null;
@@ -376,6 +395,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.mutedEnvironmentIds?.join(",") ?? "",
   ].join("|");
 }
 
@@ -562,8 +582,16 @@ const readAgentActivitySnapshot: () => Effect.Effect<
     if (!token) {
       return null;
     }
+    const deviceId = yield* Effect.tryPromise({
+      try: () => loadOrCreateAgentAwarenessDeviceId(),
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-device-registration-identifier",
+          cause,
+        }),
+    });
     const client = yield* ManagedRelay.ManagedRelayClient;
-    return yield* client.getAgentActivitySnapshot({ clerkToken: token });
+    return yield* client.getAgentActivitySnapshot({ clerkToken: token, deviceId });
   },
   Effect.catch((error) =>
     Effect.sync(() => {
@@ -683,6 +711,9 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
   startPendingDeviceRegistration();
 }
 
+// Build and send one registration at a time, so the last one the relay accepts has the newest list.
+let deviceRegistrationSendLock = Semaphore.makeUnsafe(1);
+
 const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* (
   input: RegisterDeviceInput = {},
   expectedGeneration = deviceRegistrationGeneration,
@@ -709,10 +740,12 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
         }),
     }),
   ]);
-  const preferences = mergeAgentAwarenessRegistrationPreferences(
-    storedPreferences,
-    input.preferencesOverride,
-  );
+  const preferencesNow = () =>
+    mergeAgentAwarenessRegistrationPreferences(storedPreferences, {
+      ...acceptedPreferenceOverride,
+      ...input.preferencesOverride,
+    });
+  const preferences = preferencesNow();
   if (expectedGeneration !== deviceRegistrationGeneration) return;
   if (relayTokenProvider && relayTokenProviderIdentity) {
     configureAndroidAgentNotifications(
@@ -726,29 +759,47 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
       : Constants.expoConfig?.ios?.bundleIdentifier?.trim();
-  yield* registerDeviceWithRelay(
-    makeRelayDeviceRegistrationRequest({
-      deviceId,
-      label:
-        Constants.deviceName?.trim() ||
-        (Platform.OS === "android" ? "Android device" : "iOS device"),
-      ...(Platform.OS === "android"
-        ? {
-            platform: "android" as const,
-            androidApiLevel: Number(Platform.Version),
-            notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
-          }
-        : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
-      appVersion: Constants.expoConfig?.version,
-      ...(bundleId ? { bundleId } : {}),
-      ...(Platform.OS === "ios"
-        ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
-        : {}),
-      ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
-      notificationsEnabled: pushTokenRegistration.notificationsEnabled,
-      preferences,
-    }),
-    expectedGeneration,
+  yield* deviceRegistrationSendLock.withPermit(
+    Effect.suspend(() =>
+      registerDeviceWithRelay(
+        makeRelayDeviceRegistrationRequest({
+          deviceId,
+          label:
+            Constants.deviceName?.trim() ||
+            (Platform.OS === "android" ? "Android device" : "iOS device"),
+          ...(Platform.OS === "android"
+            ? {
+                platform: "android" as const,
+                androidApiLevel: Number(Platform.Version),
+                notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
+              }
+            : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
+          appVersion: Constants.expoConfig?.version,
+          ...(bundleId ? { bundleId } : {}),
+          ...(Platform.OS === "ios"
+            ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
+            : {}),
+          ...(pushTokenRegistration.pushToken
+            ? { pushToken: pushTokenRegistration.pushToken }
+            : {}),
+          notificationsEnabled: pushTokenRegistration.notificationsEnabled,
+          preferences: preferencesNow(),
+          mutedEnvironmentIds,
+        }),
+        expectedGeneration,
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (input.preferencesOverride && expectedGeneration === deviceRegistrationGeneration) {
+              acceptedPreferenceOverride = {
+                ...acceptedPreferenceOverride,
+                ...input.preferencesOverride,
+              };
+            }
+          }),
+        ),
+      ),
+    ),
   );
 });
 
@@ -874,10 +925,13 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
+  acceptedPreferenceOverride = {};
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
   registeredWithPushToken = false;
+  mutedEnvironmentIds = [];
+  deviceRegistrationSendLock = Semaphore.makeUnsafe(1);
   androidDeviceReplayedAt = null;
   lastNativePushToken = null;
   nativePushTokenRotations = 0;

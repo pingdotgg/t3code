@@ -4,6 +4,7 @@ import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
   attentionTransitionRows,
+  nextEnvironmentRevealedAt,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -83,6 +84,22 @@ describe("shared agent activity policy", () => {
         preferences,
       }),
     ).toMatchObject([{ environmentId: other.environmentId }]);
+    expect(
+      attentionTransitionRows({
+        previousAggregate: aggregate([waiting]),
+        nextAggregate: aggregate([waiting, other]),
+        preferences: { ...preferences, mutedEnvironmentIds: [other.environmentId] },
+      }),
+    ).toEqual([]);
+    const completed = { ...state, phase: "completed" as const };
+    expect(
+      terminalTransitionRows({
+        previousAggregate: aggregate([state]),
+        nextAggregate: aggregate([completed]),
+        preferences: { ...preferences, mutedEnvironmentIds: [state.environmentId] },
+        nowMs: 0,
+      }),
+    ).toEqual([]);
   });
 
   it("checks current permission, event preferences, and freshness together", () => {
@@ -101,5 +118,55 @@ describe("shared agent activity policy", () => {
       }),
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
+    expect(
+      shouldAlertForActivity({
+        ...input,
+        preferences: { ...preferences, mutedEnvironmentIds: [state.environmentId] },
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps activity from while an environment was off quiet after it is turned back on", () => {
+    const revealedAt = Date.parse("1970-01-01T00:01:00.000Z");
+    const revealed = {
+      ...preferences,
+      environmentRevealedAt: { [state.environmentId]: revealedAt },
+    };
+    const before = { ...state, phase: "waiting_for_approval" as const };
+    const after = { ...before, updatedAt: "1970-01-01T00:01:00.001Z" };
+    // The card's baseline still lacks the row, as it does before the registration replay lands.
+    const transition = (row: RelayAgentActivityState) =>
+      attentionTransitionRows({
+        previousAggregate: aggregate([{ ...state, threadId: ThreadId.make("other") }]),
+        nextAggregate: makeAggregateState({ activeStates: [row], terminalState: null, nowMs: 0 })!,
+        preferences: revealed,
+      });
+    expect(transition(before)).toEqual([]);
+    expect(transition(after)).toMatchObject([{ environmentId: state.environmentId }]);
+    expect(shouldAlertForActivity({ ...before, preferences: revealed, nowMs: revealedAt })).toBe(
+      false,
+    );
+    expect(shouldAlertForActivity({ ...after, preferences: revealed, nowMs: revealedAt })).toBe(
+      true,
+    );
+  });
+
+  it("records when each environment leaves the muted list", () => {
+    expect(
+      nextEnvironmentRevealedAt({
+        previousMuted: ["a", "b"],
+        previousRevealedAt: { c: 1, b: 2 },
+        nextMuted: ["b"],
+        nowMs: 5,
+      }),
+    ).toEqual({ a: 5, c: 1 });
+    expect(
+      nextEnvironmentRevealedAt({
+        previousMuted: [],
+        previousRevealedAt: null,
+        nextMuted: [],
+        nowMs: 5,
+      }),
+    ).toBeNull();
   });
 });
