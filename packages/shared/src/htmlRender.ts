@@ -466,3 +466,75 @@ export function injectHtmlRenderBootstrap(html: string): string {
   }
   return `<!doctype html><head>${markup}</head>${html}`;
 }
+
+const FILE_PREVIEW_SCROLL_METHOD = "t3/notifications/file-preview-scroll";
+const FILE_PREVIEW_RESTORE_SCROLL_METHOD = "t3/file-preview/restore-scroll";
+const FILE_PREVIEW_SCROLL_RESTORED_METHOD = "t3/notifications/file-preview-scroll-restored";
+
+export interface FilePreviewScroll {
+  readonly x: number;
+  readonly y: number;
+}
+
+const FILE_PREVIEW_ZOOM_METHOD = "t3/notifications/file-preview-zoom";
+const FILE_PREVIEW_SET_ZOOM_METHOD = "t3/file-preview/set-zoom";
+export const FILE_PREVIEW_MIN_ZOOM = 0.25;
+export const FILE_PREVIEW_MAX_ZOOM = 5;
+
+/**
+ * Zooms the page inside its own frame: the opaque origin keeps the app from scaling it, and a
+ * trackpad pinch (ctrl+wheel) would otherwise zoom the whole app. A pinch that crosses actual
+ * size lands on it, and the point under the pointer stays in place.
+ */
+const FILE_PREVIEW_ZOOM_SCRIPT = `<script>(function(){var p=window.parent,z=1,lo=${FILE_PREVIEW_MIN_ZOOM},hi=${FILE_PREVIEW_MAX_ZOOM};if(p===window)return;function report(){p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_ZOOM_METHOD)},params:{zoom:z}},"*");}function apply(n,x,y){n=Math.min(hi,Math.max(lo,n));if(x===undefined){x=innerWidth/2;y=innerHeight/2;}var r=document.documentElement,l=scrollX,t=scrollY;if(z===1)r.style.width=innerWidth+"px";r.style.zoom=String(n);if(n===1)r.style.width="";scrollTo({left:(l+x)*n/z-x,top:(t+y)*n/z-y,behavior:"instant"});z=n;report();}addEventListener("wheel",function(e){if(!e.ctrlKey||!e.deltaY)return;e.preventDefault();var d=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?innerHeight:1),n=Math.min(hi,Math.max(lo,z*Math.exp(-d*.01)));if((z<1&&n>=1)||(z>1&&n<=1))n=1;apply(n,e.clientX,e.clientY);},{passive:false});addEventListener("message",function(e){var d=e.data,q=d&&d.params;if(e.source!==p||!d||d.jsonrpc!=="2.0"||d.method!==${JSON.stringify(FILE_PREVIEW_SET_ZOOM_METHOD)}||!q||typeof q.zoom!=="number"||!isFinite(q.zoom))return;apply(q.zoom);});report();})();</script>`;
+
+/** The zoom a preview page reports: once when it loads, then after each change. */
+export function readFilePreviewZoom(data: unknown): number | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== FILE_PREVIEW_ZOOM_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { zoom } = params as Record<string, unknown>;
+  return typeof zoom === "number" && Number.isFinite(zoom)
+    ? Math.min(FILE_PREVIEW_MAX_ZOOM, Math.max(FILE_PREVIEW_MIN_ZOOM, zoom))
+    : undefined;
+}
+
+export function filePreviewSetZoomMessage(zoom: number) {
+  return { jsonrpc: "2.0", method: FILE_PREVIEW_SET_ZOOM_METHOD, params: { zoom } } as const;
+}
+
+/**
+ * Appended after a served workspace page so it lands at the end of the body without changing
+ * the doctype. A preview frame is an opaque origin, so only the page can report and restore its
+ * scroll position across the reload that follows each workspace change, and zoom itself.
+ */
+export const FILE_PREVIEW_SCROLL_SCRIPT = `<script>(function(){var p=window.parent,f=0;if(p===window)return;addEventListener("scroll",function(){if(!f)f=requestAnimationFrame(function(){f=0;p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_METHOD)},params:{x:scrollX,y:scrollY}},"*");});},{passive:true});addEventListener("message",function(e){var d=e.data,q=d&&d.params;if(e.source!==p||!d||d.jsonrpc!=="2.0"||d.method!==${JSON.stringify(FILE_PREVIEW_RESTORE_SCROLL_METHOD)}||!q||typeof q.x!=="number"||typeof q.y!=="number")return;scrollTo({left:q.x,top:q.y,behavior:"instant"});p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_RESTORED_METHOD)}},"*");});})();</script>${FILE_PREVIEW_ZOOM_SCRIPT}`;
+
+export function readFilePreviewScroll(data: unknown): FilePreviewScroll | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== FILE_PREVIEW_SCROLL_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { x, y } = params as Record<string, unknown>;
+  return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)
+    ? { x, y }
+    : undefined;
+}
+
+export function isFilePreviewScrollRestored(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as Record<string, unknown>).jsonrpc === "2.0" &&
+    (data as Record<string, unknown>).method === FILE_PREVIEW_SCROLL_RESTORED_METHOD
+  );
+}
+
+export function filePreviewRestoreScrollMessage(scroll: FilePreviewScroll) {
+  return {
+    jsonrpc: "2.0",
+    method: FILE_PREVIEW_RESTORE_SCROLL_METHOD,
+    params: { x: scroll.x, y: scroll.y },
+  } as const;
+}
