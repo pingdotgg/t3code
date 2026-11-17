@@ -202,17 +202,7 @@ const make = Effect.gen(function* () {
               updatedAt,
             },
           })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new DeviceRegistrationPersistenceError({
-                  userId: input.userId,
-                  deviceId: registration.deviceId,
-                  stage: "upsert-device",
-                  cause,
-                }),
-            ),
-          );
+          .pipe(Effect.mapError(persistError("upsert-device")));
       });
       // Statements map their own errors; any SqlError left comes from opening or committing.
       yield* db.$client

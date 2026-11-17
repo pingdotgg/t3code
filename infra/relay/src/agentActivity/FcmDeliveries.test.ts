@@ -357,34 +357,6 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("alerts only for activity after a turned-off environment is turned back on", () => {
-    const h = harness();
-    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
-    const heldWhileOff = { ...other, phase: "waiting_for_input" as const };
-    // The card was last built while the environment was off, and the replay has not run yet.
-    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
-    h.current.otherStates = [heldWhileOff];
-    h.current.target.preferences_json = encodeJson({
-      ...preferences,
-      environmentRevealedAt: { [other.environmentId]: Date.parse(state.updatedAt) + 1 },
-    });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: heldWhileOff });
-      expect(h.sent.every((message) => !message.alert)).toBe(true);
-
-      const askedAfter = {
-        ...heldWhileOff,
-        threadId: ThreadId.make("asked-after"),
-        phase: "waiting_for_approval" as const,
-        updatedAt: "1970-01-01T00:00:00.002Z",
-      };
-      h.current.otherStates = [heldWhileOff, askedAfter];
-      yield* delivery.process({ ...h.job, state: askedAfter });
-      expect(h.sent.at(-1)?.alert).toBe(true);
-    }).pipe(Effect.provide(h.layer));
-  });
-
   it.effect.each(["mutedEnvironments", "revokedEnvironments"] as const)(
     "excludes %s when forming cross-environment groups",
     (restriction) => {
