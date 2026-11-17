@@ -342,9 +342,11 @@ function PullRequestOverview(props: {
         <PullRequestDescription
           markdown={props.description.body}
           onTaskListChange={props.description.toggleTask}
-          onCollapse={props.onDescriptionCollapse}
-          expanded={props.descriptionExpanded}
-          onExpandedChange={props.onDescriptionExpandedChange}
+          collapse={{
+            expanded: props.descriptionExpanded,
+            onExpandedChange: props.onDescriptionExpandedChange,
+            onCollapse: props.onDescriptionCollapse,
+          }}
           footer={<PullRequestReactions params={props.params} />}
         />
       </Animated.View>

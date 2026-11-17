@@ -394,6 +394,7 @@ function makeLocalCommandHarness(input: {
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
   readonly nativeGoals?: boolean;
+  readonly canForkWhileSourceRunning?: boolean;
   readonly goalDriver?: "opencode" | "antigravity";
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
@@ -1028,8 +1029,31 @@ function makeLocalCommandHarness(input: {
     ),
   );
   const fallbackEnsureThread = vi.fn(() => Effect.succeed(providerThread));
+  const providerSession = {
+    id: providerSessionId,
+    driver: providerThread.driver,
+    providerInstanceId: newInstanceId,
+    status: "ready",
+    cwd: "/tmp/native-account-command",
+    model: null,
+    capabilities: {
+      ...CodexProviderCapabilitiesV2,
+      threads: {
+        ...CodexProviderCapabilitiesV2.threads,
+        canForkWhileSourceRunning: input.canForkWhileSourceRunning,
+      },
+      turns: {
+        ...CodexProviderCapabilitiesV2.turns,
+        ...(input.nativeGoals === undefined ? {} : { supportsNativeGoals: input.nativeGoals }),
+      },
+    },
+    createdAt: now,
+    updatedAt: now,
+    lastError: null,
+  };
   const resumeFallbackSession = {
     driver: providerThread.driver,
+    providerSession,
     resumeThread: () =>
       Effect.fail(
         input.resumeFailure ??
@@ -1040,24 +1064,6 @@ function makeLocalCommandHarness(input: {
           }),
       ),
     ensureThread: fallbackEnsureThread,
-  };
-  const providerSession = {
-    id: providerSessionId,
-    driver: providerThread.driver,
-    providerInstanceId: newInstanceId,
-    status: "ready",
-    cwd: "/tmp/native-account-command",
-    model: null,
-    capabilities: {
-      ...CodexProviderCapabilitiesV2,
-      turns: {
-        ...CodexProviderCapabilitiesV2.turns,
-        ...(input.nativeGoals === undefined ? {} : { supportsNativeGoals: input.nativeGoals }),
-      },
-    },
-    createdAt: now,
-    updatedAt: now,
-    lastError: null,
   };
   const startTurn = vi.fn((_turn: ProviderAdapter.ProviderAdapterV2TurnInput) => Effect.void);
   const sideChatThread = {
@@ -2220,13 +2226,21 @@ effectIt.effect.each([
     transferStatus: "resolved_portable",
     handoffIds: ["side-chat-fork-context"],
   },
+  {
+    nativeForkFrom: "busy",
+    canForkWhileSourceRunning: true,
+    forks: true,
+    transferStatus: "consumed",
+    handoffIds: [],
+  },
 ] as const)(
-  "runs a planned native side chat fork when the parent is $nativeForkFrom",
-  ({ nativeForkFrom, forks, transferStatus, handoffIds }) =>
+  "runs a planned native side chat fork when the parent is $nativeForkFrom (fork while running: $canForkWhileSourceRunning)",
+  ({ nativeForkFrom, forks, transferStatus, handoffIds, ...capability }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "What is the main thread doing?",
         sideChat: { contextRun: "current", nativeForkFrom },
+        ...capability,
       });
 
       yield* harness.start;
