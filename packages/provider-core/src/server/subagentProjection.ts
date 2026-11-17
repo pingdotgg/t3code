@@ -193,6 +193,14 @@ export function withExecutedModelNote(
 /** Run signal of the notice that carries a provider's stop reason on a completed run. */
 export const PROVIDER_STOP_REASON_SIGNAL = "provider-stop-reason";
 
+/** Turn item types `subagentResultForRun` reads; load at least these for its projection. */
+export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
+  "assistant_message",
+  "error",
+  "system_notice",
+  "run_interrupt_result",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
 function withStopNotice(
   projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
   run: OrchestrationV2Run,
