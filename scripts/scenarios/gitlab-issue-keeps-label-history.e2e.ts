@@ -60,59 +60,72 @@ else if (args[0] === "api") {
 else process.exit(1);
 `;
 
+let restoreGlab: (() => Promise<void>) | undefined;
+
+test.beforeEach(async () => {
+  const fixture = await runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binary = path.join(T3_HOME, "bin", "glab");
+      const original = (yield* fs.exists(binary))
+        ? { contents: yield* fs.readFile(binary), mode: (yield* fs.stat(binary)).mode }
+        : undefined;
+      return { binary, original };
+    }),
+  );
+  restoreGlab = () =>
+    runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        if (fixture.original) {
+          yield* fs.writeFile(fixture.binary, fixture.original.contents);
+          yield* fs.chmod(fixture.binary, fixture.original.mode);
+        } else {
+          yield* fs.remove(fixture.binary, { force: true });
+        }
+      }),
+    );
+});
+
+test.afterEach(async () => {
+  try {
+    await restoreGlab?.();
+  } finally {
+    restoreGlab = undefined;
+  }
+});
+
 test(
   "GitLab issue activity keeps label changes beyond the first page",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    const fixture = await runPromise(
+    await runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const binary = path.join(T3_HOME, "bin", "glab");
-        const original = (yield* fs.exists(binary))
-          ? { contents: yield* fs.readFile(binary), mode: (yield* fs.stat(binary)).mode }
-          : undefined;
-        return { binary, original };
+        yield* fs.writeFileString(binary, GLAB);
+        yield* fs.chmod(binary, 0o755);
       }),
     );
-    try {
-      await runPromise(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          yield* fs.writeFileString(fixture.binary, GLAB);
-          yield* fs.chmod(fixture.binary, 0o755);
-        }),
+    await t3.project("gitlab-label-history", {
+      ".git/config":
+        '[remote "origin"]\n\turl = https://gitlab.com/acme/web.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+    });
+    await t3.open("/issues");
+    await screen.getByRole("button", /Label history fixture/).tap();
+    await screen.getByRole("button", "Refresh issue").waitFor();
+    await browser.evaluate(() => {
+      const events = [...document.querySelectorAll("span")].filter((element) =>
+        /^(?:added|removed) the .+ label$/.test(element.textContent ?? ""),
       );
-      await t3.project("gitlab-label-history", {
-        ".git/config":
-          '[remote "origin"]\n\turl = https://gitlab.com/acme/web.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
-      });
-      await t3.open("/issues");
-      await screen.getByRole("button", /Label history fixture/).tap();
-      await screen.getByRole("button", "Refresh issue").waitFor();
-      await browser.evaluate(() => {
-        const events = [...document.querySelectorAll("span")].filter((element) =>
-          /^(?:added|removed) the .+ label$/.test(element.textContent ?? ""),
-        );
-        events.at(-1)?.scrollIntoView({ block: "center" });
-        return null;
-      });
-      await app.screenshot("label-history");
-      await expect(
-        screen.getByText("added the second-page-label label", { exact: true }),
-      ).toHaveCount(1);
-    } finally {
-      await runPromise(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          if (fixture.original) {
-            yield* fs.writeFile(fixture.binary, fixture.original.contents);
-            yield* fs.chmod(fixture.binary, fixture.original.mode);
-          } else {
-            yield* fs.remove(fixture.binary, { force: true });
-          }
-        }),
-      );
-    }
+      events.at(-1)?.scrollIntoView({ block: "center" });
+      return null;
+    });
+    await app.screenshot("label-history");
+    await expect(
+      screen.getByText("added the second-page-label label", { exact: true }),
+    ).toHaveCount(1);
   },
 );
