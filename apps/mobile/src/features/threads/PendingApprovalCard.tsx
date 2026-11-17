@@ -73,8 +73,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       ) : null}
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
-          The provider process for this request is no longer available. Interrupt or restart the run
-          to continue.
+          The agent process has stopped, so you can no longer answer this approval request.
+          Interrupt or restart the turn to continue.
         </Text>
       ) : null}
       {warning ? (

@@ -5,6 +5,7 @@ import {
   getProviderStatusBannerKey,
   getProviderStatusDismissalKey,
   getProviderStatusMessage,
+  getProviderStatusTitle,
   isProviderStatusBannerDismissedForSession,
   shouldShowProviderStatusBanner,
 } from "./ProviderStatusBanner";
@@ -144,5 +145,34 @@ describe("banner dismissal", () => {
         getProviderStatusDismissalKey("environment-d", failing),
       ),
     ).toBe(false);
+  });
+});
+
+describe("provider status title", () => {
+  it("prompts sign-in from authentication state when provider status is warning", () => {
+    expect(
+      getProviderStatusTitle({
+        ...provider,
+        displayName: "Codex",
+        status: "warning",
+        auth: { status: "unauthenticated" },
+      }),
+    ).toBe("Sign in to Codex");
+  });
+
+  it("keeps broken-version recovery guidance ahead of the sign-in title", () => {
+    expect(
+      getProviderStatusTitle({
+        ...provider,
+        displayName: "Codex",
+        status: "warning",
+        auth: { status: "unauthenticated" },
+        compatibilityAdvisory: {
+          ...provider.compatibilityAdvisory!,
+          status: "broken",
+          message: "This version is broken. Use 2.0.0.",
+        },
+      }),
+    ).toBe("Codex 1.0.0 is known to be broken");
   });
 });
