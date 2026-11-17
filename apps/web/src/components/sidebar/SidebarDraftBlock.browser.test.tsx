@@ -3,12 +3,46 @@ import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contract
 import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
+const terminalLabels = vi.hoisted(() => ({ byThreadId: new Map<string, string>() }));
+
+vi.mock(import("~/state/terminalSessions"), async (original) => ({
+  ...(await original()),
+  useTerminalLabelsByThreadKey: (environmentIds) =>
+    new Map(
+      environmentIds.flatMap((environmentId) =>
+        [...terminalLabels.byThreadId].map(
+          ([threadId, label]) => [`${environmentId}:${threadId}`, label] as const,
+        ),
+      ),
+    ),
+}));
+
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { SidebarDraftBlock } from "./SidebarDraftBlock";
 
+function setup(labels: Record<string, string> = {}) {
+  terminalLabels.byThreadId = new Map(Object.entries(labels));
+}
+
+function draftBlock(routeDraftId: string | null) {
+  return (
+    <ul>
+      <SidebarDraftBlock
+        projectByKey={new Map()}
+        projectDisplayNameByKey={new Map()}
+        scopedProjectKeys={null}
+        routeDraftId={routeDraftId}
+        onNavigateToDraft={vi.fn()}
+        onDraftContextMenu={vi.fn()}
+      />
+    </ul>
+  );
+}
+
 it("keeps draft previews current through edits, promotion and removal", async () => {
+  setup();
   const initial = useComposerDraftStore.getState();
   using _store = {
     [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
@@ -25,16 +59,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const onRender = vi.fn();
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
-      <ul>
-        <SidebarDraftBlock
-          projectByKey={new Map()}
-          projectDisplayNameByKey={new Map()}
-          scopedProjectKeys={null}
-          routeDraftId={null}
-          onNavigateToDraft={vi.fn()}
-          onDraftContextMenu={vi.fn()}
-        />
-      </ul>
+      {draftBlock(null)}
     </Profiler>,
   );
   const row = screen.getByTestId("sidebar-draft-row");
@@ -81,4 +106,38 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await expect.element(row).toHaveAccessibleName("Next draft preview, Unsent draft");
   await act(() => initial.clearDraftThread(nextDraftId));
   await expect.element(row).not.toBeInTheDocument();
+});
+
+it("lists empty drafts by terminal label while their terminal exists, active or not", async () => {
+  setup({ "terminal-thread": "dev" });
+  const initial = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
+  };
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const environmentId = EnvironmentId.make("draft-terminal-environment");
+  const terminalDraftId = DraftId.make("draft-with-terminal");
+  initial.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("terminal-project")),
+    terminalDraftId,
+    { threadId: ThreadId.make("terminal-thread") },
+  );
+  initial.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("idle-project")),
+    DraftId.make("draft-without-terminal"),
+    { threadId: ThreadId.make("idle-thread") },
+  );
+
+  await using screen = await render(draftBlock(terminalDraftId));
+  const rows = screen.getByTestId("sidebar-draft-row");
+  await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
+  expect(rows.elements()).toHaveLength(1);
+
+  await screen.rerender(draftBlock(null));
+  await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
+  expect(rows.elements()).toHaveLength(1);
 });

@@ -22,7 +22,13 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { formatEnvironmentQueryError } from "./query";
 import { terminalEnvironment } from "./terminal";
-import { environmentSession, sessionHasScope, useEnvironmentScope } from "./session";
+import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import {
+  environmentSession,
+  sessionHasScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "./session";
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -237,4 +243,44 @@ export function useThreadRunningTerminalIds(input: {
 }): ReadonlyArray<string> {
   const sessions = useKnownTerminalSessions(input);
   return selectRunningSubprocessTerminalIds(sessions ?? []);
+}
+
+// A string so status updates that keep every label notify no one.
+const terminalLabelsFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const metadata = get(terminalEnvironment.metadata({ environmentId, input: null }));
+    if (metadata._tag !== "Success") return "[]";
+    return JSON.stringify(
+      Array.from(terminalMetadataIndex(metadata.value).byThreadId, ([threadId, summaries]) => [
+        threadId,
+        summaries[0]!.label,
+      ]),
+    );
+  }).pipe(Atom.withLabel(`web-terminal-labels:${environmentId}`)),
+);
+const terminalLabelsListAtom = environmentAtomList("web-terminal-labels", terminalLabelsFamily);
+const terminalLabelsByResults = new WeakMap<ReadonlyArray<string>, ReadonlyMap<string, string>>();
+
+/** First terminal label of each thread that has one, keyed `${environmentId}:${threadId}`. */
+export function useTerminalLabelsByThreadKey(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyMap<string, string> {
+  const readable = useEnvironmentsWithScope(
+    environmentIds.map((environmentId) => ({ environmentId })),
+    AuthTerminalReadScope,
+  );
+  const readableIds = environmentIds.filter((environmentId) => readable.has(environmentId));
+  const results = useAtomValue(terminalLabelsListAtom(environmentIdsKey(readableIds)));
+  let labels = terminalLabelsByResults.get(results);
+  if (!labels) {
+    const next = new Map<string, string>();
+    results.forEach((encoded, index) => {
+      for (const [threadId, label] of JSON.parse(encoded) as Array<[string, string]>) {
+        next.set(`${readableIds[index]}:${threadId}`, label);
+      }
+    });
+    labels = next;
+    terminalLabelsByResults.set(results, labels);
+  }
+  return labels;
 }
