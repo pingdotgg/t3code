@@ -21,6 +21,7 @@
   "859e386f8af841f0": "Confirmar al desfijar hilos",
   "de0d79b74d3e4af6": "Confirmar al archivar hilos",
   "4ab8a4878cd80c77": "Confirmar al eliminar hilos",
+  "b210068e1f078ffa": "Confirmar al cerrar terminales",
   "0c853c878aab1908": "Comportamiento del atajo para salir",
   "22e745b7db60e52f": "Pantalla",
   "2c1c93a646bbea6e": "Idioma",
@@ -32,6 +33,7 @@
   "e815f49e5abedcfd": "Pregunta antes de desfijar un hilo de la sección de fijados.",
   "41210f99adeeba78": "Pide un segundo clic en la acción de archivar antes de archivar un hilo.",
   "84f3d2cefc8d2a74": "Pregunta antes de eliminar un hilo y su historial de chat.",
+  "ca169211b232a6c4": "Pregunta antes de cerrar terminales y detener sus procesos en ejecución.",
   "3fc130f1e8170073": "El modo mantener también sale con dos pulsaciones rápidas.",
   "72c7fda6ae301e6d": "Del sistema usa el idioma de tu navegador o sistema operativo.",
   "b9ebecdb8db71466": "Del sistema usa el formato de hora de tu navegador o sistema operativo.",
@@ -72,5 +74,6 @@
   "7e4d81ca21a72019": "Confirmación al desfijar",
   "1d5052cbe70d0b28": "Confirmación al archivar",
   "d5dd27a4eb853248": "Confirmación al eliminar",
+  "5503ef439beb8d42": "Confirmación al cerrar terminales",
   "86b43caa9ff41ea2": "Atajo para salir"
 }

@@ -21,6 +21,7 @@
   "859e386f8af841f0": "Loslösen von Threads bestätigen",
   "de0d79b74d3e4af6": "Archivieren von Threads bestätigen",
   "4ab8a4878cd80c77": "Löschen von Threads bestätigen",
+  "b210068e1f078ffa": "Schließen von Terminals bestätigen",
   "0c853c878aab1908": "Beenden per Tastenkürzel",
   "22e745b7db60e52f": "Anzeige",
   "2c1c93a646bbea6e": "Sprache",
@@ -32,6 +33,7 @@
   "e815f49e5abedcfd": "Vor dem Loslösen eines Threads aus dem Bereich „Angeheftet“ nachfragen.",
   "41210f99adeeba78": "Einen zweiten Klick auf die Archivieren-Aktion verlangen, bevor ein Thread archiviert wird.",
   "84f3d2cefc8d2a74": "Vor dem Löschen eines Threads samt Chatverlauf nachfragen.",
+  "ca169211b232a6c4": "Vor dem Schließen von Terminals und dem Beenden ihrer laufenden Prozesse nachfragen.",
   "3fc130f1e8170073": "Bei „Gedrückt halten“ beendet auch zweimaliges schnelles Drücken die App.",
   "72c7fda6ae301e6d": "Systemstandard folgt der Sprache deines Browsers oder Betriebssystems.",
   "b9ebecdb8db71466": "Systemstandard folgt dem Uhrzeitformat deines Browsers oder Betriebssystems.",
@@ -72,5 +74,6 @@
   "7e4d81ca21a72019": "Loslösen bestätigen",
   "1d5052cbe70d0b28": "Archivieren bestätigen",
   "d5dd27a4eb853248": "Löschen bestätigen",
+  "5503ef439beb8d42": "Bestätigung beim Schließen von Terminals",
   "86b43caa9ff41ea2": "Tastenkürzel zum Beenden"
 }

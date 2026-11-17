@@ -21,6 +21,7 @@
   "859e386f8af841f0": "Confirmer avant de désépingler un fil",
   "de0d79b74d3e4af6": "Confirmer l'archivage des fils",
   "4ab8a4878cd80c77": "Confirmer la suppression des fils",
+  "b210068e1f078ffa": "Confirmer la fermeture des terminaux",
   "0c853c878aab1908": "Comportement du raccourci Quitter",
   "22e745b7db60e52f": "Affichage",
   "2c1c93a646bbea6e": "Langue",
@@ -32,6 +33,7 @@
   "e815f49e5abedcfd": "Demande confirmation avant de désépingler un fil.",
   "41210f99adeeba78": "Exige un second clic sur le bouton d'archivage du fil avant de l'archiver.",
   "84f3d2cefc8d2a74": "Demande confirmation avant de supprimer un fil et son historique de discussion.",
+  "ca169211b232a6c4": "Demande confirmation avant de fermer des terminaux et d'arrêter leurs processus en cours.",
   "3fc130f1e8170073": "En mode Appui long, un double appui rapide quitte aussi l'app.",
   "72c7fda6ae301e6d": "L'option Système suit la langue de votre navigateur ou de votre OS.",
   "b9ebecdb8db71466": "L'option Système suit le format de l'heure de votre navigateur ou de votre OS.",
@@ -72,5 +74,6 @@
   "7e4d81ca21a72019": "Confirmation avant de désépingler",
   "1d5052cbe70d0b28": "Confirmation de l'archivage",
   "d5dd27a4eb853248": "Confirmation de la suppression",
+  "5503ef439beb8d42": "Confirmation de la fermeture des terminaux",
   "86b43caa9ff41ea2": "Raccourci Quitter"
 }
