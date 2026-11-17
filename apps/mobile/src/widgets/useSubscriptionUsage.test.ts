@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -38,6 +39,18 @@ vi.mock("../state/presentation", async () => {
   };
 });
 
+vi.mock("../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentShell: {
+      stateValueAtom: Atom.family((_id: string) =>
+        Atom.make({ status: "synchronizing", error: Option.none<string>() }),
+      ),
+    },
+  };
+});
+
 vi.mock("../state/server", () => ({
   serverEnvironment: { refreshProviders: { label: "Refresh providers" } },
 }));
@@ -56,6 +69,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
+import { environmentShell } from "../state/shell";
 import { installSubscriptionUsageRefresh } from "./useSubscriptionUsage";
 
 const registry = appAtomRegistry as AtomRegistry.AtomRegistry;
@@ -66,8 +80,16 @@ const presentationsAtom = environmentPresentations.presentationsAtom as unknown 
   Map<string, { connection: { phase: string } }>
 >;
 
+const shellAtom = (environmentId: EnvironmentId) =>
+  environmentShell.stateValueAtom(environmentId) as unknown as Atom.Writable<{
+    status: string;
+    error: Option.Option<string>;
+  }>;
+
 const connected = EnvironmentId.make("env-connected");
 const connecting = EnvironmentId.make("env-connecting");
+const syncing = EnvironmentId.make("env-syncing");
+const failed = EnvironmentId.make("env-failed");
 
 describe("installSubscriptionUsageRefresh", () => {
   it("refreshes connected environments once the catalog is ready and the app is active", () => {
@@ -79,8 +101,13 @@ describe("installSubscriptionUsageRefresh", () => {
       new Map([
         [connected, { connection: { phase: "connected" } }],
         [connecting, { connection: { phase: "connecting" } }],
+        [syncing, { connection: { phase: "connected" } }],
+        [failed, { connection: { phase: "connected" } }],
       ]),
     );
+    registry.set(shellAtom(connected), { status: "live", error: Option.none() });
+    // A shell that failed never goes live; its quotas still refresh.
+    registry.set(shellAtom(failed), { status: "cached", error: Option.some("Shell failed") });
 
     const dispose = installSubscriptionUsageRefresh();
     registry.set(catalogAtom, { isReady: true });
@@ -89,7 +116,11 @@ describe("installSubscriptionUsageRefresh", () => {
 
     fixture.appState = "active";
     for (const listener of fixture.appStateListeners) listener();
-    expect(fixture.refreshed).toEqual([connected]);
+    expect(fixture.refreshed).toEqual([connected, failed]);
+
+    // The refresh waits for the thread list, so it never competes with it on a cold start.
+    registry.set(shellAtom(syncing), { status: "live", error: Option.none() });
+    expect(fixture.refreshed).toEqual([connected, failed, syncing]);
 
     dispose();
     expect(fixture.appStateListeners.size).toBe(0);
