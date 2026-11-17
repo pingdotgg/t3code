@@ -1,9 +1,4 @@
-export type ComposerTriggerKind =
-  | "path"
-  | "pull-request"
-  | "slash-command"
-  | "slash-model"
-  | "skill";
+export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -18,8 +13,10 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
+// Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
+// which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return label.replace(/[\\[\]*_]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
@@ -45,7 +42,7 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/** A second slash makes the whole word a path, even when the caret precedes that slash. */
+/** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
 export function isPathWord(
   text: string,
   wordStart: number,
@@ -56,7 +53,7 @@ export function isPathWord(
   while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
     wordEnd += 1;
   }
-  return text.slice(wordStart + 1, wordEnd).includes("/");
+  return /[/\\]/.test(text.slice(wordStart + 1, wordEnd));
 }
 
 /**
@@ -74,43 +71,6 @@ export function detectComposerTrigger(
   isWhitespaceChar?: (char: string) => boolean,
 ): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
-  const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-  const linePrefix = text.slice(lineStart, cursor);
-
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch && isPathWord(text, lineStart, cursor, isWhitespaceChar ?? isWhitespace)) {
-      return null;
-    }
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-
-    const modelMatch = /^\/model(?:\s+(.*))?$/i.exec(linePrefix);
-    if (modelMatch) {
-      return {
-        kind: "slash-model",
-        query: (modelMatch[1] ?? "").trim(),
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-  }
-
   const wsCheck = isWhitespaceChar ?? isWhitespace;
   let tokenIdx = cursor - 1;
   while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {

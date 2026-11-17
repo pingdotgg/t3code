@@ -119,11 +119,11 @@ export interface McpAppHost {
   readonly dispose: () => void;
 }
 
-function jsonBytes(value: unknown): number {
+function stringifyJson(value: unknown): string | undefined {
   try {
-    return encoder.encode(JSON.stringify(value) ?? "").byteLength;
+    return JSON.stringify(value);
   } catch {
-    return Number.POSITIVE_INFINITY;
+    return undefined;
   }
 }
 
@@ -131,13 +131,35 @@ function isId(value: unknown): value is JsonRpcId {
   return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
+const MCP_CONTENT_BLOCK_STRING_FIELDS: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
+  ["text", ["text"]],
+  ["image", ["data", "mimeType"]],
+  ["audio", ["data", "mimeType"]],
+  ["resource_link", ["uri", "name"]],
+]);
+
+function isMcpContentBlock(block: unknown): boolean {
+  if (!Predicate.isObject(block) || typeof block.type !== "string") return false;
+  if (block.type === "resource") {
+    const resource = block.resource;
+    return (
+      Predicate.isObject(resource) &&
+      typeof resource.uri === "string" &&
+      (typeof resource.text === "string" || typeof resource.blob === "string")
+    );
+  }
+  const fields = MCP_CONTENT_BLOCK_STRING_FIELDS.get(block.type);
+  return fields !== undefined && fields.every((field) => typeof block[field] === "string");
+}
+
 /**
- * Providers can report absent fields as null (Codex sends `_meta: null`), which
- * the MCP Apps SDK rejects, dropping the whole notification or response.
+ * The MCP Apps SDK rejects the whole notification or response over one field it
+ * does not accept: null for an absent field (Codex sends `_meta: null`), or a
+ * content block MCP does not define, such as an image whose bytes storage stripped.
  */
 function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallToolResult {
   return {
-    content: Array.isArray(result.content) ? result.content : [],
+    content: Array.isArray(result.content) ? result.content.filter(isMcpContentBlock) : [],
     ...(Predicate.isObject(result.structuredContent)
       ? { structuredContent: result.structuredContent }
       : {}),
@@ -395,10 +417,14 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
-      if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
-        if (isId(data.id) && typeof data.method === "string") {
-          fail(data.id, -32600, "Message too large.");
-        }
+      const requestId = isId(data.id) && typeof data.method === "string" ? data.id : undefined;
+      const json = stringifyJson(data);
+      if (json === undefined) {
+        if (requestId !== undefined) fail(requestId, -32602, "Params must be JSON.");
+        return;
+      }
+      if (encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
+        if (requestId !== undefined) fail(requestId, -32600, "Message too large.");
         return;
       }
       const method = data.method;
@@ -406,7 +432,9 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (isId(data.id) && ("result" in data || "error" in data)) handleResponse(data.id);
         return;
       }
-      const params = Predicate.isObject(data.params) ? data.params : {};
+      // postMessage keeps undefined, which the RPC's JSON codec rejects; pass on the JSON form.
+      const { params: jsonParams }: { params?: unknown } = JSON.parse(json);
+      const params = Predicate.isObject(jsonParams) ? jsonParams : {};
       if (isId(data.id)) handleRequest(data.id, method, params);
       else handleNotification(method, params);
     },
@@ -474,12 +502,15 @@ function downloadName(uri: unknown, name: unknown): string {
     typeof name === "string" && name.trim() !== ""
       ? name
       : typeof uri === "string"
-        ? (uri.split(/[/?#]/).findLast(Boolean) ?? "download")
+        ? (uri.split(/[?#]/, 1)[0]?.split("/").findLast(Boolean) ?? "download")
         : "download";
-  const safe = Array.from(raw, (char) =>
-    /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char,
-  ).join("");
-  return safe.slice(0, MAX_DOWNLOAD_NAME) || "download";
+  let safe = "";
+  for (const char of raw) {
+    const next = /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char;
+    if (safe.length + next.length > MAX_DOWNLOAD_NAME) break;
+    safe += next;
+  }
+  return safe || "download";
 }
 
 function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undefined {
