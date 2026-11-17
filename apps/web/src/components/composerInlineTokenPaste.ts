@@ -24,8 +24,13 @@ const readCopiedComposerContext = (clipboardData: Pick<DataTransfer, "getData">)
   decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
   decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
 
+// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses.
+export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">): string {
+  return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+}
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
-function readPastedComposerContext(
+export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
   decodedFragment = readCopiedComposerContext(clipboardData),
 ): ComposerContextClipboardFragment | null {
@@ -79,7 +84,7 @@ export function importPastedComposerText(
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
-  const pastedText = clipboardData.getData("text/plain");
+  const pastedText = readPastedPlainText(clipboardData);
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
