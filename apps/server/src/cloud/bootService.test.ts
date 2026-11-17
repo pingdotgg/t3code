@@ -1492,15 +1492,24 @@ process.disconnect();
 
   it.effect("stops a Windows launcher by ending its task, and restarts one left disabled", () =>
     Effect.gen(function* () {
-      const { service, commands, control, makeService } = yield* makeHarness("win32");
+      const { service, fs, commands, control, makeService } = yield* makeHarness("win32");
       const plan = yield* service.install();
       const launcher = new NodeSqlite.DatabaseSync(serviceLauncherLockPath(plan.baseDir));
       launcher.exec("BEGIN EXCLUSIVE");
       control.launcher = launcher;
+      const headlessTask = (yield* fs.readFileString(plan.unitPath)).replace(
+        "<LogonType>InteractiveToken</LogonType>",
+        "<LogonType>S4U</LogonType>",
+      );
+      yield* fs.writeFileString(plan.unitPath, headlessTask);
+      control.task = { xml: headlessTask, enabled: true };
+      expect((yield* service.status).current).toBe(true);
 
       // Task Scheduler runs its own copy of the task, so a deferred restart registers the new one.
       const newer = yield* makeService(undefined, "1.2.4");
       yield* newer.install({ start: false });
+      expect(yield* fs.readFileString(plan.unitPath)).toContain("<LogonType>S4U</LogonType>");
+      expect(control.task?.xml).toContain("<LogonType>S4U</LogonType>");
       const newerRuntime = pinnedRuntimePaths(yield* Path.Path, plan.baseDir, "1.2.4", "win32");
       expect(BootService.bootServiceProgramOf(control.task?.xml ?? "")).toBe(
         newerRuntime.entryPath,

@@ -211,7 +211,12 @@ export function renderBootServicePlist(
  */
 export function renderBootServiceTask(
   plan: BootServicePlan,
-  options: { readonly userId: string; readonly homeDir: string; readonly conhostPath: string },
+  options: {
+    readonly userId: string;
+    readonly homeDir: string;
+    readonly conhostPath: string;
+    readonly logonType?: "InteractiveToken" | "S4U";
+  },
 ): string {
   const launcherArguments = [
     ...plan.program,
@@ -246,7 +251,7 @@ export function renderBootServiceTask(
     `  <Principals>`,
     `    <Principal id="Author">`,
     `      <UserId>${escapeXmlText(options.userId)}</UserId>`,
-    `      <LogonType>InteractiveToken</LogonType>`,
+    `      <LogonType>${options.logonType ?? "InteractiveToken"}</LogonType>`,
     `      <RunLevel>LeastPrivilege</RunLevel>`,
     `    </Principal>`,
     `  </Principals>`,
@@ -286,7 +291,7 @@ const STOP_STEP_TIMEOUT = Duration.seconds(120);
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd" | "schtasks";
   readonly unitPath: string;
-  readonly render: (plan: BootServicePlan) => string;
+  readonly render: (plan: BootServicePlan, existingUnit?: string) => string;
   readonly stop: ReadonlyArray<BootServiceStep>;
   readonly activate: ReadonlyArray<BootServiceStep>;
   readonly restart: ReadonlyArray<BootServiceStep>;
@@ -493,11 +498,14 @@ function schtasksManager(input: {
   return {
     kind: "schtasks",
     unitPath,
-    render: (plan) =>
+    render: (plan, existingUnit) =>
       renderBootServiceTask(plan, {
         userId: input.session.userId,
         homeDir: input.homeDir,
         conhostPath: input.path.join(input.session.systemRoot, "System32", "conhost.exe"),
+        logonType: existingUnit?.includes("<LogonType>S4U</LogonType>")
+          ? "S4U"
+          : "InteractiveToken",
       }),
     stop,
     // Registration also enables the task.
@@ -1378,7 +1386,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
           // Files can match the new version even when activation fails; keep that install retryable.
           yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
-          const plan = planForUnit(currentlyInstalled ? yield* fs.readFileString(unitPath) : "");
+          const previousUnit = currentlyInstalled ? yield* fs.readFileString(unitPath) : "";
+          const plan = planForUnit(previousUnit);
           yield* writeDurably(
             statePath,
             // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
@@ -1397,7 +1406,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               return yield* new BootServiceUpdatePendingError();
             }
           }
-          const unit = manager.render(plan);
+          const unit = manager.render(plan, previousUnit);
           yield* writeDurably(unitPath, unit);
           if (!start && manager.kind === "schtasks") yield* refreshWindowsTask(unit);
           return plan;
@@ -1578,7 +1587,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       current:
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
-        normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
+        normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit), unit)) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
