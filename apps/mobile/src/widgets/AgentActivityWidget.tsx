@@ -20,12 +20,14 @@ import type {
   AgentActivityRowProps,
 } from "./AgentActivity";
 
+type AgentActivityConfiguration = { smallTap?: "agent" | "new" };
+
 // Home-screen and Lock Screen counterpart of the AgentActivity Live Activity.
 // It shares the Live Activity's name, but expo-widgets stores widget and Live
 // Activity layouts under different keys, so each needs its own registration.
 export function AgentActivityWidget(
   publishedProps: Partial<AgentActivityProps> | undefined,
-  environment: WidgetEnvironment,
+  environment: WidgetEnvironment<AgentActivityConfiguration>,
 ) {
   "widget";
   // The extension evaluates this function without the app's module scope.
@@ -34,6 +36,8 @@ export function AgentActivityWidget(
   const family = environment.widgetFamily;
   const accessory = family === "accessoryRectangular";
   const small = family === "systemSmall";
+  // The small widget has a single tap target, chosen in Edit Widget.
+  const smallOpensNewThread = small && environment.configuration?.smallTap === "new";
   const monochrome =
     environment.widgetRenderingMode === "accented" ||
     environment.widgetRenderingMode === "vibrant" ||
@@ -73,7 +77,7 @@ export function AgentActivityWidget(
   const rows = [...(props.activities ?? [])].sort(
     (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
   );
-  const shown = rows.slice(0, accessory || small ? 2 : 4);
+  const shown = rows.slice(0, smallOpensNewThread ? 1 : accessory || small ? 2 : 4);
   const attentionCount = rows.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   ).length;
@@ -108,7 +112,7 @@ export function AgentActivityWidget(
   const widgetBackground = accessory ? "clear" : isLightScheme ? "#ffffff" : "#1c1c1e";
   const rootModifiers = [
     containerBackground(widgetBackground, "widget"),
-    ...(deepLink ? [widgetURL(deepLink)] : []),
+    ...(smallOpensNewThread ? [widgetURL("t3code://new")] : deepLink ? [widgetURL(deepLink)] : []),
   ];
 
   // The template image ignores frame/foregroundStyle applied to itself; size
@@ -170,6 +174,33 @@ export function AgentActivityWidget(
       </HStack>
     );
 
+  const newThreadButton = (
+    <HStack
+      spacing={4}
+      alignment="center"
+      modifiers={[
+        padding({ horizontal: 9, vertical: 4 }),
+        background({ type: "hierarchical", style: "quaternary" }),
+        clipShape("capsule"),
+      ]}
+    >
+      <Image
+        systemName="square.and.pencil"
+        size={11}
+        modifiers={[foregroundStyle(primaryForeground)]}
+      />
+      <Text
+        modifiers={[
+          font({ weight: "semibold", size: 11 }),
+          foregroundStyle(primaryForeground),
+          lineLimit(1),
+        ]}
+      >
+        New thread
+      </Text>
+    </HStack>
+  );
+
   return (
     <VStack alignment="leading" spacing={accessory ? 2 : 8} modifiers={rootModifiers}>
       <HStack spacing={6} alignment="center">
@@ -184,35 +215,7 @@ export function AgentActivityWidget(
           {summary || (accessory ? "T3 Code" : "")}
         </Text>
         <Spacer minLength={0} />
-        {/* Small and Lock Screen widgets have a single tap target. */}
-        {accessory || small ? null : (
-          <Link destination="t3code://new">
-            <HStack
-              spacing={4}
-              alignment="center"
-              modifiers={[
-                padding({ horizontal: 9, vertical: 4 }),
-                background({ type: "hierarchical", style: "quaternary" }),
-                clipShape("capsule"),
-              ]}
-            >
-              <Image
-                systemName="square.and.pencil"
-                size={11}
-                modifiers={[foregroundStyle(primaryForeground)]}
-              />
-              <Text
-                modifiers={[
-                  font({ weight: "semibold", size: 11 }),
-                  foregroundStyle(primaryForeground),
-                  lineLimit(1),
-                ]}
-              >
-                New thread
-              </Text>
-            </HStack>
-          </Link>
-        )}
+        {accessory || small ? null : <Link destination="t3code://new">{newThreadButton}</Link>}
       </HStack>
       {shown.length > 0 ? (
         <VStack alignment="leading" spacing={accessory ? 1 : small ? 6 : 5}>
@@ -224,8 +227,12 @@ export function AgentActivityWidget(
         </Text>
       )}
       {accessory ? null : <Spacer minLength={0} />}
+      {smallOpensNewThread ? newThreadButton : null}
     </VStack>
   );
 }
 
-export default createWidget<Partial<AgentActivityProps>>("AgentActivity", AgentActivityWidget);
+export default createWidget<Partial<AgentActivityProps>, AgentActivityConfiguration>(
+  "AgentActivity",
+  AgentActivityWidget,
+);
