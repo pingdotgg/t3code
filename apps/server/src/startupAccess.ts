@@ -152,6 +152,22 @@ export const closeConnectionsOutsideLocalHosts = (
     "closed a connection on an address this server does not serve",
   );
 
+/** Installs every connection filter the server config asks for. */
+export const applyConnectionFilters = Effect.fnUntraced(function* (
+  server: NodeHttp.Server,
+  config: {
+    readonly privateNetworkOnly?: boolean | undefined;
+    readonly acceptedLocalHosts?: ReadonlyArray<string> | undefined;
+  },
+) {
+  if (config.privateNetworkOnly) {
+    yield* closeNonPrivateNetworkConnections(server);
+  }
+  if (config.acceptedLocalHosts) {
+    yield* closeConnectionsOutsideLocalHosts(server, config.acceptedLocalHosts);
+  }
+});
+
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   NetAddress.isUnspecified(address.address)
     ? "127.0.0.1"

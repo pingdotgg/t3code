@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
-import type * as NodeOS from "node:os";
+import * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   acceptsConnectionOnLocalHosts,
   acceptsPrivateNetworkConnection,
+  applyConnectionFilters,
   closeConnectionsOutsideLocalHosts,
   closeNonPrivateNetworkConnections,
   loopbackUrlHostForAddress,
@@ -193,6 +194,78 @@ describe("closeNonPrivateNetworkConnections", () => {
 
       expect(socket.destroyed).toBe(true);
       expect(Logger.formatLogFmt.log(warnings[0]!)).toMatch(/does not serve/);
+    }),
+  );
+});
+
+// Real sockets: a wildcard listener, reached over loopback and over this machine's own
+// non-loopback address, so the connection's local address is a different interface.
+describe("applyConnectionFilters on real sockets", () => {
+  const otherLocalIpv4 = Object.values(NodeOS.networkInterfaces())
+    .flat()
+    .find((entry) => entry !== undefined && entry.family === "IPv4" && !entry.internal)?.address;
+
+  /** A wildcard listener with the config's filters, closed with the scope. */
+  const serve = (config: Parameters<typeof applyConnectionFilters>[1]) =>
+    Effect.gen(function* () {
+      const server = NodeHttp.createServer((_request, response) => response.end("ok"));
+      yield* applyConnectionFilters(server, config).pipe(
+        Effect.provide(Logger.layer([], { mergeWithExisting: false })),
+      );
+      yield* Effect.acquireRelease(
+        Effect.promise(() => new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve))),
+        () => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+      );
+      return (server.address() as NodeNet.AddressInfo).port;
+    });
+
+  /** The HTTP status, or the error code when the server closes the connection unanswered. */
+  const get = (host: string, port: number) =>
+    Effect.promise(
+      () =>
+        new Promise<string>((resolve) => {
+          const request = NodeHttp.get({ host, port, path: "/", agent: false, timeout: 5_000 });
+          request.on("response", (response) => {
+            response.resume();
+            resolve(String(response.statusCode));
+          });
+          request.on("timeout", () => request.destroy(new Error("timeout")));
+          request.on("error", (error: NodeJS.ErrnoException) =>
+            resolve(error.code ?? error.message),
+          );
+        }),
+    );
+
+  it.effect("serves loopback when only other hosts are accepted", () =>
+    Effect.gen(function* () {
+      const port = yield* serve({ acceptedLocalHosts: ["203.0.113.7"] });
+      expect(yield* get("127.0.0.1", port)).toBe("200");
+    }),
+  );
+
+  it.effect.skipIf(otherLocalIpv4 === undefined)(
+    "closes a connection on a local address outside acceptedLocalHosts",
+    () =>
+      Effect.gen(function* () {
+        const port = yield* serve({ acceptedLocalHosts: ["203.0.113.7"] });
+        expect(yield* get(otherLocalIpv4!, port)).toBe("ECONNRESET");
+      }),
+  );
+
+  it.effect.skipIf(otherLocalIpv4 === undefined)(
+    "serves a local address listed in acceptedLocalHosts",
+    () =>
+      Effect.gen(function* () {
+        const port = yield* serve({ acceptedLocalHosts: [otherLocalIpv4!] });
+        expect(yield* get(otherLocalIpv4!, port)).toBe("200");
+        expect(yield* get("127.0.0.1", port)).toBe("200");
+      }),
+  );
+
+  it.effect.skipIf(otherLocalIpv4 === undefined)("installs no filter when none is configured", () =>
+    Effect.gen(function* () {
+      const port = yield* serve({});
+      expect(yield* get(otherLocalIpv4!, port)).toBe("200");
     }),
   );
 });
