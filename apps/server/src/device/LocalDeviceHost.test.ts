@@ -461,6 +461,11 @@ describe("Android SDK availability", () => {
   it.effect("uses the standard Windows SDK without probing PATH", () =>
     Effect.gen(function* () {
       const root = "C:\\Users\\test\\AppData\\Local\\Android\\Sdk";
+      const sdkFiles = new Set([
+        `${root}\\platform-tools\\adb.exe`,
+        `${root}\\emulator\\emulator.exe`,
+        `${root}\\cmdline-tools\\latest\\bin\\avdmanager.bat`,
+      ]);
       const probes: string[] = [];
       const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
         Effect.provideService(HostProcess.Environment, {
@@ -475,14 +480,14 @@ describe("Android SDK availability", () => {
             exists: (file) =>
               Effect.sync(() => {
                 probes.push(file);
-                return file === `${root}\\platform-tools\\adb.exe`;
+                return sdkFiles.has(file);
               }),
             realPath: () => Effect.die("Standard SDK must not resolve PATH executables"),
           }),
         ),
         Effect.provide(NodePath.layerWin32),
       );
-      expect(sdk).toMatchObject({ root, adb: true });
+      expect(sdk).toMatchObject({ root, adb: true, emulator: true, avdmanager: true });
       expect(probes.filter((file) => !file.startsWith("C:\\Users\\test\\"))).toEqual([]);
     }),
   );
@@ -562,6 +567,71 @@ describe("Android SDK availability", () => {
       );
       expect(reason).toBeNull();
     }),
+  );
+
+  it.effect("prefers a complete Homebrew SDK over an incomplete standard macOS SDK", () =>
+    Effect.gen(function* () {
+      const root = "/opt/homebrew/share/android-commandlinetools";
+      const files = new Set([
+        "/test/home/Library/Android/sdk/platform-tools/adb",
+        `${root}/platform-tools/adb`,
+        `${root}/emulator/emulator`,
+        `${root}/cmdline-tools/latest/bin/avdmanager`,
+      ]);
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, { HOME: "/test/home" }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({ exists: (file) => Effect.succeed(files.has(file)) }),
+        ),
+        Effect.provide(NodePath.layerPosix),
+      );
+      expect(sdk).toMatchObject({ root, adb: true });
+    }),
+  );
+
+  it.effect("reports missing Platform-Tools in a fresh Homebrew command-line tools install", () =>
+    Effect.gen(function* () {
+      const root = "/opt/homebrew/share/android-commandlinetools";
+      const reason = yield* diagnose([`${root}/cmdline-tools/latest/bin/avdmanager`], {
+        HOME: "/test/home",
+      });
+      expect(reason).toContain(`Platform-Tools are missing from ${root}`);
+    }),
+  );
+
+  it.effect(
+    "discovers a complete SDK through an adb symlink on PATH despite tools-only Homebrew",
+    () =>
+      Effect.gen(function* () {
+        const root = "/custom/android-sdk";
+        const adbLink = "/test/bin/adb";
+        const files = new Set([
+          "/opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin/avdmanager",
+          adbLink,
+          `${root}/platform-tools/adb`,
+          `${root}/emulator/emulator`,
+          `${root}/cmdline-tools/latest/bin/avdmanager`,
+        ]);
+        const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: "/test/home",
+            PATH: "/test/bin",
+          }),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              exists: (file) => Effect.succeed(files.has(file)),
+              realPath: (file) =>
+                Effect.succeed(file === adbLink ? `${root}/platform-tools/adb` : file),
+            }),
+          ),
+          Effect.provide(NodePath.layerPosix),
+        );
+        expect(sdk).toMatchObject({ root, adb: true, emulator: true, avdmanager: true });
+      }),
   );
 });
 

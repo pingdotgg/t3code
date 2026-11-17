@@ -5,11 +5,20 @@ export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'
 
 export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -z "$ANDROID_HOME" ]; then
-  if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
-  elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
-  elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
+  if [ -n "$ANDROID_SDK_ROOT" ]; then ANDROID_HOME="$ANDROID_SDK_ROOT";
+  else
+    # A complete SDK wins over an earlier partial one; the first existing root is kept for diagnostics.
+    for device_sdk in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" /opt/homebrew/share/android-commandlinetools /usr/local/share/android-commandlinetools; do
+      if [ ! -d "$device_sdk" ]; then continue; fi
+      if [ -z "$ANDROID_HOME" ]; then ANDROID_HOME="$device_sdk"; fi
+      if [ -x "$device_sdk/platform-tools/adb" ] && [ -x "$device_sdk/emulator/emulator" ] && [ -x "$device_sdk/cmdline-tools/latest/bin/avdmanager" ]; then ANDROID_HOME="$device_sdk"; break; fi
+    done
+  fi
 fi
-if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"; fi
+if [ -n "$ANDROID_HOME" ]; then
+  export ANDROID_HOME ANDROID_SDK_ROOT="$ANDROID_HOME"
+  export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+fi
 if [ -z "$JAVA_HOME" ] && ! command -v java >/dev/null 2>&1; then
   for device_java_home in "$HOME/.local/opt/android-studio/jbr" /opt/android-studio/jbr /Applications/Android\\ Studio.app/Contents/jbr "$HOME/Applications/Android Studio.app/Contents/jbr"; do
     if [ -x "$device_java_home/bin/java" ]; then export JAVA_HOME="$device_java_home"; break; fi
