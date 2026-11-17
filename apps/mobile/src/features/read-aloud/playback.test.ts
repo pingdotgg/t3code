@@ -71,7 +71,7 @@ it("falls back from a removed system voice and completes playback", async () => 
       voice: "removed-voice",
     });
     expect(Speech.speak).toHaveBeenLastCalledWith(
-      "reply",
+      "reply.",
       expect.not.objectContaining({ voice: "removed-voice" }),
     );
     expect(readAloudController.getSnapshot().status).toBe("idle");

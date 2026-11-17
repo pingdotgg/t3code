@@ -5,12 +5,24 @@ it("reads visible prose and identifiers without link targets or fenced code", ()
   const text =
     "# Findings\n\nUse **readAloud** and `message.id`. [Details](https://example.com/private).\n\n```ts\nsecret();\n```\n\nDone.";
   expect(readAloudText(text, true)).toBe(
-    "Findings\nUse readAloud and message.id. Details.\n\nDone.",
+    "Findings.\nUse readAloud and message.id. Details.\nDone.",
   );
   expect(readAloudText(text, false)).toContain("secret();");
   expect(readAloudText("![image](https://example.com/image)\n\n<!-- hidden -->", true)).toBe("");
   expect(readAloudText("Hello  \nworld.\n\n> First.\n>\n> Second.", true)).toBe(
-    "Hello\nworld.\nFirst.\nSecond.",
+    "Hello.\nworld.\nFirst.\nSecond.",
+  );
+});
+
+it("ends every heading, list item, and table row as its own sentence", () => {
+  const text = [
+    "## Next steps",
+    "1. Run the tests\n2. Push the branch:\n   - check CI",
+    "| File | Change |\n| --- | --- |\n| a.ts | Adds `x` |",
+    "See (the docs)",
+  ].join("\n\n");
+  expect(readAloudText(text, true)).toBe(
+    "Next steps.\nRun the tests.\nPush the branch:\ncheck CI.\nFile, Change.\na.ts, Adds x.\nSee (the docs).",
   );
 });
 
