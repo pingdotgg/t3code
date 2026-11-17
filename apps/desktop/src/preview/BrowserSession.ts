@@ -598,6 +598,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     }
   });
 
+  /** Camera and microphone answers by Session; clearing a profile's cookies forgets them too. */
+  const mediaDecisionsBySession = new WeakMap<Session, Map<string, boolean>>();
+  const forgetMediaDecisions = (browserSession: Session): void => {
+    mediaDecisionsBySession.get(browserSession)?.clear();
+  };
+
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -666,6 +672,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           };
           // Camera and microphone ask once per origin and device, like clipboard reads.
           const mediaDecisions = new Map<string, boolean>();
+          mediaDecisionsBySession.set(browserSession, mediaDecisions);
           const mediaKey = (origin: string, device: MediaDevice) => `${device} ${origin}`;
           const confirmMedia = (
             requester: WebContents,
@@ -854,6 +861,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 }),
             }).pipe(Effect.result);
             // Approvals go even when the storage clear fails, since the user asked to forget them.
+            forgetMediaDecisions(browserSession);
             yield* revokeCertificates(partition, browserSession);
             if (Result.isFailure(cleared)) return yield* cleared.failure;
           }),
@@ -863,7 +871,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     cookiesCleared: Effect.fn("BrowserSession.cookiesCleared")(function* (browserSession) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       for (const [partition, candidate] of sessions) {
-        if (candidate === browserSession) yield* revokeCertificates(partition, browserSession);
+        if (candidate !== browserSession) continue;
+        forgetMediaDecisions(browserSession);
+        yield* revokeCertificates(partition, browserSession);
       }
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -83,6 +84,18 @@ const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
 const layer = BrowserSession.layer.pipe(
   Layer.provide(
     Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerDialog, ElectronApp.layer),
+  ),
+);
+
+const layerDarwin = BrowserSession.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      layerDialog,
+      ElectronApp.layer,
+      Layer.succeed(HostProcess.Platform, "darwin"),
+    ),
   ),
 );
 
@@ -448,6 +461,100 @@ describe("BrowserSession", () => {
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
 
       assert.isFalse(yield* requestMedia("https://allowed.test/", []));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("asks macOS for the device after the user allows a page", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+      const requestMedia = (requestingUrl: string, mediaTypes: ReadonlyArray<string>) =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(null, "media", (granted: boolean) => resume(Effect.succeed(granted)), {
+            requestingUrl,
+            securityOrigin: requestingUrl,
+            mediaTypes,
+            isMainFrame: true,
+          });
+        });
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValue(0);
+      askForMediaAccess.mockReset();
+      askForMediaAccess.mockResolvedValue(true);
+      getMediaAccessStatus.mockReset();
+      getMediaAccessStatus.mockReturnValue("not-determined");
+
+      // A device macOS has not decided yet: ask the OS, which adds T3 Code to Privacy & Security.
+      assert.isTrue(yield* requestMedia("https://first.test/", ["video"]));
+      assert.deepStrictEqual(askForMediaAccess.mock.calls, [["camera"]]);
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+      // macOS denied one of two devices: the page gets nothing and the user learns where to fix it.
+      askForMediaAccess.mockReset();
+      getMediaAccessStatus.mockImplementation((device) =>
+        device === "camera" ? "granted" : "denied",
+      );
+      assert.isFalse(yield* requestMedia("https://second.test/", ["video", "audio"]));
+      assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
+      yield* Effect.promise(() =>
+        vi.waitFor(() => assert.strictEqual(showMessageBox.mock.calls.length, 3)),
+      );
+      assert.strictEqual(
+        showMessageBox.mock.calls[1]?.[0].message,
+        "https://second.test wants to use your camera and microphone",
+      );
+      assert.strictEqual(
+        showMessageBox.mock.calls[2]?.[0].message,
+        "macOS blocked T3 Code from using your camera and microphone",
+      );
+    }).pipe(Effect.provide(layerDarwin)),
+  );
+
+  it.effect("forgets camera answers when the profile's cookies are cleared", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+      const requestCamera = () =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(null, "media", (granted: boolean) => resume(Effect.succeed(granted)), {
+            requestingUrl: "https://page.test/",
+            mediaTypes: ["video"],
+            isMainFrame: true,
+          });
+        });
+      const checkCamera = (): boolean =>
+        checkHandler(null, "media", "https://page.test", { mediaType: "video" }) as boolean;
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(1).mockReturnValueOnce(0).mockReturnValueOnce(1);
+      getMediaAccessStatus.mockReset();
+      getMediaAccessStatus.mockReturnValue("granted");
+
+      assert.isFalse(yield* requestCamera());
+      assert.isFalse(yield* requestCamera());
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+      // Clearing lets the user reconsider a block...
+      yield* browserSessions.clearCookies([partition]);
+      assert.isTrue(yield* requestCamera());
+      assert.isTrue(checkCamera());
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+      // ...and revokes an approval, including one cleared outside clearCookies.
+      yield* browserSessions.cookiesCleared(browserSession as unknown as Electron.Session);
+      assert.isFalse(checkCamera());
+      assert.isFalse(yield* requestCamera());
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
     }).pipe(Effect.provide(layer)),
   );
 
