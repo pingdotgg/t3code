@@ -650,6 +650,12 @@ useLayoutStore.subscribe(({ layout }, previous) => {
   }
 });
 
+const shownScrolls = new WeakMap<Element, number>();
+
+export function noteStripScroll(scroller: Element): void {
+  shownScrolls.set(scroller, scroller.scrollLeft);
+}
+
 /** The stage must be a stacking context. Workspace or viewport changes move panes 1:1, except a
  * sidebar toggle's; unframed lone panes never animate independently. */
 export function usePaneMotion(
@@ -675,15 +681,12 @@ export function usePaneMotion(
   } | null>(null);
   const ghosts = useRef(new WeakSet<HTMLElement>());
   const ghostDone = useEffectEvent(onGhostDone);
-  const shownScroll = useRef<number | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Track the strip scroll the user last saw, which a layout change clamps before effects run.
   useLayoutEffect(() => {
     const scroller = stageRef.current?.parentElement;
     if (!scroller) return;
-    const note = () => {
-      shownScroll.current = scroller.scrollLeft;
-    };
+    const note = () => noteStripScroll(scroller);
     note();
     scroller.addEventListener("scroll", note, { passive: true });
     return () => scroller.removeEventListener("scroll", note);
@@ -733,12 +736,12 @@ export function usePaneMotion(
       (before.viewportWidth === viewportWidth || sidebarSlideStarting());
     stepped = !sidebarSlideStarting();
     const scroller = stage.parentElement;
-    const shown = shownScroll.current;
+    const shown = scroller ? (shownScrolls.get(scroller) ?? null) : null;
     const camera =
       animate && scroller && shown !== null && stripCameraPosition(scroller) === scroller.scrollLeft
         ? shown - scroller.scrollLeft
         : 0;
-    if (scroller) shownScroll.current = scroller.scrollLeft;
+    if (scroller) noteStripScroll(scroller);
     const previousBoxes = new Map(
       [...(before?.boxes ?? [])].map(([id, box]) => [id, { ...box, x: box.x - camera }]),
     );

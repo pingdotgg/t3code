@@ -190,8 +190,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --appearance-contrast-target: white;
-    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    /* Keeps the idle thumb above 3:1 (WCAG 1.4.11) on #000; 35% renders as gray 89, just under. */
+    --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   }
 }
 
@@ -492,29 +493,81 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    the notch's end, so it only paints while the strip's right edge holds it. */
 [data-pane-cut$="notch"] {
   display: none;
+  overflow: clip;
 }
 
-[data-pane-cut="end-notch"] {
+[data-pane-cut="start-after-notch"] {
+  --pane-cut-center: 100% 100%;
+}
+
+[data-pane-cut="end-before-notch"] {
+  --pane-cut-center: 0 100%;
+}
+
+:is(
+  [data-pane-cut="end-notch"],
+  [data-pane-cut="start-after-notch"],
+  [data-pane-cut="end-before-notch"]
+) {
   &::before {
     content: none;
   }
 
   & > span {
     position: sticky;
-    right: 0;
     flex: none;
     container-type: scroll-state;
   }
 
   & > span > span {
     display: block;
-    visibility: hidden;
   }
+}
+
+:is([data-pane-cut="end-notch"], [data-pane-cut="end-before-notch"]) > span {
+  right: 0;
+}
+
+[data-pane-cut="start-after-notch"] > span {
+  left: 0;
+}
+
+[data-pane-cut="end-notch"] > span > span {
+  visibility: hidden;
+}
+
+:is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) > span > span {
+  opacity: 0;
+  transition: opacity var(--panel-animation-duration, 150ms) ease-out;
 }
 
 @container scroll-state(stuck: right) {
   [data-pane-cut="end-notch"] > span > span {
     visibility: visible;
+  }
+
+  [data-pane-cut="end-before-notch"] > span > span {
+    opacity: 1;
+  }
+}
+
+@container scroll-state(stuck: left) {
+  [data-pane-cut="start-after-notch"] > span > span {
+    opacity: 1;
+  }
+}
+
+@media (width >= 48rem) {
+  :root:not(.black-chrome)
+    [data-slot="sidebar"][data-variant="inset"][data-state="collapsed"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id][data-pane-notched]
+    > [data-pane-cut="start-after-notch"] {
+    left: 0;
+
+    & > span > span {
+      transition: none;
+    }
   }
 }
 
@@ -541,6 +594,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-layout-pane-id][data-pane-notched]
       > [data-pane-cut="end-notch"] {
       right: calc(anchor(--pane-notch right) + 1rem);
+    }
+
+    .black-chrome
+      [data-slot="sidebar"][data-variant="inset"]
+      ~ [data-slot="sidebar-inset"]
+      [data-layout-pane-id][data-pane-notched]
+      > :is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) {
+      display: none;
     }
   }
 }
@@ -1055,11 +1116,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
-    [data-surface-preview] *
-  ),
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well:not([data-surface-preview] *),
 [data-surface-preview="gradient-rim"]
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well {
   --well-fill: var(--raised-fill);
   --well-rim: var(--raised-rim);
   --well-shadow: var(--raised-shadow);
@@ -1272,9 +1339,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
   --foreground: #18181b;
 }
-:root.dark:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
-  --foreground: #f5f5f5;
-  --muted-foreground: #a3a3a3;
+:root {
+  @variant dark {
+    &:not([data-theme-id]:not([data-theme-id=""])) .thread-details-stack {
+      --foreground: #f5f5f5;
+      --muted-foreground: #a3a3a3;
+    }
+  }
 }
 
 /* Details use the snapshot's lower raised surfaces without repainting the composer. */
@@ -1288,15 +1359,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --tray-shadow: 0 1px 2px #00000010, 0 2px 8px #0000000e;
   --composer-shadow: 0 1px 2px #00000010, 0 2px 5px #0000000b;
 }
-:root.dark:not([data-theme-id]:not([data-theme-id=""])):is(
-    :not([data-surface-style]),
-    [data-surface-style="gradient-rim"]
-  )
-  .thread-details-stack {
-  --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
-  --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
-  --tray-shadow: 0 1px 2px #0000004d, 0 2px 8px #00000027;
-  --composer-shadow: 0 1px 2px #0000004d, 0 2px 5px #0000001f;
+:root {
+  @variant dark {
+    &:not([data-theme-id]:not([data-theme-id=""])):is(
+        :not([data-surface-style]),
+        [data-surface-style="gradient-rim"]
+      )
+      .thread-details-stack {
+      --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
+      --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
+      --tray-shadow: 0 1px 2px #0000004d, 0 2px 8px #00000027;
+      --composer-shadow: 0 1px 2px #0000004d, 0 2px 5px #0000001f;
+    }
+  }
 }
 
 /* The composer: tray around it, text box inside, and the user's prompt. */
@@ -3045,8 +3120,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   @variant dark {
     --well-shade: 16%;
     --well-switch-shade: 30%;
-    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 8%, transparent);
-    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 12%, transparent);
+    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
+    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
   }
 }
 
@@ -3666,8 +3741,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --merged-foreground: oklch(from var(--merged) max(l, 0.75) c h);
 }
 
-/* Preserve the default pill; other styles inherit their card's pill recipe. */
-:root:is(
+/* Preserve the default pill; other styles and named themes inherit their card's pill recipe. */
+:root:not([data-theme-id]:not([data-theme-id=""])):is(
     :not([data-surface-style]),
     [data-surface-style="gradient-rim"],
     [data-surface-style="flat"]
@@ -3681,17 +3756,21 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --error-foreground: #f85149;
 }
 
-:root:not(.dark):is(
-    :not([data-surface-style]),
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  [data-composer-send-pill] {
-  --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
-  --pill-foreground: #252525;
-  --pill-icon: #525252;
-  --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
-  --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+:root {
+  @variant light {
+    &:not([data-theme-id]:not([data-theme-id=""])):is(
+        :not([data-surface-style]),
+        [data-surface-style="gradient-rim"],
+        [data-surface-style="flat"]
+      )
+      [data-composer-send-pill] {
+      --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
+      --pill-foreground: #252525;
+      --pill-icon: #525252;
+      --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
+      --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
+    }
+  }
 }
 
 :root[data-surface-style="flat"] [data-chat-composer-compact-send] [data-variant="pill"] {
@@ -4286,50 +4365,64 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --destructive-foreground: oklch(from var(--destructive) max(l, 0.88) calc(c * 0.6) h);
 }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
-  --flat-primary: var(--primary);
+:root {
+  @variant light {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+      --flat-primary: var(--primary);
+    }
+  }
 }
 
-:root.dark[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
-:root.dark[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
-  --destructive-foreground: oklch(from var(--destructive) max(l, 0.85) calc(c * 0.75) h);
+:root {
+  @variant dark {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="flat"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="flat"] {
+      --destructive-foreground: oklch(from var(--destructive) max(l, 0.85) calc(c * 0.75) h);
+    }
+  }
 }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style]:not(
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
-  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
-  --contrast-muted-foreground: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
-}
+:root {
+  @variant light {
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style]:not(
+        [data-surface-style="gradient-rim"],
+        [data-surface-style="flat"]
+      )
+      > body,
+    &[data-theme-id]:not([data-theme-id=""])
+      [data-surface-preview]:not(
+        [data-surface-preview="gradient-rim"],
+        [data-surface-preview="flat"]
+      ) {
+      --contrast-muted-foreground: color-mix(
+        in srgb,
+        var(--muted-foreground) 90%,
+        var(--foreground)
+      );
+    }
 
-/* Named light palettes already pair action and hover colors with their label. */
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="soft-gradient"] > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="soft-gradient"] {
-  --lit-fill: linear-gradient(var(--primary), var(--message-action-hover)) !important;
-}
+    /* Named light palettes already pair action and hover colors with their label. */
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="soft-gradient"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="soft-gradient"] {
+      --lit-fill: linear-gradient(var(--primary), var(--message-action-hover)) !important;
+    }
 
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])[data-surface-style="aqua-gloss-full"]
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="aqua-gloss-full"] {
-  --lit-fill: linear-gradient(
-    var(--primary) 0%,
-    color-mix(in srgb, var(--primary) 75%, var(--message-action-hover)) 50%,
-    var(--message-action-hover) 50%,
-    color-mix(in srgb, var(--primary) 50%, var(--message-action-hover)) 100%
-  ) !important;
-}
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="aqua-gloss-full"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="aqua-gloss-full"] {
+      --lit-fill: linear-gradient(
+        var(--primary) 0%,
+        color-mix(in srgb, var(--primary) 75%, var(--message-action-hover)) 50%,
+        var(--message-action-hover) 50%,
+        color-mix(in srgb, var(--primary) 50%, var(--message-action-hover)) 100%
+      ) !important;
+    }
 
-:root:not(.dark)[data-theme-id]:not(
-    [data-theme-id=""]
-  )[data-surface-style="gradient-rim-everywhere"]
-  > body,
-:root:not(.dark)[data-theme-id]:not([data-theme-id=""])
-  [data-surface-preview="gradient-rim-everywhere"] {
-  --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+    &[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim-everywhere"] > body,
+    &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="gradient-rim-everywhere"] {
+      --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+    }
+  }
 }
 
 /* Every other surface follows the style too (pen I71Cep): wells (inputs,
@@ -4343,16 +4436,20 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    style can still override a shared role. */
 
 /* Tinted warning labels need a darker amber on the light recipes. */
-:root:not(.dark)[data-surface-style]:not(
-    [data-surface-style="gradient-rim"],
-    [data-surface-style="flat"]
-  )
-  > body,
-:root:not(.dark)
-  [data-surface-preview]:not([data-surface-preview="gradient-rim"], [data-surface-preview="flat"]) {
-  --warning-foreground: oklch(
-    from var(--ss-default-warning-foreground) min(l, 0.48) c h
-  ) !important;
+:root {
+  @variant light {
+    &[data-surface-style]:not([data-surface-style="gradient-rim"], [data-surface-style="flat"])
+      > body,
+    &
+      [data-surface-preview]:not(
+        [data-surface-preview="gradient-rim"],
+        [data-surface-preview="flat"]
+      ) {
+      --warning-foreground: oklch(
+        from var(--ss-default-warning-foreground) min(l, 0.48) c h
+      ) !important;
+    }
+  }
 }
 
 :root[data-surface-style]:not(
@@ -4769,19 +4866,19 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 /* On the near-black sidebar the well's split sits close to the chrome, or its top half glares. */
-:root:is(.dark, .black-chrome):is(
-    [data-surface-style="aqua-gloss-full"],
-    [data-surface-style="aqua-blue"]
-  )
+/* The sidebar is a [data-chrome-scope], so the dark variant also covers light, black chrome. */
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-app-sidebar] {
-  --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
-  --well-fill: linear-gradient(
-    180deg in srgb,
-    oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
-    oklch(from var(--ss-background) calc(l + 0.03) c h) 50%,
-    oklch(from var(--ss-background) calc(l - 0.01) c h) 50%,
-    oklch(from var(--ss-background) calc(l + 0.005) c h) 100%
-  ) !important;
+  @variant dark {
+    --contrast-placeholder: color-mix(in oklab, var(--foreground) 85%, var(--background));
+    --well-fill: linear-gradient(
+      180deg in srgb,
+      oklch(from var(--ss-background) calc(l + 0.045) c h) 0%,
+      oklch(from var(--ss-background) calc(l + 0.03) c h) 50%,
+      oklch(from var(--ss-background) calc(l - 0.01) c h) 50%,
+      oklch(from var(--ss-background) calc(l + 0.005) c h) 100%
+    ) !important;
+  }
 }
 
 /* Rim surfaces use the secondary face and its fading edge, with no drop shadow. */
@@ -4878,12 +4975,14 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
    and the chrome row controls) take the dark tokens above plus these, which
    outrank the per-theme sidebar mapping so every theme gets the same black
    chrome. Portaled popovers and tooltips live outside the scope and stay light.
-   :not(.dark) only lifts specificity past the per-theme chrome mapping. */
-:root.black-chrome:not(.dark) {
-  --app-chrome-background: #000000;
-  /* The light scrim barely dims a black window, so modals take the dark one
-     (pen FWF4P) and the sidebar and chrome read as under it too. */
-  --scrim: #00000099;
+   The light variant only lifts specificity past the per-theme chrome mapping. */
+:root.black-chrome {
+  @variant light {
+    --app-chrome-background: #000000;
+    /* The light scrim barely dims a black window, so modals take the dark one
+       (pen FWF4P) and the sidebar and chrome read as under it too. */
+    --scrim: #00000099;
+  }
 }
 
 /* Thread titles otherwise read a theme's text color, which is dark on a light theme. */
@@ -4900,8 +4999,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 
 :root.black-chrome [data-chrome-scope] {
   --appearance-contrast-target: white;
-  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   --background: var(--app-chrome-background);
   --muted-foreground: #8a8a8a;
   --dim-foreground: #666666;
@@ -6264,8 +6363,10 @@ body {
 }
 
 /* The board draws the working bar rule white, which vanishes on a light pane. */
-:root:not(.dark) {
-  --timeline-working-rule: var(--border);
+:root {
+  @variant light {
+    --timeline-working-rule: var(--border);
+  }
 }
 
 /* Rich answers (board FC7yK): a 15px h3 and 12.5px inline code. */
@@ -6322,6 +6423,23 @@ body {
    where it fades. An unfocused pane keeps the shape with a quieter rim.
    [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
    slides to the active tab. Light, black chrome keeps the notch instead. */
+@property --pane-lit-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-end {
+  syntax: "*";
+  inherits: false;
+}
+
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
   --pane-join-fill: var(--background);
@@ -6522,8 +6640,26 @@ body {
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
       top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
     }
+    & [data-layout-pane-id] > [data-pane-cut$="notch"] {
+      --pane-lit-start: inherit;
+      --pane-lit-end: inherit;
+      --pane-lit-panel-start: inherit;
+      --pane-lit-panel-end: inherit;
+      --pane-lit-from: min(var(--pane-lit-start, 100000px), var(--pane-lit-panel-start, 100000px));
+      --pane-lit-to: max(var(--pane-lit-end, -100000px), var(--pane-lit-panel-end, -100000px));
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="start-notch"] {
+      right: max(var(--pane-cut), calc(100% - var(--pane-lit-from)));
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="start-after-notch"] {
+      left: max(0px, var(--pane-lit-to));
+    }
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-notch"] {
+      left: max(var(--pane-cut), var(--pane-lit-to));
       right: 0;
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-before-notch"] {
+      right: max(0px, calc(100% - var(--pane-lit-from)));
     }
 
     & [data-pane-notch=""] [data-pane-join] {

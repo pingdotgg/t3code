@@ -12,9 +12,11 @@ import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
-import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { closeLayoutThread } from "../layout/layoutActions";
+import { useLayoutPane } from "../layout/layoutPaneContext";
+import { useLayoutStore } from "../layout/layoutStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
@@ -62,6 +64,10 @@ export function ThreadRouteView({
   background?: boolean;
 }) {
   const navigate = useNavigate();
+  const { visible } = useLayoutPane();
+  const scrolledOff = useLayoutStore(
+    (state) => tabId !== null && state.scrolledOffTabIds.has(tabId),
+  );
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
     draftId === null ? null : store.getDraftSession(draftId),
@@ -239,7 +245,9 @@ export function ThreadRouteView({
 
   return (
     <BackgroundThreadContext value={background}>
-      {view}
+      <HiddenThreadContext value={background || !visible || scrolledOff}>
+        {view}
+      </HiddenThreadContext>
       {background || !focused ? null : redirect}
     </BackgroundThreadContext>
   );

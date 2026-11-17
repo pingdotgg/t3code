@@ -579,18 +579,22 @@ export function decodeIterationChangesJson(
     const decodedChange = decodeChangeEntry(entry);
     if (Exit.isFailure(decodedChange)) continue;
     const change = decodedChange.value;
-    const path = toRepositoryPath(change.item?.path);
+    // Azure uses either field for renames, depending on route/version.
+    const sourcePath =
+      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath);
+    const deleted = toChangeKind(change.changeType, false) === "deleted";
+    // A deleted file has no `item.path`; only the source fields name it.
+    const path = toRepositoryPath(change.item?.path) ?? (deleted ? sourcePath : null);
     if (path === null) continue;
     if (change.item?.isFolder === true) continue;
     if ((change.item?.gitObjectType ?? "blob").toLowerCase() !== "blob") continue;
-    // Azure uses either field for renames, depending on route/version.
-    const oldPath =
-      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
+    const oldPath = sourcePath ?? path;
     changes.push({
       path,
       oldPath,
       changeKind: toChangeKind(change.changeType, oldPath !== path),
-      objectId: trimmed(change.item?.objectId),
+      // Viewed marks read a deleted file at the empty revision, not a blob id.
+      objectId: deleted ? null : trimmed(change.item?.objectId),
       originalObjectId: trimmed(change.item?.originalObjectId),
     });
   }

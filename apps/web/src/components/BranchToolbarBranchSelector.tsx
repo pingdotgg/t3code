@@ -989,7 +989,7 @@ export function BranchToolbarBranchSelector({
         ...(displayMode === "toolbar"
           ? {
               anchor: () =>
-                toolbarAnchorRef.current?.closest<HTMLElement>('[data-slot="composer-shell"]') ??
+                toolbarAnchorRef.current?.closest<HTMLElement>('[data-slot="composer-host"]') ??
                 toolbarAnchorRef.current,
             }
           : {}),

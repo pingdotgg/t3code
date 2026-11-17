@@ -464,14 +464,14 @@ export function SourceControlSettingsPanel() {
     </Tooltip>
   );
 
-  const providersTitle = "Source Control Providers";
+  const providersTitle = "Source control providers";
   return (
     <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
           id={searchableSetting("source-control").id}
-          title="Source Control Providers"
+          title="Source control providers"
         >
           <p className="px-4 py-3 text-sm text-muted-foreground">
             Connect an environment to inspect its version control tools and hosting integrations.
@@ -484,7 +484,7 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title="Version Control"
+              title="Version control"
               titleAction={environmentContext}
               headerAction={scanButton}
             >
@@ -497,7 +497,7 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
+              title="Source control providers"
               titleAction={hasVersionControlSystems ? null : environmentContext}
               headerAction={hasVersionControlSystems ? null : scanButton}
             >

@@ -3,7 +3,11 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { Sidebar, SidebarProvider, SidebarTrigger, useSidebar } from "../ui/sidebar";
-import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
+import {
+  observeSidebarDraftPromotion,
+  type SidebarRouteReveal,
+  useActiveRowReveal,
+} from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
 
@@ -11,8 +15,9 @@ function RevealList(props: {
   readonly reveal: SidebarRouteReveal;
   readonly rowKeys: ReadonlyArray<string>;
   readonly activeKey: string | null;
+  readonly inPlace?: boolean;
 }) {
-  const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey);
+  const revealActiveRow = useActiveRowReveal(props.reveal, props.activeKey, props.inPlace);
   return (
     <ul aria-label="Threads" style={{ height: ROW_HEIGHT_PX * 4, overflowY: "auto", margin: 0 }}>
       {props.rowKeys.map((key) => (
@@ -71,6 +76,41 @@ describe("useActiveRowReveal", () => {
 
     await vi.waitFor(() => expect(reveal.pendingKey).toBeNull());
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("leaves the list where it is when the open draft's first send lists its thread", async () => {
+    const reveal = newReveal();
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={rowKeys(40)} activeKey="thread-0" />,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    // A new draft names no thread until it is sent.
+    await screen.rerender(<RevealList reveal={reveal} rowKeys={rowKeys(40)} activeKey={null} />);
+
+    await screen.rerender(
+      <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-45" inPlace />,
+    );
+
+    await vi.waitFor(() => expect(reveal.pendingKey).toBeNull());
+    await expect.element(screen.getByText("thread-45", { exact: true })).not.toBeInViewport();
+  });
+
+  it("leaves the list where it is when a draft open since the mount lists its thread", async () => {
+    const reveal = newReveal();
+    // The sidebar mounted on the draft, so no row has spent the mount reveal yet.
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={rowKeys(40)} activeKey={null} />,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    observeSidebarDraftPromotion(reveal, "thread-45");
+
+    await screen.rerender(
+      <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-45" />,
+    );
+
+    await expect.element(screen.getByText("thread-45", { exact: true })).not.toBeInViewport();
   });
 
   it("reveals a focused row scrolled out of view when the keyboard opens its thread", async () => {

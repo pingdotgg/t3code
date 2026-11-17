@@ -1,27 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
-import { shortcutLabelForCommand } from "../../keybindings";
 import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
+  LayoutNewTabButton,
   LayoutPaneTabStrip,
   LayoutTabCloseButton,
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
 } from "../../layout/PaneTabs";
 import { useLayoutPane } from "../../layout/layoutPaneContext";
-import { openLayoutNewTab } from "../../layout/layoutActions";
-import { useLayoutStore } from "../../layout/layoutStore";
 import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { PANE_TAB_CLASS, PaneNotch } from "../PaneNotch";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** Utility pages share this tab chrome. */
 export function SettingsTabNotch({
@@ -34,7 +29,6 @@ export function SettingsTabNotch({
   title?: string;
 }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
   const { tabId } = useLayoutPane();
   const siblingTabs = useLayoutPaneSiblingTabs();
   return (
@@ -64,25 +58,7 @@ export function SettingsTabNotch({
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
       </LayoutPaneTabStrip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="bare"
-              size="icon-xs"
-              data-pane-notch-add=""
-              aria-label="New tab"
-              onClick={() => {
-                if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
-                openLayoutNewTab();
-              }}
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
-      </Tooltip>
+      <LayoutNewTabButton tabId={tabId} />
     </PaneNotch>
   );
 }
