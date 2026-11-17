@@ -26,7 +26,6 @@ import {
 } from "./MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { PierreEntryIcon } from "./PierreEntryIcon";
-
 import { RunShellCommandDialog } from "./RunShellCommandDialog";
 
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
