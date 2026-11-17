@@ -243,10 +243,10 @@ export interface EffectOutboxV2Shape {
   readonly claimNext: (input: {
     readonly workerId: string;
     readonly excludeRestartContinuations?: boolean;
-    readonly maxRunningPerSlowEffectType?: number;
+    readonly maxRunningSlowEffects?: number;
   }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
   readonly nextClaimableAt: (input?: {
-    readonly maxRunningPerSlowEffectType?: number;
+    readonly maxRunningSlowEffects?: number;
   }) => Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
   readonly succeed: (input: {
     readonly effectId: string;
@@ -336,7 +336,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
-      maxRunningPerSlowEffectType?: number,
+      maxRunningSlowEffects?: number,
     ) =>
       sql`
         ${
@@ -374,7 +374,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             )
         )
         AND ${
-          maxRunningPerSlowEffectType === undefined
+          maxRunningSlowEffects === undefined
             ? sql`1 = 1`
             : sql`(
                 candidate.effect_type NOT IN ('thread-title.generate', 'checkpoint.capture')
@@ -382,8 +382,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                   SELECT COUNT(*)
                   FROM orchestration_v2_effect_outbox AS running_slow
                   WHERE running_slow.status = 'running'
-                    AND running_slow.effect_type = candidate.effect_type
-                ) < ${maxRunningPerSlowEffectType}
+                    AND running_slow.effect_type IN ('thread-title.generate', 'checkpoint.capture')
+                ) < ${maxRunningSlowEffects}
               )`
         }
       `;
@@ -555,7 +555,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ),
       // The worker polls for the next effect even when there is no work to claim.
       claimNext: Effect.fnUntraced(
-        function* ({ workerId, excludeRestartContinuations = false, maxRunningPerSlowEffectType }) {
+        function* ({ workerId, excludeRestartContinuations = false, maxRunningSlowEffects }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           // Idle claims return empty; tracing their full SQL on every poll overwhelms useful traces.
@@ -573,7 +573,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               WHERE ${claimableCandidatePredicate(
                 nowIso,
                 excludeRestartContinuations,
-                maxRunningPerSlowEffectType,
+                maxRunningSlowEffects,
               )}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
@@ -608,13 +608,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         ),
       ),
       nextClaimableAt: Effect.fnUntraced(
-        function* ({
-          maxRunningPerSlowEffectType,
-        }: { readonly maxRunningPerSlowEffectType?: number } = {}) {
+        function* ({ maxRunningSlowEffects }: { readonly maxRunningSlowEffects?: number } = {}) {
           const rows = yield* sql<{ readonly available_at: string | null }>`
             SELECT MIN(candidate.available_at) AS available_at
             FROM orchestration_v2_effect_outbox AS candidate
-            WHERE ${claimableCandidatePredicate(undefined, false, maxRunningPerSlowEffectType)}
+            WHERE ${claimableCandidatePredicate(undefined, false, maxRunningSlowEffects)}
           `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
           const availableAt = rows[0]?.available_at;
           if (availableAt === undefined || availableAt === null) return Option.none();

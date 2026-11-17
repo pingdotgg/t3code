@@ -2637,7 +2637,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     const childThreadIds = [1, 2, 3].map((index) =>
       ThreadId.make(`thread:foundation-capture-cap:child-${index}`),
     );
-    const cap = { maxRunningPerSlowEffectType: 2 };
+    const cap = { maxRunningSlowEffects: 2 };
     const capture = (id: string, threadId: ThreadId) => ({
       id,
       commandId,
@@ -3221,34 +3221,55 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("holds pending titles at the running-title cap without waking idle workers", () =>
-    Effect.gen(function* () {
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const cap = { maxRunningPerSlowEffectType: 1 };
-      const title = (name: string) => ({
-        id: `effect:foundation-title-cap:${name}`,
-        commandId: CommandId.make(`command:foundation-title-cap:${name}`),
-        threadId: ThreadId.make(`thread:foundation-title-cap:${name}`),
-        request: { type: "thread-title.generate" as const, kind: { type: "regenerate" as const } },
-      });
-      yield* outbox.enqueue([title("first"), title("second")]);
-      const first = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
-      assert.strictEqual(Option.getOrUndefined(first)?.id, title("first").id);
+  it.effect(
+    "holds pending titles and captures at the slow-effect cap without waking idle workers",
+    () =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const cap = { maxRunningSlowEffects: 1 };
+        const title = (name: string) => ({
+          id: `effect:foundation-title-cap:${name}`,
+          commandId: CommandId.make(`command:foundation-title-cap:${name}`),
+          threadId: ThreadId.make(`thread:foundation-title-cap:${name}`),
+          request: {
+            type: "thread-title.generate" as const,
+            kind: { type: "regenerate" as const },
+          },
+        });
+        yield* outbox.enqueue([title("first"), title("second")]);
+        const first = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
+        assert.strictEqual(Option.getOrUndefined(first)?.id, title("first").id);
+        const captureId = "effect:foundation-title-cap:third-capture";
+        yield* outbox.enqueue([
+          {
+            id: captureId,
+            commandId: CommandId.make("command:foundation-title-cap:capture"),
+            threadId: ThreadId.make("thread:foundation-title-cap:capture"),
+            request: {
+              type: "checkpoint.capture",
+              runId: RunId.make("run:foundation-title-cap:capture"),
+              scopeId: CheckpointScopeId.make("scope:foundation-title-cap:capture"),
+            },
+          },
+        ]);
 
-      assert.isTrue(
-        Option.isNone(yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap })),
-      );
-      assert.isTrue(
-        Option.isNone(yield* outbox.nextClaimableAt(cap)),
-        "a capped title must not report a past deadline, or idle workers re-poll every 25 ms",
-      );
-      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt()));
+        assert.isTrue(
+          Option.isNone(yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap })),
+        );
+        assert.isTrue(
+          Option.isNone(yield* outbox.nextClaimableAt(cap)),
+          "a capped title must not report a past deadline, or idle workers re-poll every 25 ms",
+        );
+        assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt()));
 
-      yield* outbox.succeed({ effectId: title("first").id, workerId: "title-cap-worker" });
-      const second = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
-      assert.strictEqual(Option.getOrUndefined(second)?.id, title("second").id);
-      yield* outbox.succeed({ effectId: title("second").id, workerId: "title-cap-worker" });
-    }),
+        yield* outbox.succeed({ effectId: title("first").id, workerId: "title-cap-worker" });
+        const second = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
+        assert.strictEqual(Option.getOrUndefined(second)?.id, title("second").id);
+        yield* outbox.succeed({ effectId: title("second").id, workerId: "title-cap-worker" });
+        const capture = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
+        assert.strictEqual(Option.getOrUndefined(capture)?.id, captureId);
+        yield* outbox.succeed({ effectId: captureId, workerId: "title-cap-worker" });
+      }),
   );
 
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
