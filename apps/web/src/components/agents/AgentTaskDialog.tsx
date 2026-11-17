@@ -45,6 +45,12 @@ import { APP_NAME } from "@t3tools/shared/branding";
 const NEW_CHAT_HISTORY_KEY = "t3code:agents:new-chat-history";
 const COLLAPSED_CHOICES = 4;
 
+/** A chat opened for a set task: its own draft, prefilled with the first message. */
+export interface AgentTaskSeed {
+  readonly draftKey: string;
+  readonly prompt: string;
+}
+
 const useNewChatHistory = () =>
   useLocalStorage(NEW_CHAT_HISTORY_KEY, emptyNewChatHistory, NewChatHistory);
 
@@ -81,14 +87,20 @@ function ShowMoreChoices({
 export function AgentTaskDialog({
   profiles,
   orderedProfiles,
+  seed,
+  onSeedStarted,
   onClose,
 }: {
   /** Library order, which agent colors are derived from. */
   profiles: readonly McpGatewayProfile[];
   /** The board's column order, which never-picked agent cards keep. */
   orderedProfiles: readonly McpGatewayProfile[];
+  seed?: AgentTaskSeed;
+  /** Called once the seeded chat's first turn starts. */
+  onSeedStarted?: () => void;
   onClose: () => void;
 }) {
+  const draftKey = seed?.draftKey ?? "agent-task";
   const [profileId, setProfileId] = useState(
     () => defaultNewChatProfile(orderedProfiles)?.profileId,
   );
@@ -100,7 +112,7 @@ export function AgentTaskDialog({
   const busy = creating || sending;
   const hasContent = useComposerDraftStore((store) => {
     const session = profile
-      ? store.getDraftSessionByLogicalProjectKey(`agent-task:${profile.profileId}`)
+      ? store.getDraftSessionByLogicalProjectKey(`${draftKey}:${profile.profileId}`)
       : null;
     const draft = session ? store.draftsByThreadKey[session.draftId] : null;
     return composerDraftHasUserContent(draft) || (draft?.nonPersistedImageIds.length ?? 0) > 0;
@@ -126,7 +138,9 @@ export function AgentTaskDialog({
         <div className="agent-dialog p-6">
           <DialogTitle>New chat{profile ? ` · ${profile.name}` : ""}</DialogTitle>
           <DialogDescription className="mt-2">
-            Pick an agent and a project, then give it a task.
+            {seed
+              ? "Pick an agent and a project. The first message is filled in; edit it if you like, then send."
+              : "Pick an agent and a project, then give it a task."}
           </DialogDescription>
           <fieldset className="agent-choice-group" disabled={busy || hasContent}>
             <legend>Agent</legend>
@@ -166,6 +180,9 @@ export function AgentTaskDialog({
             <AgentTaskForm
               key={profile.profileId}
               profile={profile}
+              draftKey={draftKey}
+              seed={seed}
+              onSeedStarted={onSeedStarted}
               creating={creating}
               sending={sending}
               hasContent={hasContent}
@@ -193,6 +210,9 @@ export function AgentTaskDialog({
 
 function AgentTaskForm({
   profile,
+  draftKey,
+  seed,
+  onSeedStarted,
   creating,
   sending,
   hasContent,
@@ -201,6 +221,9 @@ function AgentTaskForm({
   onClose,
 }: {
   profile: McpGatewayProfile;
+  draftKey: string;
+  seed: AgentTaskSeed | undefined;
+  onSeedStarted: (() => void) | undefined;
   creating: boolean;
   sending: boolean;
   hasContent: boolean;
@@ -219,7 +242,7 @@ function AgentTaskForm({
   const [initialDraft] = useState(() =>
     useComposerDraftStore
       .getState()
-      .getDraftSessionByLogicalProjectKey(`agent-task:${profile.profileId}`),
+      .getDraftSessionByLogicalProjectKey(`${draftKey}:${profile.profileId}`),
   );
   // Empty until the user picks a machine or a project; until then the default may follow
   // machines connecting and disconnecting.
@@ -286,7 +309,7 @@ function AgentTaskForm({
     if (!selected || !modelSelection || profile.runtimeMode === "read-only") return;
     const store = useComposerDraftStore.getState();
     store.setLogicalProjectDraftThreadId(
-      `agent-task:${profile.profileId}`,
+      `${draftKey}:${profile.profileId}`,
       scopeProjectRef(selected.environmentId, selected.id),
       draftId,
       {
@@ -317,6 +340,11 @@ function AgentTaskForm({
       },
       { replaceOptions: true },
     );
+    if (
+      seed &&
+      !composerDraftHasUserContent(useComposerDraftStore.getState().draftsByThreadKey[draftId])
+    )
+      store.setPrompt(draftId, seed.prompt);
   };
   const finish = () => {
     useComposerDraftStore.getState().clearDraftThread(draftId);
@@ -471,7 +499,10 @@ function AgentTaskForm({
               threadId={draftSession.threadId}
               profileSelection={profileSelection}
               onSendBusyChange={setSending}
-              onTurnStarted={finish}
+              onTurnStarted={() => {
+                onSeedStarted?.();
+                finish();
+              }}
             />
           </div>
         )}
@@ -496,7 +527,7 @@ function AgentTaskForm({
         <Button variant="ghost" disabled={busy} onClick={onClose}>
           Cancel
         </Button>
-        {!hasContent && (
+        {!hasContent && !seed && (
           <Button
             disabled={
               busy ||

@@ -1,4 +1,4 @@
-import { type AgentSkill } from "@t3tools/contracts";
+import { agentSkillDigest, type AgentSkill } from "@t3tools/contracts";
 import { DEFAULT_AGENT_SKILL_NAMES } from "@t3tools/shared/agentPresets";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -33,6 +33,10 @@ it.effect("seeds the default skills into an empty library", () =>
       DEFAULT_AGENT_SKILL_NAMES.map((name) => [`t3-default-${name}`, name]),
     );
     assert.isTrue(settings.agentSkills.every((item) => item.content.length > 0));
+    // The stored copy still matches its record, so it reads as an unedited install.
+    assert.isTrue(
+      settings.agentSkills.every((item) => item.template?.digest === agentSkillDigest(item)),
+    );
   }),
 );
 

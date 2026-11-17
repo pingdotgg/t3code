@@ -1,6 +1,7 @@
 import {
   agentSkillDigest,
   agentSkillDigestOf,
+  textDigest,
   AgentSkillResources,
   isAgentSkillStub,
   withoutAgentSkillTransportFields,
@@ -9,6 +10,7 @@ import {
   TrimmedNonEmptyString,
   type AgentSkill,
   type AgentSkillResource,
+  type AgentTemplateRecord,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml } from "yaml";
@@ -51,11 +53,75 @@ export interface AgentPresetSkill {
   readonly resources: ReadonlyArray<AgentSkillResource>;
   /** Set by the picker for a same-name conflict; absent means `presetSkillConflicts`' default. */
   readonly choice?: PresetSkillChoice;
+  /** Set when this is a built-in skill, recorded on the copy it installs. */
+  readonly template?: AgentTemplateRecord;
 }
 
 export interface AgentPreset extends Omit<AgentPresetManifest, "skills"> {
   readonly systemPrompt: string;
   readonly skills: ReadonlyArray<AgentPresetSkill>;
+  /** Set when this is a built-in preset, recorded on the agent it installs. */
+  readonly template?: AgentTemplateRecord;
+}
+
+const skillNameKey = (name: string) => name.trim().toLowerCase();
+
+/** What an agent takes from its template: the prompt and which skills it uses, by name. */
+export const agentTemplateDigest = (systemPrompt: string, skillNames: ReadonlyArray<string>) =>
+  textDigest(
+    [systemPrompt.trim(), ...[...new Set(skillNames.map(skillNameKey))].sort()].join("\u0001"),
+  );
+
+const templateDigests = new WeakMap<AgentPreset | AgentPresetSkill, string>();
+const cachedDigest = <T extends AgentPreset | AgentPresetSkill>(
+  item: T,
+  digest: (item: T) => string,
+) => {
+  let value = templateDigests.get(item);
+  if (value === undefined) {
+    value = digest(item);
+    templateDigests.set(item, value);
+  }
+  return value;
+};
+const presetDigest = (preset: AgentPreset) =>
+  cachedDigest(preset, (item) =>
+    agentTemplateDigest(
+      item.systemPrompt,
+      item.skills.map((skill) => skill.name),
+    ),
+  );
+const presetSkillDigest = (skill: AgentPresetSkill) => cachedDigest(skill, agentSkillDigest);
+
+/**
+ * Marks presets and skills identical to a built-in one as that template, so what they install
+ * records where it came from. Pass the built-ins themselves to mark them.
+ */
+export function withAgentTemplates(
+  presets: ReadonlyArray<AgentPreset>,
+  builtIns: ReadonlyArray<AgentPreset>,
+  version: string,
+): ReadonlyArray<AgentPreset> {
+  const builtInSkills = new Map(
+    builtIns.flatMap((preset) => preset.skills).map((skill) => [skillNameKey(skill.name), skill]),
+  );
+  return presets.map((preset) => {
+    const builtIn = builtIns.find((item) => item.id === preset.id);
+    const digest = presetDigest(preset);
+    return {
+      ...preset,
+      ...(builtIn && presetDigest(builtIn) === digest
+        ? { template: { id: preset.id, digest, version } }
+        : {}),
+      skills: preset.skills.map((skill) => {
+        const match = builtInSkills.get(skillNameKey(skill.name));
+        const skillDigest = presetSkillDigest(skill);
+        return match && presetSkillDigest(match) === skillDigest
+          ? { ...skill, template: { id: match.name, digest: skillDigest, version } }
+          : skill;
+      }),
+    };
+  });
 }
 
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(AgentPresetManifest));
@@ -234,11 +300,14 @@ export function addPresetSkills(
         : agentSkills.findIndex((candidate) => candidate.skillId === choice.skillId);
     if (target !== undefined && target >= 0) {
       if (choice.kind === "reuse") return agentSkills[target]!.skillId;
-      const { resources: _resources, ...current } = withoutAgentSkillTransportFields(
-        agentSkills[target]!,
-      );
+      const {
+        resources: _resources,
+        template: _template,
+        ...current
+      } = withoutAgentSkillTransportFields(agentSkills[target]!);
       agentSkills[target] = {
         ...current,
+        ...(skill.template ? { template: skill.template } : {}),
         description: skill.description,
         content: skill.content,
         // Explicit, so a server keeping the stored files for an omitted field drops the old ones.
@@ -255,6 +324,7 @@ export function addPresetSkills(
       description: skill.description,
       content: skill.content,
       ...(skill.resources.length ? { resources: skill.resources } : {}),
+      ...(skill.template ? { template: skill.template } : {}),
       revision: 1,
       createdAt: options.now,
       updatedAt: options.now,
@@ -296,6 +366,7 @@ const isNewAgentLibrary = (library: AgentLibraryState) =>
 export function defaultAgentSkills(
   library: AgentLibraryState,
   skillFiles: Readonly<Record<string, string>>,
+  version: string,
 ): ReadonlyArray<AgentSkill> {
   if (!isNewAgentLibrary(library)) return [];
   return DEFAULT_AGENT_SKILL_NAMES.map((name): AgentSkill => {
@@ -306,6 +377,7 @@ export function defaultAgentSkills(
       description: skill.description,
       content: skill.content,
       ...(skill.resources.length ? { resources: skill.resources } : {}),
+      template: { id: skill.name, digest: agentSkillDigest(skill), version },
       revision: 1,
       createdAt: DEFAULT_AGENT_SKILL_TIME,
       updatedAt: DEFAULT_AGENT_SKILL_TIME,

@@ -483,6 +483,10 @@
       "types": "./src/agentPresets/agentPresets.ts",
       "import": "./src/agentPresets/agentPresets.ts"
     },
+    "./agentTemplateUpdates": {
+      "types": "./src/agentPresets/agentTemplateUpdates.ts",
+      "import": "./src/agentPresets/agentTemplateUpdates.ts"
+    },
     "./agentPresetSkillFiles": {
       "types": "./src/agentPresets/agentPresetSkillFiles.ts",
       "import": "./src/agentPresets/agentPresetSkillFiles.ts"
