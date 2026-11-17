@@ -79,6 +79,7 @@ const make = Effect.gen(function* () {
     connected: false,
     account: null,
     detail: null,
+    unavailable: false,
     scopes: [],
   });
 
@@ -90,49 +91,62 @@ const make = Effect.gen(function* () {
       cause: error,
     });
 
-  /**
-   * The list contract has no unavailable status, so temporary probe failures use its error channel.
-   * Settings then hides all rows and bindings, including credential replacement and disconnect.
-   */
-  const status = (api: StandaloneIssueTrackerApi, token: string) =>
+  /** The tracker's view of a stored credential; a refusal or an outage is status, not a failure. */
+  const status = (
+    api: StandaloneIssueTrackerApi,
+    token: string,
+    bound: IssueTrackerConnectionList["bindings"],
+  ) =>
     api.probeCredential(token).pipe(
       Effect.map((probe): IssueTrackerConnection => ({
         ...api.standalone,
         connected: true,
         account: probe.account,
         detail: null,
+        unavailable: false,
         scopes: probe.scopes,
       })),
-      Effect.catch((error) =>
-        error.reason === "unauthenticated"
-          ? Effect.succeed<IssueTrackerConnection>({
-              ...api.standalone,
-              connected: true,
-              account: null,
-              detail: IssueService.trackerDetail(error),
-              scopes: [],
-            })
-          : Effect.fail(probeFailure(error)),
-      ),
+      Effect.catch((error) => {
+        const unavailable = error.reason !== "unauthenticated";
+        // Scope names come only from the tracker, so bound projects keep their pickers by key.
+        const boundKeys = new Set(
+          Object.values(bound).flatMap((binding) =>
+            binding.tracker === api.kind ? [binding.scope] : [],
+          ),
+        );
+        return Effect.succeed<IssueTrackerConnection>({
+          ...api.standalone,
+          connected: true,
+          account: null,
+          detail: IssueService.trackerDetail(error),
+          unavailable,
+          scopes: unavailable ? [...boundKeys].map((key) => ({ key, name: key })) : [],
+        });
+      }),
     );
 
-  const current = (api: StandaloneIssueTrackerApi) =>
-    secrets.get(issueTrackerSecretName(api.kind)).pipe(
-      Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
-      Effect.flatMap((stored) =>
-        Option.isNone(stored)
-          ? Effect.succeed(disconnected(api))
-          : status(api, new TextDecoder().decode(stored.value)),
+  const current =
+    (bound: IssueTrackerConnectionList["bindings"]) => (api: StandaloneIssueTrackerApi) =>
+      secrets.get(issueTrackerSecretName(api.kind)).pipe(
+        Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
+        Effect.flatMap((stored) =>
+          Option.isNone(stored)
+            ? Effect.succeed(disconnected(api))
+            : status(api, new TextDecoder().decode(stored.value), bound),
+        ),
+      );
+
+  const list: IssueTrackerConnections["Service"]["list"] = Effect.gen(function* () {
+    const bound = Object.fromEntries(
+      yield* bindings.list.pipe(
+        // No single tracker is at fault; the first registered one carries the report.
+        Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
       ),
     );
-
-  const list: IssueTrackerConnections["Service"]["list"] = Effect.all({
-    trackers: Effect.forEach(registry.standalone, current, { concurrency: 4 }),
-    bindings: bindings.list.pipe(
-      Effect.map((bound) => Object.fromEntries(bound)),
-      // No single tracker is at fault; the first registered one carries the report.
-      Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
-    ),
+    const trackers = yield* Effect.forEach(registry.standalone, current(bound), {
+      concurrency: 4,
+    });
+    return { trackers, bindings: bound };
   });
 
   const disconnect = Effect.fn("IssueTrackerConnections.disconnect")(function* (
@@ -162,6 +176,7 @@ const make = Effect.gen(function* () {
       connected: true,
       account: probe.account,
       detail: null,
+      unavailable: false,
       scopes: probe.scopes,
     };
   });

@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerBindable,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   AuthSettingsWriteScope,
@@ -159,7 +162,6 @@ export function SettingsIssueTrackerRouteScreen({
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const tracker = query.data?.trackers.find((entry) => entry.tracker === route.params.tracker);
   const disabled = !canWrite || !canEdit;
-  const usable = tracker?.connected === true && tracker.account !== null;
   return (
     <DetailPage title={tracker?.displayName ?? "Issue tracker"}>
       {!environment || !tracker ? (
@@ -176,7 +178,7 @@ export function SettingsIssueTrackerRouteScreen({
               disabled={disabled}
             />
           </SettingsSection>
-          {usable && tracker.scopes.length > 0 ? (
+          {issueTrackerBindable(tracker) ? (
             <SettingsSection
               title="Projects"
               footer={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}

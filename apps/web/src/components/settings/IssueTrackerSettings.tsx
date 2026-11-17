@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerBindable,
+  issueTrackerRejected,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
 import { useState, type ElementType } from "react";
@@ -139,7 +143,7 @@ function TrackerRow({
             <span className="truncate text-sm font-medium text-foreground">
               {tracker.displayName}
             </span>
-            {tracker.connected && tracker.account === null ? (
+            {issueTrackerRejected(tracker) ? (
               <Badge variant="destructive" size="sm">
                 Credential rejected
               </Badge>
@@ -215,7 +219,7 @@ function TrackerRow({
                   </div>
                 }
               />
-              {usable ? (
+              {issueTrackerBindable(tracker) ? (
                 <ProjectBindings
                   environmentId={environmentId}
                   tracker={tracker}
