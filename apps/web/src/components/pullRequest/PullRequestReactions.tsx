@@ -16,6 +16,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   applyPendingPullRequestReactions,
+  type PendingPullRequestReaction,
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
@@ -26,7 +27,8 @@ import {
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
-const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
+const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction> =
+  new Map();
 
 export function PullRequestReactionBar({
   reactions,
@@ -49,7 +51,7 @@ export function PullRequestReactionBar({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
-    readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
+    readonly values: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction>;
   }>({ signature: "", values: EMPTY_PENDING });
   const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
     reportFailure: false,
@@ -60,7 +62,8 @@ export function PullRequestReactionBar({
   const shown = applyPendingPullRequestReactions(reactions, values);
 
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
-    setPending({ signature, values: new Map([...values, [content, reacted]]) });
+    const entry: PendingPullRequestReaction = { reacted };
+    setPending({ signature, values: new Map([...values, [content, entry]]) });
     const result = await setReaction({
       environmentId,
       input: {
@@ -72,6 +75,7 @@ export function PullRequestReactionBar({
     });
     if (result._tag === "Failure") {
       setPending((current) => {
+        if (current.values.get(content) !== entry) return current;
         const next = new Map(current.values);
         next.delete(content);
         return { signature: current.signature, values: next };

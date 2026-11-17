@@ -22,12 +22,13 @@ export type ThreadInspectorPresentation =
   | { readonly onClose: () => void };
 
 export function ThreadInspectorHeader(
-  props: ThreadInspectorPresentation & { readonly title: string },
+  props: ThreadInspectorPresentation & { readonly title: string; readonly subtitle?: string },
 ) {
   if ("onMaximize" in props) {
     return (
       <AppBar
         title={props.title}
+        subtitle={props.subtitle}
         actions={[
           {
             accessibilityLabel: "Maximize thread",
@@ -39,7 +40,12 @@ export function ThreadInspectorHeader(
     );
   }
   return (
-    <SheetHeader title={props.title} onClose={props.onClose} accessibilityLabel="Close thread" />
+    <SheetHeader
+      title={props.title}
+      subtitle={props.subtitle}
+      onClose={props.onClose}
+      accessibilityLabel="Close thread"
+    />
   );
 }
 
