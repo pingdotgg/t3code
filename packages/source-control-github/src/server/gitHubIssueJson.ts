@@ -17,7 +17,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
 
 import type * as Issues from "./issues.graphql.ts";
-import { toReactions } from "./gitHubPullRequestJson.ts";
+import { toCanWrite, toReactions } from "./gitHubPullRequestJson.ts";
 
 type DetailIssue = NonNullable<NonNullable<Issues.IssueDetail.Result["repository"]>["issue"]>;
 type Actor = {
@@ -210,6 +210,7 @@ function toViewerPermissions(raw: {
   readonly viewerPermission?: string | null | undefined;
   readonly issue: {
     readonly state: string;
+    readonly locked: boolean;
     readonly viewerCanUpdate: boolean;
     readonly viewerCanClose: boolean;
     readonly viewerCanReopen: boolean;
@@ -224,7 +225,7 @@ function toViewerPermissions(raw: {
     setState:
       raw.issue === null ||
       (raw.issue.state === "CLOSED" ? raw.issue.viewerCanReopen : raw.issue.viewerCanClose),
-    comment: true,
+    comment: raw.issue?.locked !== true || toCanWrite(raw.viewerPermission),
     edit: canUpdate,
     labels: canTriage,
     assignees: canTriage,
