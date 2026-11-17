@@ -702,6 +702,48 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
+  it("gives each task of a wait_all MultiResult its own status and output", () => {
+    const subagentId = "01a1e5fc-0e49-72b0-8841-27bfa3df8b6b";
+    const failedShellId = "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29";
+    const runningShellId = "1fd59a86-519d-4cdf-bce0-0918577c976c";
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-multi-wait",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [subagentId, failedShellId, runningShellId],
+            timeout_ms: 3_000_000,
+          },
+          rawOutput: {
+            type: "TaskOutput",
+            MultiResult: {
+              mode: "wait_all",
+              results: [
+                {
+                  task_id: subagentId,
+                  status: "completed",
+                  exit_code: 0,
+                  output:
+                    "<subagent_meta>id</subagent_meta>Request changes.\n<subagent_result>x</subagent_result>",
+                },
+                { task_id: failedShellId, exit_code: 2, output: "" },
+                { task_id: runningShellId, status: "running", output: "partial\n" },
+              ],
+              summary: "2/3 tasks completed (wait_all)",
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      { taskId: subagentId, status: "completed", appendOutput: "Request changes." },
+      { taskId: failedShellId, status: "failed", appendOutput: "" },
+      { taskId: runningShellId, status: "running", appendOutput: "partial" },
+    ]);
+  });
+
   it("keeps every requested monitor running when a completed poll has no terminal task status", () => {
     expect(
       extractXAiBackgroundTaskCompletion({
