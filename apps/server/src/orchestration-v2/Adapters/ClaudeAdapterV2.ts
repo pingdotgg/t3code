@@ -524,6 +524,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     canRollbackThread: true,
     canForkThread: true,
     canForkFromTurn: true,
+    canForkWhileSourceRunning: true,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -2767,10 +2768,8 @@ const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpT
       return boundaryNativeId;
     }
 
-    const terminalTurnsAfterBoundary = sourceTurns
-      .slice(boundaryIndex + 1)
-      .filter(isTerminalProviderTurn);
-    if (terminalTurnsAfterBoundary.length === 0) {
+    // The head only marks this boundary when no later turn, finished or still running, wrote after it.
+    if (sourceTurns.length === boundaryIndex + 1) {
       // Rollback pins the head but leaves the rolled-back turns in Claude's transcript.
       return yield* getNativeConversationHeadId(input.sourceProviderThread);
     }
@@ -6220,6 +6219,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const retriedFreshNativeSessions = new Map<string, string>();
         const activeNativeThreadId = (id: string | null | undefined) =>
           id == null ? id : (retriedFreshNativeSessions.get(id) ?? id);
+        const reportedNativeSessionId = (id: string): string => {
+          let current = id;
+          const seen = new Set<string>();
+          while (!seen.has(current)) {
+            seen.add(current);
+            const next = clearedNativeSessions.get(current);
+            if (next === undefined || next === current) break;
+            current = next;
+          }
+          return current;
+        };
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -6259,7 +6269,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
             const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
-            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
+            const nativeSessionId = reportedNativeSessionId(nativeThreadId);
             const metadataNativeThreadId =
               retriedFreshNativeSessions.get(nativeThreadId) ?? nativeThreadId;
             event = {
@@ -6269,7 +6279,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 metadataNativeThreadId,
               ),
             };
-            if (nativeSessionId !== undefined) {
+            if (nativeSessionId !== nativeThreadId) {
               event = {
                 ...event,
                 providerThread: {
@@ -13237,8 +13247,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.modelSelection,
               querySession.launchArgSettings,
             );
+            // The allocated native ref may be abandoned before the first prompt.
+            // Use the successful CLI's identity everywhere that inspects the turn snapshot.
+            const effectiveProviderThread: OrchestrationV2ProviderThread =
+              turnInput.providerThread.nativeThreadRef?.nativeId === nativeThreadId
+                ? turnInput.providerThread
+                : {
+                    ...turnInput.providerThread,
+                    nativeThreadRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeThreadId,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                  };
             const context: ActiveClaudeTurnContext = {
-              input: turnInput,
+              input:
+                effectiveProviderThread === turnInput.providerThread
+                  ? turnInput
+                  : { ...turnInput, providerThread: effectiveProviderThread },
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
