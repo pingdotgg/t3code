@@ -71,6 +71,7 @@ const CODEX_REPLAY_MODEL_OVERRIDE = readArgValue("--model") ?? process.env.T3_CO
 
 const SCENARIO_NAMES = [
   "simple",
+  "usage_limit",
   "tool_call_read_only_on_request",
   "tool_call_workspace_never",
   "tool_call_restricted_granular",
@@ -352,6 +353,20 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           description: "Single text-only turn.",
           prompt: SIMPLE_PROMPT,
           steps: [{ type: "turn", label: "simple", prompt: SIMPLE_PROMPT }],
+        },
+      ],
+    },
+    {
+      name: "usage_limit",
+      fileName: "usage_limit.ndjson",
+      description:
+        "One turn against a model provider that answers 429 usage_limit_reached with resets_at, as a CLIProxyAPI hub forwards it.",
+      runs: [
+        {
+          name: "usage_limit",
+          description: "Single turn that hits the usage limit.",
+          prompt: SIMPLE_PROMPT,
+          steps: [{ type: "turn", label: "usage_limit", prompt: SIMPLE_PROMPT }],
         },
       ],
     },
