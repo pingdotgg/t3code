@@ -1237,6 +1237,7 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
 it.effect("persists member base commits on the run and passes them to worktree creation", () => {
   const memberBaseCommits = { api: "a".repeat(40), web: "b".repeat(40) };
   const harness = makeHarness({
+    isGitRepository: () => Effect.succeed(false),
     multiRepo: {
       members: () => Effect.succeed(["api", "web"]),
       listLocalBranchNames: () => Effect.succeed(["main"]),
@@ -1259,6 +1260,8 @@ it.effect("persists member base commits on the run and passes them to worktree c
       startFromOrigin: false,
       memberBaseCommits,
     });
+    // A group root is not a repository, yet it takes isolated checkouts.
+    assert.isFalse(yield* launches.isNonGitProject(projectId));
     assert.deepEqual(
       harness.createWorktree.mock.calls[0]?.[1]?.memberBaseCommits,
       memberBaseCommits,

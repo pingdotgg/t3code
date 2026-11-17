@@ -450,6 +450,8 @@ const make = Effect.gen(function* () {
       .getById(projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isNone(project)) return false;
+    // A multi-repo group root has no repository of its own but still takes isolated member checkouts.
+    if ((yield* groupMembers(project.value.workspaceRoot)) !== null) return false;
     // Unlike `git.repositoryRoot`, this fails on a repository Git cannot read, which is not "no repository".
     return yield* checkpointStore.isGitRepository(project.value.workspaceRoot).pipe(
       Effect.map((isRepository) => !isRepository),
