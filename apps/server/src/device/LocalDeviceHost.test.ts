@@ -43,6 +43,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
   previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -68,7 +69,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-    Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+    Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
@@ -162,6 +163,56 @@ describe("AgentDevice startup", () => {
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses the SDK a later shell environment selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-sdk-" });
+      const standard = `${home}/Library/Android/sdk`;
+      const profile = `${home}/profile-sdk`;
+      for (const root of [standard, profile]) {
+        for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+          yield* fs.makeDirectory(`${root}/${tool.split("/")[0]}`, { recursive: true });
+          yield* fs.writeFileString(`${root}/${tool}`, "");
+        }
+      }
+      const environment: NodeJS.ProcessEnv = { HOME: home, PATH: "" };
+      const { host, hub, runs } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        undefined,
+        environment,
+      );
+      // The desktop shell snapshot updates the server's environment after the host exists.
+      environment.ANDROID_HOME = profile;
+      hub.running = false;
+      runs.length = 0;
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      yield* ready.run("emulator", ["-list-avds"]);
+
+      const emulator = `${profile}/emulator/emulator`;
+      const sdkRuns = runs.filter(
+        (run) => run.command === emulator || run.args.includes("devices"),
+      );
+      // Two hub camera probes, the agent-device launch, and the emulator command.
+      expect(sdkRuns.map((run) => run.args[0])).toEqual([
+        "-help-camera-front",
+        "-help-camera-back",
+        expect.stringContaining("agent-device"),
+        "-list-avds",
+      ]);
+      for (const run of sdkRuns) {
+        expect(run.env?.ANDROID_HOME).toBe(profile);
+        expect(run.env?.PATH?.split(":")[0]).toBe(`${profile}/platform-tools`);
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

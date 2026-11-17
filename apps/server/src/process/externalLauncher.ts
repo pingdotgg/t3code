@@ -142,16 +142,37 @@ function resolveCommandEditorArgs(
   target: string,
   isDirectory: boolean,
   projectRoot: string | undefined,
+  position: LaunchEditorInput["position"],
 ): ReadonlyArray<string> {
-  const parsedTarget = parseTargetPathAndPosition(target);
+  const parsedTarget =
+    position === undefined
+      ? parseTargetPathAndPosition(target)
+      : Option.fromUndefinedOr(position.line).pipe(
+          Option.map((line) => ({
+            path: target,
+            line: String(line),
+            column: Option.fromUndefinedOr(position.column).pipe(Option.map(String)),
+          })),
+        );
+  const positionedTarget = Option.match(parsedTarget, {
+    onNone: () => target,
+    onSome: ({ path, line, column }) => [path, line, ...Option.toArray(column)].join(":"),
+  });
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [target];
+      return [positionedTarget];
     case "goto":
-      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      return isDirectory ? ["--new-window", target] : [target];
+      if (isDirectory) return ["--new-window", target];
+      // VS Code splits every numeric colon segment, including ones inside the filename.
+      if (
+        position !== undefined &&
+        target.split(":").some((segment) => !Number.isNaN(Number(segment)))
+      )
+        return [target];
+      return Option.isSome(parsedTarget) ? ["--goto", positionedTarget] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -182,7 +203,8 @@ function encodeUtf16LeBase64(input: string): string {
 }
 
 function escapePowerShellStringLiteral(input: string): string {
-  return `'${input.replaceAll("'", "''")}'`;
+  // PowerShell also recognises typographic apostrophes as single-quote delimiters.
+  return `'${input.replace(/['\u2018-\u201b]/g, "$&$&")}'`;
 }
 
 function resolveWindowsRoot(env: NodeJS.ProcessEnv): string {
@@ -369,10 +391,40 @@ const fileManagerRevealKindForPlatform = Effect.fn(
   return hasGraphicalLinuxSession(env) ? "files" : undefined;
 });
 
-function resolveWslFileManagerPath(target: string, distroName: string): string {
+function wslUncFallbackPath(target: string, distroName: string): string {
   const relativePath = target.replace(/^\/+/, "").replaceAll("/", "\\");
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
 }
+
+// wslpath -w is mount-aware, so a drive remapped in /etc/wsl.conf resolves to the
+// real letter and a Linux path resolves to the \\wsl.localhost UNC path. Fall back
+// to the UNC form by hand when wslpath is missing or fails.
+export const resolveWslFileManagerPath = Effect.fn("externalLauncher.resolveWslFileManagerPath")(
+  function* (
+    target: string,
+    distroName: string,
+  ): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner
+      .spawn(ChildProcess.make("wslpath", ["-w", target], { stdin: "ignore", stderr: "ignore" }))
+      .pipe(
+        Effect.flatMap((handle) =>
+          Effect.all([handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode], {
+            concurrency: "unbounded",
+          }),
+        ),
+        Effect.map(([stdout, exitCode]) => {
+          const translated = stdout.trim();
+          return exitCode === 0 && translated.length > 0
+            ? translated
+            : wslUncFallbackPath(target, distroName);
+        }),
+        Effect.scoped,
+        Effect.timeout("2 seconds"),
+        Effect.orElseSucceed(() => wslUncFallbackPath(target, distroName)),
+      );
+  },
+);
 
 function buildBrowserLaunch(
   target: string,
@@ -441,16 +493,23 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
+// Editors and the file manager open on the desktop session, so a boot-started
+// server discovers and launches them with that session's display.
+const readEditorEnv = Effect.fn("externalLauncher.readEditorEnv")(function* () {
+  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  return hasGraphicalLinuxSession(env) ? env : { ...env, ...(yield* readGraphicalSessionEnv()) };
+});
+
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readEditorEnv();
   return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
   function* () {
     const platform = yield* HostProcess.Platform;
-    const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+    const env = yield* readEditorEnv();
     return yield* fileManagerRevealKindForPlatform(platform, env);
   },
 );
@@ -476,7 +535,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readEditorEnv();
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,
     "externalLauncher.cwd": input.cwd,
@@ -485,6 +544,18 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+  }
+
+  const target = input.cwd;
+  let position = input.position;
+  if (editorDef.id === "zed" && position?.line !== undefined) {
+    // Zed resolves existing paths before positions, so ambiguous spellings must stay literal.
+    const collision =
+      /:\d+(?=:|$)/.test(target) ||
+      (yield* (yield* FileSystem.FileSystem)
+        .exists(`${target}:${position.line}${position.column ? `:${position.column}` : ""}`)
+        .pipe(Effect.orElseSucceed(() => true)));
+    if (collision) position = {};
   }
 
   if (editorDef.commands) {
@@ -498,7 +569,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     const { command, baseArgs } = resolved.value;
     const isDirectory =
       editorDef.launchStyle === "goto" &&
-      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+      (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
       ));
@@ -508,7 +579,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       command,
       args: [
         ...baseArgs,
-        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+        ...resolveCommandEditorArgs(editorDef, target, isDirectory, input.projectRoot, position),
       ],
     };
   }
@@ -522,9 +593,20 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
-  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
   if (input.reveal === true) {
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
+  }
+
+  if (platform === "win32") {
+    // ShellExecute honours replacement folder handlers that explorer.exe bypasses.
+    return {
+      ...powerShellFileManagerLaunch(
+        target,
+        `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(normalizeWindowsFileManagerPath(target))}`,
+        resolvePowerShellPath(env),
+      ),
+      detached: WINDOWS_POWERSHELL_DETACHED,
+    };
   }
 
   return {
@@ -533,20 +615,19 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
-        : platform === "win32"
-          ? // Explorer interprets / as a switch and silently opens a fallback folder.
-            [normalizeWindowsFileManagerPath(target)]
-          : [target],
+        ? [yield* resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME)]
+        : [target],
   };
 });
 
-// A replacement manager registers a default Directory shell verb; stock Windows
-// uses "none". Explorer needs its /select argument passed verbatim through
-// PowerShell because Node's argument quoting changes how Explorer parses it.
+// Replacement managers can register under Directory, Drive, or Folder. Explorer
+// needs its /select argument passed verbatim through PowerShell because Node's
+// argument quoting changes how Explorer parses it.
 function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
   const literal = escapePowerShellStringLiteral(target);
-  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
+  const folderClass = /^[a-z]:\\$/i.test(parent) ? "Drive" : "Directory";
+  // Explorer's ordinary open/explore handlers may also be explicit defaults.
+  return String.raw`$ProgressPreference = 'SilentlyContinue'; $folderVerb = '${folderClass}', 'Folder' | ForEach-Object { $key = "Registry::HKEY_CLASSES_ROOT\$_\shell"; $verb = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).'(default)'; if ($verb -and $verb -ne 'none') { $handler = Get-ItemProperty -LiteralPath "$key\$verb\command" -ErrorAction SilentlyContinue; if ($handler.DelegateExecute -ne '{11dbb47c-a525-400b-9e80-a54615a090c0}' -and $handler.'(default)' -notmatch '^\s*"?(?:[^"]*[\\/])?explorer\.exe(?:["\s]|$)') { $verb } } }; if ($folderVerb) { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
 }
 
 function powerShellFileManagerLaunch(
@@ -598,13 +679,18 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
     shouldUseWindowsHostFromWsl(platform, env) &&
     env.WSL_DISTRO_NAME !== undefined
   ) {
-    const explorerTarget = resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME);
     if (yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env })) {
       // WSL names may contain quotes that Explorer's /select cannot encode.
       // Open the parent through the shell so replacement managers still apply.
       const path = yield* Path.Path;
       // .NET path parsing rejects characters that are legal in WSL filenames.
-      const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
+      const [explorerTarget, parent] = yield* Effect.all(
+        [
+          resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME),
+          resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME),
+        ],
+        { concurrency: "unbounded" },
+      );
       const source = explorerTarget.includes('"')
         ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
         : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
@@ -619,7 +705,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       editor: "file-manager",
       target,
       command: "explorer.exe",
-      args: [resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
+      args: [yield* resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
     };
   }
 
@@ -718,7 +804,12 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   input: LaunchEditorInput,
   hasStockFolderVerb: Effect.Effect<boolean>,
 ) {
-  const launch = yield* resolveEditorLaunch(input);
+  // Clients send `~/` host paths as written, and launches run without a shell to expand them.
+  const home = yield* HostProcess.HomeDirectory;
+  const cwd = expandHomePath(input.cwd, home);
+  const projectRoot =
+    input.projectRoot === undefined ? undefined : expandHomePath(input.projectRoot, home);
+  const launch = yield* resolveEditorLaunch({ ...input, cwd, projectRoot });
   if (input.editor === "file-manager" && input.reveal === true) {
     const platform = yield* HostProcess.Platform;
     if (
