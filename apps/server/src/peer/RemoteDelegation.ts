@@ -29,7 +29,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -71,6 +70,15 @@ export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>
         ),
       ),
   },
+);
+
+/**
+ * How often a blocking wait on a remote task rereads it: nothing there reaches
+ * this environment as an event, and the follower looks only every 45 seconds.
+ */
+export const RemoteTaskRecheckSchedule = Context.Reference<Schedule.Schedule<unknown>>(
+  "t3/peer/RemoteDelegation/RemoteTaskRecheckSchedule",
+  { defaultValue: () => Schedule.spaced(Duration.seconds(5)) },
 );
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
@@ -146,8 +154,6 @@ export class RemoteDelegation extends Context.Service<
       scope: ThreadScope,
       task: OrchestrationV2Subagent,
     ) => Effect.Effect<RemoteTaskState>;
-    /** A task's id each time its follower finds it waiting on a question or an approval there. */
-    readonly blocked: (taskId: NodeId) => Stream.Stream<NodeId>;
     /**
      * Follows every open remote task until it ends, including after a
      * restart, and a finished one again when a Stop here owes it a stop there.
@@ -1046,27 +1052,21 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => UNKNOWN_STATE),
   );
 
-  const blockedTasks = yield* PubSub.unbounded<NodeId>();
-  const blocked: RemoteDelegation["Service"]["blocked"] = (taskId) =>
-    Stream.fromPubSub(blockedTasks).pipe(Stream.filter((id) => id === taskId));
-
-  // The question each follower last told its parent about, so it tells it once.
+  // The request each follower last told its parent about, so it tells it once.
   const askedParent = new Map<NodeId, RuntimeRequestId>();
 
   /**
-   * What a task still running there waits on, reported here as a local child's is:
-   * a blocking wait ends, and otherwise the parent hears of its question.
+   * Tells the parent what a task still running there waits on. A question goes to its agent,
+   * as a local child's does; an approval does too, since no client here sees the thread there.
    */
   const reportBlocked = Effect.fn("RemoteDelegation.reportBlocked")(
     function* (scope: ThreadScope, task: OrchestrationV2Subagent) {
       const remote = task.remoteChild;
       if (remote === undefined) return;
       const state = yield* remoteState(scope, task);
-      if (state.pendingQuestionId === null && state.pendingApproval === null) return;
-      yield* PubSub.publish(blockedTasks, task.id);
-      const requestId = state.pendingQuestionId;
+      const requestId = state.pendingQuestionId ?? state.pendingApproval?.requestId ?? null;
       if (requestId === null || askedParent.get(task.id) === requestId) return;
-      // A blocking delegate_task wait delivers the question itself; once it ends, the parent hears.
+      // A blocking delegate_task wait delivers the request itself; once it ends, the parent hears.
       const { runs } = yield* threads.getThreadRecords(task.threadId, ["runs"]);
       if (
         task.completionWake === "settled_only" &&
@@ -1082,7 +1082,9 @@ const make = Effect.gen(function* () {
       yield* threads.dispatch(
         questionWakeCommand(
           task,
-          { id: requestId, blocking: true },
+          state.pendingQuestionId === null && state.pendingApproval !== null
+            ? { id: requestId, blocking: true, approval: state.pendingApproval.kind }
+            : { id: requestId, blocking: true },
           { environmentId: remote.environmentId, threadId: remote.threadId },
         ),
       );
@@ -1118,7 +1120,7 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ignoreCause({ log: true })),
     );
 
-  return RemoteDelegation.of({ delegate, followUp, cancel, remoteState, blocked, start });
+  return RemoteDelegation.of({ delegate, followUp, cancel, remoteState, start });
 });
 
 /** A defect, logged, as a failure, so a retry covers it. */

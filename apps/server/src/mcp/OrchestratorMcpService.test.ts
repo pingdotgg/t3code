@@ -3063,7 +3063,6 @@ describe("OrchestratorMcpService provider resolution", () => {
                 }).pipe(Effect.orDie),
               remoteState: () =>
                 Effect.succeed({ status: null, pendingQuestionId: null, pendingApproval: null }),
-              blocked: () => Stream.never,
             });
           }),
         ).pipe(Layer.provide(layerWatchedThreads));

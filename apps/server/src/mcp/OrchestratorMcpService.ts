@@ -1277,6 +1277,7 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const remoteRecheck = yield* RemoteDelegation.RemoteTaskRecheckSchedule;
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -2115,9 +2116,9 @@ const make = Effect.gen(function* () {
         ),
         { concurrency: "unbounded" },
       ).pipe(Stream.mapError(streamError));
-      // A remote task's questions and approvals arrive through its follower.
+      // A remote task's questions and approvals raise no event here, so it is reread.
       return yield* (
-        childThreadId === null ? Stream.merge(events, remoteDelegation.blocked(taskId)) : events
+        childThreadId === null ? Stream.merge(events, Stream.fromSchedule(remoteRecheck)) : events
       ).pipe(
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
         Stream.filter(endsTaskWait),

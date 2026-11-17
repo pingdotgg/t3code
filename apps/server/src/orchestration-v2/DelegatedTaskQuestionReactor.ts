@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
+  type ProviderRequestKind,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -31,12 +32,16 @@ export class DelegatedTaskQuestionReactor extends Context.Service<
 >()("t3/orchestration-v2/DelegatedTaskQuestionReactor") {}
 
 /**
- * Tells a delegated task's parent that its child asked `request`. A child in a
- * linked environment names that environment, where the question is answered.
+ * Tells a delegated task's parent that its child asked `request`, a question or, from a
+ * linked environment, an approval. Such a child names that environment, where it is answered.
  */
 export const questionWakeCommand = (
   task: OrchestrationV2Subagent,
-  request: { readonly id: RuntimeRequestId; readonly blocking: boolean },
+  request: {
+    readonly id: RuntimeRequestId;
+    readonly blocking: boolean;
+    readonly approval?: ProviderRequestKind;
+  },
   child: { readonly threadId: ThreadId; readonly environmentId?: EnvironmentId },
 ) => {
   const key = `${task.threadId}:${request.id}`;
@@ -53,7 +58,10 @@ export const questionWakeCommand = (
     commandId: CommandId.make(`server:delegated-task-question:${key}`),
     threadId: task.threadId,
     messageId: MessageId.make(`message:delegated-task-question:${key}`),
-    text: `${situation} Read it with t3_pending_request action read, ${where}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
+    text:
+      request.approval === undefined
+        ? `${situation} Read it with t3_pending_request action read, ${where}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`
+        : `Delegated task ${task.id} is blocked on a ${request.approval} approval (${where}, requestId ${request.id}) and cannot continue until the user approves or declines it in that environment. You cannot approve it; tell the user.`,
     notification: {
       source: {
         kind: "delegated_task",
@@ -61,7 +69,9 @@ export const questionWakeCommand = (
         ...(child.environmentId === undefined ? { childThreadId: child.threadId } : {}),
       },
       outcome: "updated",
-      summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
+      summary: `Delegated task${label === undefined ? "" : ` "${label}"`} ${
+        request.approval === undefined ? "has a question" : "needs approval"
+      }`,
     },
     attachments: [],
     dispatchMode: { type: "queue_after_active" },

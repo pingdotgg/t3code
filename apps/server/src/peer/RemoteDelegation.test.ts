@@ -144,8 +144,10 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
-  /** What the thread there asks. One pending ends a wait there, as its timeout would. */
+  /** What the thread there asks. */
   readonly requests: SubscriptionRef.SubscriptionRef<ReadonlyArray<OrchestrationV2RuntimeRequest>>;
+  /** Offered as each wait there for the task's run starts waiting. */
+  readonly waits: Queue.Queue<void>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -185,6 +187,7 @@ const makeBoxThread = Effect.gen(function* () {
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
     requests: yield* SubscriptionRef.make<ReadonlyArray<OrchestrationV2RuntimeRequest>>([]),
+    waits: yield* Queue.unbounded<void>(),
   } satisfies BoxThread;
 });
 
@@ -352,14 +355,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
               : {}),
           };
         }
-        const asked = SubscriptionRef.changes(thread.requests).pipe(
-          Stream.filter((requests) => requests.some((request) => request.status === "pending")),
-          Stream.runHead,
-          Effect.andThen(Effect.succeedNone),
-        );
+        yield* Queue.offer(thread.waits, undefined);
         const done = yield* Deferred.await(thread.finished).pipe(
           Effect.timeoutOption(input.timeoutMs),
-          Effect.raceFirst(asked),
         );
         // Only a waiter that asks waits past the run for the thread's own task.
         if (
@@ -1031,35 +1029,54 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       // A running task there needs its local row, not the parent's run or transfer history.
       expect(historyReads).toEqual([]);
 
-      // Blocked there, it reports what it waits on, and its question wakes the parent here.
-      yield* SubscriptionRef.set(thread.requests, [boxQuestion, boxApproval]);
-      const blocked = yield* a.call("task_status", { taskId: delegated.taskId });
-      expect(blocked.structuredContent).toMatchObject({
+      // Blocked there, it reports what it waits on, and the follower's next look wakes the parent.
+      const wakeText = (requestId: RuntimeRequestId) =>
+        a.orchestrator
+          .streamStoredEventsFrom({
+            threadId: parentThreadId,
+            afterSequence: 0,
+            eventType: "message.updated",
+          })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "message.updated" &&
+                stored.event.payload.id ===
+                  `message:delegated-task-question:${parentThreadId}:${requestId}`,
+            ),
+            Stream.runHead,
+            Effect.map((stored) =>
+              Option.isSome(stored) && stored.value.event.type === "message.updated"
+                ? stored.value.event.payload.text
+                : undefined,
+            ),
+          );
+      const where = `environmentId ${box.environmentId}, threadId ${delegated.remoteChild.threadId}`;
+      // An approval reaches the parent too: no client here sees the thread there.
+      yield* SubscriptionRef.set(thread.requests, [boxApproval]);
+      expect(
+        (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+      ).toMatchObject({
         status: "running",
-        hasPendingQuestion: true,
+        hasPendingQuestion: false,
         pendingApproval: { requestId: boxApproval.id, kind: "command", runId: boxRunId },
       });
-      const woken = yield* a.orchestrator
-        .streamStoredEventsFrom({
-          threadId: parentThreadId,
-          afterSequence: 0,
-          eventType: "message.updated",
-        })
-        .pipe(
-          Stream.filter(
-            (stored) =>
-              stored.event.type === "message.updated" &&
-              stored.event.payload.id ===
-                `message:delegated-task-question:${parentThreadId}:${boxQuestion.id}`,
-          ),
-          Stream.runHead,
-        );
+      yield* Queue.take(thread.waits);
+      yield* TestClock.adjust("45 seconds");
+      expect(yield* wakeText(boxApproval.id)).toContain(
+        `command approval (${where}, requestId ${boxApproval.id})`,
+      );
+      yield* SubscriptionRef.set(thread.requests, [boxQuestion, boxApproval]);
       expect(
-        Option.isSome(woken) && woken.value.event.type === "message.updated"
-          ? woken.value.event.payload.text
-          : undefined,
-      ).toContain(
-        `environmentId ${box.environmentId}, threadId ${delegated.remoteChild.threadId}, and requestId ${boxQuestion.id}`,
+        (yield* a.call("task_status", { taskId: delegated.taskId })).structuredContent,
+      ).toMatchObject({
+        hasPendingQuestion: true,
+        pendingApproval: { requestId: boxApproval.id },
+      });
+      yield* Queue.take(thread.waits);
+      yield* TestClock.adjust("45 seconds");
+      expect(yield* wakeText(boxQuestion.id)).toContain(
+        `${where}, and requestId ${boxQuestion.id}`,
       );
       yield* SubscriptionRef.set(thread.requests, []);
 
@@ -1128,12 +1145,13 @@ it.effect("a wait on a task delegated to the box ends when it asks a question th
         ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
       >([]);
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
+      const rechecks = yield* steppedRetries;
+      const a = yield* makeLaptop(database, offers).pipe(
+        Effect.provideService(RemoteDelegation.RemoteTaskRecheckSchedule, rechecks.schedule),
+      );
       yield* linkTo(a.links, b, "full-access");
       yield* seedParent(a);
 
-      // The wait's first look there finds nothing asked yet.
-      yield* Ref.set(thread.holdRead, true);
       const waiting = yield* a
         .call("delegate_task", {
           task: "Ask which colour to use, then paint the box.",
@@ -1146,11 +1164,11 @@ it.effect("a wait on a task delegated to the box ends when it asks a question th
           clientRequestId: "paint-on-box",
         })
         .pipe(Effect.forkScoped);
-      yield* Deferred.await(thread.readStarted);
-      yield* Deferred.succeed(thread.releaseRead, undefined);
+      // Its first look there found nothing asked; the next one, well inside its timeout, does.
+      yield* Queue.take(rechecks.failed);
       yield* SubscriptionRef.set(thread.requests, [boxQuestion]);
+      yield* Queue.offer(rechecks.retry, undefined);
       const waited = yield* Fiber.join(waiting);
-      yield* SubscriptionRef.set(thread.requests, []);
       expect(waited.structuredContent).toMatchObject({
         status: "running",
         hasPendingQuestion: true,
