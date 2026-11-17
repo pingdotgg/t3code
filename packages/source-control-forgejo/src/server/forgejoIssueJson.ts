@@ -7,7 +7,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { IssueComment, IssueEvent, IssueTemplate } from "@t3tools/contracts";
+import type { IssueComment, IssueEvent, IssueState, IssueTemplate } from "@t3tools/contracts";
 import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
 
 import {
@@ -84,6 +84,12 @@ function toIsoUtc(value: string): string {
   return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
 }
 
+const OPEN: IssueState = { category: "open", name: "Open" };
+const CLOSED: IssueState = { category: "closed", name: "Closed" };
+
+/** Forgejo has exactly the two states and records no reason for a close. */
+export const ISSUE_STATES: ReadonlyArray<IssueState> = [OPEN, CLOSED];
+
 export function forgejoIssue(issue: typeof ForgejoIssue.Type): TrackerIssueSummary {
   return {
     key: String(issue.number),
@@ -91,10 +97,7 @@ export function forgejoIssue(issue: typeof ForgejoIssue.Type): TrackerIssueSumma
     title: issue.title,
     url: issue.html_url,
     author: forgejoActor(issue.user),
-    state:
-      issue.state === "closed"
-        ? { category: "closed", name: "closed" }
-        : { category: "open", name: "open" },
+    state: issue.state === "closed" ? CLOSED : OPEN,
     createdAt: toIsoUtc(issue.created_at),
     updatedAt: toIsoUtc(issue.updated_at),
     closedAt: issue.closed_at ? toIsoUtc(issue.closed_at) : null,

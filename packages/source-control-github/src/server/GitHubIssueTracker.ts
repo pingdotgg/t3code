@@ -20,6 +20,7 @@ import { IssuesGraphQLGroup } from "./issues.graphql.ts";
 import { AddReaction, RemoveReaction } from "./pullRequestMutations.graphql.ts";
 import { gitHubReactionContent } from "./gitHubPullRequestJson.ts";
 import {
+  ISSUE_STATES,
   decodeCreatedIssueJson,
   decodeIssueMetadataJson,
   toIssueCandidates,
@@ -41,11 +42,6 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
-  states: [
-    { category: "open", name: "open" },
-    { category: "closed", name: "closed" },
-  ],
-  closeReasons: ["completed", "not-planned"],
 };
 
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
@@ -91,11 +87,6 @@ function searchQuery(input: {
     ...searchTerms(input.query ?? ""),
   ].join(" ");
 }
-
-const CLOSE_REASON: Record<string, "completed" | "not_planned"> = {
-  completed: "completed",
-  "not-planned": "not_planned",
-};
 
 function reasonFor(
   error: GitHubRequestPolicy.GitHubApiError | GraphQLClientError.GraphQLClientError,
@@ -390,10 +381,11 @@ export const make = Effect.gen(function* () {
 
     setState: Effect.fn("GitHubIssueTracker.setState")(function* (input) {
       const { path, state, stateReason } = yield* verifiedIssue(input, "setState");
-      const reason =
-        input.state === "closed" && input.closeReason !== undefined
-          ? CLOSE_REASON[input.closeReason]
-          : undefined;
+      const wanted = ISSUE_STATES.find((candidate) => candidate.name === input.state);
+      if (wanted === undefined) {
+        return yield* invalid("setState", `A GitHub issue has no "${input.state}" state.`);
+      }
+      const reason = wanted.closeReason?.replace("-", "_");
       // GitHub ignores `state_reason` unless the state changes, and would answer with success.
       if (reason !== undefined && state === "CLOSED" && stateReason?.toLowerCase() !== reason) {
         return yield* invalid(
@@ -407,7 +399,10 @@ export const make = Effect.gen(function* () {
           operation: "setState",
           method: "PATCH",
           path,
-          body: { state: input.state, ...(reason === undefined ? {} : { state_reason: reason }) },
+          body: {
+            state: wanted.category,
+            ...(reason === undefined ? {} : { state_reason: reason }),
+          },
         })
         .pipe(Effect.mapError(fail("setState")));
     }),

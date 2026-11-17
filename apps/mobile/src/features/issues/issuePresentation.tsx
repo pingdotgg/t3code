@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueStateLabel, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
+import { issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -16,15 +16,15 @@ import { pullRequestLabelColor } from "../pull-requests/pullRequestList";
 import { usePullRequestConnected } from "../pull-requests/usePullRequestConnected";
 import { issueTarget, type IssueParams } from "./issueParams";
 
-// Open and completed wear the pull request colors for open and merged; not planned is grey,
-// because work that stopped must not look like work that finished.
+// Open and completed wear the pull request colors for open and merged; closed any other way
+// than completed is grey, because work that stopped must not look like work that finished.
 export function issueStatus(state: IssueState): {
   readonly label: string;
   readonly icon: AppSymbolName;
   readonly tint: string;
   readonly text: string;
 } {
-  const label = issueStateLabel(state);
+  const label = state.name;
   if (state.category === "open")
     return {
       label,
@@ -32,7 +32,7 @@ export function issueStatus(state: IssueState): {
       tint: "accent-adaptive-emerald-600-400",
       text: "text-adaptive-emerald-600-400",
     };
-  if (state.closeReason === "not-planned")
+  if (state.closeReason !== undefined && state.closeReason !== "completed")
     return {
       label,
       icon: "slash.circle",

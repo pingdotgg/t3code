@@ -158,7 +158,11 @@ describe("GitLabIssueTracker", () => {
       expect(issue).toMatchObject({
         key: "42",
         displayKey: "#42",
-        state: { category: "closed", name: "closed" },
+        state: { category: "closed", name: "Closed" },
+        states: [
+          { category: "open", name: "Open" },
+          { category: "closed", name: "Closed" },
+        ],
         author: { login: "octocat", name: "Octo Cat" },
         assignees: [{ login: "theo" }],
         labels: [{ name: "bug", color: null }],
@@ -284,6 +288,26 @@ describe("GitLabIssueTracker", () => {
       expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
       const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));
       expect(error.reason).toBe("failed");
+    }),
+  );
+
+  it.effect("moves an issue to a state by its name and refuses any other name", () =>
+    Effect.gen(function* () {
+      const writes: unknown[] = [];
+      const api = yield* tracker((args, input) => {
+        writes.push([args[1], JSON.parse(input.stdin ?? "null")]);
+        return "{}";
+      });
+      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      yield* api.setState!({ ...target, state: "Closed" });
+      yield* api.setState!({ ...target, state: "Open" });
+      // The category is not a state name: nothing is sent for it.
+      const error = yield* Effect.flip(api.setState!({ ...target, state: "closed" }));
+      expect(error).toMatchObject({ operation: "setState", reason: "failed" });
+      expect(writes).toEqual([
+        ["projects/acme%2Fweb/issues/42", { state_event: "close" }],
+        ["projects/acme%2Fweb/issues/42", { state_event: "reopen" }],
+      ]);
     }),
   );
 

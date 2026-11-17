@@ -1,9 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  issueCloseReasonLabel,
-  issueEventSentence,
-  issueWriteAccess,
-} from "@t3tools/client-runtime/issue-presentation";
+import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -505,11 +501,9 @@ export function IssueDetailPanel({
   const canLabel = access.labels;
   const canAssign = access.assignees;
   const canReact = access.react;
-  const canSetState = access.states.length > 0;
   const otherStates = access.states;
   const tracker = issueTrackerPresentation(detail.tracker);
-  const closingStates = otherStates.filter((state) => state.category === "closed");
-  const openingStates = otherStates.filter((state) => state.category === "open");
+  const currentState = issueStatePresentation(detail.state);
 
   const loadOlder = async () => {
     if (nextCursor === null || loadingOlder) return;
@@ -546,12 +540,12 @@ export function IssueDetailPanel({
     setEditing(null);
   };
 
-  const moveTo = async (state: string, closeReason?: string) => {
+  const moveTo = async (state: string) => {
     if (changingState) return;
     setChangingState(true);
     const result = await setState({
       environmentId,
-      input: { ...reference, state, ...(closeReason === undefined ? {} : { closeReason }) },
+      input: { ...reference, state },
     });
     setChangingState(false);
     if (result._tag === "Failure") {
@@ -565,64 +559,50 @@ export function IssueDetailPanel({
     refreshIssueLists(environmentId);
   };
 
-  const stateControl: ReactNode = canSetState ? (
-    <span className="flex shrink-0 items-center gap-1">
-      {openingStates.length === 1 && closingStates.length === 0 ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={changingState}
-          onClick={() => void moveTo(openingStates[0]!.name)}
+  const currentStateIcon = (
+    <currentState.Icon
+      aria-hidden
+      className={cn("size-3.5 shrink-0", currentState.toneClassName)}
+    />
+  );
+  const stateControl: ReactNode =
+    otherStates.length > 0 ? (
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="xs"
+              variant="outline"
+              aria-label={`Issue state, ${currentState.label}`}
+              disabled={changingState}
+            />
+          }
         >
-          Reopen
-        </Button>
-      ) : null}
-      {closingStates.length === 1 &&
-      detail.capabilities.closeReasons.length === 0 &&
-      openingStates.length === 0 ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={changingState}
-          onClick={() => void moveTo(closingStates[0]!.name)}
-        >
-          Close
-        </Button>
-      ) : null}
-      {(closingStates.length > 0 && detail.capabilities.closeReasons.length > 0) ||
-      otherStates.length > 1 ? (
-        <Menu>
-          <MenuTrigger render={<Button size="xs" variant="outline" disabled={changingState} />}>
-            {detail.state.category === "open" ? "Close" : "Change state"}
-            <ChevronDownIcon aria-hidden className="size-3" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            {otherStates.flatMap((state) =>
-              state.category === "closed" && detail.capabilities.closeReasons.length > 0
-                ? detail.capabilities.closeReasons.map((reason) => (
-                    <MenuItem
-                      key={`${state.name}:${reason}`}
-                      onClick={() => void moveTo(state.name, reason)}
-                    >
-                      {state.name === "closed" ? "Close" : state.name} as{" "}
-                      {issueCloseReasonLabel(reason).toLowerCase()}
-                    </MenuItem>
-                  ))
-                : [
-                    <MenuItem key={state.name} onClick={() => void moveTo(state.name)}>
-                      {state.category === "open" && state.name === "open"
-                        ? "Reopen"
-                        : state.name === "closed"
-                          ? "Close"
-                          : `Move to ${state.name}`}
-                    </MenuItem>,
-                  ],
-            )}
-          </MenuPopup>
-        </Menu>
-      ) : null}
-    </span>
-  ) : null;
+          {currentStateIcon}
+          {currentState.label}
+          <ChevronDownIcon aria-hidden className="size-3" />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {otherStates.map((state) => {
+            const presentation = issueStatePresentation(state);
+            return (
+              <MenuItem key={state.name} onClick={() => void moveTo(state.name)}>
+                <presentation.Icon
+                  aria-hidden
+                  className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+                />
+                {state.name}
+              </MenuItem>
+            );
+          })}
+        </MenuPopup>
+      </Menu>
+    ) : (
+      <span className="flex shrink-0 items-center gap-1 font-medium">
+        {currentStateIcon}
+        {currentState.label}
+      </span>
+    );
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -640,10 +620,7 @@ export function IssueDetailPanel({
               {detail.scope}
             </span>
             <InlineButton
-              className={cn(
-                "shrink-0 font-medium",
-                issueStatePresentation(detail.state).toneClassName,
-              )}
+              className={cn("shrink-0 font-medium", currentState.toneClassName)}
               aria-label={`Open ${detail.displayKey} on ${tracker.providerName}`}
               render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
             >

@@ -56,11 +56,6 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
-  states: [
-    { category: "open", name: "open" },
-    { category: "closed", name: "closed" },
-  ],
-  closeReasons: ["completed", "canceled"],
 };
 
 /** Everything granted: Linear's API reports no per-issue permissions and refuses with a message. */
@@ -73,7 +68,27 @@ const VIEWER_PERMISSIONS: IssueViewerPermissions = {
 };
 
 const COMMENTS_PAGE = 50;
-const CLOSED_STATE_TYPES = ["completed", "canceled"];
+const CLOSED_STATE_TYPES = ["completed", "canceled", "duplicate"];
+/** The order Linear lists a workflow in; within a type, its own `position` decides. */
+const STATE_TYPE_ORDER = [
+  "triage",
+  "backlog",
+  "unstarted",
+  "started",
+  "completed",
+  "canceled",
+  "duplicate",
+];
+
+function inWorkflowOrder(
+  states: ReadonlyArray<LinearApi.LinearWorkflowState>,
+): ReadonlyArray<LinearApi.LinearWorkflowState> {
+  return states.toSorted(
+    (a, b) =>
+      STATE_TYPE_ORDER.indexOf(a.type) - STATE_TYPE_ORDER.indexOf(b.type) ||
+      (a.position ?? 0) - (b.position ?? 0),
+  );
+}
 
 /** Linear reacts with the emoji itself; GitHub's names are the contract's vocabulary. */
 const EMOJI_BY_CONTENT: Record<IssueReactionContent, string> = {
@@ -484,6 +499,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           body: issue.description ?? "",
           viewer: me === null ? null : toActor(me).login,
           viewerPermissions: VIEWER_PERMISSIONS,
+          states: inWorkflowOrder(issue.team.states.nodes).map(toState),
           reactions: toReactions(issue.reactions, viewer),
           comments: issue.comments.nodes.map((comment) => toComment(comment, viewer)),
           commentsCursor: issue.comments.pageInfo.hasNextPage
@@ -546,17 +562,9 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       setState: Effect.fn("LinearIssueTracker.setState")(function* (input) {
         const { identifier } = yield* requireTeamIssue("setState", input);
         const scope = yield* requireTeam("setState", input.scope);
-        const states = scope.team.states.nodes.toSorted(
-          (a, b) => (a.position ?? 0) - (b.position ?? 0),
-        );
-        const wanted =
-          input.state === "closed"
-            ? states.find((state) => state.type === (input.closeReason ?? "completed"))
-            : (states.find((state) => state.type === "unstarted") ??
-              states.find((state) => state.type === "backlog") ??
-              states.find((state) => state.type === "triage"));
+        const wanted = scope.team.states.nodes.find((state) => state.name === input.state);
         if (wanted === undefined)
-          return yield* failed("setState", "This team has no workflow state for that change.");
+          return yield* failed("setState", `This team's workflow has no "${input.state}" state.`);
         yield* linear.updateIssue(identifier, { stateId: wanted.id });
       }),
 

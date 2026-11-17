@@ -1,13 +1,9 @@
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  issueCloseReasonLabel,
-  issueEventSentence,
-} from "@t3tools/client-runtime/issue-presentation";
+import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import type {
   IssueComment,
-  IssueDetail,
   IssueEvent,
   IssueLinkedPullRequest,
   IssueReaction,
@@ -100,43 +96,12 @@ function IssueReactions(props: {
 
 function IssueStateControl(props: {
   readonly state: IssueState;
-  readonly detail: IssueDetail | null;
   readonly states: ReadonlyArray<IssueState>;
   readonly busy: boolean;
-  readonly onMove: (state: string, closeReason?: string) => void;
+  readonly onMove: (state: string) => void;
 }) {
   const status = issueStatus(props.state);
-  const reasons = props.detail?.capabilities.closeReasons ?? [];
-  const moves = props.states.flatMap(
-    (
-      state,
-    ): ReadonlyArray<{
-      readonly id: string;
-      readonly state: string;
-      readonly reason?: string;
-      readonly title: string;
-    }> =>
-      state.category === "closed" && reasons.length > 0
-        ? reasons.map((reason) => ({
-            // No NUL separator: it ends the native string, and UIKit drops a duplicate id.
-            id: `${state.name}:${reason}`,
-            state: state.name,
-            reason,
-            title: `${state.name === "closed" ? "Close" : state.name} as ${issueCloseReasonLabel(reason).toLowerCase()}`,
-          }))
-        : [
-            {
-              id: state.name,
-              state: state.name,
-              title:
-                state.category === "open" && state.name === "open"
-                  ? "Reopen"
-                  : state.name === "closed"
-                    ? "Close"
-                    : `Move to ${state.name}`,
-            },
-          ],
-  );
+  const moves = props.states;
   const trigger = (
     <Pressable
       accessibilityRole={moves.length ? "button" : undefined}
@@ -157,10 +122,11 @@ function IssueStateControl(props: {
     <View className="self-start">
       <Menu
         title="Issue state"
-        actions={moves.map((move) => ({ id: move.id, title: move.title }))}
+        // The name is the id: unique within a workflow, and a NUL separator would end the native string.
+        actions={moves.map((move) => ({ id: move.name, title: move.name }))}
         onPressAction={({ nativeEvent }) => {
-          const move = moves.find((candidate) => candidate.id === nativeEvent.event);
-          if (move) props.onMove(move.state, move.reason);
+          if (moves.some((move) => move.name === nativeEvent.event))
+            props.onMove(nativeEvent.event);
         }}
       >
         {trigger}
@@ -171,10 +137,9 @@ function IssueStateControl(props: {
 
 function IssueIdentity(props: {
   readonly issue: IssueSummary;
-  readonly detail: IssueDetail | null;
   readonly access: IssueAccess | null;
   readonly busy: boolean;
-  readonly onMove: (state: string, closeReason?: string) => void;
+  readonly onMove: (state: string) => void;
   readonly onEditLabels: () => void;
   readonly onEditAssignees: () => void;
 }) {
@@ -185,7 +150,6 @@ function IssueIdentity(props: {
     <View className="gap-3">
       <IssueStateControl
         state={issue.state}
-        detail={props.detail}
         states={access?.states ?? []}
         busy={props.busy}
         onMove={props.onMove}
@@ -468,13 +432,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     access?.comment === true
       ? run("comment", () => postComment({ ...target, input: { ...target.input, body } }))
       : Promise.resolve(false);
-  const moveTo = (state: string, closeReason?: string) =>
-    void run("state", () =>
-      setState({
-        ...target,
-        input: { ...target.input, state, ...(closeReason === undefined ? {} : { closeReason }) },
-      }),
-    );
+  const moveTo = (state: string) =>
+    void run("state", () => setState({ ...target, input: { ...target.input, state } }));
 
   const showComposer = detail?.capabilities.comment === true;
   const commentBlocked =
@@ -592,7 +551,6 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             <View className="gap-5">
               <IssueIdentity
                 issue={issue}
-                detail={detail}
                 access={access}
                 busy={busy === "state"}
                 onMove={moveTo}

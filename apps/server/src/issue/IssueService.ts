@@ -575,15 +575,8 @@ const make = Effect.gen(function* () {
   const setState: IssueService["Service"]["setState"] = (input) =>
     requireWritable(input, "setState").pipe(
       Effect.flatMap((project) => {
-        const { capabilities } = project.api;
-        const target = capabilities.states.find((state) => state.name === input.state);
-        if (project.api.setState === undefined || target === undefined)
-          return Effect.fail(unsupported("setState", `the state "${input.state}"`));
-        if (
-          input.closeReason !== undefined &&
-          (target.category !== "closed" || !capabilities.closeReasons.includes(input.closeReason))
-        )
-          return Effect.fail(unsupported("setState", `the close reason "${input.closeReason}"`));
+        if (project.api.setState === undefined)
+          return Effect.fail(unsupported("setState", "changing an issue's state"));
         return project.api
           .setState({
             cwd: project.project.workspaceRoot,
@@ -591,7 +584,6 @@ const make = Effect.gen(function* () {
             scope: project.scope,
             key: input.key,
             state: input.state,
-            closeReason: input.closeReason,
           })
           .pipe(Effect.mapError(toIssueError("setState")));
       }),
