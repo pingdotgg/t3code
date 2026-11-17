@@ -260,6 +260,30 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
+it.each([
+  ["sound", "granted"],
+  ["notifications", "denied"],
+] as const)(
+  "badges an unseen event without a system notification (mode %s, permission %s)",
+  async (mode, permission) => {
+    await using app = setup();
+    state.mode = mode;
+    TestNotification.permission = permission;
+    app.start();
+    state.shells.set(
+      "one",
+      shell({
+        latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01Z" },
+      }),
+    );
+    state.shells.set("two", shell({ hasPendingUserInput: true }));
+    expect(TestNotification.sent).toEqual([]);
+    expect(state.badge).toHaveBeenLastCalledWith(2);
+    window.dispatchEvent(new Event("focus"));
+    expect(state.badge).toHaveBeenLastCalledWith(0);
+  },
+);
+
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies once per %s request, not again as queued runs start behind it",
   async (flag) => {
