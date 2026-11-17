@@ -2,7 +2,7 @@
 
 ## 2026-11-17
 
-- **Integration candidate**: [Upstream integration](upstream-integration.md#november-17-candidate) records merge `423f20588f` and follow-up `62999eedc1` through `b46edac5c1`, retaining all 205 incoming commits with zero branch gap. Fork `main` remains at `38ba9f1c7a`. Recovery keeps upstream's empty-directory fix alongside Git/Jujutsu ownership; the overlapping PR action stays a single implementation. No live deployment occurred.
+- **Integration**: [PR #84](https://github.com/NicholasZolton/t3code/pull/84) reached fork `main` at `092507e48b`. Refreshed [upstream integration](upstream-integration.md#completed-november-17-sync): both merges and all 205 commits through `b46edac5c1` are retained, with zero main gap. Recovery keeps upstream's empty-directory fix alongside Git/Jujutsu ownership; the overlapping PR action stays a single implementation. The 18 remaining failures reproduce upstream, native access is blocked, and GitHub registered no checks. No live deployment occurred.
 
 - **Compatibility**: Recorded [PR #83](https://github.com/NicholasZolton/t3code/pull/83)'s [opt-in PR approval wait](upstream-integration.md#opt-in-pull-request-approval-waits). Default watches retain upstream's checks-only waiting; `waitForApproval` also waits for a host-reported approval and releases automatically without unwatching.
 
