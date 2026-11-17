@@ -673,11 +673,7 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(toIssueError("resolveUrl")));
         const canonicalUrl = parseUrl(issue.url);
         const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
-        if (
-          canonical === null ||
-          canonical.workspace !== standalone.link.workspace ||
-          canonical.key !== link.key
-        ) {
+        if (canonical === null || canonical.workspace !== standalone.link.workspace) {
           return yield* new IssueOperationError({
             operation: "resolveUrl",
             reason: "not-found",
