@@ -90,7 +90,7 @@ describe("ssh config", () => {
       yield* fs.makeDirectory(path.join(sshDir, "single.d"));
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
-        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nInclude single.d/team?one.conf\nHost real\n  HostName real.example.com\n",
+        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nInclude single.d/team?one.conf\nInclude single.d/exact??.conf\nHost real\n  HostName real.example.com\nHost svc?x\n  HostName wrong.example.com\nHost svc\u2028x\n  HostName correct.example.com\nHost svc\u00f8x\n  HostName byte-correct.example.com\n",
       );
       for (const [index, separator] of ["\u2028", "\u2029"].entries()) {
         yield* fs.writeFileString(
@@ -103,6 +103,16 @@ describe("ssh config", () => {
         path.join(sshDir, "single.d", "team\u2028one.conf"),
         "Host single-byte\n  HostName single-byte.example.com\n",
       );
+      for (const [file, alias] of [
+        ["teamxone.conf", "single-ascii"],
+        ["teamøone.conf", "single-unicode"],
+        ["exactø.conf", "double-byte"],
+      ] as const) {
+        yield* fs.writeFileString(
+          path.join(sshDir, "single.d", file),
+          `Host ${alias}\n  HostName ${alias}.example.com\n`,
+        );
+      }
       yield* fs.writeFileString(
         path.join(sshDir, "config.d", "team.conf"),
         "Host team\n  HostName team.example.com\n",
@@ -121,17 +131,21 @@ describe("ssh config", () => {
       );
       yield* fs.writeFileString(
         path.join(sshDir, "known_hosts"),
-        "known.example.com ssh-ed25519 AAAA\n",
+        "known.example.com ssh-ed25519 AAAA\nbyte-correct.example.com ssh-ed25519 AAAA\n",
       );
 
       const hosts = yield* discoverSshHosts({ homeDir });
       assert.deepEqual(
         hosts.map((host) => [host.alias, host.hostname, host.source]),
         [
+          ["double-byte", "double-byte.example.com", "ssh-config"],
           ["enabled", "enabled.example.com", "ssh-config"],
           ["known.example.com", "known.example.com", "known-hosts"],
           ["literal", "literal.example.com", "ssh-config"],
           ["real", "real.example.com", "ssh-config"],
+          ["single-ascii", "single-ascii.example.com", "ssh-config"],
+          ["svc\u2028x", "correct.example.com", "ssh-config"],
+          ["svc\u00f8x", "byte-correct.example.com", "ssh-config"],
           ["team", "team.example.com", "ssh-config"],
           ["unicode-0", "unicode-0.example.com", "ssh-config"],
           ["unicode-1", "unicode-1.example.com", "ssh-config"],
