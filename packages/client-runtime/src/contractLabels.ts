@@ -10,17 +10,19 @@ import {
   type ProjectCloneStage,
   type RuntimeMode,
   type WorktreeSetupStageId,
+  worktreeSetupStageLabel as contractsWorktreeSetupStageLabel,
 } from "@t3tools/contracts";
 import type { IdleCompactionMode } from "@t3tools/contracts/settings";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
-const WORKTREE_SETUP_STAGE_LABELS: Record<WorktreeSetupStageId, string> = {
-  fetch: msg("Fetch base branch"),
-  checkout: msg("Check out files"),
-  submodules: msg("Init submodules"),
-  "setup-script": msg("Run setup script"),
-  agent: msg("Start agent"),
+// Contracts decides each stage's English label; this table only makes that text translatable.
+const WORKTREE_SETUP_STAGE_LABELS: Readonly<Record<string, string>> = {
+  "Fetch base branch": msg("Fetch base branch"),
+  "Check out files": msg("Check out files"),
+  "Init submodules": msg("Init submodules"),
+  "Run setup script": msg("Run setup script"),
+  "Start agent": msg("Start agent"),
 };
 
 /** @public */
@@ -28,7 +30,8 @@ export function worktreeSetupStageLabel(
   id: WorktreeSetupStageId,
   resolve: MFunctionType = mFallback,
 ): string {
-  return resolve(WORKTREE_SETUP_STAGE_LABELS[id]);
+  const english = contractsWorktreeSetupStageLabel(id);
+  return resolve(WORKTREE_SETUP_STAGE_LABELS[english] ?? english);
 }
 
 const PROJECT_CLONE_STAGE_LABELS: Record<ProjectCloneStage, string> = {
