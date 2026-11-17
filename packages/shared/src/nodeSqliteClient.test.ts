@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,19 +30,39 @@ const workerExits = vi.hoisted(() => new WeakMap<NodeWorkerThreads.Worker, Promi
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
 const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
 const checkpointWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+const posts = vi.hoisted(() => new Set<(sql: string, worker: NodeWorkerThreads.Worker) => void>());
+const readerWorkers = vi.hoisted(() => new WeakSet<NodeWorkerThreads.Worker>());
+// Statements marked "/* hold */" wait in their worker until the gate opens.
+const statementGate = vi.hoisted(() => {
+  const gate = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  gate[0] = 1;
+  return gate;
+});
+const heldExits = vi.hoisted(() => ({
+  on: false,
+  held: [] as Array<{ worker: NodeWorkerThreads.Worker; code: unknown }>,
+}));
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
   class RecordedWorker extends actual.Worker {
     constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      const [source, options] = args;
       super(
         ...((silentWorkers.on
           ? ["setInterval(() => {}, 1 << 30);", { eval: true }]
           : failingWorkers.message !== undefined
             ? [`throw new Error(${JSON.stringify(failingWorkers.message)});`, { eval: true }]
-            : args) as ConstructorParameters<typeof actual.Worker>),
+            : [
+                String(source).replace(
+                  'operation = "execute";',
+                  'operation = "execute"; if (sql.includes("/* hold */")) Atomics.wait(workerData.statementGate, 0, 0);',
+                ),
+                { ...options, workerData: { ...options?.workerData, statementGate } },
+              ]) as ConstructorParameters<typeof actual.Worker>),
       );
       startedWorkers.push(this);
+      if (options?.workerData?.requireWal === true) readerWorkers.add(this);
       workerExits.set(this, new Promise((resolve) => this.once("exit", () => resolve())));
       if (args[1]?.workerData?.frames !== undefined) checkpointWorkers.push(this);
     }
@@ -49,6 +70,18 @@ vi.mock("node:worker_threads", async (importOriginal) => {
       // A "ready" already queued when termination starts reaches the parent before "exit".
       if (silentWorkers.readyOnTerminate) this.emit("message", { type: "ready" });
       return super.terminate();
+    }
+    override postMessage(message: any, ...rest: Array<any>) {
+      if (typeof message?.sql === "string") for (const notify of posts) notify(message.sql, this);
+      return super.postMessage(message, ...rest);
+    }
+    override emit(event: string | symbol, ...values: Array<any>) {
+      // Stands in for a reader whose native statement has not returned yet.
+      if (event === "exit" && heldExits.on && readerWorkers.has(this)) {
+        heldExits.held.push({ worker: this, code: values[0] });
+        return true;
+      }
+      return super.emit(event, ...values);
     }
   }
   return { ...actual, Worker: RecordedWorker };
@@ -570,6 +603,403 @@ it.effect("fails a read-only transaction whose reader stops, then starts a new r
       assert.include(String(error.reason.cause), "Database reader exited");
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
       assert.equal(startedWorkers.length, startedBefore + 2);
+    }),
+  ),
+);
+
+const held = "SELECT /* hold */ COUNT(*) AS count FROM entries";
+
+const holdStatements = Effect.acquireRelease(
+  Effect.sync(() => Atomics.store(statementGate, 0, 0)),
+  () => releaseStatements,
+);
+
+const releaseStatements = Effect.sync(() => {
+  Atomics.store(statementGate, 0, 1);
+  Atomics.notify(statementGate, 0);
+});
+
+const holdReaderExits = Effect.acquireRelease(
+  Effect.sync(() => {
+    heldExits.on = true;
+  }),
+  () =>
+    Effect.sync(() => {
+      heldExits.on = false;
+      for (const { worker, code } of heldExits.held.splice(0)) worker.emit("exit", code);
+    }),
+);
+
+const nextPost = (match: string) =>
+  Effect.gen(function* () {
+    const posted = yield* Deferred.make<NodeWorkerThreads.Worker>();
+    const notify = (sql: string, worker: NodeWorkerThreads.Worker) => {
+      if (!sql.includes(match)) return;
+      posts.delete(notify);
+      Deferred.doneUnsafe(posted, Effect.succeed(worker));
+    };
+    posts.add(notify);
+    return posted;
+  });
+
+const startRead = <A, E>(read: Effect.Effect<A, E>, match: string) =>
+  Effect.gen(function* () {
+    const posted = yield* nextPost(match);
+    const fiber = yield* Effect.forkChild(read, { startImmediately: true });
+    return { fiber, worker: yield* Deferred.await(posted) };
+  });
+
+const startReaders = (sql: SqlClient.SqlClient) =>
+  Effect.forEach([0, 1, 2, 3], () => countEntries(sql).pipe(SqliteClient.readOnly), {
+    concurrency: 4,
+  });
+
+const abandonHeldRead = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const { fiber, worker } = yield* startRead(sql.unsafe(held).pipe(SqliteClient.readOnly), held);
+    yield* Fiber.interrupt(fiber);
+    return worker;
+  });
+
+it.effect(
+  "returns a read queued on a reserved reader after the read ahead of it is abandoned",
+  () =>
+    withReaderClient((sql) =>
+      Effect.gen(function* () {
+        yield* holdStatements;
+        const answer = yield* Effect.gen(function* () {
+          const connection = yield* sql.reserve;
+          const first = yield* startRead(connection.executeUnprepared(held, [], undefined), held);
+          const second = yield* startRead(
+            connection.executeUnprepared("SELECT 42 AS answer", [], undefined),
+            "SELECT 42",
+          );
+          yield* Fiber.interrupt(first.fiber);
+          yield* releaseStatements;
+          return yield* Fiber.join(second.fiber);
+        }).pipe(Effect.scoped, SqliteClient.readOnly);
+
+        assert.deepEqual(answer, [{ answer: 42 }]);
+      }).pipe(Effect.scoped),
+    ),
+);
+
+it.effect("serves the next read on an idle reader while an abandoned statement still runs", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* startReaders(sql);
+      const startedBefore = startedWorkers.length;
+      const abandoned = yield* abandonHeldRead(sql);
+      const next = yield* startRead(
+        countEntries(sql).pipe(SqliteClient.readOnly),
+        "SELECT COUNT(*)",
+      );
+
+      assert.notStrictEqual(next.worker, abandoned);
+      assert.equal(yield* Fiber.join(next.fiber), 1);
+      assert.equal(startedWorkers.length, startedBefore);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("starts a new reader once every reader runs only abandoned statements", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      yield* startReaders(sql);
+      const busy = yield* Effect.forEach([0, 1, 2, 3], () => abandonHeldRead(sql));
+      const startedBefore = startedWorkers.length;
+      const posted = yield* nextPost("SELECT COUNT(*)");
+      const next = yield* Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("1 second");
+
+      assert.notInclude(busy, yield* Deferred.await(posted));
+      assert.equal(yield* Fiber.join(next), 1);
+      assert.equal(startedWorkers.length, startedBefore + 1);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("waits for a reader once four retired readers are still running", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      yield* startReaders(sql);
+      yield* Effect.forEach([0, 1, 2, 3], () => abandonHeldRead(sql));
+      const startedBefore = startedWorkers.length;
+      for (let index = 0; index < 4; index++) {
+        const posted = yield* nextPost(held);
+        const read = yield* Effect.forkChild(sql.unsafe(held).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(posted);
+        yield* Fiber.interrupt(read);
+      }
+      assert.equal(startedWorkers.length, startedBefore + 4);
+
+      const next = yield* Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("1 second");
+      yield* releaseStatements;
+
+      assert.equal(yield* Fiber.join(next), 1);
+      assert.equal(startedWorkers.length, startedBefore + 4);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+// A read-only transaction that keeps its reader until `release` completes.
+const holdReader = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const fiber = yield* sql
+      .withTransaction(
+        countEntries(sql).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+        ),
+      )
+      .pipe(SqliteClient.readOnly, (read) => Effect.forkChild(read, { startImmediately: true }));
+    return { fiber, entered, release };
+  });
+
+const holdEveryReader = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const holders = yield* Effect.forEach([0, 1, 2, 3], () => holdReader(sql));
+    yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+    return holders;
+  });
+
+const finishHeld = (held: Effect.Success<ReturnType<typeof holdReader>>) =>
+  Deferred.succeed(held.release, undefined).pipe(Effect.andThen(Fiber.join(held.fiber)));
+
+// A read looks at its clock each time it checks for a free reader, so this counts the checks.
+const withCheckCount = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.map(Clock.clockWith(Effect.succeed), (clock) => {
+    const counted = { checks: 0 };
+    const counting: Clock.Clock = {
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+      currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+      monotonicTimeNanosUnsafe: () => {
+        counted.checks++;
+        return clock.monotonicTimeNanosUnsafe();
+      },
+      currentTimeMillis: clock.currentTimeMillis,
+      currentTimeNanos: clock.currentTimeNanos,
+      monotonicTimeNanos: clock.monotonicTimeNanos,
+      sleep: (duration) => clock.sleep(duration),
+    };
+    return { counted, read: Effect.provideService(effect, Clock.Clock, counting) };
+  });
+
+it.effect("wakes one waiting read per reader that frees up, in arrival order", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* holdEveryReader(sql);
+      const waiting = yield* Effect.forEach([0, 1, 2], () => holdReader(sql));
+      const last = yield* withCheckCount(countEntries(sql).pipe(SqliteClient.readOnly));
+      const lastRead = yield* Effect.forkChild(last.read, { startImmediately: true });
+      const checksWhileQueued = last.counted.checks;
+      yield* Effect.forEach(holders.slice(0, 2), finishHeld);
+
+      yield* Deferred.await(waiting[0]!.entered);
+      yield* Deferred.await(waiting[1]!.entered);
+      assert.isFalse(yield* Deferred.isDone(waiting[2]!.entered));
+      assert.equal(last.counted.checks, checksWhileQueued);
+      yield* finishHeld(waiting[0]!);
+      yield* Deferred.await(waiting[2]!.entered);
+      yield* Effect.forEach([...holders.slice(2), ...waiting.slice(1)], finishHeld);
+      assert.equal(yield* Fiber.join(lastRead), 1);
+    }),
+  ),
+);
+
+it.effect("serves the reads behind a waiting read that is interrupted", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const holders = yield* holdEveryReader(sql);
+      const waiting = yield* Effect.forEach([0, 1, 2, 3], () => holdReader(sql));
+      // The first waiting read is the one a freed reader would go to.
+      yield* Fiber.interrupt(waiting[0]!.fiber);
+      yield* Fiber.interrupt(waiting[2]!.fiber);
+
+      yield* finishHeld(holders[0]!);
+      yield* Deferred.await(waiting[1]!.entered);
+      yield* finishHeld(holders[1]!);
+      yield* Deferred.await(waiting[3]!.entered);
+      yield* Effect.forEach([holders[2]!, holders[3]!, waiting[1]!, waiting[3]!], finishHeld);
+    }),
+  ),
+);
+
+it.effect("replaces an abandoned reader for the next waiting read after the first leaves", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      const holders = yield* Effect.forEach([0, 1, 2], () => holdReader(sql));
+      yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+      yield* abandonHeldRead(sql);
+      const [first, second] = yield* Effect.forEach([0, 1], () =>
+        Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        }),
+      );
+      yield* Fiber.interrupt(first!);
+      yield* TestClock.adjust("1 second");
+
+      assert.equal(yield* Fiber.join(second!), 1);
+      yield* Effect.forEach(holders, finishHeld);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("replaces two readers abandoned at once for the two reads waiting on them", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      const holders = yield* Effect.forEach([0, 1], () => holdReader(sql));
+      yield* Effect.forEach(holders, (holder) => Deferred.await(holder.entered));
+      // Distinct text, so each read waits for its own post rather than the one before it.
+      const stuck = yield* Effect.forEach(["1 = 1", "2 = 2"], (where) => {
+        const statement = `${held} WHERE ${where}`;
+        return startRead(sql.unsafe(statement).pipe(SqliteClient.readOnly), statement);
+      });
+      const waiting = yield* Effect.forEach([0, 1], () =>
+        Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        }),
+      );
+      const startedBefore = startedWorkers.length;
+      yield* Effect.forEach(stuck, ({ fiber }) => Fiber.interrupt(fiber));
+      yield* TestClock.adjust("1 second");
+
+      assert.deepEqual(yield* Effect.forEach(waiting, Fiber.join), [1, 1]);
+      assert.equal(startedWorkers.length, startedBefore + 2);
+      yield* Effect.forEach(holders, finishHeld);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("replaces an abandoned reader one grace after the wall clock moves back", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      yield* holdReaderExits;
+      yield* TestClock.adjust("1 minute");
+      yield* startReaders(sql);
+      yield* Effect.forEach([0, 1, 2, 3], () => abandonHeldRead(sql));
+      yield* TestClock.setTime(0);
+      const startedBefore = startedWorkers.length;
+      const next = yield* Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+        startImmediately: true,
+      });
+
+      yield* TestClock.adjust("249 millis");
+      assert.equal(startedWorkers.length, startedBefore);
+      yield* TestClock.adjust("1 millis");
+      assert.equal(startedWorkers.length, startedBefore + 1);
+      assert.equal(yield* Fiber.join(next), 1);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("runs the next statement of a read-only transaction after one timed out", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* holdStatements;
+      const transaction = yield* startRead(
+        sql
+          .withTransaction(
+            sql
+              .unsafe(held)
+              .pipe(Effect.timeout("1 second"), Effect.ignore, Effect.andThen(countEntries(sql))),
+          )
+          .pipe(SqliteClient.readOnly),
+        held,
+      );
+      yield* TestClock.adjust("1 second");
+      yield* releaseStatements;
+
+      assert.equal(yield* Fiber.join(transaction.fiber), 1);
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("closes the client without waiting for an abandoned statement", () =>
+  Effect.gen(function* () {
+    yield* holdStatements;
+    yield* holdReaderExits;
+    yield* withReaderClient((sql) => abandonHeldRead(sql));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("fails a read waiting for a reader when the client closes, and starts none", () =>
+  Effect.gen(function* () {
+    const startedBefore = startedWorkers.length;
+    const waiting = yield* Effect.gen(function* () {
+      yield* holdStatements;
+      return yield* withReaderClient((sql) =>
+        Effect.gen(function* () {
+          yield* startReaders(sql);
+          yield* Effect.forEach([0, 1, 2, 3], () => abandonHeldRead(sql));
+          return yield* Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+            startImmediately: true,
+          });
+        }),
+      );
+    }).pipe(Effect.scoped);
+    const startedAtClose = startedWorkers.length;
+    // Settled by the close itself, before its grace runs out.
+    const error = yield* Effect.flip(Fiber.join(waiting));
+    assert.include(String(error.reason.cause), "Database reader closed");
+    yield* TestClock.adjust("1 second");
+
+    assert.equal(startedWorkers.length, startedAtClose);
+    yield* Effect.promise(() =>
+      Promise.all(startedWorkers.slice(startedBefore).map((worker) => workerExits.get(worker))),
+    );
+  }),
+);
+
+it.effect("fails a read that arrives after the client closes, and starts no reader", () =>
+  Effect.gen(function* () {
+    const sql = yield* withReaderClient((sql) => Effect.as(startReaders(sql), sql));
+    const startedAtClose = startedWorkers.length;
+    const error = yield* Effect.flip(countEntries(sql).pipe(SqliteClient.readOnly));
+
+    assert.equal(startedWorkers.length, startedAtClose);
+    assert.include(String(error.reason.cause), "Database reader closed");
+  }),
+);
+
+it.effect("keeps the reader when a read-only transaction is interrupted between statements", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const read = yield* Deferred.make<void>();
+      const transaction = yield* sql
+        .withTransaction(
+          countEntries(sql).pipe(
+            Effect.andThen(Deferred.succeed(read, undefined)),
+            Effect.andThen(Effect.never),
+          ),
+        )
+        .pipe(SqliteClient.readOnly, Effect.forkChild);
+      yield* Deferred.await(read);
+      const startedBefore = startedWorkers.length;
+      yield* Fiber.interrupt(transaction);
+
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      assert.equal(startedWorkers.length, startedBefore);
     }),
   ),
 );
