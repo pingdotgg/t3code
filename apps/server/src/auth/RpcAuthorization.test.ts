@@ -39,16 +39,6 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
-  it("keeps AI PM board reads behind project read access", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.aiPmList)).toBe(AuthOrchestrationReadScope);
-    expect(requiredScopeForRpcMethod(WS_METHODS.aiPmBrief)).toBe(AuthOrchestrationReadScope);
-    expect(requiredScopeForRpcMethod(WS_METHODS.aiPmIdeas)).toBe(AuthOrchestrationReadScope);
-    expect(requiredScopeForRpcMethod(WS_METHODS.aiPmSaveIdea)).toBe(AuthOrchestrationOperateScope);
-    expect(requiredScopeForRpcMethod(WS_METHODS.aiPmSetIdeaStatus)).toBe(
-      AuthOrchestrationOperateScope,
-    );
-  });
-
   it("lets readers list MCP servers but requires settings access to change them", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.mcpServersList)).toBe(AuthOrchestrationReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.mcpServersSubscribe)).toBe(

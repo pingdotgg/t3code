@@ -1,4 +1,3 @@
-import * as AiPmService from "./aiPm/AiPmService.ts";
 import * as McpServerOAuth from "./mcpHub/McpServerOAuth.ts";
 import * as McpServerRegistry from "./mcpHub/McpServerRegistry.ts";
 import * as DocCommentDelivery from "./docs/DocCommentDelivery.ts";
@@ -737,11 +736,6 @@ export const FORK_RPC_METHODS = [
   WS_METHODS.mcpServersSetEnabled,
   WS_METHODS.mcpServersStartSignIn,
   WS_METHODS.mcpServersSignOut,
-  WS_METHODS.aiPmList,
-  WS_METHODS.aiPmBrief,
-  WS_METHODS.aiPmIdeas,
-  WS_METHODS.aiPmSaveIdea,
-  WS_METHODS.aiPmSetIdeaStatus,
   WS_METHODS.docsListComments,
   WS_METHODS.docsCreateComment,
   WS_METHODS.docsReplyComment,
@@ -1559,23 +1553,13 @@ const layerChatCommandRpc = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ChatCommandRunner.layer.pipe(Layer.provide(ProcessRunner.layer))));
 
-const layerAiPmDocsRpc = Layer.unwrap(
+const layerDocsRpc = Layer.unwrap(
   Effect.gen(function* () {
-    const aiPm = yield* AiPmService.AiPmService;
     const docComments = yield* DocCommentsService.DocCommentsService;
     const docCommentDelivery = yield* DocCommentDelivery.DocCommentDelivery;
     const docsCloudImport = yield* DocsCloudImport.DocsCloudImport;
     const docsCloudSendTo = yield* DocsCloudSendTo.DocsCloudSendTo;
     return Layer.mergeAll(
-      ServerWsRpcGroup.toLayerHandler(WS_METHODS.aiPmList, () => aiPm.list()),
-      ServerWsRpcGroup.toLayerHandler(WS_METHODS.aiPmBrief, (input) => aiPm.brief(input)),
-      ServerWsRpcGroup.toLayerHandler(WS_METHODS.aiPmIdeas, () => aiPm.ideas()),
-      ServerWsRpcGroup.toLayerHandler(WS_METHODS.aiPmSaveIdea, (input) =>
-        aiPm.saveIdea(input, { mergeLinks: false }),
-      ),
-      ServerWsRpcGroup.toLayerHandler(WS_METHODS.aiPmSetIdeaStatus, (input) =>
-        aiPm.setIdeaStatus(input),
-      ),
       ServerWsRpcGroup.toLayerHandler(WS_METHODS.docsListComments, (input) =>
         docComments.list(input),
       ),
@@ -3840,7 +3824,7 @@ export const layer = Layer.unwrap(
                 Layer.merge(
                   layerMcpServersRpc(mcpServers, mcpServerOAuth, secretRequests, url.value.origin),
                 ),
-                Layer.merge(layerAiPmDocsRpc),
+                Layer.merge(layerDocsRpc),
                 Layer.merge(layerSkillTrashRpc),
                 Layer.merge(layerSkillSourcesRpc),
                 Layer.merge(layerReleaseMirrorRpc),
@@ -3868,7 +3852,6 @@ export const layer = Layer.unwrap(
                 Layer.provide(WorkspaceEnvFile.layer),
                 Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
                 Layer.provide(AcpRegistrySessions.layer),
-                Layer.provide(AiPmService.layer.pipe(Layer.provide(ProcessRunner.layer))),
                 Layer.provide(ProviderMaintenanceRunner.layer),
                 Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
                 Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

@@ -69,7 +69,6 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   NotebookPenIcon,
-  ListChecksIcon,
   MessageSquareIcon,
   PaletteIcon,
   RotateCcwIcon,
@@ -1670,17 +1669,6 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-
-  actionItems.push({
-    kind: "action",
-    value: "action:ai-pm",
-    searchTerms: ["open ai pm", "ai pm", "projects", "status", "overview", "next actions"],
-    title: "Open AI PM",
-    icon: <ListChecksIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      await navigate({ to: "/ai-pm", search: { project: undefined, environment: undefined } });
-    },
-  });
 
   actionItems.push({
     kind: "action",

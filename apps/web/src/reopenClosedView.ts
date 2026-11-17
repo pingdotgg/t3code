@@ -130,10 +130,6 @@ export async function reopenClosedView(
       panels.open(ref, "docs");
       panels.selectDocsCloud(ref, persistedDocsCloudPath(surface));
       break;
-    case "ai-pm":
-      panels.open(ref, "ai-pm");
-      panels.selectAiPmProject(ref, surface.projectId);
-      break;
     case "preview":
       if (surface.resourceId !== null) return false;
       panels.openBrowser(ref, null);

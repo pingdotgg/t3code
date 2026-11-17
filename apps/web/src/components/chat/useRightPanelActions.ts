@@ -157,11 +157,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "device");
   };
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
-  const addAiPmSurface = () => {
-    if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "ai-pm");
-  };
-  const addAiPmSurfaceStable = useStableCallback(addAiPmSurface);
   const addDocsSurface = () => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "docs");
@@ -335,7 +330,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   return {
     shortcuts,
     activateRightPanelSurfaceStable,
-    addAiPmSurfaceStable,
     addDeviceSurfaceStable,
     addDocsSurfaceStable,
     addDiffSurfaceStable,

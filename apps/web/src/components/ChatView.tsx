@@ -2393,7 +2393,6 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const {
     activateRightPanelSurfaceStable,
-    addAiPmSurfaceStable,
     addDeviceSurfaceStable,
     addDocsSurfaceStable,
     addDiffSurfaceStable,
@@ -4042,7 +4041,6 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
-          onAddAiPm={addAiPmSurfaceStable}
           onAddDocs={addDocsSurfaceStable}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
@@ -4052,7 +4050,6 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
-          aiPmAvailable={activeThreadRef !== null}
           docsAvailable={activeThreadRef !== null && activeProject !== null}
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}

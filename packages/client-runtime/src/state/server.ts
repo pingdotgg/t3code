@@ -1487,21 +1487,6 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshIntervalMs: 5_000,
       idleTtlMs: 0,
     }),
-    aiPmList: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:ai-pm:list",
-      tag: WS_METHODS.aiPmList,
-      staleTimeMs: 15_000,
-    }),
-    aiPmBrief: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:ai-pm:brief",
-      tag: WS_METHODS.aiPmBrief,
-      staleTimeMs: 15_000,
-    }),
-    aiPmIdeas: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:ai-pm:ideas",
-      tag: WS_METHODS.aiPmIdeas,
-      staleTimeMs: 15_000,
-    }),
     docComments: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:docs:comments",
       tag: WS_METHODS.docsListComments,
@@ -1883,14 +1868,6 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
-    }),
-    saveAiPmIdea: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:ai-pm:save-idea",
-      tag: WS_METHODS.aiPmSaveIdea,
-    }),
-    setAiPmIdeaStatus: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:ai-pm:set-idea-status",
-      tag: WS_METHODS.aiPmSetIdeaStatus,
     }),
     createDocComment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:docs:create-comment",

@@ -29,9 +29,6 @@ import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel"
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
-const AiPmPanel = lazy(() =>
-  import("../aiPm/AiPmPanel").then((module) => ({ default: module.AiPmPanel })),
-);
 const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
@@ -87,19 +84,6 @@ export function RightPanelSurfaceContent(props: {
   const { surface, threadRef, visible, onCloseSurface } = props;
   if (surface === null) return null;
   switch (surface.kind) {
-    case "ai-pm":
-      return (
-        <Suspense fallback={null}>
-          <AiPmPanel
-            key={scopedThreadKey(threadRef)}
-            environmentId={props.environmentId}
-            projectId={surface.projectId}
-            onSelectProject={(projectId) =>
-              useRightPanelStore.getState().selectAiPmProject(threadRef, projectId)
-            }
-          />
-        </Suspense>
-      );
     case "docs":
       return (
         <DocsSurfaceContent

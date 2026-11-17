@@ -107,9 +107,7 @@ describe("RightPanelTabs", () => {
           onAddPullRequest={noop}
           onAddPullRequests={noop}
           onAddDevice={noop}
-          onAddAiPm={noop}
           onAddDocs={noop}
-          aiPmAvailable={false}
           docsAvailable={false}
           browserAvailable={false}
           terminalAvailable
@@ -184,9 +182,7 @@ function panel(activeSurface: RightPanelSurface) {
     onAddPullRequest: noop,
     onAddPullRequests: noop,
     onAddDevice: noop,
-    onAddAiPm: noop,
     onAddDocs: noop,
-    aiPmAvailable: false,
     docsAvailable: false,
     browserAvailable: true,
     terminalAvailable: true,

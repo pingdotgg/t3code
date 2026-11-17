@@ -19,7 +19,6 @@ const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "device",
-  "ai-pm",
   "docs",
   "terminal",
   "pull-request",
@@ -49,7 +48,6 @@ export type RightPanelSurface =
       activeTerminalId: string;
       splitDirection?: "horizontal" | "vertical";
     }
-  | { id: "ai-pm"; kind: "ai-pm"; projectId?: string }
   | {
       id: "docs";
       kind: "docs";
@@ -91,7 +89,7 @@ export type RightPanelSurface =
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -137,7 +135,6 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
-  selectAiPmProject: (ref: ScopedThreadRef, projectId: string | undefined) => void;
   /** Shows Docs Cloud at `cloudPath`; `automatic` records where the embedded app navigated. */
   selectDocsCloud: (
     ref: ScopedThreadRef,
@@ -234,8 +231,6 @@ const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
 ): RightPanelSurface => {
   switch (kind) {
-    case "ai-pm":
-      return { id: "ai-pm", kind };
     case "docs":
       return { id: "docs", kind };
     case "diff":
@@ -543,7 +538,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "plan" || kind === "agents" || kind === "ai-pm") return [];
                     if (surface.kind === "docs") {
                       const cloudPath = persistedDocsCloudPath(surface);
                       return [
@@ -551,17 +546,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           id: "docs",
                           kind: "docs",
                           ...(cloudPath === undefined ? {} : { cloudPath }),
-                        },
-                      ];
-                    }
-                    if (surface.kind === "ai-pm") {
-                      return [
-                        {
-                          id: "ai-pm",
-                          kind: "ai-pm",
-                          ...(typeof surface.projectId === "string"
-                            ? { projectId: surface.projectId }
-                            : {}),
                         },
                       ];
                     }
@@ -771,20 +755,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
-        ),
-      selectAiPmProject: (ref, projectId) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => ({
-            ...current,
-            surfaces: current.surfaces.map((surface) => {
-              if (surface.kind !== "ai-pm") return surface;
-              return {
-                id: "ai-pm",
-                kind: "ai-pm",
-                ...(projectId === undefined ? {} : { projectId }),
-              };
-            }),
-          })),
         ),
       selectDocsCloud: (ref, cloudPath, automatic = false) =>
         set((state) =>

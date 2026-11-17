@@ -1587,7 +1587,6 @@ export function PullRequestsPage() {
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
-            onAddAiPm={() => undefined}
             onAddDocs={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
@@ -1596,7 +1595,6 @@ export function PullRequestsPage() {
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             deviceAvailable={false}
-            aiPmAvailable={false}
             docsAvailable={false}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
