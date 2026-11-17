@@ -146,12 +146,19 @@ function getShortcutContext() {
 }
 
 function hostOptionsFor(
-  groups: ReturnType<typeof groupIssues>,
+  trackers: ReadonlyArray<IssueTrackerSummary>,
   chosen: string | undefined,
   resolve: MessageResolver,
 ) {
   const hosts = new Map<string, IssueTrackerSummary>();
-  for (const group of groups) hosts.set(group.tracker.host, group.tracker);
+  const ordered = [...trackers].sort((a, b) =>
+    issueTrackerKey(a).localeCompare(issueTrackerKey(b)),
+  );
+  for (const tracker of ordered) {
+    const existing = hosts.get(tracker.host);
+    if (existing === undefined || (!existing.configured && tracker.configured))
+      hosts.set(tracker.host, tracker);
+  }
   return [
     { value: "", label: resolve(msg("All", { $context: "issue filter" })), Icon: Plug2Icon },
     // A remembered host no project is on any more stays listed, so the filter can be taken off.
@@ -244,10 +251,32 @@ export function IssuesPage() {
 
   // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
   // would be, and each tracker's rows carry on from their own cursors.
-  const groups = groupIssues(held, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(held, projects);
+  // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
+  const chosenHost = search.host?.toLowerCase();
+  const shown = chosenHost
+    ? new Map(
+        [...held].map(([environmentId, page]) => [
+          environmentId,
+          {
+            ...page,
+            answer: {
+              ...page.answer,
+              trackers: page.answer.trackers.filter(
+                (tracker) => tracker.host.toLowerCase() === chosenHost,
+              ),
+            },
+          },
+        ]),
+      )
+    : held;
+  const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
+  const filterScopes = issueFilterScopes(shown, projects);
 
-  const hostOptions = hostOptionsFor(groups, search.host, resolve);
+  const hostOptions = hostOptionsFor(
+    [...held.values()].flatMap((page) => page.answer.trackers),
+    search.host,
+    resolve,
+  );
 
   const updateSearch = (patch: { [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined }) => {
     const merged = { ...search, ...patch };
