@@ -1001,6 +1001,34 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)("validates canonical preview dependency paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const page = path.join(root, "report.html");
+      yield* fs.writeFileString(page, "<!doctype html>");
+      for (const name of ["report.css", ".internal.css", "notes.txt"]) {
+        yield* fs.writeFileString(path.join(root, name), "fixture");
+      }
+      yield* fs.symlink(path.join(root, "report.css"), path.join(root, "theme.css"));
+      yield* fs.symlink(path.join(root, ".internal.css"), path.join(root, "internal.css"));
+      yield* fs.symlink(path.join(root, "notes.txt"), path.join(root, "notes.css"));
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: page },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(ASSET_ROUTE_PREFIX.length + 1);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      expect(yield* resolveAsset(token, "theme.css")).toMatchObject({
+        path: yield* fs.realPath(path.join(root, "report.css")),
+      });
+      expect(yield* resolveAsset(token, "internal.css")).toBeNull();
+      expect(yield* resolveAsset(token, "notes.css")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
