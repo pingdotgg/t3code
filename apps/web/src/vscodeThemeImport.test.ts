@@ -485,22 +485,27 @@ describe("VS Code theme import", () => {
 
   it("tells same-named variants apart by their file names", () => {
     // Both Dracula theme files declare the same internal name.
-    const dracula = (bg: string) =>
-      parseVsCodeThemeFile({
+    const css = ".app { outline: 1px solid red; }";
+    const dracula = (bg: string) => ({
+      ...parseVsCodeThemeFile({
         name: "Dracula",
         type: "dark",
         colors: { "editor.background": bg, "editor.foreground": "#f8f8f2" },
-      });
+      }),
+      css,
+    });
     const themes = resolveThemeLabelCollisions([
       { theme: dracula("#282a36"), sourceName: "dracula.json" },
       { theme: dracula("#22232e"), sourceName: "dracula-soft.json" },
     ]);
     expect(themes.map((theme) => theme.label)).toEqual(["Dracula", "Dracula Soft"]);
     expect(themes.map((theme) => theme.id)).toEqual(["dracula", "dracula-soft"]);
+    expect(themes.map((theme) => theme.css)).toEqual([css, css]);
     const numbered = resolveThemeLabelCollisions([
       { theme: dracula("#282a36") },
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
+    expect(numbered.map((theme) => theme.css)).toEqual([css, css]);
   });
 });
