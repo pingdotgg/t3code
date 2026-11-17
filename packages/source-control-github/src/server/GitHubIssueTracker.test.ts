@@ -385,6 +385,43 @@ describe("GitHubIssueTracker", () => {
     }),
   );
 
+  it.effect("reports when GitHub creates an issue but drops requested metadata", () =>
+    Effect.gen(function* () {
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                number: 43,
+                html_url: "https://github.com/acme/web/issues/43",
+                labels: [],
+                assignees: [],
+              }),
+              { status: 201, headers: { "content-type": "application/json" } },
+            ),
+          ),
+        ),
+      );
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      const result = yield* api
+        .create({
+          cwd: "/w",
+          host: "github.com",
+          scope: "acme/web",
+          title: "Missing metadata",
+          body: "Repro attached.",
+          labels: ["bug"],
+          assignees: ["octocat"],
+        })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { operation: "create", reason: "failed" },
+      });
+    }),
+  );
+
   it.effect("asks search for the labels, assignee and order a listing names", () =>
     Effect.gen(function* () {
       const seen: unknown[] = [];
