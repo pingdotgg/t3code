@@ -1,6 +1,5 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  type EditorId,
   type EnvironmentId,
   type EnvironmentTheme,
   type ServerConfig,
@@ -53,7 +52,6 @@ interface PrimaryServerState {
   readonly welcome: ServerLifecycleWelcomePayload | null;
 }
 
-const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
 export const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   config: null,
@@ -166,11 +164,6 @@ export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
   environmentsAtom: environmentConnectionsAtom,
 }).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
-export const primaryServerAvailableEditorsAtom = Atom.make(
-  (get): ReadonlyArray<EditorId> =>
-    get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
-).pipe(Atom.withLabel("web-primary-server-available-editors"));
-
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
 const themeServerConfigAtom = Atom.make((get): ServerConfig | null => {
@@ -178,9 +171,20 @@ const themeServerConfigAtom = Atom.make((get): ServerConfig | null => {
   return environmentId === null ? null : get(serverEnvironment.configValueAtom(environmentId));
 }).pipe(Atom.withLabel("web-theme-server-config"));
 
+/**
+ * Null until the theme environment says what it publishes. Cached configs and
+ * snapshots never carry themes, so a capable server has none until its theme
+ * event lands.
+ */
 export const themeServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(themeServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    const config = get(themeServerConfigAtom);
+    if (config === null) return null;
+    if (config.environmentThemes !== undefined) return config.environmentThemes;
+    return config.environment.capabilities.environmentThemes === true
+      ? null
+      : EMPTY_ENVIRONMENT_THEMES;
+  },
 ).pipe(Atom.withLabel("web-theme-server-environment-themes"));
 
 export const themeServerSettingsAtom = Atom.make(

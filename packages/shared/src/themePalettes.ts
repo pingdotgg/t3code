@@ -111,6 +111,8 @@ export type ThemeDefinition = Readonly<{
   collection?: Readonly<{ id: string; label: string }>;
   sidebarArtwork?: boolean;
   managed?: boolean;
+  /** Custom styles for web and desktop. */
+  css?: string;
 }>;
 
 export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {

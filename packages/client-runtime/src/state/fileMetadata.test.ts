@@ -160,7 +160,7 @@ describe("file metadata", () => {
       yield* TestClock.adjust(60_001);
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
       expect(h.batches).toEqual([[path], ["/workspace/known"], [path], [path]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not seed a different path from a literal name with a numeric suffix", () =>
@@ -179,7 +179,7 @@ describe("file metadata", () => {
       expect(yield* h.read("/workspace/read:12:3")).toEqual({ kind: "file", byteLength: 100 });
       expect(yield* h.read("/workspace/read")).toBeNull();
       expect(h.batches).toEqual([["/workspace/report"], ["/workspace/read"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("retries only paths invalidated while their response is in flight", () =>
@@ -216,7 +216,7 @@ describe("file metadata", () => {
         byteLength: 10,
       });
       expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("an offscreen invalidation waits until that path is read again", () =>
@@ -236,7 +236,7 @@ describe("file metadata", () => {
         kind: "directory",
       });
       expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("invalidates a changed retained path without refetching other paths", () =>
@@ -262,7 +262,7 @@ describe("file metadata", () => {
       h.registry.refresh(h.atom("/workspace/unchanged", ENVIRONMENT_ID, threadId));
       yield* h.read("/workspace/unchanged", ENVIRONMENT_ID, threadId);
       expect(h.batches.slice(before)).toEqual([["/workspace/file"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("a reconnect discards retained metadata from the previous session", () =>
@@ -279,7 +279,7 @@ describe("file metadata", () => {
         kind: "directory",
       });
       expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps batches and cached paths separate across environments", () =>
@@ -293,7 +293,7 @@ describe("file metadata", () => {
         { concurrency: "unbounded" },
       );
       expect(h.batches.slice(1)).toEqual([["/workspace/new"], ["/workspace/new"]]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("settles a failed batch and can retry after access is granted", () =>
@@ -309,7 +309,7 @@ describe("file metadata", () => {
       h.values.set("/workspace/a", { kind: "directory" });
       h.registry.refresh(h.atom("/workspace/a"));
       expect(yield* h.read("/workspace/a")).toEqual({ kind: "directory" });
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("reuses file read sizes and normalizes Windows cache keys", () =>
@@ -323,7 +323,7 @@ describe("file metadata", () => {
         .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
       expect(yield* h.read("c:/workspace/file/")).toEqual({ kind: "file", byteLength: 100 });
       expect(h.batches).toHaveLength(0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("batches mounted paths and deduplicates repeated chips", () =>
@@ -343,7 +343,7 @@ describe("file metadata", () => {
       ]);
       yield* h.read("/workspace/file");
       expect(h.batches).toHaveLength(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("uses search and tree kinds without another request", () =>
@@ -352,7 +352,7 @@ describe("file metadata", () => {
       yield* h.seed("folder.ts", "directory");
       expect(yield* h.read("/workspace/folder.ts")).toEqual({ kind: "directory" });
       expect(h.batches).toHaveLength(0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("splits large mounts into bounded batches and caches misses", () =>
@@ -368,6 +368,6 @@ describe("file metadata", () => {
       const count = h.batches.length;
       yield* h.read("/workspace/0");
       expect(h.batches).toHaveLength(count);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
