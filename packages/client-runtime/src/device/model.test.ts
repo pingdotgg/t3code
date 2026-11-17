@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
+import { createDeviceModelSlot, resolveDeviceModelId, type DeviceModelSource } from "./model.ts";
 
 const pro: DeviceModelSource = { id: "iphone-18-pro", url: "/pro.glb" };
 const max: DeviceModelSource = { id: "iphone-18-pro-max", url: "/max.glb" };
@@ -95,4 +95,13 @@ it("releases an invalid model and restores the fallback if scene preparation rej
   await Promise.resolve();
   expect(install).toHaveBeenLastCalledWith(recovered);
   slot.dispose();
+});
+
+it.each([
+  ["iPhone Duo", "iphone-duo"],
+  ["my-feature iPhone Duo", "iphone-duo"],
+  ["my-feature iPhone 18 Pro", "iphone-18-pro"],
+  ["my-feature iPhone 18 Pro Max", "iphone-18-pro-max"],
+] as const)("resolves the model of an iOS simulator named %s", (name, id) => {
+  expect(resolveDeviceModelId("ios", name)).toBe(id);
 });
