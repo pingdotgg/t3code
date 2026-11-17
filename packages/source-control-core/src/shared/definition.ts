@@ -38,6 +38,7 @@ export interface ChangeRequestLink {
  */
 export interface IssueLink {
   readonly host: string;
+  readonly authority?: string;
   readonly scope: string;
   readonly key: string;
 }
@@ -454,7 +455,12 @@ export function parseIssuePath(url: URL, route: RegExp): IssueLink | null {
   const scope = match?.[1];
   const number = Number(match?.[2]);
   return scope && Number.isSafeInteger(number) && number > 0
-    ? { host: url.hostname.toLowerCase(), scope: scope.toLowerCase(), key: String(number) }
+    ? {
+        host: url.hostname.toLowerCase(),
+        ...(url.port ? { authority: url.host.toLowerCase() } : {}),
+        scope: scope.toLowerCase(),
+        key: String(number),
+      }
     : null;
 }
 
@@ -495,6 +501,22 @@ export function defineSourceControl<const Definition extends SourceControlDefini
   definition: Definition,
 ): Definition {
   return definition;
+}
+
+/** Web URLs take precedence; an SSH remote alone does not specify an HTTP port. */
+function issueWebUrl(identity: ChangeRequestHostIdentity): URL | null {
+  return httpUrl(identity?.webUrl ?? "") ?? httpUrl(identity?.locator?.remoteUrl ?? "");
+}
+
+export function isIssueOnProjectHost(
+  projectHost: string,
+  identity: ChangeRequestHostIdentity,
+  link: IssueLink,
+): boolean {
+  const web = issueWebUrl(identity);
+  return web === null
+    ? projectHost === link.host || projectHost === link.authority
+    : web.host.toLowerCase() === (link.authority ?? link.host);
 }
 
 export function isChangeRequestAuthorityOfProject(
@@ -696,6 +718,7 @@ export interface SourceControlDefinitionRegistry {
   ) => string | null;
   /** Where the project's issues live: the host's `issueScope`, else its repository. */
   readonly issueScope: (identity: RepositorySelectorIdentity | null | undefined) => string | null;
+  readonly issueHost: (identity: ChangeRequestHostIdentity, kind: string) => string;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,
@@ -882,6 +905,10 @@ export function makeSourceControlDefinitionRegistry(
         ? repositorySelector(identity)
         : issueScope(identity);
     },
+    issueHost: (identity, kind) =>
+      issueWebUrl(identity)?.host.toLowerCase() ??
+      byKind.get(kind)?.changeRequestHost?.(identity) ??
+      projectChangeRequestHost(identity, kind),
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),

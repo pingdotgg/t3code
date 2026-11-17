@@ -31,6 +31,7 @@ import {
   type OrchestrationProjectShell,
   type ProjectId,
 } from "@t3tools/contracts";
+import { isIssueOnProjectHost } from "@t3tools/source-control-core/shared/definition";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   IssueTrackerError,
@@ -64,6 +65,7 @@ export function trackerDetail(error: IssueTrackerError): string {
 
 /** One project's resolved tracker: which driver, where it is served from, and its container. */
 interface ProjectTrackerBinding {
+  readonly repositoryIdentity?: OrchestrationProjectShell["repositoryIdentity"];
   readonly tracker: IssueTrackerKind;
   readonly host: string;
   readonly scope: string;
@@ -86,7 +88,8 @@ function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrack
   if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
   return {
     tracker: IssueTrackerKind.make(kind),
-    host: sourceControlDefinitions.changeRequestHost(identity, kind),
+    host: sourceControlDefinitions.issueHost(identity, kind),
+    repositoryIdentity: identity,
     scope,
   };
 }
@@ -627,10 +630,11 @@ const make = Effect.gen(function* () {
         });
       }
       const { definition, link } = parsed;
-      // Servers on different ports are different servers: a link's port must match its binding's.
-      const { supported } = yield* listProjects({ host: new URL(url).host });
+      const { supported } = yield* listProjects({});
       const onTracker = supported.filter(
-        (project) => project.tracker === IssueTrackerKind.make(definition.kind),
+        (project) =>
+          project.tracker === IssueTrackerKind.make(definition.kind) &&
+          isIssueOnProjectHost(project.host, project.repositoryIdentity, link),
       );
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];

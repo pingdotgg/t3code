@@ -57,6 +57,8 @@ function project(input: {
   readonly repository?: string;
   readonly provider?: string;
   readonly host?: string;
+  readonly remoteUrl?: string;
+  readonly webUrl?: string;
 }): OrchestrationProjectShell {
   const host = input.host ?? "github.com";
   return {
@@ -66,14 +68,17 @@ function project(input: {
     ...(input.repository
       ? {
           repositoryIdentity: {
-            canonicalKey: normalizeGitRemoteUrl(`https://${host}/${input.repository}.git`),
+            canonicalKey: normalizeGitRemoteUrl(
+              input.remoteUrl ?? `https://${host}/${input.repository}.git`,
+            ),
             locator: {
               source: "git-remote" as const,
               remoteName: "origin",
-              remoteUrl: `https://${host}/${input.repository}.git`,
+              remoteUrl: input.remoteUrl ?? `https://${host}/${input.repository}.git`,
             },
             provider: SourceControlProviderKind.make(input.provider ?? "github"),
             displayName: input.repository,
+            ...(input.webUrl ? { webUrl: input.webUrl } : {}),
           },
         }
       : {}),
@@ -272,6 +277,56 @@ describe("IssueService", () => {
         _tag: "Failure",
         failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
       });
+
+      for (const { provider, host, path } of [
+        { provider: "forgejo", host: "gitea.test", path: "issues" },
+        { provider: "gitlab", host: "gitlab.test", path: "-/issues" },
+      ]) {
+        for (const transport of ["ssh", "https", "web"] as const) {
+          const configured = yield* makeService({
+            projects: [
+              project({
+                id: "configured",
+                repository: "acme/web",
+                provider,
+                host,
+                remoteUrl:
+                  transport === "https"
+                    ? `https://${host}:8443/acme/web.git`
+                    : `git@${host}:acme/web.git`,
+                ...(transport === "web" ? { webUrl: `https://${host}:8443/acme/web` } : {}),
+              }),
+            ],
+            trackers: [fakeTracker({ kind: IssueTrackerKind.make(provider) })],
+          });
+          expect(
+            yield* configured.resolveUrl(`https://${host}:8443/acme/web/${path}/3`),
+          ).toMatchObject({
+            projectId: "configured",
+            key: "3",
+            writable: true,
+            host: transport === "ssh" ? host : `${host}:8443`,
+          });
+          if (transport !== "ssh") {
+            expect(
+              yield* configured
+                .resolveUrl(`https://${host}:9443/acme/web/${path}/3`)
+                .pipe(Effect.result),
+            ).toMatchObject({
+              _tag: "Failure",
+              failure: { reason: "tracker-unsupported" },
+            });
+            expect(
+              yield* configured
+                .resolveUrl(`https://${host}/acme/web/${path}/3`)
+                .pipe(Effect.result),
+            ).toMatchObject({
+              _tag: "Failure",
+              failure: { reason: "tracker-unsupported" },
+            });
+          }
+        }
+      }
 
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
