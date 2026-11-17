@@ -12,8 +12,9 @@ public final class T3PreviewTunnelModule: Module {
     View(T3TunnelWebView.self) {
       Events("onAccessRequest", "onNavigationChange", "onLoadError")
 
-      // Each view already has its own non-persistent data store, so environments never share one.
-      Prop("environmentId") { (_: T3TunnelWebView, _: String) in }
+      Prop("environmentId") { (view: T3TunnelWebView, environmentId: String) in
+        view.setEnvironment(environmentId)
+      }
 
       Prop("url") { (view: T3TunnelWebView, url: String) in
         view.load(url)

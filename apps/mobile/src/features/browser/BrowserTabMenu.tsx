@@ -1,7 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useNavigation } from "@react-navigation/native";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   type EnvironmentId,
@@ -18,6 +17,7 @@ import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { browserTabUrl, loopbackUrlForDevice } from "./browserTabs";
+import { useOpenLocalPreview } from "./useOpenLocalPreview";
 
 const APPEARANCES = [
   { id: "system", title: "System" },
@@ -53,7 +53,7 @@ export function BrowserTabMenu({
   readonly onPaste?: () => void;
   readonly onReleaseControl?: () => void;
 }) {
-  const navigation = useNavigation();
+  const openLocalPreview = useOpenLocalPreview();
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
@@ -142,7 +142,7 @@ export function BrowserTabMenu({
       return;
     }
     if (id === "open-on-device" && deviceUrl) {
-      return navigation.navigate("ThreadLocalPreview", { environmentId, url: deviceUrl });
+      return openLocalPreview({ environmentId, threadId: tab.threadId }, deviceUrl);
     }
     if (id === "paste") return onPaste?.();
     if (id === "release-control") return onReleaseControl?.();

@@ -7,7 +7,7 @@ import { normalizePreviewUrl, previewPdfAssetUrl } from "@t3tools/shared/preview
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 import { Platform, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ui/ControlPill";
 import { Menu } from "../../components/ui/Menu";
@@ -117,7 +117,11 @@ function BrowserPreviewScreen({
     (pictureInPicture.active || pdfUri === null);
 
   return (
-    <View className="flex-1 bg-sheet">
+    // The route spans the Duo's rail, so the screen insets its own sides.
+    <SafeAreaView
+      edges={["left", "right"]}
+      style={{ flex: 1, backgroundColor: themeVariables["--color-sheet-solid"] }}
+    >
       <BrowserBar
         key={tab ? `address:${tab.tabId}` : "address"}
         url={tab ? browserTabUrl(tab) : ""}
@@ -199,7 +203,7 @@ function BrowserPreviewScreen({
           ) : null}
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 

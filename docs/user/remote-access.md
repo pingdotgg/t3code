@@ -289,10 +289,12 @@ you connect to only through a proxy or over HTTPS with a privately issued
 certificate. The web app keeps streaming.
 
 On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
-has **Open on this device** in its menu. It opens the page in the phone's own
-browser view, at the same `localhost` address, so it scrolls and responds to
-touch natively. Like the desktop app, it never opens a server on the phone
-itself. The streamed tab stays where it was, and agents keep using it.
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone.
 
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it

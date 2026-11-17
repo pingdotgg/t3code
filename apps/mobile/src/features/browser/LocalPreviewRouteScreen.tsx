@@ -3,9 +3,12 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useRef, useState } from "react";
 import { View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AppBar } from "../../components/ui/AppBar";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserBar } from "./BrowserBar";
@@ -16,15 +19,34 @@ type LocalPreviewRouteScreenProps = StaticScreenProps<{
   readonly url: string;
 }>;
 
-/** Another environment's localhost page rendered by this device's own webview. */
 export function LocalPreviewRouteScreen({ route }: LocalPreviewRouteScreenProps) {
   const navigation = useNavigation();
-  const environmentId = EnvironmentId.make(route.params.environmentId);
+  return (
+    <LocalPreviewScreen
+      environmentId={EnvironmentId.make(route.params.environmentId)}
+      url={route.params.url}
+      onClose={() => navigation.goBack()}
+    />
+  );
+}
+
+/**
+ * Another environment's localhost page rendered by this device's own webview. Full screen it has
+ * an editable address bar; in the inspector pane, `onMaximize` gives it the pane's bar instead.
+ */
+export function LocalPreviewScreen(props: {
+  readonly environmentId: EnvironmentId;
+  readonly url: string;
+  readonly onClose: () => void;
+  readonly onMaximize?: (url: string) => void;
+}) {
+  const { environmentId, onMaximize } = props;
   const environmentLabel =
     useEnvironments().presentationById.get(environmentId)?.entry.target.label ?? "the environment";
   const { themeVariables } = useAppearancePreferences();
+  const barOverlap = useBarOverlap();
   const webView = useRef<TunnelWebViewRef>(null);
-  const [requested, setRequested] = useState(route.params.url);
+  const [requested, setRequested] = useState(props.url);
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
   const [unsupported, setUnsupported] = useState<string | null>(null);
@@ -45,24 +67,56 @@ export function LocalPreviewRouteScreen({ route }: LocalPreviewRouteScreenProps)
     setFailed(false);
     void webView.current?.reload();
   };
+  const back = () => void webView.current?.goBack();
+  const canGoBack = page?.canGoBack ?? false;
 
   return (
-    <View className="flex-1 bg-sheet">
-      <BrowserBar
-        url={current}
-        editable
-        canGoBack={page?.canGoBack ?? false}
-        onClose={() => navigation.goBack()}
-        onBack={() => void webView.current?.goBack()}
-        onReload={retry}
-        onSubmit={open}
-      />
+    // Full screen spans the Duo's rail, so it insets its own sides; the pane is inset already.
+    <SafeAreaView
+      edges={onMaximize ? [] : ["left", "right"]}
+      style={{ flex: 1, backgroundColor: themeVariables["--color-sheet-solid"] }}
+    >
+      {onMaximize ? (
+        <>
+          <AppBar
+            title={page?.title || hostOf(current)}
+            subtitle={hostOf(current)}
+            actions={[
+              ...(canGoBack
+                ? [{ accessibilityLabel: "Back", icon: "chevron.left" as const, onPress: back }]
+                : []),
+              {
+                accessibilityLabel: "Reload page",
+                icon: "arrow.clockwise" as const,
+                onPress: retry,
+              },
+              {
+                accessibilityLabel: "Maximize page",
+                icon: "arrow.up.left.and.arrow.down.right",
+                onPress: () => onMaximize(current),
+              },
+            ]}
+          />
+          <View style={{ height: barOverlap }} />
+        </>
+      ) : (
+        <BrowserBar
+          url={current}
+          editable
+          canGoBack={canGoBack}
+          onClose={props.onClose}
+          onBack={back}
+          onReload={retry}
+          onSubmit={open}
+        />
+      )}
       <View className="flex-1">
         <TunnelWebView
+          key={environmentId}
           ref={webView}
           className="flex-1"
           environmentId={environmentId}
-          url={route.params.url}
+          url={props.url}
           onNavigationChange={(next) => {
             if (next.loading) setFailed(false);
             setPage(next);
@@ -105,7 +159,7 @@ export function LocalPreviewRouteScreen({ route }: LocalPreviewRouteScreenProps)
           </View>
         ) : null}
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

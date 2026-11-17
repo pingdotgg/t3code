@@ -146,11 +146,18 @@ export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
 }
 
 /** Full-screen media (a device stream, a browser, an app) with no bar and no dismiss gesture. */
-export function immersiveRoute(options: { readonly hideSystemBars?: boolean } = {}) {
+export function immersiveRoute(
+  options: {
+    readonly hideSystemBars?: boolean;
+    /** The screen spans the Duo's rail and insets its own content. */
+    readonly spansRail?: boolean;
+  } = {},
+) {
   return {
     presentation: "fullScreenModal",
     headerShown: false,
     gestureEnabled: false,
+    ...(options.spansRail ? { nativeContentInsetHorizontally: false } : undefined),
     ...(options.hideSystemBars
       ? { autoHideHomeIndicator: true, navigationBarHidden: true }
       : undefined),
