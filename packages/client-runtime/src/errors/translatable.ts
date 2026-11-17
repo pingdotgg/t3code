@@ -61,6 +61,19 @@ export function errorDisplayMessage(
     : null;
 }
 
+/**
+ * A thrown `Error`'s text in the active language, its plain `message` (even empty) when it has no
+ * marked text, and null for anything that is not an `Error`.
+ */
+export function thrownErrorMessage(
+  error: unknown,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (!(error instanceof Error)) return null;
+  const text = errorI18nMessage(error);
+  return text === undefined ? error.message : resolveMarkedText(text, resolve);
+}
+
 /** Carries another error's message, and its marked text when it has one, into `detail`. */
 export function detailFromError(error: { readonly message: string }): {
   readonly detail: string;

@@ -135,6 +135,23 @@ export interface SecretRequestSource {
 }
 
 const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
+
+// Secret provider packages author this text in English; the same English, translatable here.
+const INVALID_REFERENCE_MESSAGES: ReadonlyMap<string, string> = new Map([
+  [
+    "Use a 1Password reference like op://vault/item/field.",
+    msg("Use a 1Password reference like {example}.", { example: "op://vault/item/field" }),
+  ],
+]);
+
+/** A secret provider's `invalidReferenceMessage` in the UI language when it is a known one. */
+export function invalidSecretReferenceText(
+  message: string,
+  resolve: MFunctionType = mFallback,
+): string {
+  const translated = INVALID_REFERENCE_MESSAGES.get(message);
+  return translated === undefined ? message : resolve(translated);
+}
 const decodeConfigByKind = new Map(
   builtInSecretProviderDefinitions.definitions.map((definition) => [
     definition.kind,
@@ -146,13 +163,15 @@ const decodeConfigByKind = new Map(
 export function secretRequestSources(
   config: Pick<ServerConfig, "secretRequestReferences"> | null | undefined,
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   if (config?.secretRequestReferences !== true) return NO_SOURCES;
-  return configuredSecretSources(providers);
+  return configuredSecretSources(providers, resolve);
 }
 
 export function configuredSecretSources(
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   return (Object.keys(providers) as Array<SecretProviderId>).flatMap((id) => {
     const provider = providers[id];
@@ -171,7 +190,10 @@ export function configuredSecretSources(
         label: provider.label,
         isReference: definition.isReference,
         referencePlaceholder: definition.referencePlaceholder,
-        invalidReferenceMessage: definition.invalidReferenceMessage,
+        invalidReferenceMessage: invalidSecretReferenceText(
+          definition.invalidReferenceMessage,
+          resolve,
+        ),
       },
     ];
   });

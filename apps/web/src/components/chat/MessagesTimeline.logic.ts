@@ -212,27 +212,11 @@ export function threadReadTargetId(entry: Pick<WorkLogEntry, "structuredPayload"
   return typeof threadId === "string" && threadId.trim().length > 0 ? threadId.trim() : null;
 }
 
-// Same English as client-runtime's thread-read tool sentence, so it shares that catalog key.
-const THREAD_READ_SENTENCE = msg(
-  "{status, select, inProgress {Reading a T3 thread} completed {Read a T3 thread} failed {Failed to read a T3 thread} declined {Declined to read a T3 thread} stopped {Stopped reading a T3 thread} other {Reading a T3 thread}}",
-);
-const THREAD_READ_PREFIX = msg(
-  "{status, select, inProgress {Reading thread} completed {Read thread} failed {Failed to read thread} declined {Declined to read thread} stopped {Stopped reading thread} other {Reading thread}}",
-);
-const THREAD_READ_STATUSES = ["inProgress", "completed", "failed", "declined", "stopped"] as const;
-
 export function threadReadTargetTitle(
   shell: Pick<ThreadShell, "title" | "archivedAt" | "deletedAt"> | null,
 ) {
   if (!shell || shell.archivedAt !== null || shell.deletedAt !== null) return null;
   return shell.title.trim() || null;
-}
-
-export function threadReadLabelPrefix(label: string, resolve: MessageResolver = m) {
-  const status = THREAD_READ_STATUSES.find(
-    (candidate) => resolve(THREAD_READ_SENTENCE, { status: candidate }) === label,
-  );
-  return status === undefined ? null : resolve(THREAD_READ_PREFIX, { status });
 }
 
 export function workEntryReadOutput(

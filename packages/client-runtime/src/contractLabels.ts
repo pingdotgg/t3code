@@ -5,6 +5,7 @@
 import {
   type BrowserImportFailureReason,
   isRuntimeModeAbove,
+  managedUpdatesDenial as contractsManagedUpdatesDenial,
   type ManagedPolicySummary,
   type ProjectCloneSnapshot,
   type ProjectCloneStage,
@@ -88,7 +89,7 @@ export function managedUpdatesDenial(
   summary: ManagedPolicySummary | undefined,
   resolve: MFunctionType = mFallback,
 ): string | undefined {
-  return summary?.limits?.updates?.mode === "off"
+  return summary !== undefined && contractsManagedUpdatesDenial(summary) !== undefined
     ? managedUpdatesMessage(summary.organization, resolve)
     : undefined;
 }
@@ -220,4 +221,71 @@ export function browserImportFailureMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   return resolve(BROWSER_IMPORT_FAILURE_MESSAGES[reason]);
+}
+
+// The server's source-control discovery hints, in the same English; commands and URLs stay as is.
+const INSTALL_HINTS = [
+  msg("Install Git from {url} or with your package manager.", {
+    url: "https://git-scm.com/downloads",
+  }),
+  msg("Install Jujutsu with {command} or from {url}.", {
+    command: "`brew install jj`",
+    url: "https://github.com/jj-vcs/jj",
+  }),
+  msg(
+    "Install the GitHub command-line tool ({cli}) via {url} or your package manager (for example {command}).",
+    {
+      cli: "`gh`",
+      url: "https://cli.github.com/",
+      command: "`brew install gh`",
+    },
+  ),
+  msg(
+    "Install the GitLab command-line tool ({cli}) from {url} or your package manager (for example {command}).",
+    {
+      cli: "`glab`",
+      url: "https://gitlab.com/gitlab-org/cli",
+      command: "`brew install glab`",
+    },
+  ),
+  msg(
+    "Install the Azure command-line tools ({cli}), then enable Azure DevOps support with {command}.",
+    {
+      cli: "`az`",
+      command: "`az extension add --name azure-devops`",
+    },
+  ),
+  msg("Add a Bitbucket token in Settings → Source Control."),
+  msg("Install the Origin CLI with {install}, then run {login}.", {
+    install: "`curl -fsSL https://downloads.cursor.com/origin/install.sh | sh`",
+    login: "`origin auth login`",
+  }),
+  msg(
+    "Install {fj} 0.6 or later from {fjUrl} and run {fjLogin}, or install {tea} 0.16 or later from {teaUrl} and run {teaLogin} for each Forgejo or Gitea server.",
+    {
+      fj: "`fj`",
+      fjUrl: "https://codeberg.org/forgejo-contrib/forgejo-cli",
+      fjLogin: "`fj --host <server-url> auth add-token`",
+      tea: "`tea`",
+      teaUrl: "https://gitea.com/gitea/tea",
+      teaLogin: "`tea login add`",
+    },
+  ),
+  msg(
+    "Install the GitCafe CLI with {install}, then run {login}, save a token in Settings, or set {variable} on the server.",
+    {
+      install: "`bun install -g @gitcafe/cli`",
+      login: "`cafe auth login --host https://git.cafe/api`",
+      variable: "CAFE_TOKEN",
+    },
+  ),
+];
+
+/** @public A source-control `installHint`, translated when it is one of the server's fixed hints. */
+export function sourceControlInstallHintText(
+  hint: string,
+  resolve: MFunctionType = mFallback,
+): string {
+  const known = INSTALL_HINTS.find((entry) => mFallback(entry) === hint);
+  return known === undefined ? hint : resolve(known);
 }

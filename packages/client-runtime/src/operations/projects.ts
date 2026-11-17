@@ -31,6 +31,7 @@ import { sourceControlClients } from "../sourceControlClients.ts";
 import type { SourceControlDefinition } from "../sourceControlClients.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import { sourceControlInstallHintText } from "../contractLabels.ts";
 
 export type AddProjectRemoteSource = SourceControlProviderKind | "url";
 
@@ -198,7 +199,9 @@ export function buildAddProjectRemoteSourceReadiness(
     if (source === "url") return READY;
     const provider = providerByKind.get(source);
     if (!provider) return { ready: false, hint: resolve(UNAVAILABLE_HINT) };
-    if (provider.status !== "available") return { ready: false, hint: provider.installHint };
+    if (provider.status !== "available") {
+      return { ready: false, hint: sourceControlInstallHintText(provider.installHint, resolve) };
+    }
     if (provider.auth.status === "unauthenticated") {
       return {
         ready: false,

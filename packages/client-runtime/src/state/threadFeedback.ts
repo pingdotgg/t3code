@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "../errors/translatable.ts";
+import { thrownErrorMessage } from "../errors/translatable.ts";
 import { MessageId, type ProviderUploadFeedbackResult } from "@t3tools/contracts";
 
 import {
@@ -124,7 +124,7 @@ export async function submitCodexFeedback<E>(
       status: "failed",
       errorMessage:
         error instanceof Error
-          ? (errorDisplayMessage(error, resolve) ?? error.message)
+          ? (thrownErrorMessage(error, resolve) ?? error.message)
           : resolve(msg("An error occurred.")),
     });
   }

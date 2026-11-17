@@ -35,11 +35,31 @@ export type VoiceInputPhase =
   | "post-processing"
   | "error";
 
+/** Which known failure `error` describes, so clients label it without reading the text. */
+export type VoiceInputErrorCode =
+  | "microphone-blocked"
+  | "draft-unavailable"
+  | "already-recording"
+  | "unavailable"
+  | "still-transcribing"
+  | "language-unsupported"
+  | "start-failed"
+  | "interrupted"
+  | "finish-failed"
+  | "transcription-failed"
+  | "draft-changed"
+  | "no-speech"
+  | "microphone-failed"
+  | "microphone-disconnected";
+
 export type VoiceInputState = {
   readonly phase: VoiceInputPhase;
   readonly error: string | null;
   readonly errorAction: "retry" | "settings" | null;
+  readonly errorCode?: VoiceInputErrorCode;
 };
+
+type VoiceInputFailure = { readonly message: string; readonly code?: VoiceInputErrorCode };
 
 export function voiceInputBlocksSubmission(state: VoiceInputState): boolean {
   return (
@@ -238,25 +258,37 @@ function errorCode(error: unknown): string | null {
   return typeof error.code === "string" ? error.code : null;
 }
 
-function preparationErrorMessage(error: unknown, resolve: MFunctionType): string {
+function preparationFailure(error: unknown, resolve: MFunctionType): VoiceInputFailure {
   if (error instanceof Error && error.message === "voice-operation-busy") {
-    return resolve(msg("Voice transcription is still finishing. Try again shortly."));
+    return {
+      message: resolve(msg("Voice transcription is still finishing. Try again shortly.")),
+      code: "still-transcribing",
+    };
   }
   if (errorCode(error) === "unsupported-locale") {
-    return resolve(msg("Voice transcription is not available for this language."));
+    return {
+      message: resolve(msg("Voice transcription is not available for this language.")),
+      code: "language-unsupported",
+    };
   }
   return isVoiceTranscriptionError(error) && error.message.trim()
-    ? (errorDisplayMessage(error, resolve) ?? error.message)
-    : resolve(msg("Could not prepare voice transcription."));
+    ? { message: errorDisplayMessage(error, resolve) ?? error.message }
+    : { message: resolve(msg("Could not prepare voice transcription.")), code: "start-failed" };
 }
 
-function transcriptionErrorMessage(error: unknown, resolve: MFunctionType): string {
+function transcriptionFailure(error: unknown, resolve: MFunctionType): VoiceInputFailure {
   if (error instanceof Error && error.message === "voice-operation-busy") {
-    return resolve(msg("Voice transcription is still finishing. Try again shortly."));
+    return {
+      message: resolve(msg("Voice transcription is still finishing. Try again shortly.")),
+      code: "still-transcribing",
+    };
   }
   return isVoiceTranscriptionError(error)
-    ? (errorDisplayMessage(error, resolve) ?? error.message)
-    : resolve(msg("Could not transcribe this recording."));
+    ? { message: errorDisplayMessage(error, resolve) ?? error.message }
+    : {
+        message: resolve(msg("Could not transcribe this recording.")),
+        code: "transcription-failed",
+      };
 }
 
 const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -302,7 +334,11 @@ export class VoiceInputController {
     if (this.state.phase !== "idle" && this.state.phase !== "error") return;
     const initiatingDraft = this.dependencies.readDraft();
     if (!initiatingDraft) {
-      this.setError(this.text(msg("This draft is no longer available.")), "retry");
+      this.setError(
+        this.text(msg("This draft is no longer available.")),
+        "retry",
+        "draft-unavailable",
+      );
       return;
     }
     let sessionToken: VoiceInputSession | null = null;
@@ -320,7 +356,11 @@ export class VoiceInputController {
       }
       sessionToken = acquireSession();
       if (!sessionToken) {
-        this.setError(this.text(msg("Another voice recording is already active.")), "retry");
+        this.setError(
+          this.text(msg("Another voice recording is already active.")),
+          "retry",
+          "already-recording",
+        );
         return;
       }
       this.sessionToken = sessionToken;
@@ -341,7 +381,7 @@ export class VoiceInputController {
       }
       const transcriber = this.dependencies.getTranscriber();
       if (!transcriber) {
-        this.setError(this.text(msg("Voice transcription is not available.")), null);
+        this.setError(this.text(msg("Voice transcription is not available.")), null, "unavailable");
         return;
       }
 
@@ -351,6 +391,7 @@ export class VoiceInputController {
         this.setError(
           this.text(msg("Microphone access is required for voice input.")),
           permission.canAskAgain ? "retry" : "settings",
+          "microphone-blocked",
         );
         return;
       }
@@ -361,7 +402,7 @@ export class VoiceInputController {
         );
       } catch (error) {
         if (this.isCurrent(operationToken))
-          this.setError(preparationErrorMessage(error, this.resolve), "retry");
+          this.setFailure(preparationFailure(error, this.resolve), "retry");
         return;
       }
       if (!this.isCurrent(operationToken)) return;
@@ -376,7 +417,11 @@ export class VoiceInputController {
 
       const capturedDraft = this.dependencies.readDraft();
       if (!capturedDraft || capturedDraft.ownerKey !== initiatingDraft.ownerKey) {
-        this.setError(this.text(msg("This draft is no longer available.")), "retry");
+        this.setError(
+          this.text(msg("This draft is no longer available.")),
+          "retry",
+          "draft-unavailable",
+        );
         return;
       }
       this.capturedDraft = capturedDraft;
@@ -389,7 +434,8 @@ export class VoiceInputController {
           (text) => ({ text }),
           (error: unknown) => {
             if (this.isCurrent(operationToken) && this.state.phase === "recording") {
-              void this.discardRecording(transcriptionErrorMessage(error, this.resolve));
+              const failure = transcriptionFailure(error, this.resolve);
+              void this.discardRecording(failure.message, failure.code);
             }
             return { error };
           },
@@ -404,6 +450,7 @@ export class VoiceInputController {
             ? this.text(MICROPHONE_PERMISSION_ERROR)
             : this.text(msg("Could not start voice recording.")),
           "retry",
+          isMicrophonePermissionError(error) ? "microphone-blocked" : "start-failed",
         );
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
@@ -452,18 +499,25 @@ export class VoiceInputController {
   }
 
   interruptRecording(
-    message = this.text(msg("Voice recording was interrupted.")),
+    message?: string,
     completedUri: string | null = null,
+    code?: VoiceInputErrorCode,
   ): Promise<void> | void {
+    const failure: VoiceInputFailure =
+      message === undefined
+        ? { message: this.text(msg("Voice recording was interrupted.")), code: "interrupted" }
+        : code === undefined
+          ? { message }
+          : { message, code };
     if (this.state.phase === "preparing") {
       this.invalidateOperation();
-      this.setError(message, "retry");
+      this.setFailure(failure, "retry");
       return;
     }
     if (this.state.phase !== "recording") return;
     this.rememberRecordingUri(completedUri);
     this.recordingUri = completedUri ?? this.recordingUri;
-    return this.discardRecording(message);
+    return this.discardRecording(failure.message, failure.code);
   }
 
   appMovedToBackground(): Promise<void> | void {
@@ -478,10 +532,7 @@ export class VoiceInputController {
     if (this.state.phase !== "recording") return;
     if (status.url && this.recordingUri && status.url !== this.recordingUri) return;
     if (status.hasError) {
-      return this.interruptRecording(
-        status.error ?? this.text(msg("Voice recording was interrupted.")),
-        status.url,
-      );
+      return this.interruptRecording(status.error ?? undefined, status.url);
     }
     if (status.isFinished) {
       if (!status.url) {
@@ -536,7 +587,11 @@ export class VoiceInputController {
         !this.transcriptionAbortController ||
         !this.capturedDraft
       ) {
-        this.setError(this.text(msg("Could not finish voice recording.")), "retry");
+        this.setError(
+          this.text(msg("Could not finish voice recording.")),
+          "retry",
+          "finish-failed",
+        );
         return;
       }
 
@@ -567,7 +622,7 @@ export class VoiceInputController {
               transcription,
             };
           }
-          this.setError(transcriptionErrorMessage(error, this.resolve), "retry");
+          this.setFailure(transcriptionFailure(error, this.resolve), "retry");
         }
         return;
       }
@@ -619,11 +674,12 @@ export class VoiceInputController {
             msg("The draft changed while voice input was running. The transcript was not added."),
           ),
           "retry",
+          "draft-changed",
         );
         return;
       }
       if (result.kind === "empty") {
-        this.setError(this.text(msg("No speech was detected.")), "retry");
+        this.setError(this.text(msg("No speech was detected.")), "retry", "no-speech");
         return;
       }
 
@@ -631,7 +687,11 @@ export class VoiceInputController {
       this.setState(IDLE_STATE);
     } catch {
       if (this.isCurrent(operationToken)) {
-        this.setError(this.text(msg("Could not finish voice recording.")), "retry");
+        this.setError(
+          this.text(msg("Could not finish voice recording.")),
+          "retry",
+          "finish-failed",
+        );
       }
     } finally {
       this.finishing = false;
@@ -639,11 +699,16 @@ export class VoiceInputController {
     }
   }
 
-  private async discardRecording(error: string | null): Promise<void> {
+  private async discardRecording(
+    error: string | null,
+    errorCode?: VoiceInputErrorCode,
+  ): Promise<void> {
     this.invalidateOperation();
     this.setState(
       error
-        ? { phase: "error", error, errorAction: "retry" }
+        ? errorCode === undefined
+          ? { phase: "error", error, errorAction: "retry" }
+          : { phase: "error", error, errorAction: "retry", errorCode }
         : { phase: "idle", error: null, errorAction: null },
     );
     await this.releaseResources();
@@ -709,8 +774,20 @@ export class VoiceInputController {
     return operationToken === this.operationToken;
   }
 
-  private setError(error: string, errorAction: VoiceInputState["errorAction"]): void {
-    this.setState({ phase: "error", error, errorAction });
+  private setError(
+    error: string,
+    errorAction: VoiceInputState["errorAction"],
+    errorCode?: VoiceInputErrorCode,
+  ): void {
+    this.setState(
+      errorCode === undefined
+        ? { phase: "error", error, errorAction }
+        : { phase: "error", error, errorAction, errorCode },
+    );
+  }
+
+  private setFailure(failure: VoiceInputFailure, errorAction: VoiceInputState["errorAction"]) {
+    this.setError(failure.message, errorAction, failure.code);
   }
 
   private setState(state: VoiceInputState): void {

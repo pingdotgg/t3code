@@ -447,6 +447,10 @@
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
     },
+    "./t3McpToolPresentationCopy": {
+      "types": "./src/t3McpToolPresentationCopy.ts",
+      "import": "./src/t3McpToolPresentationCopy.ts"
+    },
     "./Array": {
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"

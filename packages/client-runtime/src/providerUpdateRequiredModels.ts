@@ -33,6 +33,7 @@ export function formatProviderUpdateRequiredNotice(
   const names = formatConjunctionList(
     models.map((model) => model.name),
     locale,
+    resolve,
   );
   return resolve(
     msg(

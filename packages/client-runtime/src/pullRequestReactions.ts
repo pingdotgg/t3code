@@ -115,7 +115,7 @@ export function pullRequestReactionTooltip(
     ...shown,
     ...(others > 0 ? [countRemainder(others, shown.length > 0, resolve)] : []),
   ];
-  return reactedWith(reaction.content, formatConjunctionList(parts, locale), resolve);
+  return reactedWith(reaction.content, formatConjunctionList(parts, locale, resolve), resolve);
 }
 
 /** Changes whenever the host reports different reactions, so pending overlays can reset. */

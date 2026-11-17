@@ -1,4 +1,10 @@
-import { errorDisplayMessage, type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
+import {
+  errorI18nMessage,
+  type MarkedText,
+  markedTextEnglish,
+  resolveMarkedText,
+  thrownErrorMessage,
+} from "../errors/translatable.ts";
 import {
   type EnvironmentId,
   type ProviderInstanceId,
@@ -85,6 +91,8 @@ export type ServerUpdateState =
       readonly fromVersion: string;
       readonly targetVersion: string;
       readonly message: string;
+      /** `message` as marked text, so it follows the UI language; absent for plain error text. */
+      readonly i18nMessage?: MarkedText;
     };
 
 export interface ServerUpdateTarget {
@@ -363,13 +371,31 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-export function serverUpdateFailureMessage(
-  error: unknown,
+function serverUpdateFailureMessage(error: unknown, resolve: MFunctionType = mFallback): string {
+  return error instanceof Error
+    ? (thrownErrorMessage(error, resolve) ?? error.message)
+    : resolve(msg("Server update failed."));
+}
+
+/** The failed state's `message` and, when the text is ours, its marked text. */
+export function serverUpdateFailure(error: unknown): {
+  readonly message: string;
+  readonly i18nMessage?: MarkedText;
+} {
+  const i18nMessage =
+    error instanceof Error ? errorI18nMessage(error) : [msg("Server update failed.")];
+  return i18nMessage === undefined
+    ? { message: serverUpdateFailureMessage(error) }
+    : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+export function serverUpdateFailureText(
+  state: Extract<ServerUpdateState, { status: "failed" }>,
   resolve: MFunctionType = mFallback,
 ): string {
-  return error instanceof Error
-    ? (errorDisplayMessage(error, resolve) ?? error.message)
-    : resolve(msg("Server update failed."));
+  return state.i18nMessage === undefined
+    ? state.message
+    : resolveMarkedText(state.i18nMessage, resolve);
 }
 
 function isRpcSocketError(error: unknown): boolean {
@@ -1280,7 +1306,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
-              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
+              ...serverUpdateFailure(Cause.squash(exit.cause)),
             });
           }),
         ),

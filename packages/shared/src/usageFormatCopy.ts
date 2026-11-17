@@ -50,10 +50,17 @@ export function formatRelativeHourShort(
   timeZone?: string,
   hour12 = true,
   resolve: MFunctionType = mFallback,
+  locale?: string,
 ): string {
-  return formatRelativeHourShortWith(hourStart, relativeTo, timeZone, hour12, (hour, daysAgo) =>
-    daysAgo === 0
-      ? resolve(msg("{hour} today", { hour }))
-      : resolve(msg("{hour} yesterday", { hour })),
+  return formatRelativeHourShortWith(
+    hourStart,
+    relativeTo,
+    timeZone,
+    hour12,
+    (hour, daysAgo) =>
+      daysAgo === 0
+        ? resolve(msg("{hour} today", { hour }))
+        : resolve(msg("{hour} yesterday", { hour })),
+    locale,
   );
 }
