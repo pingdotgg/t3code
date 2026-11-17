@@ -1291,7 +1291,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Option.none(),
   );
   const stoppingRef = yield* Ref.make(false);
-  const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
+  const terminationFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
   const stderrTailRef = yield* Ref.make("");
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const stderrDrained = yield* Deferred.make<void>();
@@ -1354,6 +1354,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     if (!firstTermination) {
       return;
     }
+    yield* Deferred.fail(terminationFailure, enriched);
     yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
     yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
   });
@@ -1368,7 +1369,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   ): Effect.Effect<A, EffectAcpErrors.AcpError> =>
     logRequest({ method, payload, status: "started" }).pipe(
       Effect.flatMap(() =>
-        (options.onStderr ? Effect.raceFirst(effect, Deferred.await(stderrFailure)) : effect).pipe(
+        // Fail with the termination error rather than the interrupt from closing runtimeScope.
+        Effect.raceFirst(effect, Deferred.await(terminationFailure)).pipe(
           Effect.catch((error) =>
             enrichProcessExitWithStderr(error).pipe(Effect.flatMap(Effect.fail)),
           ),
@@ -1666,7 +1668,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ),
         Effect.catch((error) =>
           Effect.gen(function* () {
-            yield* Deferred.fail(stderrFailure, error);
+            yield* Deferred.fail(terminationFailure, error);
             yield* recordTermination(error);
             yield* child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore);
           }),
