@@ -1,3 +1,4 @@
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
@@ -78,7 +79,6 @@ import React, {
   Suspense,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
-  type MouseEvent as ReactMouseEvent,
   use,
   memo,
   useEffect,
@@ -160,6 +160,7 @@ import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
+import { useOpenIssueLink } from "../lib/openIssueLink";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -186,6 +187,7 @@ import {
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
+import { textDirection } from "~/textDirection";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -301,6 +303,7 @@ function CodexArtifactTemplateCard(props: {
     <div
       role="group"
       aria-label={`${props.template.displayName} template`}
+      dir={textDirection(props.template.displayName)}
       data-chat-markdown-artifact-template
       className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-foreground shadow-xs"
       data-artifact-kind={props.template.artifactKind}
@@ -696,6 +699,7 @@ function useChatMarkdownState({
     );
   };
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const openIssueLink = useOpenIssueLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
@@ -940,6 +944,9 @@ function useChatMarkdownState({
                   )
               : undefined
         }
+        resolveDragPath={async () =>
+          resolvePathLinkTarget((await resolveHostPath()).absolutePath, cwd ?? "")
+        }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
@@ -992,6 +999,7 @@ function useChatMarkdownState({
     onUseArtifactTemplate,
     onRunShellCommand,
     openChangeRequestLink,
+    openIssueLink,
     openDeferredMarkdownLink,
     openExternalLinkInPreview,
     openMarkdownMedia,
@@ -1043,11 +1051,6 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
       />
     );
   };
-}
-
-// Native word selection stops at hyphens and dots, so a double-click takes the whole span.
-function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
-  window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
 const CHAT_MARKDOWN_COMPONENTS = {
@@ -1162,6 +1165,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       threadRef,
       openMarkdownMedia,
       openChangeRequestLink,
+      openIssueLink,
       openDeferredMarkdownLink,
       linkTargetPreference,
       openExternalLinkInPreview,
@@ -1277,7 +1281,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             }
             if (
               !href ||
-              openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
+              openChangeRequestLink(event, href, undefined, environmentId ?? undefined) ||
+              openIssueLink(event, href, environmentId ?? undefined)
             ) {
               return;
             }
@@ -1402,7 +1407,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 environmentId ?? undefined,
               )
             }
-            onOpenFallback={openDeferredMarkdownLink}
+            // A reference that is not a pull request may still be an issue this app can show.
+            onOpenFallback={async (url) => {
+              const opened = openIssueLink(
+                {
+                  metaKey: false,
+                  ctrlKey: false,
+                  preventDefault: () => undefined,
+                  stopPropagation: () => undefined,
+                },
+                url,
+                environmentId ?? undefined,
+              );
+              if (!opened) await openDeferredMarkdownLink(url);
+            }}
           />
         );
       }
@@ -1458,7 +1476,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       return (
-        <code {...props} className={className} onDoubleClick={selectInlineCode}>
+        <code {...props} className={className}>
           {children}
         </code>
       );
@@ -1667,8 +1685,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
   },
-  details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
-    return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
+  details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen, dir }) {
+    return (
+      <MarkdownDetails open={detailsOpen} dir={dir}>
+        {children}
+      </MarkdownDetails>
+    );
   },
   pre: function MarkdownPre({ node, children, ...props }) {
     const {

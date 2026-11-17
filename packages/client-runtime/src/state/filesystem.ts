@@ -5,6 +5,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
 import type {
@@ -79,12 +80,44 @@ export function filterFilesystemBrowseEntries(
   const lowerQuery = query.toLowerCase();
   const lowerNormalizedQuery = normalizedQuery.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      (entry.name.toLowerCase().startsWith(lowerQuery) ||
-        entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery)) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
+  const candidates = entries.filter((entry) => showHidden || !entry.name.startsWith("."));
+  const visibleEntries =
+    lowerQuery.length === 0
+      ? candidates
+      : candidates
+          .map((entry) => {
+            const options = {
+              // Position penalties stay under 1000 for 255-character names, so tiers never overlap.
+              query: lowerNormalizedQuery,
+              exactBase: 0,
+              prefixBase: 1000,
+              boundaryBase: 2000,
+              includesBase: 3000,
+              fuzzyBase: 4000,
+              boundaryMarkers: [" ", "-", "_", "."],
+            };
+            const rawScore = scoreQueryMatch({
+              ...options,
+              value: entry.name.toLowerCase(),
+              query: lowerQuery,
+            });
+            const normalizedScore = scoreQueryMatch({
+              ...options,
+              value: entry.name.normalize("NFC").toLowerCase(),
+            });
+            const score =
+              rawScore === null
+                ? normalizedScore
+                : normalizedScore === null
+                  ? rawScore
+                  : Math.min(rawScore, normalizedScore);
+            return { entry, score };
+          })
+          .filter((match): match is { entry: FilesystemBrowseEntry; score: number } => {
+            return match.score !== null;
+          })
+          .sort((left, right) => left.score - right.score)
+          .map((match) => match.entry);
   const normalizedMatches = visibleEntries.filter(
     (entry) => entry.name.normalize("NFC") === normalizedQuery,
   );
@@ -102,7 +135,14 @@ export function getFilesystemBrowseTabCompletion(
   visibleEntries: ReadonlyArray<FilesystemBrowseEntry>,
   filterQuery: string,
 ): { readonly name: string; readonly isComplete: boolean } | null {
-  const [first, ...rest] = visibleEntries;
+  const lowerQuery = filterQuery.toLowerCase();
+  const lowerNormalizedQuery = filterQuery.normalize("NFC").toLowerCase();
+  const prefixEntries = visibleEntries.filter(
+    (entry) =>
+      entry.name.toLowerCase().startsWith(lowerQuery) ||
+      entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery),
+  );
+  const [first, ...rest] = prefixEntries;
   if (first === undefined) return null;
   if (rest.length === 0) return { name: first.name, isComplete: true };
   let prefix = Array.from(first.name);
@@ -118,8 +158,8 @@ export function getFilesystemBrowseTabCompletion(
   }
   const name = prefix.join("");
   const lowerName = name.toLowerCase();
-  return lowerName.length > filterQuery.toLowerCase().length &&
-    visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
+  return lowerName.length > lowerQuery.length &&
+    prefixEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
     ? { name, isComplete: false }
     : null;
 }

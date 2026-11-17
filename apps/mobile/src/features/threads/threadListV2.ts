@@ -238,6 +238,8 @@ export function threadHasUnseenCompletion(
 ): boolean {
   const completedAt = thread.latestRun?.completedAt;
   if (!completedAt) return false;
+  const status = thread.latestRun?.status;
+  if (status === "interrupted" || status === "cancelled") return false;
   const completedAtMs = Date.parse(completedAt);
   if (Number.isNaN(completedAtMs)) return false;
   if (!thread.lastVisitedAt) return false;
@@ -297,6 +299,35 @@ export function resolveThreadListV2Status(
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+export function threadListV2RowAccessibilityLabel(input: {
+  readonly title: string;
+  readonly variant: "card" | "slim";
+  readonly woke: boolean;
+  readonly statusLabel: string | undefined;
+  readonly timeLabel: string;
+  readonly snoozeWakeLabel: string | undefined;
+  readonly providerNameLabel: string | null;
+  readonly hasQueuedMessages: boolean;
+  readonly regeneratingTitle: boolean;
+}): string {
+  // Mirrors the row's meta line: a card shows Woke, else its status, else the time.
+  const meta =
+    input.variant === "slim"
+      ? (input.snoozeWakeLabel ?? input.timeLabel)
+      : input.woke
+        ? "Woke"
+        : (input.statusLabel ?? input.timeLabel);
+  return [
+    input.title,
+    meta,
+    input.providerNameLabel,
+    input.hasQueuedMessages ? "messages queued to send" : null,
+    input.regeneratingTitle ? "regenerating title" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
 }
 
 /** Row status: a failure the user has already opened settles to ready, like Done. */

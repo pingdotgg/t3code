@@ -233,8 +233,8 @@ export function referencedComposerContext(text: string, context?: OrchestrationM
     }
   }
   const records = context.records.filter((record) => ids.has(record.contextId));
-  if (records.length === context.records.length) return context;
-  return records.length ? { version: 1 as const, records } : undefined;
+  if (records.length === 0) return undefined;
+  return records.length === context.records.length ? context : { version: 1 as const, records };
 }
 
 /** Uploads change attachment ids; keep context bindings attached to the same ordered file. */
