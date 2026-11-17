@@ -4086,16 +4086,30 @@ function commandInputFromClaudeTool(toolName: string, input: ClaudeNativeToolInp
 const CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS: ReadonlyMap<
   string,
   Exclude<OrchestrationV2PendingBackgroundTask["kind"], "subagent">
-> = new Map([["local_bash", "command"]]);
+> = new Map([
+  ["local_bash", "command"],
+  ["mcp_task", "background_task"],
+]);
 
-// Claude Code 2.1.292 defers its goal Stop hook for these subagent types.
-// local_bash tasks defer it through the opaque-task roster.
+// Claude Code 2.1.326 defers its goal Stop hook for these subagent types and for local_bash,
+// whose tasks the roster holds as commands and monitors. It does not wait for an mcp_task.
 const CLAUDE_GOAL_DEFERRING_TASK_TYPES: ReadonlySet<string> = new Set([
   "local_agent",
   "remote_agent",
   "in_process_teammate",
   "local_workflow",
 ]);
+const CLAUDE_GOAL_DEFERRING_ROSTER_KINDS: ReadonlySet<
+  OrchestrationV2PendingBackgroundTask["kind"]
+> = new Set(["command", "monitor"]);
+
+function claudeRosterDefersGoal(
+  roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
+): boolean {
+  return Array.from(roster.values()).some((task) =>
+    CLAUDE_GOAL_DEFERRING_ROSTER_KINDS.has(task.kind),
+  );
+}
 
 function isClaudeOpaqueBackgroundTaskType(taskType: string | null | undefined): boolean {
   return typeof taskType === "string" && CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.has(taskType);
@@ -10194,7 +10208,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   goalChecked &&
                   input.status === "completed" &&
                   (terminalReason === undefined || terminalReason === "completed") &&
-                  roster.size === 0 &&
+                  !claudeRosterDefersGoal(roster) &&
                   !(
                     liveQuery?.nativeThreadId === nativeThreadId &&
                     (yield* liveProcessRunsBackgroundWork(liveQuery, { forGoalCheck: true }))
@@ -13378,12 +13392,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live: ClaudeLiveQueryContext,
           options?: { readonly forGoalCheck?: boolean },
         ) {
-          if (
-            rosterForNativeThread(
-              yield* Ref.get(pendingBackgroundTasksByNativeThread),
-              live.nativeThreadId,
-            ).size > 0
-          ) {
+          const roster = rosterForNativeThread(
+            yield* Ref.get(pendingBackgroundTasksByNativeThread),
+            live.nativeThreadId,
+          );
+          if (options?.forGoalCheck === true ? claudeRosterDefersGoal(roster) : roster.size > 0) {
             return true;
           }
           const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];

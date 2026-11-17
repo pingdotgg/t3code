@@ -14185,6 +14185,94 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("holds a backgrounded MCP call as a background task, not a subagent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const taskId = "k2bw174rj";
+      const toolUseId = "toolu_codemode";
+      const expected = {
+        taskId,
+        kind: "background_task" as const,
+        description: "exec/codemode",
+        nativeItemId: toolUseId,
+      };
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-mcp-task"),
+          text: "Run the slow script.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_mcp_task",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "mcp__exec__codemode",
+                input: { code: "return 1" },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "mcp-task-launch",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          description: "exec/codemode",
+          task_type: "mcp_task",
+          uuid: "mcp-task-started",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({ uuid: "mcp-task-result", result: "Waiting." }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+      assert.deepEqual(
+        providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+        [expected],
+      );
+
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: taskId, task_type: "mcp_task", description: "exec/codemode" }],
+          uuid: "mcp-task-snapshot",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(
+        providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+        [expected],
+      );
+      assert.isUndefined(harness.events.find((event) => event.type === "subagent.updated"));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
