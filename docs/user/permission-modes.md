@@ -45,7 +45,10 @@ ACP Registry agents run their own tools in their own mode; T3 Code answers their
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 Claude can still ask in **Full access** when its settings disable bypass permissions or require
-approval for an action. Dangerous-removal safety checks in bypass mode reject the command with
+approval for an action. Turn on **Approve safety checks in Full access** in the Claude provider's
+settings to approve the checks Claude Code raises on its own, such as a command that holds your
+account email address. Your organization's policies, your own ask rules, and tools that need your
+input still ask. Dangerous-removal safety checks in bypass mode reject the command with
 the original warning. Claude can use a safe rewrite when the warning supplies one; otherwise it
 continues without the removal and tells you what it skipped.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
