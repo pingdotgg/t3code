@@ -30,6 +30,7 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
@@ -40,6 +41,7 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexRuntimeModesAllowedByRequirements } from "./codexRuntimeModeRequirements.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -162,6 +164,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
   readonly cyberAccessProgramsUnavailable?: boolean | undefined;
@@ -768,45 +771,63 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
-    [
-      withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
-      accountResponse.account?.type === "chatgpt"
-        ? requestCodexChatGptModels({
-            client,
-            codexHome: initialize.codexHome,
-            spawnedAtMs,
-            deadlineMs,
-          })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
-      // The shared catalog must exclude config from the server's launch project.
-      withCodexDiscoveryDeadline(
-        client.request("config/read", { includeLayers: false }),
-        deadlineMs,
-        CODEX_CONFIG_PROBE_TIMEOUT_MS,
-      ).pipe(
-        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
-        Effect.flatMap((config) => {
-          // Only a confirmed native route may probe or publish the login's quota.
-          const nativeUsage =
-            !input.skipNativeUsage &&
-            config !== undefined &&
-            codexRoutesSpendNativeQuota(accountResponse, config.config);
-          const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
-            ? readCodexRateLimits(client, deadlineMs)
-            : Effect.undefined;
-          return readUsage.pipe(
-            Effect.map((rateLimits) => ({
-              config: config?.config,
-              nativeUsage,
-              rateLimits,
-            })),
-          );
-        }),
-      ),
-    ],
-    { concurrency: "unbounded" },
-  );
+  const [skillsResponse, models, { config, nativeUsage, rateLimits }, supportedRuntimeModes] =
+    yield* Effect.all(
+      [
+        withCodexDiscoveryDeadline(
+          client.request("skills/list", { cwds: [input.cwd] }),
+          deadlineMs,
+        ),
+        accountResponse.account?.type === "chatgpt"
+          ? requestCodexChatGptModels({
+              client,
+              codexHome: initialize.codexHome,
+              spawnedAtMs,
+              deadlineMs,
+            })
+          : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+        // The shared catalog must exclude config from the server's launch project.
+        withCodexDiscoveryDeadline(
+          client.request("config/read", { includeLayers: false }),
+          deadlineMs,
+          CODEX_CONFIG_PROBE_TIMEOUT_MS,
+        ).pipe(
+          Effect.catch(() =>
+            Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
+          ),
+          Effect.flatMap((config) => {
+            // Only a confirmed native route may probe or publish the login's quota.
+            const nativeUsage =
+              !input.skipNativeUsage &&
+              config !== undefined &&
+              codexRoutesSpendNativeQuota(accountResponse, config.config);
+            const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
+              ? readCodexRateLimits(client, deadlineMs)
+              : Effect.undefined;
+            return readUsage.pipe(
+              Effect.map((rateLimits) => ({
+                config: config?.config,
+                nativeUsage,
+                rateLimits,
+              })),
+            );
+          }),
+        ),
+        // Managed requirements can forbid a sandbox mode, and Codex then refuses
+        // to start the turn, so delegation has to know which modes are allowed.
+        withCodexDiscoveryDeadline(
+          client.request("configRequirements/read", undefined),
+          deadlineMs,
+          CODEX_CONFIG_PROBE_TIMEOUT_MS,
+        ).pipe(
+          Effect.map((response) => codexRuntimeModesAllowedByRequirements(response?.requirements)),
+          Effect.catch(() =>
+            Effect.logDebug("Codex config requirements read failed.").pipe(Effect.as(undefined)),
+          ),
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
 
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
@@ -817,6 +838,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     version,
     models,
     serviceTier: config?.service_tier ?? undefined,
+    supportedRuntimeModes,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
     cyberAccessProgramsUnavailable:
@@ -1149,7 +1171,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           });
 
   return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
+    presentation: {
+      ...CODEX_PRESENTATION,
+      ...(snapshot.supportedRuntimeModes
+        ? { supportedRuntimeModes: snapshot.supportedRuntimeModes }
+        : {}),
+    },
     enabled: codexSettings.enabled,
     checkedAt,
     models: pipe(

@@ -1,6 +1,7 @@
 import {
   managedRuntimeModeDenial,
   type ManagedPolicySummary,
+  providerRuntimeMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import {
@@ -49,7 +50,7 @@ export function resolveCompatibleRuntimeMode(
     supportedRuntimeModes && supportedRuntimeModes.length > 0
       ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
       : runtimeModeOptions;
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+  return { modes, mode: providerRuntimeMode(runtimeMode, supportedRuntimeModes) };
 }
 
 export function resolveRuntimeModeOptions(
