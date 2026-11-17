@@ -30,8 +30,10 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("100_PullRequestPolli
                   '2026-10-01', ${updatedAt}, ${deletedAt}, ${JSON.stringify(payload)})`;
       }
       const query = `SELECT thread_id FROM orchestration_v2_projection_threads
-        WHERE deleted_at IS NULL AND json_extract(payload_json, '$.archivedAt') IS NULL
-        AND json_array_length(payload_json, '$.pullRequests') > 0
+        WHERE deleted_at IS NULL AND CASE WHEN json_valid(payload_json) THEN
+          json_extract(payload_json, '$.archivedAt') IS NULL
+          AND json_array_length(payload_json, '$.pullRequests') > 0
+          ELSE 0 END
         ORDER BY updated_at ASC, thread_id ASC`;
       const before = yield* sql.unsafe(query);
       assert.deepEqual(yield* runMigrations(), [[100, "PullRequestPollingIndex"]]);
@@ -54,6 +56,13 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))("100_PullRequestPolli
         { thread_id: "deleted" },
         { thread_id: "missing" },
         { thread_id: "later" },
+      ]);
+      // A malformed payload stays writable and drops out of polling.
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{broken' WHERE thread_id = 'later'`;
+      assert.deepEqual(yield* sql.unsafe(query), [
+        { thread_id: "b" },
+        { thread_id: "deleted" },
+        { thread_id: "missing" },
       ]);
     }),
   );

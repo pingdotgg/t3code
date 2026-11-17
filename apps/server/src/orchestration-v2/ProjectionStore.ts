@@ -8546,8 +8546,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
-            AND json_extract(payload_json, '$.archivedAt') IS NULL
-            AND json_array_length(payload_json, '$.pullRequests') > 0
+            AND CASE WHEN json_valid(payload_json) THEN
+              json_extract(payload_json, '$.archivedAt') IS NULL
+              AND json_array_length(payload_json, '$.pullRequests') > 0
+              ELSE 0 END
           ORDER BY updated_at ASC, thread_id ASC
         `;
           return yield* Effect.forEach(rows, (row) =>
