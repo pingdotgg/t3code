@@ -115,15 +115,16 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
 });
 
 /** What a legacy symlink or a launcher script on macOS and Linux runs. */
-const posixLauncherTarget = (launcher: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const link = yield* fs.readLink(launcher).pipe(Effect.option);
-    return Option.isSome(link)
-      ? path.resolve(path.dirname(launcher), link.value)
-      : yield* readPosixLauncherTarget(launcher).pipe(Effect.orElseSucceed(() => undefined));
-  });
+const posixLauncherTarget = Effect.fn("cli.update.posix_launcher_target")(function* (
+  launcher: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const link = yield* fs.readLink(launcher).pipe(Effect.option);
+  return Option.isSome(link)
+    ? path.resolve(path.dirname(launcher), link.value)
+    : yield* readPosixLauncherTarget(launcher).pipe(Effect.orElseSucceed(() => undefined));
+});
 
 /**
  * The launcher this process ran through and its `ada`/`t3` sibling, each kept only when it already

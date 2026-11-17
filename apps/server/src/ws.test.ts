@@ -945,7 +945,10 @@ it.live.each([
           markDisconnected: () => Effect.void,
           awaitInvalidation: () => Effect.never,
         }),
-        Layer.mock(McpGatewayBroker.McpGatewayBroker)({}),
+        Layer.mock(McpGatewayBroker.McpGatewayBroker)({
+          view: () => ({ grants: {}, refusals: {} }),
+          available: () => false,
+        }),
         Layer.mock(ClientFocusBroker.ClientFocusBroker)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: process.cwd(),

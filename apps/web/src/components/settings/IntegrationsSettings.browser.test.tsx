@@ -47,7 +47,6 @@ const environments: EnvironmentPresentation[] = [
     environmentId,
     label: "Desk",
     displayUrl: "http://localhost:12345",
-    relayManaged: false,
     entry: {
       target: new PrimaryConnectionTarget({
         environmentId,

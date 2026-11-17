@@ -13,7 +13,6 @@ function environment(
     environmentId: environmentId as EnvironmentId,
     environmentLabel,
     displayUrl: "",
-    isRelayManaged: false,
     isEnabled,
     connectionState: isEnabled ? "connected" : "available",
     connectionError: null,

@@ -94,16 +94,11 @@ export function hasParentThread(
 // (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
 export function resolveListedAncestorThreadRef(
   ref: ScopedThreadRef,
-  threads: readonly Pick<
+  threads: readonly (Pick<
     EnvironmentThreadShell,
-    | "id"
-    | "environmentId"
-    | "lineage"
-    | "parentThreadId"
-    | "parentRelationship"
-    | "delegatedFrom"
-    | "archivedAt"
-  >[],
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+  > &
+    Parameters<typeof isListedThread>[0])[],
 ): ScopedThreadRef {
   const findThread = (target: ScopedThreadRef) =>
     threads.find(

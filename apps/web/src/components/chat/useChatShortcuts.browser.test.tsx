@@ -199,6 +199,7 @@ const ctrlAlt = (key: string, command: KeybindingCommand) => ({
 function ChatWithSideChatPane(props: { ran: string[] }) {
   useChatShortcuts({
     enabled: true,
+    embeddedSurfaceRef: null,
     keybindings: [
       ctrlAlt("b", "rightPanel.toggle"),
       ctrlAlt("k", "rightPanel.close"),

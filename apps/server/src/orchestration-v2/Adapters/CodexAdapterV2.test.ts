@@ -2706,6 +2706,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         (entry) =>
           entry.label === "wake-turn-1 thread/sample"
             ? Deferred.succeed(firstSampleAnswered, undefined).pipe(Effect.asVoid)
@@ -5990,6 +5991,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             inbound("item/completed/stopped", "item/completed", backgroundCommandItem("completed")),
           ],
         }),
+        undefined,
         undefined,
         undefined,
         undefined,

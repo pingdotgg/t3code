@@ -916,39 +916,53 @@ function makeLocalCommandHarness(input: {
       : providerThreadId;
     projection = {
       ...projection,
-      attempts: [
-        {
-          id: previousAttemptId,
-          runId: previousRunId,
-          attemptOrdinal: 1,
-          rootNodeId: NodeId.make("previous-root"),
-          providerInstanceId: newInstanceId,
-          providerThreadId: previousProviderThreadId,
-          providerTurnId: null,
-          reason: "initial",
-          status: input.previousTurn.supersededTurn === true ? "superseded" : "interrupted",
-          startedAt: now,
-          completedAt: now,
-        },
-        ...(input.previousTurn.supersededTurn === true
+      attempts:
+        input.previousTurn.profileContentHash !== undefined
           ? [
               {
-                id: steeredAttemptId,
+                ...projection.attempts[0]!,
+                id: previousAttemptId,
                 runId: previousRunId,
-                attemptOrdinal: 2,
-                rootNodeId: NodeId.make("previous-steered-root"),
+                providerThreadId: previousProviderThreadId,
+                nativeThreadId: "existing-native-conversation",
+                status: "completed",
+                profileContentHash: input.previousTurn.profileContentHash,
+              },
+              ...projection.attempts,
+            ]
+          : [
+              {
+                id: previousAttemptId,
+                runId: previousRunId,
+                attemptOrdinal: 1,
+                rootNodeId: NodeId.make("previous-root"),
                 providerInstanceId: newInstanceId,
                 providerThreadId: previousProviderThreadId,
                 providerTurnId: null,
-                reason: "steering_restart" as const,
-                status: "interrupted" as const,
-                startedAt: null,
+                reason: "initial",
+                status: input.previousTurn.supersededTurn === true ? "superseded" : "interrupted",
+                startedAt: now,
                 completedAt: now,
               },
-            ]
-          : []),
-        ...projection.attempts,
-      ],
+              ...(input.previousTurn.supersededTurn === true
+                ? [
+                    {
+                      id: steeredAttemptId,
+                      runId: previousRunId,
+                      attemptOrdinal: 2,
+                      rootNodeId: NodeId.make("previous-steered-root"),
+                      providerInstanceId: newInstanceId,
+                      providerThreadId: previousProviderThreadId,
+                      providerTurnId: null,
+                      reason: "steering_restart" as const,
+                      status: "interrupted" as const,
+                      startedAt: null,
+                      completedAt: now,
+                    },
+                  ]
+                : []),
+              ...projection.attempts,
+            ],
       runs: [
         {
           ...run,
@@ -966,21 +980,6 @@ function makeLocalCommandHarness(input: {
         },
         run,
       ],
-      attempts:
-        input.previousTurn.profileContentHash === undefined
-          ? projection.attempts
-          : [
-              {
-                ...projection.attempts[0]!,
-                id: previousAttemptId,
-                runId: previousRunId,
-                providerThreadId: previousProviderThreadId,
-                nativeThreadId: "existing-native-conversation",
-                status: "completed",
-                profileContentHash: input.previousTurn.profileContentHash,
-              },
-              ...projection.attempts,
-            ],
       providerThreads: [
         {
           ...providerThread,
@@ -1647,8 +1646,7 @@ effectIt.effect(
           title: "Turn failed to start",
           failure: {
             class: "unknown",
-            message:
-              `${APP_NAME} could not start this turn. Send the message again; if it keeps failing, check the server logs.`,
+            message: `${APP_NAME} could not start this turn. Send the message again; if it keeps failing, check the server logs.`,
           },
         },
       ]);

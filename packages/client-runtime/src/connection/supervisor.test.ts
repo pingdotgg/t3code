@@ -1944,9 +1944,7 @@ describe("EnvironmentSupervisor routes", () => {
         const harness = yield* makeHarness({
           checkRoute: () => Effect.succeed("answered"),
           prepare: (_attempt, target) =>
-            !isRemote(target)
-              ? Effect.fail(failure)
-              : Effect.succeed(preparedFor(target)),
+            !isRemote(target) ? Effect.fail(failure) : Effect.succeed(preparedFor(target)),
         });
         const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
           initiallyDesired: true,

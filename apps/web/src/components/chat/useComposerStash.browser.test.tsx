@@ -67,6 +67,7 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
     attachmentTargetKey: target,
     isComposerDraftTargetOpen: () => true,
     composerEditorRef: { current: null },
+    composerFormRef: { current: null },
     isRevertingCheckpoint: () => false,
     pendingThreadImportsRef: { current: new Map() },
     setComposerCursor: vi.fn(),

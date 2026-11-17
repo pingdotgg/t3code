@@ -703,6 +703,7 @@ it.effect("a refused dispatch records its refusal, and opaque causes stay generi
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),
           }),
+          ScheduledTaskTestkit.layerLocalProjects(),
           NodeCrypto.layer,
           Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
         ),
