@@ -1178,7 +1178,7 @@ describe("adding a remark to the chat", () => {
 
     expect(
       buildPullRequestCommentContext(
-        { ...pullRequest, reviewThreads },
+        { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },
         { kind: "comment", comment: review },
       )?.text,
     ).toBe(
@@ -1189,7 +1189,10 @@ describe("adding a remark to the chat", () => {
       ].join("\n\n"),
     );
     expect(
-      buildPullRequestCommentContext(pullRequest, { kind: "comment", comment: review })?.text,
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreadsTruncated: false },
+        { kind: "comment", comment: review },
+      )?.text,
     ).toBe(
       [
         "octocat: One misplaced doc comment inline.",
@@ -1197,6 +1200,30 @@ describe("adding a remark to the chat", () => {
         "This review posted no line comments.",
       ].join("\n\n"),
     );
+    // A failed or partial thread read must not read as a review with no line comments.
+    expect(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreadsTruncated: true },
+        { kind: "comment", comment: review },
+      )?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "No line comments from this review were loaded.",
+        "More may exist; see the review link.",
+      ].join("\n\n"),
+    );
+
+    const sent = reviewCommentContextRecord(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },
+        { kind: "comment", comment: { ...review, body: `Summary ${"x".repeat(15_990)}` } },
+      )!,
+    ).text;
+    expect(sent).toContain(`Review: ${url}#pullrequestreview-9`);
+    expect(sent).toContain("This doc comment belongs below.");
+    expect(sent).toContain("more characters of the review summary are omitted");
   });
 
   it("keeps every added remark when a later hand-off lands", () => {

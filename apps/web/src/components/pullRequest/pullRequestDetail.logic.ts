@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -1265,6 +1266,7 @@ export function buildPullRequestCommentContext(
     readonly number: number;
     readonly url: string;
     readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
   },
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
@@ -1293,10 +1295,7 @@ export function buildPullRequestCommentContext(
     startIndex: 0,
     endIndex: 0,
     rangeLabel: "comment",
-    text: [
-      `${author}: ${body}`.trim(),
-      ...reviewLineComments(comment, pullRequest.reviewThreads),
-    ].join("\n\n"),
+    text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
     diff: "",
     ...(comment.path === null
       ? {}
@@ -1304,11 +1303,34 @@ export function buildPullRequestCommentContext(
   };
 }
 
+/**
+ * The record keeps only the first COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS, so a long summary gives
+ * up its tail, never more than half, before the review link and line comments that follow it.
+ */
+function remarkText(remark: string, review: ReadonlyArray<string>): string {
+  if (review.length === 0) return remark;
+  const after = review.join("\n\n");
+  const room = Math.max(
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS / 2,
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS - after.length - 200,
+  );
+  if (remark.length <= room) return `${remark}\n\n${after}`;
+  let end = room;
+  const last = remark.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  const omitted = remark.length - end;
+  return `${remark.slice(0, end)}\n… ${omitted} more characters of the review summary are omitted; read it at the review link.\n\n${after}`;
+}
+
 /** A GitHub review summary's link and the line comments it posted, which live in other threads. */
 function reviewLineComments(
   comment: PullRequestComment,
-  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  pullRequest: {
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
+  },
 ): ReadonlyArray<string> {
+  const reviewThreads = pullRequest.reviewThreads;
   const anchor = comment.kind === "review" ? parsePullRequestAnchor(comment.url) : null;
   // Only GitHub links line comments to their review, so no other host can say it posted none.
   if (anchor?.kind !== "timeline" || !/^pullrequestreview-\d+$/i.test(anchor.anchor)) return [];
@@ -1322,11 +1344,21 @@ function reviewLineComments(
       return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${line}: ${body}`];
     }),
   );
+  // Threads or their replies can be partly loaded; then an empty match proves nothing.
+  const complete =
+    pullRequest.reviewThreadsTruncated === false &&
+    reviewThreads.every((thread) => thread.nextCommentsCursor === undefined);
+  const more = complete ? [] : ["More may exist; see the review link."];
   return [
     `Review: ${comment.url}`,
-    posted.length === 0
-      ? "This review posted no line comments."
-      : `Line comments in this review:\n\n${posted.join("\n\n")}`,
+    ...(posted.length === 0
+      ? [
+          complete
+            ? "This review posted no line comments."
+            : "No line comments from this review were loaded.",
+          ...more,
+        ]
+      : [`Line comments in this review:\n\n${posted.join("\n\n")}`, ...more]),
   ];
 }
 
