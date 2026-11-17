@@ -322,7 +322,7 @@ describe("resolveWorkflowOpening", () => {
     expect(isWorkflowScriptMessage({ role: "user", text: "// export const meta = {}" })).toBe(
       false,
     );
-    // Divider comments ahead of ordinary code once took exponential time to reject.
+    // Divider comments ahead of ordinary code must reject without catastrophic backtracking.
     const dividers = `${"/".repeat(40)}\n`.repeat(40);
     expect(isWorkflowScriptMessage({ role: "user", text: `${dividers}const x = 1;` })).toBe(false);
     expect(
