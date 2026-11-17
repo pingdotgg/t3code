@@ -1210,12 +1210,11 @@ export default function ChatView(props: ChatViewProps) {
     !isServerThread && draftFallback
       ? draftFallback.selection
       : activeProjectSettings.settings.defaultModelSelection;
-  // The notch's "+": a new thread in this project, in a new tab of this pane.
+  // A new thread in this project, in a new tab of this pane.
   const handleNewThreadInActiveProject = () => {
     if (activeProjectRef === null) return;
     void runInNewLayoutTab(() => handleNewThread(activeProjectRef));
   };
-  const handleNewThreadInActiveProjectStable = useStableCallback(handleNewThreadInActiveProject);
   const projectGroupingSettings = selectProjectGroupingSettings(settings);
   const activeDraftLogicalProjectKey =
     !isServerThread && activeProject
@@ -2260,7 +2259,7 @@ export default function ChatView(props: ChatViewProps) {
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
             !isInSideChatPane(document.activeElement) &&
-            shouldRefocusComposerOnWindowFocus(document.activeElement)
+            shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
             focusComposerStable();
           }
@@ -2461,8 +2460,6 @@ export default function ChatView(props: ChatViewProps) {
       })
     : null;
   const {
-    besideAvailable,
-    openBesideStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
@@ -3011,6 +3008,7 @@ export default function ChatView(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
+  const openNewSideChatStable = useStableCallback(() => void sideChat.open());
   const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
     useTimelineRewind({
       environmentId,
@@ -3173,6 +3171,7 @@ export default function ChatView(props: ChatViewProps) {
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
+    layoutTabId: layoutPane.tabId,
   });
   const withdrawQueuedSendStable = useStableCallback(withdrawQueuedSend);
 
@@ -3561,11 +3560,8 @@ export default function ChatView(props: ChatViewProps) {
               trailingInset={
                 !rightPanelControlsAtRoot && !rightPanelControlsInPanel ? headerControlsInset : null
               }
-              onNewThreadInProject={handleNewThreadInActiveProjectStable}
-              besideAvailable={besideAvailable}
-              onOpenBeside={openBesideStable}
-              newTabShortcutLabel={shortcutLabelForCommand(keybindings, "tab.new")}
               hiddenTerminal={hiddenTerminalChip}
+              onNewSideChat={sideChat.available ? openNewSideChatStable : undefined}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
@@ -3812,7 +3808,7 @@ export default function ChatView(props: ChatViewProps) {
                         inert={queuedRunEdit.isSaving}
                         aria-busy={queuedRunEdit.isSaving}
                       >
-                        <div className="relative z-10">
+                        <div className="relative z-10 rounded-[inherit]">
                           {showProviderSubagentBar ? (
                             <ProviderSubagentBar
                               provider={selectedProviderEntry ?? null}

@@ -64,7 +64,7 @@ export function ThreadDetailsCard({
     const element = contentElement;
     if (!element) return;
     const measure = () => {
-      const frame = element.closest<HTMLElement>("[data-thread-details-card]");
+      const frame = element.closest<HTMLElement>("[data-thread-details-frame]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
       // Only the laid-out DOM knows the full card height, and the canvas keeps preview
       // frames clear of it, so it is reported from this measure effect.
@@ -88,7 +88,7 @@ export function ThreadDetailsCard({
       )}
       style={{ height }}
       onContextMenu={onContextMenu}
-      data-thread-details-card
+      data-thread-details-frame
     >
       <ScrollArea scrollFade orientation="vertical" className="min-h-0 min-w-0">
         <div ref={setContentElement} className="min-w-0 overflow-x-clip">

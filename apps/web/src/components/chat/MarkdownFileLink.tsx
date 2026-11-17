@@ -1,3 +1,4 @@
+import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
@@ -10,8 +11,10 @@ import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { FolderIcon } from "lucide-react";
 
 import { contextMenuSourceOf } from "../../contextMenuSource";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { fileSurface } from "../../rightPanelStore";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
@@ -42,6 +45,8 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  resolveDragPath: () => Promise<string>;
+  resolvePanelPath: (panelPath: string) => string | Promise<string>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -67,13 +72,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   threadRef,
   onOpen,
   onOpenInPanel,
+  resolvePanelPath,
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
   onReveal,
   revealLabel,
   resolveCopyPaths,
+  resolveDragPath,
 }: MarkdownFileLinkProps) {
+  const nativeDrag = useNativeFileDrag(environmentId, resolveDragPath);
   const handleOpenInEditor = () => {
     if (!onOpen) {
       return;
@@ -321,6 +329,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
+  const layoutDragThreadRef =
+    threadRef && panelPath && !useBrowserPrimaryAction && !nativeDrag.draggable ? threadRef : null;
 
   return (
     <Tooltip>
@@ -328,9 +338,10 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         render={
           hasPrimaryAction ? (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
-              render={<a href={href} />}
+              render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -347,6 +358,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 handleOpenInFilePreview();
               }}
               onContextMenu={handleContextMenu}
+              onPointerDown={(event) => {
+                if (!layoutDragThreadRef || !panelPath) return;
+                beginLayoutContentDrag(event, {
+                  kind: "surface",
+                  threadRef: layoutDragThreadRef,
+                  surface: fileSurface(panelPath, line ?? null, 0),
+                  resolve: async () =>
+                    fileSurface(await resolvePanelPath(panelPath), line ?? null, 0),
+                });
+              }}
             >
               <FileTagChipContent
                 icon={
@@ -362,6 +383,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             </ContextChip>
           ) : (
             <ContextChip
+              {...nativeDrag}
               kind={chipKind}
               dir="ltr"
               render={<button type="button" />}
@@ -413,11 +435,13 @@ function areMarkdownFileLinkPropsEqual(
     previous.isAppBundle === next.isAppBundle &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
+    previous.resolvePanelPath === next.resolvePanelPath &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
     previous.resolveCopyPaths === next.resolveCopyPaths &&
+    previous.resolveDragPath === next.resolveDragPath &&
     previous.revealLabel === next.revealLabel
   );
 }

@@ -158,7 +158,7 @@ it("opens on the checked permission when composer.mode marked the trigger", asyn
 function PermissionsChip() {
   const [mode, setMode] = useState<RuntimeMode>("approval-required");
   return (
-    <div data-slot="composer-shell">
+    <div data-slot="composer-host">
       <button type="button" data-composer-shortcut="composer.effort composer.mode">
         Model
       </button>

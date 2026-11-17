@@ -39,6 +39,7 @@ export function ThreadDetailsSection({
     <section
       {...props}
       aria-label={title}
+      data-thread-details-card={card || undefined}
       className={cn(card && "surface-tray rounded-pane p-1", variant === "usage" && "contents")}
       style={card ? { order: Math.max(0, order.indexOf(title)) + 1 } : undefined}
       onDragOver={
