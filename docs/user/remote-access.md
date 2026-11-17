@@ -288,7 +288,7 @@ continue. Read-only connections can watch without changing the page.
 
 While you have control, the tab works with your device: text the page copies or
 cuts goes to your clipboard, a file picker on the page opens your device's
-picker, and a finished download is offered for you to save. Popups such as
+picker, a dropdown on the page shows its options on your device, and a finished download is offered for you to save. Popups such as
 sign-in windows open as their own tabs. Downloads stay on the host until the
 tab closes. Audio does not play on your device.
 
