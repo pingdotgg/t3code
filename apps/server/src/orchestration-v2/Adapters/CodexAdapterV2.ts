@@ -766,7 +766,16 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
       };
     case "full-access":
       return {
-        approvalPolicy: "never",
+        // `never` also rejects browser and app access prompts before the client sees them.
+        approvalPolicy: {
+          granular: {
+            mcp_elicitations: true,
+            request_permissions: false,
+            rules: false,
+            sandbox_approval: false,
+            skill_approval: false,
+          },
+        },
         approvalsReviewer: "user",
         sandboxPolicy: {
           type: "dangerFullAccess",
@@ -2274,7 +2283,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
             const suggestion =
               (yield* decodeCodexThreadSampleResponse(response)).text?.trim() ?? "";
-            if (suggestion.length === 0) return;
+            // Delegated completion wakes arrive as user input, so samples can imitate one.
+            if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) return;
             yield* emitProviderEvent({
               type: "prompt_suggestion.updated",
               driver: CODEX_PROVIDER,
@@ -2526,18 +2536,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
           });
 
-        // Streaming updates repeatedly await this context, including retries before registration.
-        const awaitActiveTurn = Effect.fnUntraced(function* (
-          nativeTurnId: string,
+        // Native events can arrive before their turn registers, so lookups retry briefly.
+        const awaitRegisteredTurn = Effect.fnUntraced(function* (
+          lookup: Effect.Effect<ActiveCodexTurnContext | undefined>,
           attemptsRemaining = 1_000,
         ): Effect.fn.Return<ActiveCodexTurnContext | undefined> {
-          const context = (yield* Ref.get(activeTurns)).get(nativeTurnId);
+          const context = yield* lookup;
           if (context !== undefined || attemptsRemaining <= 0) {
             return context;
           }
           yield* Effect.yieldNow;
-          return yield* awaitActiveTurn(nativeTurnId, attemptsRemaining - 1);
+          return yield* awaitRegisteredTurn(lookup, attemptsRemaining - 1);
         });
+
+        // Streaming updates repeatedly await this context; avoid a span for each update.
+        const awaitActiveTurn = (nativeTurnId: string) =>
+          awaitRegisteredTurn(
+            Ref.get(activeTurns).pipe(Effect.map((turns) => turns.get(nativeTurnId))),
+          );
 
         const resolveItemEventContext =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -6044,27 +6060,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
-            if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
-              yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
+            const acceptance = toMcpElicitationResponse(payload, "accept");
+            if (acceptance.action !== "accept") {
+              yield* Effect.logWarning("Cancelled an unsupported MCP elicitation.", {
                 serverName: payload.serverName,
                 mode: payload.mode,
               });
               return {
-                action: "decline",
+                action: "cancel",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
             const context =
               payload.turnId === undefined || payload.turnId === null
-                ? undefined
+                ? yield* awaitRegisteredTurn(findActiveTurnByNativeThreadId(payload.threadId))
                 : yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               yield* Effect.logWarning(
-                "Declined an MCP elicitation without an active Codex turn context.",
+                "Cancelled an MCP elicitation without an active Codex turn context.",
                 { serverName: payload.serverName },
               );
               return {
-                action: "decline",
+                action: "cancel",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
+            }
+
+            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+              return acceptance;
             }
 
             const nativeRequestId =
@@ -6414,7 +6435,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runOrdinal: input.context.input.runOrdinal,
               status: terminalStatus,
               failure: null,
-              ...(terminalStatus === "interrupted" && input.context.hookStopReason !== undefined
+              ...(input.context.hookStopReason !== undefined
                 ? { reason: input.context.hookStopReason }
                 : {}),
               threadDisposition: "reusable",
@@ -8083,6 +8104,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
+              const serviceTier =
+                adapterOptions.resolveRuntime === undefined
+                  ? getCodexServiceTierOptionValue(turnInput.modelSelection)
+                  : undefined;
+              if (serviceTier !== undefined) {
+                // turn/steer carries no settings, and the turns Codex starts on its own reuse the thread's.
+                yield* client.request("thread/settings/update", { threadId, serviceTier }).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-steer-service-tier-failed", {
+                      cause,
+                    }),
+                  ),
+                );
+              }
               const codexInput = yield* toCodexInput(turnInput);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,

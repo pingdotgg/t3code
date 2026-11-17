@@ -1,6 +1,7 @@
 import {
   composerFileAttachmentMimeType,
   composerImageDedupKey,
+  rememberComposerImageBytes,
 } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -1659,6 +1660,27 @@ function getComposerDraftState(
   return state.draftsByThreadKey[threadKey] ?? null;
 }
 
+/** Where a draft lives now: its thread once promoted, or null once it was discarded. */
+export function resolveLiveComposerDraftTarget(
+  target: ComposerThreadTarget,
+): ComposerThreadTarget | null {
+  if (typeof target !== "string") return target;
+  const state = composerDraftStore.getState();
+  const promoted = state.promotedDraftRedirects[target];
+  if (promoted) return promoted;
+  return state.draftThreadsByThreadKey[target] || state.draftsByThreadKey[target] ? target : null;
+}
+
+/** The stored prompt for a target, empty when it has no draft, or null when the target is gone. */
+export function readComposerDraftPrompt(target: ComposerThreadTarget): string | null {
+  const live = resolveLiveComposerDraftTarget(target);
+  if (live === null) return null;
+  const state = composerDraftStore.getState();
+  const threadKey = resolveComposerDraftKey(state, live);
+  if (!threadKey) return null;
+  return state.draftsByThreadKey[threadKey]?.prompt ?? "";
+}
+
 function draftThreadHasOpenPreview(draftThread: DraftThreadState | undefined): boolean {
   if (draftThread === undefined) return false;
   const ref = scopeThreadRef(draftThread.environmentId, draftThread.threadId);
@@ -2628,16 +2650,21 @@ function hydratePersistedComposerImageAttachment(
         header.startsWith("data:") && header.includes(";")
           ? header.slice("data:".length, header.indexOf(";"))
           : attachment.mimeType;
-      return new File([decodedText], attachment.name, {
+      const textBytes = new TextEncoder().encode(decodedText);
+      const textFile = new File([textBytes], attachment.name, {
         type: inferredMimeType || attachment.mimeType,
       });
+      rememberComposerImageBytes(textFile, textBytes);
+      return textFile;
     }
     const binary = atob(payload);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
-    return new File([bytes], attachment.name, { type: attachment.mimeType });
+    const file = new File([bytes], attachment.name, { type: attachment.mimeType });
+    rememberComposerImageBytes(file, bytes);
+    return file;
   } catch {
     return null;
   }
