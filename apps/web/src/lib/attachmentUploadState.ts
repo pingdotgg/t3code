@@ -21,10 +21,19 @@ export type AttachmentUploadState =
       readonly status: "failed";
       readonly environmentId: EnvironmentId;
       readonly reason: string;
+      /** `reason` as a `msg()`, so the composer shows it in the current language. */
+      readonly reasonMessage?: string;
       /** Retry/release deletes this id; never use a persisted draft attachment id. */
       readonly attachmentId?: string;
       readonly previous?: ReadyAttachmentUpload;
     };
+
+export function attachmentUploadFailureText(
+  upload: Extract<AttachmentUploadState, { status: "failed" }>,
+  resolve: MessageResolver,
+): string {
+  return upload.reasonMessage === undefined ? upload.reason : resolve(upload.reasonMessage);
+}
 
 export function attachmentUploadBlockReason(
   input: {

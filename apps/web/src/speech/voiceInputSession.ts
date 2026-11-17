@@ -165,8 +165,8 @@ export class VoiceInputSession {
       onText: (preview) => {
         if (!this.disposed) this.publishActivity({ ...this.activity, preview });
       },
-      onError: (message) => {
-        if (!this.disposed) void this.controller.interruptRecording(message);
+      onError: (message, code) => {
+        if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },
     });
     const postProcess: NonNullable<VoiceInputControllerDependencies["postProcess"]> = (

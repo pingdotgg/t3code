@@ -1,4 +1,4 @@
-import { T, useGT } from "gt-react";
+import { msg, T, useGT } from "gt-react";
 
 import { APP_VERSION } from "../../branding";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -9,7 +9,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function AboutVersionTitle() {
   const gt = useGT();
   const { copyToClipboard } = useCopyToClipboard<void>({
-    target: "version",
+    target: {
+      target: "version",
+      unavailableMessage: msg("Clipboard API is unavailable while copying version."),
+      failureMessage: msg("Failed to copy version to the clipboard."),
+    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({

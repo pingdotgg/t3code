@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -102,7 +102,7 @@ interface BranchToolbarBranchSelectorProps {
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
 function toBranchActionErrorMessage(error: unknown): string {
-  return errorDisplayMessage(error, m) ?? m(msg("An error occurred."));
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 export function BranchToolbarBranchSelector({
@@ -395,7 +395,11 @@ export function BranchToolbarBranchSelector({
         : null;
 
   const copyBranchName = (branchName: string) => {
-    void writeTextToClipboard(branchName, "branch name").then(undefined, (error: unknown) => {
+    void writeTextToClipboard(branchName, {
+      target: "branch name",
+      unavailableMessage: msg("Clipboard API is unavailable while copying branch name."),
+      failureMessage: msg("Failed to copy branch name to the clipboard."),
+    }).then(undefined, (error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",

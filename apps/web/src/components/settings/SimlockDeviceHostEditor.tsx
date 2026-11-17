@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { useId, useState, type ReactNode } from "react";
@@ -39,7 +39,7 @@ import {
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error);
+  return error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : String(error);
 };
 
 /** The gateway each environment's own agent-device points at, if any. */

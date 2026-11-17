@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -108,7 +108,7 @@ export function ProjectActionsSettings() {
         initial: payload,
         error:
           error instanceof Error
-            ? (errorDisplayMessage(error, m) ?? error.message)
+            ? (thrownErrorMessage(error, m) ?? error.message)
             : gt("Failed to import action."),
       });
     }

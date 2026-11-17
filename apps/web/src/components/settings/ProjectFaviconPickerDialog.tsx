@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -121,7 +121,7 @@ export function ProjectFaviconPickerDialog(props: {
                           title: gt("Could not open image picker"),
                           description:
                             error instanceof Error
-                              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
                               : gt("An error occurred."),
                         });
                       })

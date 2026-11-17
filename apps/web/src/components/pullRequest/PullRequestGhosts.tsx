@@ -257,7 +257,17 @@ export function PullRequestDetailGhost({
                   <PullRequestCopyableCode
                     key={checkout}
                     value={checkout}
-                    target={`${terminology.singular} checkout command`}
+                    target={{
+                      target: `${terminology.singular} checkout command`,
+                      unavailableMessage: msg(
+                        "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
+                        { term: changeRequestTermKind(terminology) },
+                      ),
+                      failureMessage: msg(
+                        "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
+                        { term: changeRequestTermKind(terminology) },
+                      ),
+                    }}
                     copyLabel={gt("Copy checkout command")}
                     copiedLabel={gt("Checkout command copied")}
                     className="ml-auto font-mono"
@@ -282,7 +292,13 @@ export function PullRequestDetailGhost({
                   <PullRequestCopyableCode
                     key={seed.headBranch}
                     value={seed.headBranch}
-                    target="branch name"
+                    target={{
+                      target: "branch name",
+                      unavailableMessage: msg(
+                        "Clipboard API is unavailable while copying branch name.",
+                      ),
+                      failureMessage: msg("Failed to copy branch name to the clipboard."),
+                    }}
                     copyLabel={gt(
                       "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
                       { term: changeRequestTermKind(terminology) },

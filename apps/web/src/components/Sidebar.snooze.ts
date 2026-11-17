@@ -32,18 +32,20 @@ export function pickSnoozePreset(
   id: string,
   timestampFormat: TimestampFormat,
   environmentId: EnvironmentId,
+  resolve: MessageResolver = m,
 ): SnoozePreset | undefined {
   const picked = pickSharedSnoozePreset({
     shown,
     id,
     now: new Date(),
     ...snoozeOptions(timestampFormat, environmentId),
+    resolve,
   });
   if (!picked) {
     toastManager.add({
       type: "warning",
-      title: m(msg("Could not snooze thread")),
-      description: m(msg("That snooze time has passed. Choose another time.")),
+      title: resolve(msg("Could not snooze thread")),
+      description: resolve(msg("That snooze time has passed. Choose another time.")),
     });
   }
   return picked;

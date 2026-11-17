@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -119,7 +119,7 @@ export function DesktopWebLinkCoordinator() {
       stackedThreadToast({
         type: "error",
         title: gt("Could not add backend"),
-        description: errorDisplayMessage(error, m) ?? gt("Failed to add backend."),
+        description: thrownErrorMessage(error, m) ?? gt("Failed to add backend."),
       }),
     );
 
@@ -201,7 +201,7 @@ export function DesktopWebLinkCoordinator() {
     }
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      reportFailure(url, errorDisplayMessage(error, m) ?? url);
+      reportFailure(url, thrownErrorMessage(error, m) ?? url);
     }
   });
 

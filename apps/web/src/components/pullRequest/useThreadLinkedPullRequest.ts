@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -93,7 +93,7 @@ export function useThreadLinkedPullRequest(input: {
         stackedThreadToast({
           type: "error",
           title: m(msg("Unable to update the thread pull request")),
-          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
@@ -245,7 +245,7 @@ function AboutVersionSection() {
             title: gt("Could not confirm update"),
             description:
               error instanceof Error
-                ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
                 : gt("Update confirmation failed."),
           }),
         );
@@ -264,7 +264,7 @@ function AboutVersionSection() {
               title: gt("Could not install update"),
               description:
                 error instanceof Error
-                  ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                  ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
                   : gt("Install failed."),
             }),
           );
@@ -298,7 +298,7 @@ function AboutVersionSection() {
             title: gt("Could not check for updates"),
             description:
               error instanceof Error
-                ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
                 : gt("Update check failed."),
           }),
         );

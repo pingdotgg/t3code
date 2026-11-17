@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -32,7 +32,7 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
@@ -131,7 +131,9 @@ export function AttachmentFilePreview(props: {
     props.asset && "attachmentId" in props.asset ? props.asset.attachmentId : undefined;
   const gt = useGT();
   const messages = useMessages();
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget(props.name),
+  });
   // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
   const resource =
     props.asset && "resource" in props.asset
@@ -189,7 +191,7 @@ export function AttachmentFilePreview(props: {
       })
       .catch((cause: unknown) => {
         if (!cancelled)
-          setError(errorDisplayMessage(cause, m) ?? m(msg("The attachment is unavailable.")));
+          setError(thrownErrorMessage(cause, m) ?? m(msg("The attachment is unavailable.")));
       });
     return () => {
       cancelled = true;
@@ -235,7 +237,7 @@ export function AttachmentFilePreview(props: {
       if (!controller.signal.aborted) setContent(result);
     })().catch((cause: unknown) => {
       if (!controller.signal.aborted)
-        setContentError(errorDisplayMessage(cause, m) ?? m(msg("Could not load this file.")));
+        setContentError(thrownErrorMessage(cause, m) ?? m(msg("Could not load this file.")));
     });
     return () => controller.abort();
   }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
@@ -275,7 +277,7 @@ export function AttachmentFilePreview(props: {
         toastManager.add({
           type: "error",
           title: gt("Could not save file"),
-          description: errorDisplayMessage(cause, m) ?? gt("Please try again."),
+          description: thrownErrorMessage(cause, m) ?? gt("Please try again."),
         });
       }
       setSaving(false);
@@ -418,7 +420,7 @@ export function AttachmentFilePreview(props: {
           </span>
           {props.sizeBytes > 0 ? (
             <span className="ml-2 shrink-0 text-muted-foreground">
-              {formatAttachmentSize(props.sizeBytes)}
+              {formatAttachmentSize(props.sizeBytes, messages)}
             </span>
           ) : null}
         </div>
@@ -475,7 +477,7 @@ export function AttachmentFilePreview(props: {
                   toastManager.add({
                     type: "error",
                     title: gt("Could not copy file"),
-                    description: errorDisplayMessage(cause, m) ?? gt("Try again."),
+                    description: thrownErrorMessage(cause, m) ?? gt("Try again."),
                   }),
                 );
             }}

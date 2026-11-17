@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -1512,7 +1512,17 @@ export function PullRequestsPage() {
     const terminology = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void writeTextToClipboard(url, `${terminology.singular} link`).then(undefined, (error) => {
+    void writeTextToClipboard(url, {
+      target: `${terminology.singular} link`,
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} link.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+      failureMessage: msg(
+        "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} link to the clipboard.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+    }).then(undefined, (error) => {
       toastManager.add({
         type: "error",
         title: m(
@@ -1520,7 +1530,7 @@ export function PullRequestsPage() {
             term: changeRequestTermKind(terminology),
           }),
         ),
-        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+        description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
       });
     });
   });

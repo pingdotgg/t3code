@@ -100,6 +100,165 @@ function fieldAcceptsString(
   return (value) => Option.isSome(decode(value));
 }
 
+// Field text authored in contracts and the provider and source-control packages, which the server
+// also imports. Keyed by that English; text not listed here shows as authored.
+const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
+  ["Binary path", msg("Binary path")],
+  ["CODEX_HOME path", msg("CODEX_HOME path")],
+  ["Shadow home path", msg("Shadow home path")],
+  ["Launch arguments", msg("Launch arguments")],
+  ["CLAUDE_CONFIG_DIR path", msg("CLAUDE_CONFIG_DIR path")],
+  ["Auto-compact after", msg("Auto-compact after")],
+  ["Compact idle threads", msg("Compact idle threads")],
+  ["Sign-in method", msg("Sign-in method")],
+  ["API key", msg("API key")],
+  ["GCP project", msg("GCP project")],
+  ["GCP location", msg("GCP location")],
+  ["ACP source", msg("ACP source")],
+  ["Registry agent ID", msg("Registry agent ID")],
+  ["Executable override", msg("Executable override")],
+  ["Authentication method", msg("Authentication method")],
+  ["Server URL", msg("Server URL")],
+  ["Server password", msg("Server password")],
+  ["Access token", msg("Access token")],
+  ["Atlassian account email", msg("Atlassian account email")],
+  ["API token", msg("API token")],
+  ["Token", msg("Token", { $context: "settings field, an access token" })],
+  [
+    "Path to the Codex binary used by this instance.",
+    msg("Path to the Codex binary used by this instance."),
+  ],
+  ["Custom Codex home and config directory.", msg("Custom Codex home and config directory.")],
+  [
+    "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
+    msg(
+      "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
+    ),
+  ],
+  [
+    "Additional CLI arguments passed to codex app-server on session start.",
+    msg("Additional CLI arguments passed to codex app-server on session start."),
+  ],
+  [
+    "Path to the Claude binary used by this instance.",
+    msg("Path to the Claude binary used by this instance."),
+  ],
+  [
+    "Custom Claude home and config directory. Keeps .claude.json and .claude separate.",
+    msg("Custom Claude home and config directory. Keeps .claude.json and .claude separate."),
+  ],
+  [
+    "Additional CLI arguments passed on session start.",
+    msg("Additional CLI arguments passed on session start."),
+  ],
+  [
+    "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
+    msg("Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default."),
+  ],
+  [
+    "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+    msg(
+      "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+    ),
+  ],
+  [
+    "Google accounts use your subscription; API keys and Agent Platform bill usage.",
+    msg("Google accounts use your subscription; API keys and Agent Platform bill usage."),
+  ],
+  [
+    "Gemini or Vertex AI express key. Stored separately on the host.",
+    msg("Gemini or Vertex AI express key. Stored separately on the host."),
+  ],
+  [
+    "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",
+    msg("Required for Gemini Enterprise. Agent Platform uses it when no API key is set."),
+  ],
+  [
+    "Region for Gemini Enterprise or Agent Platform.",
+    msg("Region for Gemini Enterprise or Agent Platform."),
+  ],
+  [
+    "Custom ACP executable. Leave empty to select automatically.",
+    msg("Custom ACP executable. Leave empty to select automatically."),
+  ],
+  [
+    "Agent identifier from the official ACP Registry, for example 'devin'.",
+    msg("Agent identifier from the official ACP Registry, for example 'devin'."),
+  ],
+  [
+    "Executable on this environment. For registry agents, this overrides the distribution executable while keeping its arguments and environment.",
+    msg(
+      "Executable on this environment. For registry agents, this overrides the distribution executable while keeping its arguments and environment.",
+    ),
+  ],
+  [
+    "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",
+    msg(
+      "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",
+    ),
+  ],
+  [
+    "Path to the fx binary. All fx instances on this machine share its fx login.",
+    msg("Path to the fx binary. All fx instances on this machine share its fx login."),
+  ],
+  ["Path to the Grok CLI binary.", msg("Path to the Grok CLI binary.")],
+  ["Path to the Kiro CLI binary.", msg("Path to the Kiro CLI binary.")],
+  [
+    "Path to the Muse Code binary on this environment. Sign in with muse login on that host.",
+    msg("Path to the Muse Code binary on this environment. Sign in with muse login on that host."),
+  ],
+  ["Path to the OpenCode binary.", msg("Path to the OpenCode binary.")],
+  [
+    "Leave blank to let T3 Code spawn the server when needed.",
+    msg("Leave blank to let T3 Code spawn the server when needed."),
+  ],
+  ["Stored separately on the host.", msg("Stored separately on the host.")],
+  ["Path to the Pi coding agent binary.", msg("Path to the Pi coding agent binary.")],
+  [
+    "Additional CLI arguments passed to pi --mode rpc on session start.",
+    msg("Additional CLI arguments passed to pi --mode rpc on session start."),
+  ],
+  [
+    "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
+    msg(
+      "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
+    ),
+  ],
+  [
+    "With an API token instead of an access token.",
+    msg("With an API token instead of an access token."),
+  ],
+  [
+    "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, plus read:user:bitbucket and read:workspace:bitbucket.",
+    msg(
+      "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, plus read:user:bitbucket and read:workspace:bitbucket.",
+    ),
+  ],
+  [
+    "A git.cafe token, used before CAFE_TOKEN and the cafe login, so GitCafe works without the CLI signed in.",
+    msg(
+      "A git.cafe token, used before CAFE_TOKEN and the cafe login, so GitCafe works without the CLI signed in.",
+    ),
+  ],
+  ["e.g. --chrome", msg("e.g. --chrome")],
+  ["e.g. 300000", msg("e.g. 300000")],
+  ["Optional", msg("Optional", { $context: "placeholder of an optional settings field" })],
+  ["Automatic", msg("Automatic", { $context: "placeholder, chosen automatically when empty" })],
+  ["Registry default", msg("Registry default")],
+  ["When you return", msg("When you return")],
+  ["Before the cache expires (beta)", msg("Before the cache expires (beta)")],
+  ["Never", msg("Never", { $context: "option, never compact idle threads" })],
+  ["Use default", msg("Use default")],
+  ["Google account", msg("Google account")],
+  ["Gemini API key", msg("Gemini API key")],
+  ["Local command", msg("Local command")],
+]);
+
+function packageFieldText(text: string, resolve: MessageResolver): string {
+  const entry = PACKAGE_FIELD_TEXT.get(text);
+  return entry === undefined ? text : resolve(entry);
+}
+
 export function deriveProviderSettingsFields(
   definition: SettingsFormDefinition,
   value?: unknown,
@@ -137,16 +296,18 @@ export function deriveProviderSettingsFields(
           label:
             isLocalAcp && key === "commandPath"
               ? resolve(msg("Executable"))
-              : (annotatedTitle ?? titleizeFieldKey(key)),
+              : annotatedTitle !== undefined
+                ? packageFieldText(annotatedTitle, resolve)
+                : titleizeFieldKey(key),
           ...(isLocalAcp && key === "commandPath"
             ? { description: resolve(msg("Executable name or path on this environment.")) }
             : annotatedDescription !== undefined
-              ? { description: annotatedDescription }
+              ? { description: packageFieldText(annotatedDescription, resolve) }
               : {}),
           ...(isLocalAcp && key === "commandPath"
             ? { placeholder: resolve(msg("e.g. dsh")) }
             : formAnnotation.placeholder !== undefined
-              ? { placeholder: formAnnotation.placeholder }
+              ? { placeholder: packageFieldText(formAnnotation.placeholder, resolve) }
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
@@ -156,7 +317,12 @@ export function deriveProviderSettingsFields(
             : {}),
           accepts: fieldAcceptsString(fieldSchema),
           ...(formAnnotation.control === "select" && formAnnotation.options
-            ? { options: formAnnotation.options }
+            ? {
+                options: formAnnotation.options.map((option) => ({
+                  ...option,
+                  label: packageFieldText(option.label, resolve),
+                })),
+              }
             : {}),
         } satisfies ProviderSettingsFieldModel,
       ];

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthEnvironmentMaintainScope,
@@ -14,7 +14,11 @@ import type {
   ServerInstallation,
   ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
-import type { ServerUpdateStage, ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import {
+  serverUpdateFailureText,
+  type ServerUpdateStage,
+  type ServerUpdateState,
+} from "@t3tools/client-runtime/state/server";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -89,7 +93,7 @@ function CrossTrackNote() {
 }
 
 function updateFailureMessage(error: unknown): string {
-  return errorDisplayMessage(error, m) ?? m(msg("Server update failed."));
+  return thrownErrorMessage(error, m) ?? m(msg("Server update failed."));
 }
 
 export interface ServerUpdateTarget {
@@ -261,8 +265,12 @@ export function ServerUpdateProgress({
       <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
         <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         <Tooltip>
-          <TooltipTrigger render={<span className="min-w-0 truncate">{state.message}</span>} />
-          <TooltipPopup side="top">{state.message}</TooltipPopup>
+          <TooltipTrigger
+            render={
+              <span className="min-w-0 truncate">{serverUpdateFailureText(state, messages)}</span>
+            }
+          />
+          <TooltipPopup side="top">{serverUpdateFailureText(state, messages)}</TooltipPopup>
         </Tooltip>
       </div>
     );
@@ -301,7 +309,17 @@ export function ServerUpdateAction({
   const updatesInstall =
     installation?.kind === "npm-global" || installation?.kind === "t3-launcher";
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
-    target: updatesInstall ? "update command" : "relaunch command",
+    target: updatesInstall
+      ? {
+          target: "update command",
+          unavailableMessage: msg("Clipboard API is unavailable while copying update command."),
+          failureMessage: msg("Failed to copy update command to the clipboard."),
+        }
+      : {
+          target: "relaunch command",
+          unavailableMessage: msg("Clipboard API is unavailable while copying relaunch command."),
+          failureMessage: msg("Failed to copy relaunch command to the clipboard."),
+        },
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",

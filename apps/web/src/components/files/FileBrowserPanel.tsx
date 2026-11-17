@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
@@ -241,7 +241,7 @@ export default function FileBrowserPanel({
             toastManager.add({
               type: "error",
               title: gt("Failed to copy mention"),
-              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             });
           }
           return;

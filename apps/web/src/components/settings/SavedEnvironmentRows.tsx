@@ -143,7 +143,11 @@ export function SavedBackendListRow({
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
-    target: "trace ID",
+    target: {
+      target: "trace ID",
+      unavailableMessage: msg("Clipboard API is unavailable while copying trace ID."),
+      failureMessage: msg("Failed to copy trace ID to the clipboard."),
+    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -158,7 +162,11 @@ export function SavedBackendListRow({
     copyTraceIdToClipboard(traceId, { traceId });
   };
   const { copyToClipboard: copyMcpUrl } = useCopyToClipboard<{ url: string }>({
-    target: "MCP URL",
+    target: {
+      target: "MCP URL",
+      unavailableMessage: msg("Clipboard API is unavailable while copying MCP URL."),
+      failureMessage: msg("Failed to copy MCP URL to the clipboard."),
+    },
     onCopy: ({ url }) => {
       toastManager.add({
         type: "success",
@@ -377,7 +385,10 @@ export function SavedBackendListRow({
       serverUpdateState.status !== "running" ? (
         <OutdatedServerUpdateAction
           environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
+          serverLabel={gt("{label} server", {
+            label: environment.label,
+            $context: "names a T3 server inside sentences such as {serverLabel} updated",
+          })}
           fromVersion={lastDescriptor?.serverVersion}
           targetVersion={APP_VERSION}
           label={serverUpdateState.status === "failed" ? gt("Retry update") : gt("Update")}
@@ -386,7 +397,10 @@ export function SavedBackendListRow({
       {showUpdateAction ? (
         <ServerUpdateAction
           environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
+          serverLabel={gt("{label} server", {
+            label: environment.label,
+            $context: "names a T3 server inside sentences such as {serverLabel} updated",
+          })}
           selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
           installation={environment.serverConfig?.environment.capabilities.serverInstallation}
           desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import * as DateTime from "effect/DateTime";
 import { msg } from "gt-react";
 
@@ -306,7 +306,7 @@ export function formatDesktopSshConnectionError(
 ): string {
   const fallback = resolve(msg("Failed to connect SSH host."));
   const rawMessage =
-    error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : fallback;
+    error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
     "",

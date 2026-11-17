@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import * as Schema from "effect/Schema";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
@@ -65,7 +65,7 @@ export function DeviceAndroidFoldControls(props: {
         setError(
           controller.signal.aborted
             ? gt("Fold command timed out.")
-            : (errorDisplayMessage(cause, m) ?? gt("Could not change fold posture.")),
+            : (thrownErrorMessage(cause, m) ?? gt("Could not change fold posture.")),
         );
       })
       .finally(() => {

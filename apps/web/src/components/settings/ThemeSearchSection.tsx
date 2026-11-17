@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
@@ -139,7 +139,7 @@ export function createThemeSearch(
           shownKey = null;
           view.setError(
             cause instanceof Error
-              ? (errorDisplayMessage(cause, m) ?? cause.message)
+              ? (thrownErrorMessage(cause, m) ?? cause.message)
               : m(msg("Open VSX search failed.")),
           );
         },
@@ -274,7 +274,7 @@ export function ThemeSearchSection({
     } catch (cause) {
       setError(
         cause instanceof Error
-          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          ? (thrownErrorMessage(cause, m) ?? cause.message)
           : gt("Installed themes could not be read."),
       );
       return;
@@ -299,7 +299,7 @@ export function ThemeSearchSection({
       if (!installSignal.aborted) {
         setError(
           cause instanceof Error
-            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            ? (thrownErrorMessage(cause, m) ?? cause.message)
             : gt("That theme could not be added."),
         );
       }

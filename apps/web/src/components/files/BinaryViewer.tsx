@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 
@@ -108,6 +108,7 @@ export default function BinaryViewer(props: {
   readonly onRetry?: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const [sizeBytes, setSizeBytes] = useState<number | null>(null);
   const [archive, setArchive] = useState<Archive | null>(null);
   const [database, setDatabase] = useState<Database | null>(null);
@@ -236,7 +237,7 @@ export default function BinaryViewer(props: {
           </span>
           <span className="shrink-0 text-muted-foreground">
             {entriesLabel(archive.entries.length, gt)}
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes, messages)}` : ""}
           </span>
         </div>
       ) : null}
@@ -299,7 +300,7 @@ export default function BinaryViewer(props: {
           >
             {rowsLabel(table.count, gt)} ·{" "}
             {rows ? columnsLabel(rows.columns.length, gt) : gt("… columns")}
-            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
+            {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes, messages)}` : ""}
           </div>
           <FileSurfaceNotice>
             <T>
@@ -371,7 +372,7 @@ export default function BinaryViewer(props: {
                       </button>
                     </td>
                     <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
-                      {formatAttachmentSize(item.size)}
+                      {formatAttachmentSize(item.size, messages)}
                     </td>
                     <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
                       {item.modified ? new Date(item.modified).toLocaleDateString() : "-"}

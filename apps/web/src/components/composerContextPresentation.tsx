@@ -17,19 +17,24 @@ import { ComposerContextActionsContext } from "./composerContextActions";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
 import { useTheme } from "~/hooks/useTheme";
-import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
+import {
+  attachmentUploadFailureText,
+  type AttachmentUploadState,
+} from "~/lib/attachmentUploadState";
 import { useAttachmentUploadProgress } from "~/hooks/useAttachmentUploadProgress";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
   isPullRequestSummaryContext,
-  pullRequestContextDisplayState,
-  pullRequestContextKindLabel,
   previewAnnotationContextId,
   previewAnnotationContextLabel,
+  pullRequestContextDisplayState,
+  pullRequestContextKindLabel,
   reviewCommentContextId,
   reviewCommentContextLabel,
+  reviewCommentRangeText,
+  reviewCommentSectionText,
   terminalContextReference,
   uploadedAttachmentContextRecord,
 } from "~/lib/composerContextRecords";
@@ -180,9 +185,10 @@ function useUploadStatusSuffix(
 function attachmentTooltip(
   attachment: ComposerImageAttachment | ComposerFileAttachment,
   upload: AttachmentUploadState | undefined,
+  resolve: MessageResolver,
 ): string {
-  const lines = [attachment.name, formatAttachmentSize(attachment.sizeBytes)];
-  if (upload?.status === "failed") lines.push("", upload.reason);
+  const lines = [attachment.name, formatAttachmentSize(attachment.sizeBytes, resolve)];
+  if (upload?.status === "failed") lines.push("", attachmentUploadFailureText(upload, resolve));
   return lines.join("\n");
 }
 
@@ -191,6 +197,7 @@ function ImageContextChip(props: {
   upload: AttachmentUploadState | undefined;
 }) {
   const actions = use(ComposerContextActionsContext);
+  const messages = useMessages();
   const suffix = useUploadStatusSuffix(props.record.id, props.upload);
   return (
     <Tooltip>
@@ -199,14 +206,14 @@ function ImageContextChip(props: {
           <ImageChipButton
             name={props.record.name}
             previewUrl={props.record.previewUrl}
-            size={formatAttachmentSize(props.record.sizeBytes)}
+            size={formatAttachmentSize(props.record.sizeBytes, messages)}
             suffix={suffix}
             onClick={() => actions.expandImage(props.record.id)}
           />
         }
       />
       <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {attachmentTooltip(props.record, props.upload)}
+        {attachmentTooltip(props.record, props.upload, messages)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -217,12 +224,13 @@ function FileContextChip(props: {
   upload: AttachmentUploadState | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const actions = use(ComposerContextActionsContext);
   const { resolvedTheme } = useTheme();
   const needsReattach = composerFileNeedsReattach(props.record);
   const uploadSuffix = useUploadStatusSuffix(props.record.id, props.upload);
   const suffix = needsReattach ? gt("attach again") : uploadSuffix;
-  const size = formatAttachmentSize(props.record.sizeBytes);
+  const size = formatAttachmentSize(props.record.sizeBytes, messages);
   const isVideo = videoMimeType(props.record) !== null;
   return (
     <FileChip
@@ -258,7 +266,7 @@ function FileContextChip(props: {
           ? gt("{name} was not saved with this draft. Attach it again to send it.", {
               name: props.record.name,
             })
-          : attachmentTooltip(props.record, props.upload)
+          : attachmentTooltip(props.record, props.upload, messages)
       }
     />
   );
@@ -266,16 +274,40 @@ function FileContextChip(props: {
 
 function PullRequestContextChip(props: { record: ReviewCommentContext; kind: ContextChipKind }) {
   const actions = use(ComposerContextActionsContext);
+  const messages = useMessages();
   const metadata = props.record.pullRequest;
   if (metadata === undefined) return null;
   return (
     <PullRequestChip
       metadata={metadata}
       environmentId={actions.environmentId}
-      label={reviewCommentContextLabel(props.record)}
-      kindLabel={pullRequestContextKindLabel(props.record)}
+      label={reviewCommentContextLabel(props.record, messages)}
+      kindLabel={pullRequestContextKindLabel(props.record, messages)}
       kind={props.kind}
       onOpen={actions.openPullRequest}
+    />
+  );
+}
+
+function ReviewCommentContextChip(props: {
+  record: ReviewCommentContext;
+  isPullRequest: boolean;
+  detailsMode: ContextPresentationCapability["details"];
+  kind: ContextChipKind;
+}) {
+  const messages = useMessages();
+  return (
+    <ContextChip
+      icon={props.isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+      label={reviewCommentContextLabel(props.record, messages)}
+      kindLabel={
+        props.isPullRequest
+          ? pullRequestContextKindLabel(props.record, messages)
+          : msg("Review comment")
+      }
+      details={<ComposerReviewCommentDetails comment={props.record} />}
+      detailsMode={props.detailsMode}
+      kind={props.kind}
     />
   );
 }
@@ -329,12 +361,14 @@ function previewAnnotationTooltip(
 }
 
 function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentContext }) {
+  const messages = useMessages();
   return (
     <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
         <div className="text-secondary-label text-2xs">
-          {comment.sectionTitle} · {comment.rangeLabel}
+          {reviewCommentSectionText(comment.sectionTitle, messages)} ·{" "}
+          {reviewCommentRangeText(comment.rangeLabel, messages)}
         </div>
       </div>
       {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}
@@ -496,13 +530,9 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           );
         }
         return (
-          <ContextChip
-            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
-            label={reviewCommentContextLabel(entry.record)}
-            kindLabel={
-              isPullRequest ? pullRequestContextKindLabel(entry.record) : msg("Review comment")
-            }
-            details={<ComposerReviewCommentDetails comment={entry.record} />}
+          <ReviewCommentContextChip
+            record={entry.record}
+            isPullRequest={isPullRequest}
             detailsMode={definition.capabilities.details}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
           />

@@ -1,4 +1,5 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { sourceControlInstallHintText } from "@t3tools/client-runtime/contract-labels";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
@@ -225,7 +226,7 @@ function getPublishProviderReadiness(
     };
   }
   if (discovered.status !== "available") {
-    return { ready: false, hint: discovered.installHint };
+    return { ready: false, hint: sourceControlInstallHintText(discovered.installHint, resolve) };
   }
   if (discovered.auth.status === "unauthenticated") {
     return {
@@ -557,7 +558,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          setPublishError(errorDisplayMessage(error, m) ?? gt("An error occurred."));
+          setPublishError(thrownErrorMessage(error, m) ?? gt("An error occurred."));
         }
         return;
       }
@@ -1093,7 +1094,7 @@ export default function GitActionsControl({
   const ignoreWhitespaceSetting = useClientSettings((settings) => settings.diffIgnoreWhitespace);
   const ignoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
-  const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId);
+  const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId, messages);
   // Same input as the Diff panel's branch query, so both read one cached result. Status
   // totals join the revision because edits, pulls and resets outside a turn leave the mutation
   // id as is.
@@ -1328,7 +1329,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Action failed"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
@@ -1411,7 +1412,7 @@ export default function GitActionsControl({
             stackedThreadToast({
               type: "error",
               title: gt("Pull failed"),
-              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
               timeout: errorToastTiming.timeout,
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
             }),
@@ -1502,7 +1503,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Unable to open file"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1540,7 +1541,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Git initialization failed"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );

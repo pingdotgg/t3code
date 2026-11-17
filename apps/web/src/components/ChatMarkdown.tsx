@@ -1,5 +1,5 @@
 import { m } from "../i18n/messages";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
@@ -626,7 +626,7 @@ function useChatMarkdownState({
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
         let description =
-          errorDisplayMessage(error, m) ??
+          thrownErrorMessage(error, m) ??
           gt("The file could not be loaded. It may have been moved or deleted.");
         if (
           isAssetNotFoundError(error) &&
@@ -1368,7 +1368,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 }
               },
               openExternal: (target) => api.shell.openExternal(target),
-              copyLink: (target) => writeTextToClipboard(target, "link"),
+              copyLink: (target) =>
+                writeTextToClipboard(target, {
+                  target: "link",
+                  unavailableMessage: msg("Clipboard API is unavailable while copying link."),
+                  failureMessage: msg("Failed to copy link to the clipboard."),
+                }),
               updateThreadLink: updateThreadPullRequestLink,
               reportFailure: (operation, cause) => {
                 reportMarkdownActionFailure({ operation, target: href }, cause);
@@ -1383,7 +1388,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                         operation === "link-pull-request-to-thread"
                           ? gt("Unable to link pull request")
                           : gt("Unable to unlink pull request"),
-                      description: errorDisplayMessage(cause, m) ?? gt("The request failed."),
+                      description: thrownErrorMessage(cause, m) ?? gt("The request failed."),
                     }),
                   );
                 }

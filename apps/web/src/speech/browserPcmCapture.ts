@@ -2,6 +2,7 @@ import type {
   PreparedVoiceTranscription,
   VoiceRecorder,
   VoiceStreamingSession,
+  VoiceInputErrorCode,
   VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 import { requestMicrophone } from "./requestMicrophone";
@@ -18,7 +19,7 @@ export function createBrowserPcmCapture(
     readonly getMicrophoneId: () => string | Promise<string>;
     readonly onLevel: (level: number) => void;
     readonly onDurationLimit: () => void;
-    readonly onError: (message: string) => void;
+    readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
   },
   prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedBrowserTranscription>,
 ) {
@@ -113,12 +114,12 @@ export function createBrowserPcmCapture(
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error(m(msg("Microphone processing failed."))));
-          input.onError(m(msg("Microphone processing failed.")));
+          input.onError(m(msg("Microphone processing failed.")), "microphone-failed");
         };
         for (const track of captured.getTracks())
           track.addEventListener(
             "ended",
-            () => input.onError(m(msg("The microphone disconnected."))),
+            () => input.onError(m(msg("The microphone disconnected.")), "microphone-disconnected"),
             {
               once: true,
             },

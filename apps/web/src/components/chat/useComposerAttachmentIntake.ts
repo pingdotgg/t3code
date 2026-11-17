@@ -213,7 +213,7 @@ export function useComposerAttachmentIntake(input: {
           continue;
         }
         if (file.size > fileStagingLimit) {
-          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit);
+          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit, m);
           continue;
         }
         const attachmentFile =
@@ -252,7 +252,7 @@ export function useComposerAttachmentIntake(input: {
           title: m(msg("Large paste attached as {name}", { name: attached.name })),
           description: m(
             msg("{size} · Use {shortcut} to keep a large paste inline.", {
-              size: formatAttachmentSize(attached.sizeBytes),
+              size: formatAttachmentSize(attached.sizeBytes, m),
               shortcut: isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V",
             }),
           ),

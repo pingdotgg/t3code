@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { msg } from "gt-react";
 import {
@@ -180,7 +180,7 @@ function failureCause<A>(result: AsyncResult.AsyncResult<A, unknown>): unknown {
 
 function errorMessage(cause: unknown, resolve: MessageResolver): string | null {
   if (cause === null) return null;
-  return errorDisplayMessage(cause, resolve) ?? resolve(msg("Workspace query failed."));
+  return thrownErrorMessage(cause, resolve) ?? resolve(msg("Workspace query failed."));
 }
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
@@ -193,7 +193,7 @@ export function useProjectEntriesQuery(
   revision?: string | null,
   resolve: MessageResolver = m,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const fileAccess = useFilesystemReadAccess(environmentId);
+  const fileAccess = useFilesystemReadAccess(environmentId, resolve);
   const { canReadFiles } = fileAccess;
   const atom = canReadFiles
     ? getProjectEntriesQueryAtom(environmentId, cwd, directoryPath)
@@ -251,7 +251,7 @@ export function useProjectFileQuery(
   resolve: MessageResolver = m,
 ): ProjectFileQueryState {
   // Read media-like paths too; a failed read is how folders with those names are detected.
-  const fileAccess = useFilesystemReadAccess(environmentId);
+  const fileAccess = useFilesystemReadAccess(environmentId, resolve);
   const { canReadFiles } = fileAccess;
   const isQueryEnabled = enabled;
   const atom =

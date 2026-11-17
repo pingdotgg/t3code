@@ -75,6 +75,7 @@ export function PullRequestReviewerPicker({
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
+    resolve,
   );
   // Past the first page the host is asked, since what was loaded cannot answer for the rest.
   const debouncedQuery = useDebouncedValue(query.trim(), 250);

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -384,7 +384,7 @@ function ProjectScriptEditorForm({
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
     } catch (error) {
-      setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
+      setValidationError(thrownErrorMessage(error, m) ?? gt("Failed to save action."));
       return;
     }
 
@@ -398,7 +398,7 @@ function ProjectScriptEditorForm({
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
-            setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
+            setValidationError(thrownErrorMessage(error, m) ?? gt("Failed to save action."));
           }
         } else {
           close();
@@ -406,7 +406,7 @@ function ProjectScriptEditorForm({
       }
     } catch (error) {
       if (pendingSubmissionRef.current === submission) {
-        setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
+        setValidationError(thrownErrorMessage(error, m) ?? gt("Failed to save action."));
       }
     }
     if (pendingSubmissionRef.current === submission) {

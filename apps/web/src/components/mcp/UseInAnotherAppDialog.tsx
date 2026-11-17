@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -32,7 +32,11 @@ import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
-import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  namedClipboardTarget,
+  useCopyToClipboard,
+  writeTextToClipboard,
+} from "~/hooks/useCopyToClipboard";
 import { useNowSecond } from "~/hooks/useNowSecond";
 import { readLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -697,7 +701,7 @@ function openLink(url: string) {
       toastManager.add({
         type: "error",
         title: m(msg("Could not open the link")),
-        description: errorDisplayMessage(error, m) ?? url,
+        description: thrownErrorMessage(error, m) ?? url,
       }),
     );
 }
@@ -735,7 +739,9 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
   const handOff = async () => {
     if (copy !== null) {
       // The app opens only once the copy lands, so it never gets an older clipboard.
-      const copied = await writeTextToClipboard(copy.text, copy.title).catch(() => false);
+      const copied = await writeTextToClipboard(copy.text, namedClipboardTarget(copy.title)).catch(
+        () => false,
+      );
       if (!copied) {
         toastManager.add({
           type: "error",
@@ -848,7 +854,10 @@ function ApprovalCode({
 }
 
 function CopyRow({ label, value }: { readonly label: string; readonly value: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: label });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: namedClipboardTarget(label),
+  });
   const gt = useGT();
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">

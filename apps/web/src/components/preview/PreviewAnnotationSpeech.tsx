@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type {
@@ -118,7 +118,7 @@ export function PreviewAnnotationSpeech({
         toastManager.add({
           type: "error",
           title: gt("Could not update annotation voice input"),
-          description: errorDisplayMessage(error, m) ?? String(error),
+          description: thrownErrorMessage(error, m) ?? String(error),
         });
       }
     },

@@ -1,10 +1,10 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
@@ -131,6 +131,7 @@ export function AddEnvironmentDialog({
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
     isSshDiscoveryActive ? desktopSshHostsStateAtom : null,
+    useMessages(),
   );
   // The discovery atom is kept alive across dialog opens, so re-read SSH config
   // each time the SSH tab is shown; stale hosts stay visible while it refreshes.
@@ -228,7 +229,7 @@ export function AddEnvironmentDialog({
     } catch (error) {
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, m) ?? error.message)
+          ? (thrownErrorMessage(error, m) ?? error.message)
           : gt("Failed to add backend.");
       onErrorChange(message);
       toastManager.add(
@@ -251,7 +252,7 @@ export function AddEnvironmentDialog({
         const error = squashAtomCommandFailure(result);
         const message =
           error instanceof Error
-            ? (errorDisplayMessage(error, m) ?? error.message)
+            ? (thrownErrorMessage(error, m) ?? error.message)
             : gt("Failed to add backend.");
         onErrorChange(message);
         toastManager.add(
@@ -469,7 +470,7 @@ export function AddEnvironmentDialog({
         const error = squashAtomCommandFailure(result);
         onErrorChange(
           error instanceof Error
-            ? (errorDisplayMessage(error, m) ?? error.message)
+            ? (thrownErrorMessage(error, m) ?? error.message)
             : gt("Could not add the route."),
         );
       }

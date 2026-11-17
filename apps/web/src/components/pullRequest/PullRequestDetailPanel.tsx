@@ -598,7 +598,17 @@ export function PullRequestDetailPanel({
   ).changeRequest;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
-    target: `${terminology.singular} reference`,
+    target: {
+      target: `${terminology.singular} reference`,
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} reference.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+      failureMessage: msg(
+        "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} reference to the clipboard.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+    },
     onError: (error, failureTitle) =>
       toastManager.add({
         type: "error",
@@ -1814,7 +1824,17 @@ export function PullRequestDetailPanel({
                     <PullRequestCopyableCode
                       key={checkoutCommand}
                       value={checkoutCommand}
-                      target={`${terminology.singular} checkout command`}
+                      target={{
+                        target: `${terminology.singular} checkout command`,
+                        unavailableMessage: msg(
+                          "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
+                          { term: changeRequestTermKind(terminology) },
+                        ),
+                        failureMessage: msg(
+                          "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
+                          { term: changeRequestTermKind(terminology) },
+                        ),
+                      }}
                       copyLabel={gt("Copy checkout command")}
                       copiedLabel={gt("Checkout command copied")}
                       className="ml-auto font-mono"
@@ -1836,7 +1856,13 @@ export function PullRequestDetailPanel({
                   <PullRequestCopyableCode
                     key={detail.headBranch}
                     value={detail.headBranch}
-                    target="branch name"
+                    target={{
+                      target: "branch name",
+                      unavailableMessage: msg(
+                        "Clipboard API is unavailable while copying branch name.",
+                      ),
+                      failureMessage: msg("Failed to copy branch name to the clipboard."),
+                    }}
                     copyLabel={gt(
                       "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
                       { term: changeRequestTermKind(terminology) },

@@ -1,4 +1,4 @@
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import { m } from "~/i18n/messages";
 import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
@@ -43,6 +43,7 @@ export default function LargeTextViewer(props: {
   readonly wordWrap?: boolean;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const [meta, setMeta] = useState<Extract<TextPreviewResult, { type: "meta" }> | null>(null);
   const [pages, setPages] = useState(new Map<number, string[][]>());
   const [error, setError] = useState<string | null>(null);
@@ -235,7 +236,7 @@ export default function LargeTextViewer(props: {
               formatted: meta.count.toLocaleString(),
             })}
         {meta.complete && meta.sizeBytes !== undefined
-          ? ` · ${meta.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(meta.sizeBytes)}`
+          ? ` · ${meta.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(meta.sizeBytes, messages)}`
           : ` · ${gt("Indexing…")}`}
       </div>
       {!meta.complete ? (

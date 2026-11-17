@@ -67,7 +67,10 @@ export function LinkedEnvironmentsSettings({
 }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
-  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  const links = useEnvironmentQuery(
+    peerLinkEnvironment.list({ environmentId, input: {} }),
+    useMessages(),
+  );
   // Links made outside this client bump nothing the shared list reads, so showing the panel
   // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
   // A list still loading counts as read now, so the next return to the window asks again.

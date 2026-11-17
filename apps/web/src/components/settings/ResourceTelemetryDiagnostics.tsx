@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -207,12 +207,22 @@ function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
   }
   return (
     <span className="text-2xs text-muted-foreground/60">
-      <T>
-        Updated{" "}
-        <span className="font-mono tabular-nums">
-          <Var>{relative.label}</Var>
-        </span>
-      </T>
+      {relative.suffix ? (
+        <T context="the time is an elapsed time such as 5m">
+          Updated{" "}
+          <span className="font-mono tabular-nums">
+            <Var>{relative.value}</Var>
+          </span>{" "}
+          ago
+        </T>
+      ) : (
+        <T>
+          Updated{" "}
+          <span className="font-mono tabular-nums">
+            <Var>{relative.value}</Var>
+          </span>
+        </T>
+      )}
     </span>
   );
 }
@@ -947,7 +957,7 @@ function ResourceTelemetryDiagnosticsBody({
           title: gt("Could not confirm signal"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : gt("Failed to send {signal}.", { signal }),
         });
         return;
@@ -992,7 +1002,7 @@ function ResourceTelemetryDiagnosticsBody({
           title: gt("Could not send {signal}", { signal }),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : gt("Failed to send {signal}.", { signal }),
         });
       })
@@ -1027,7 +1037,7 @@ function ResourceTelemetryDiagnosticsBody({
           title: gt("Could not restart resource monitor"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : gt("The resource monitor retry failed."),
         });
       })

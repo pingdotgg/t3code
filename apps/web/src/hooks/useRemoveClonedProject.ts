@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useRouter } from "@tanstack/react-router";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedProjectRef } from "@t3tools/contracts";
@@ -30,7 +30,7 @@ export function useRemoveClonedProject() {
         stackedThreadToast({
           type: "error",
           title: m(msg("Failed to remove project")),
-          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
       return false;

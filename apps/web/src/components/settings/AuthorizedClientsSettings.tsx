@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
@@ -644,7 +644,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       const error = squashAtomCommandFailure(result);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to create pairing URL.");
       toastManager.add(
         stackedThreadToast({

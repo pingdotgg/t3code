@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -194,7 +194,7 @@ function SwitchPlan({
       const error = squashAtomCommandFailure(result);
       fail(
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("An unexpected error occurred."),
       );
     }
@@ -220,11 +220,7 @@ function SwitchPlan({
       restarts={everything.restarts}
       confirmLabel={checking ? gt("Checking…") : gt("Switch to {label}", { label })}
       busy={checking}
-      disabledReason={
-        switchesLocal && localBlocked !== null
-          ? gt("This app cannot switch: {reason}.", { reason: localBlocked })
-          : idle.disabledReason
-      }
+      disabledReason={switchesLocal && localBlocked !== null ? localBlocked : idle.disabledReason}
       onConfirm={() => void run()}
     />
   );

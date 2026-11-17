@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -248,7 +248,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
           stackedThreadToast({
             type: "error",
             title: gt("Clone failed"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }

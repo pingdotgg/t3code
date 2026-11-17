@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -60,7 +60,7 @@ const deviceHostStatesAtom = environmentAtomList("web-device-host-states", (envi
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
   return error instanceof Error
-    ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+    ? (thrownErrorMessage(error, resolveNow) ?? error.message)
     : String(error);
 };
 
@@ -260,7 +260,7 @@ export function DeviceSourcesSettings(props: {
         title: gt("Device host not saved"),
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            ? (thrownErrorMessage(error, resolveNow) ?? error.message)
             : String(error),
       });
     }

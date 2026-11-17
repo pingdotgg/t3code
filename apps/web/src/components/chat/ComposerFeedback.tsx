@@ -30,15 +30,13 @@ export function feedbackBannerItem(
           size="xs"
           variant="ghost"
           onClick={() => {
-            void writeTextToClipboard(
-              submission.feedbackId,
-              m(
-                msg("Codex feedback thread ID", {
-                  $context:
-                    'noun inserted into clipboard errors like "Failed to copy {target} to the clipboard."',
-                }),
+            void writeTextToClipboard(submission.feedbackId, {
+              target: "Codex feedback thread ID",
+              unavailableMessage: msg(
+                "Clipboard API is unavailable while copying Codex feedback thread ID.",
               ),
-            ).catch((error: unknown) => {
+              failureMessage: msg("Failed to copy Codex feedback thread ID to the clipboard."),
+            }).catch((error: unknown) => {
               toastManager.add({
                 type: "error",
                 title: m(msg("Could not copy thread ID")),

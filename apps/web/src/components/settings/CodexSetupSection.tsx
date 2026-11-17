@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
@@ -286,14 +286,18 @@ function ManagedCodexSetup({
 }) {
   const gt = useGT();
   const target = { environmentId, input: { instanceId } };
-  const authQuery = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
-  const installQuery = useEnvironmentQuery(serverEnvironment.providerInstallState(target));
+  const authQuery = useEnvironmentQuery(serverEnvironment.providerAuthState(target), useMessages());
+  const installQuery = useEnvironmentQuery(
+    serverEnvironment.providerInstallState(target),
+    useMessages(),
+  );
   const [handoff, setHandoff] = useState<{
     environmentId: EnvironmentId;
     input: ChatGptHandoffInput;
   } | null>(null);
   const handoffQuery = useEnvironmentQuery(
     handoff ? serverEnvironment.chatGptHandoffState(handoff) : null,
+    useMessages(),
   );
   const auth = handoffQuery.data?.phase === "auth" ? handoffQuery.data.state : authQuery.data;
   const [accountPickerOpen, setAccountPickerOpen] = useState(false);
@@ -411,7 +415,7 @@ function ManagedCodexSetup({
           const failure = squashAtomCommandFailure(result);
           setError(
             failure instanceof Error
-              ? (errorDisplayMessage(failure, resolveMessage) ?? failure.message)
+              ? (thrownErrorMessage(failure, resolveMessage) ?? failure.message)
               : gt("Codex setup failed. Try again."),
           );
         }
@@ -1131,6 +1135,7 @@ export function CodexManagedRuntimeFields({
       environmentId,
       input: { instanceId },
     }),
+    useMessages(),
   );
   const executablePath = installation.data?.executablePath ?? "";
   return (

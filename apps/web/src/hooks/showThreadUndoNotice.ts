@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -117,7 +117,7 @@ function refreshNotice() {
               stackedThreadToast({
                 type: "error",
                 title: failureTitle,
-                description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+                description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
               }),
             );
           };

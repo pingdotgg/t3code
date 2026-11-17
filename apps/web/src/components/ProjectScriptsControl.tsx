@@ -1,5 +1,5 @@
 import { m } from "../i18n/messages";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   AuthSettingsWriteScope,
@@ -153,7 +153,7 @@ export default function ProjectScriptsControl({
       setEditorRequest({
         scriptId: null,
         initial: payload,
-        error: errorDisplayMessage(error, m) ?? gt("Failed to import action."),
+        error: thrownErrorMessage(error, m) ?? gt("Failed to import action."),
       });
     }
   };

@@ -177,22 +177,28 @@ function uploadBytes(input: {
 const canOperate = (environmentId: EnvironmentId) =>
   readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
 
+const uploadFailureReason = (reasonMessage: string) => ({
+  reason: m(reasonMessage),
+  reasonMessage,
+});
+
 /** Records the failure the composer shows, then fails the upload with it. */
-const failUpload = (job: UploadJob, reason: string, attachmentId?: string) =>
+const failUpload = (job: UploadJob, reasonMessage: string, attachmentId?: string) =>
   Effect.sync(() =>
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason,
+      reason: m(reasonMessage),
+      reasonMessage,
       ...(attachmentId ? { attachmentId } : {}),
       ...(job.previous ? { previous: job.previous } : {}),
     }),
-  ).pipe(Effect.andThen(Effect.fail(attachmentUploadError(new Error(reason)))));
+  ).pipe(Effect.andThen(Effect.fail(attachmentUploadError(new Error(m(reasonMessage))))));
 
 /** Uploads one composer attachment, writing the state its composer shows as it goes. */
 const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: UploadJob) {
   if (!canOperate(job.environmentId)) {
-    return yield* failUpload(job, m(msg("This connection cannot upload attachments.")));
+    return yield* failUpload(job, msg("This connection cannot upload attachments."));
   }
   if (job.persistedAttachmentId) {
     const verification = yield* verifyPersistedAttachmentUpload({
@@ -233,8 +239,8 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       return yield* failUpload(
         job,
         verification.status === "missing"
-          ? m(msg("Uploaded file expired. Remove it and attach it again."))
-          : m(msg("Uploaded file could not be verified. Retry when the server reconnects.")),
+          ? msg("Uploaded file expired. Remove it and attach it again.")
+          : msg("Uploaded file could not be verified. Retry when the server reconnects."),
       );
     }
   }
@@ -245,11 +251,11 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       : PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
           (supportedMimeType) => supportedMimeType === job.image.mimeType.toLowerCase(),
         );
-  if (!mimeType) return yield* failUpload(job, m(msg("Unsupported image type")));
+  if (!mimeType) return yield* failUpload(job, msg("Unsupported image type"));
   const file = job.image.file;
-  if (!file) return yield* failUpload(job, m(msg("Original file is no longer available")));
+  if (!file) return yield* failUpload(job, msg("Original file is no longer available"));
   if (!canOperate(job.environmentId)) {
-    return yield* failUpload(job, m(msg("This connection cannot upload attachments.")));
+    return yield* failUpload(job, msg("This connection cannot upload attachments."));
   }
 
   let lastStep = -1;
@@ -307,14 +313,16 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
   return yield* failUpload(
     job,
     result.step === "mint"
-      ? m(msg("Upload could not start"))
+      ? msg("Upload could not start")
       : result.step === "resolve-url"
         ? canOperate(job.environmentId)
-          ? m(msg("Not connected"))
-          : m(msg("This connection cannot upload attachments."))
+          ? msg("Not connected")
+          : msg("This connection cannot upload attachments.")
         : result.error instanceof Error
-          ? (errorDisplayMessage(result.error, m) ?? result.error.message)
-          : m(msg("Upload failed")),
+          ? msg("{reason}", {
+              reason: errorDisplayMessage(result.error, m) ?? result.error.message,
+            })
+          : msg("Upload failed"),
     result.attachmentId ?? undefined,
   );
 });
@@ -326,7 +334,7 @@ const uploads = createAttachmentUploadRegistry<UploadJob>({
   upload: (job) =>
     uploadJob(job).pipe(
       Effect.catchDefect((defect) =>
-        failUpload(job, m(msg("Upload failed"))).pipe(
+        failUpload(job, msg("Upload failed")).pipe(
           Effect.ensuring(Effect.logWarning("Composer attachment upload threw", defect)),
         ),
       ),
@@ -568,7 +576,9 @@ export async function refreshExpiredAttachmentUploads(input: {
             status: "failed",
             environmentId: input.environmentId,
             previous: upload,
-            reason: m(msg("Uploaded attachment could not be verified. Attach the file again.")),
+            ...uploadFailureReason(
+              msg("Uploaded attachment could not be verified. Attach the file again."),
+            ),
           });
         }
         return;
@@ -594,12 +604,11 @@ export async function refreshExpiredAttachmentUploads(input: {
         status: "failed",
         environmentId: input.environmentId,
         previous: upload,
-        reason:
+        ...uploadFailureReason(
           verification.status === "missing"
-            ? m(msg("Uploaded attachment expired. Remove it and attach it again."))
-            : m(
-                msg("Uploaded attachment could not be verified. Retry when the server reconnects."),
-              ),
+            ? msg("Uploaded attachment expired. Remove it and attach it again.")
+            : msg("Uploaded attachment could not be verified. Retry when the server reconnects."),
+        ),
       });
     }),
   );

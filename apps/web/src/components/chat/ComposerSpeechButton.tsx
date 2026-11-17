@@ -163,6 +163,7 @@ export function ComposerSpeechRecordingPill(props: {
         size={props.size}
         error={props.state.error}
         errorAction={props.state.errorAction}
+        errorCode={props.state.errorCode}
         disabled={props.disabled ?? false}
         cancelShortcutLabel={props.cancelShortcutLabel ?? null}
         onRetry={props.onStart}

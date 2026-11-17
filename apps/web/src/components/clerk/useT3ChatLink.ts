@@ -1,4 +1,4 @@
-import { errorDisplayMessage, findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { findErrorTraceId, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,7 +21,7 @@ function reportFailure(title: string, cause: unknown) {
   toastManager.add({
     type: "error",
     title,
-    description: errorDisplayMessage(cause, m) ?? m(msg("Try again.")),
+    description: thrownErrorMessage(cause, m) ?? m(msg("Try again.")),
     data: traceId
       ? {
           secondaryActionProps: {

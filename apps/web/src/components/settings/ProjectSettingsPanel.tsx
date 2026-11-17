@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { m as resolveMessage } from "../../i18n/messages";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -109,7 +109,7 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
               title: gt("Could not save grouping rule"),
               description:
                 error instanceof Error
-                  ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                  ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
                   : gt("An error occurred."),
             }),
           );

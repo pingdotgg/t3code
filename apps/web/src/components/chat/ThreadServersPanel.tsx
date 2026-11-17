@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
@@ -73,7 +73,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       stackedThreadToast({
         type: "error",
         title,
-        description: errorDisplayMessage(error, m) ?? String(error),
+        description: thrownErrorMessage(error, m) ?? String(error),
       }),
     );
   };

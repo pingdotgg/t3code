@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
@@ -264,7 +264,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
         title: serverTab
           ? gt("Unable to pop out preview")
           : gt("Unable to update popped-out preview"),
-        description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
     }
   };

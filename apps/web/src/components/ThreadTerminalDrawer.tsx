@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -853,7 +853,7 @@ function TerminalSessionViewport({
         if (requestId !== selectionActionRequestIdRef.current) return;
         const activeTerminal = terminalRef.current;
         if (activeTerminal) {
-          writeSystemMessage(activeTerminal, errorDisplayMessage(error, m) ?? fallback);
+          writeSystemMessage(activeTerminal, thrownErrorMessage(error, m) ?? fallback);
         }
       };
 
@@ -865,7 +865,13 @@ function TerminalSessionViewport({
 
       const copySelection = async (text: string, requestId: number) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          await writeTextToClipboard(text, {
+            target: "terminal selection",
+            unavailableMessage: msg(
+              "Clipboard API is unavailable while copying terminal selection.",
+            ),
+            failureMessage: msg("Failed to copy terminal selection to the clipboard."),
+          });
         } catch (error) {
           reportIfCurrent(requestId, error, m(msg("Unable to copy terminal selection")));
         }
@@ -879,7 +885,14 @@ function TerminalSessionViewport({
         try {
           // Let the surface own clipboard reads so paste shortcuts can supersede an in-flight menu paste.
           await activeTerminal.pasteFromClipboard(
-            () => readTextFromClipboard("terminal input"),
+            () =>
+              readTextFromClipboard({
+                target: "terminal input",
+                unavailableMessage: msg(
+                  "Clipboard API is unavailable while reading terminal input.",
+                ),
+                failureMessage: msg("Failed to read terminal input from the clipboard."),
+              }),
             () => requestId === selectionActionRequestIdRef.current,
           );
         } catch (error) {
@@ -982,7 +995,7 @@ function TerminalSessionViewport({
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
-              report(errorDisplayMessage(error, m) ?? fallbackError);
+              report(thrownErrorMessage(error, m) ?? fallbackError);
             }
             return false;
           },
@@ -998,7 +1011,7 @@ function TerminalSessionViewport({
             if (result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
-              report(errorDisplayMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
+              report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
             }
             return false;
           },
@@ -1070,7 +1083,7 @@ function TerminalSessionViewport({
             void localApi.shell.openExternal(text).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
-                errorDisplayMessage(error, m) ?? m(msg("Unable to open link")),
+                thrownErrorMessage(error, m) ?? m(msg("Unable to open link")),
               );
             });
           };
@@ -1084,7 +1097,7 @@ function TerminalSessionViewport({
                 stackedThreadToast({
                   type: "error",
                   title: m(msg("Unable to open link")),
-                  description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+                  description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
                 }),
               );
             },
@@ -1100,7 +1113,7 @@ function TerminalSessionViewport({
           const error = squashAtomCommandFailure(result);
           writeSystemMessage(
             latestTerminal,
-            errorDisplayMessage(error, m) ?? m(msg("Unable to open path")),
+            thrownErrorMessage(error, m) ?? m(msg("Unable to open path")),
           );
         })();
       }
@@ -1157,7 +1170,7 @@ function TerminalSessionViewport({
         setupTerminal = null;
         if (cancelled) return;
         const message =
-          errorDisplayMessage(error, m) ?? m(msg("Unable to initialize libghostty-vt"));
+          thrownErrorMessage(error, m) ?? m(msg("Unable to initialize libghostty-vt"));
         mount.textContent = m(
           msg("{message}. Close and reopen the terminal to retry.", { message }),
         );

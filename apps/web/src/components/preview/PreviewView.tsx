@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -314,7 +314,7 @@ export function PreviewView({
         title: gt("Could not open this address"),
         description: isPreviewUrlNormalizationError(error)
           ? gt("Enter an http or https URL.")
-          : (errorDisplayMessage(error, m) ?? gt("An error occurred.")),
+          : (thrownErrorMessage(error, m) ?? gt("An error occurred.")),
       });
     }
   };
@@ -334,7 +334,7 @@ export function PreviewView({
         title: gt("Could not open this address"),
         description: isPreviewUrlNormalizationError(error)
           ? gt("Enter an http or https URL.")
-          : (errorDisplayMessage(error, m) ?? gt("An error occurred.")),
+          : (thrownErrorMessage(error, m) ?? gt("An error occurred.")),
       });
     }
   };
@@ -360,7 +360,7 @@ export function PreviewView({
       toastManager.add({
         type: "error",
         title: gt("Unable to change the browser tab"),
-        description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
       return;
     }
@@ -489,7 +489,7 @@ export function PreviewView({
       toastManager.add({
         type: "error",
         title: gt("Unable to move the browser tab"),
-        description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
       return;
     }
@@ -560,7 +560,7 @@ export function PreviewView({
       toastManager.add({
         type: "error",
         title: gt("Unable to update popped-out preview"),
-        description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
     });
   };
@@ -604,7 +604,7 @@ export function PreviewView({
                   stackedThreadToast({
                     type: "error",
                     title: gt("Unable to copy recording path"),
-                    description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                    description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                     actionProps: revealAction,
                   }),
                 );
@@ -654,7 +654,7 @@ export function PreviewView({
           toastManager.add({
             type: "error",
             title: gt("Unable to stop recording"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           });
         },
       );
@@ -662,7 +662,7 @@ export function PreviewView({
     }
     if (record) {
       void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
-        const description = errorDisplayMessage(error, m) ?? gt("An error occurred.");
+        const description = thrownErrorMessage(error, m) ?? gt("An error occurred.");
         if (isBrowserRecordingStartCancelledError(error)) return;
         toastManager.add({
           type: "error",
@@ -741,7 +741,7 @@ export function PreviewView({
               updateScreenshotToast(
                 "error",
                 gt("Unable to copy screenshot path"),
-                errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                thrownErrorMessage(error, m) ?? gt("An error occurred."),
               );
             },
           );
@@ -761,7 +761,7 @@ export function PreviewView({
               updateScreenshotToast(
                 "error",
                 gt("Unable to copy screenshot"),
-                errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                thrownErrorMessage(error, m) ?? gt("An error occurred."),
               );
             },
           );
@@ -797,7 +797,7 @@ export function PreviewView({
         toastManager.add({
           type: "error",
           title: gt("Unable to capture screenshot"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         });
       },
     );

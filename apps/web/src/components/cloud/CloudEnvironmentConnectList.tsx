@@ -1,4 +1,8 @@
-import { errorDisplayMessage, findErrorTraceId } from "@t3tools/client-runtime/errors";
+import {
+  errorDisplayMessage,
+  findErrorTraceId,
+  thrownErrorMessage,
+} from "@t3tools/client-runtime/errors";
 import {
   connectionErrorText,
   type ConnectionTarget,
@@ -183,7 +187,7 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      errorDisplayMessage(cause, m) ?? gt("Could not connect the T3 Connect environment.");
+      thrownErrorMessage(cause, m) ?? gt("Could not connect the T3 Connect environment.");
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({

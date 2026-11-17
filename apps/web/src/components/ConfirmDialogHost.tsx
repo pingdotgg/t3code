@@ -25,10 +25,13 @@ type ConfirmationCopy = {
   readonly description: string | null;
 };
 
+// LocalApi.confirm takes one string; translated questions may end in a full-width mark.
+const QUESTION_MARK = /[?？]/;
+
 function resolveConfirmDialogCopy(message: string, resolve: MessageResolver): ConfirmationCopy {
   const normalizedMessage = message.trim();
   const lines = normalizedMessage.split("\n");
-  const questionLineIndex = lines.findIndex((line) => line.trim().endsWith("?"));
+  const questionLineIndex = lines.findIndex((line) => QUESTION_MARK.test(line.trim().slice(-1)));
 
   if (questionLineIndex >= 0) {
     const title = lines[questionLineIndex]!.trim();
@@ -39,7 +42,7 @@ function resolveConfirmDialogCopy(message: string, resolve: MessageResolver): Co
     return { title, description: description || null };
   }
 
-  const questionMarkIndex = normalizedMessage.indexOf("?");
+  const questionMarkIndex = normalizedMessage.search(QUESTION_MARK);
   if (questionMarkIndex >= 0) {
     return {
       title: normalizedMessage.slice(0, questionMarkIndex + 1).trim(),

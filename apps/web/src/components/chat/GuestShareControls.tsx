@@ -10,7 +10,7 @@ import {
   type ScopedThreadRef,
   type ThreadGuestShare,
 } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT } from "gt-react";
 import { CheckIcon, CopyIcon, UserIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -80,10 +80,11 @@ function GuestShareDialog({
     reportFailure: false,
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: gt("guest link", {
-      $context:
-        'noun inserted into clipboard errors like "Failed to copy {target} to the clipboard."',
-    }),
+    target: {
+      target: "guest link",
+      unavailableMessage: msg("Clipboard API is unavailable while copying guest link."),
+      failureMessage: msg("Failed to copy guest link to the clipboard."),
+    },
   });
   const [state, setState] = useState<CreateState>({ status: "idle" });
 

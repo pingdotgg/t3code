@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   useEffect,
   useEffectEvent,
@@ -99,7 +99,7 @@ function PdfPage(props: {
       await Promise.all([paint.promise, layer.render()]);
     })().catch((cause: unknown) => {
       if (!cancelled)
-        onError(errorDisplayMessage(cause, m) ?? m(msg("This PDF page could not render.")));
+        onError(thrownErrorMessage(cause, m) ?? m(msg("This PDF page could not render.")));
     });
     return () => {
       cancelled = true;
@@ -348,7 +348,7 @@ export default function PdfViewer(props: {
       })()
         .catch((cause: unknown) => {
           if (!cancelled)
-            setFindError(errorDisplayMessage(cause, m) ?? m(msg("Could not search this PDF.")));
+            setFindError(thrownErrorMessage(cause, m) ?? m(msg("Could not search this PDF.")));
         })
         .finally(() => {
           if (!cancelled) setFinding(false);

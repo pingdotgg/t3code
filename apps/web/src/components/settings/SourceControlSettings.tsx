@@ -50,6 +50,7 @@ import {
 } from "./settingsLayout";
 import { useSearchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { sourceControlInstallHintText } from "@t3tools/client-runtime/contract-labels";
 import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
@@ -158,11 +159,14 @@ function itemSummary({
   item,
   auth,
   authAccount,
+  resolve,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
+  readonly resolve: MessageResolver;
 }) {
+  const installHint = sourceControlInstallHintText(item.installHint, resolve);
   if (isVcsNotReady(item)) {
     return (
       <span>
@@ -177,7 +181,7 @@ function itemSummary({
     return (
       <span>
         <T>
-          Not available on this server: <Var>{item.installHint}</Var>
+          Not available on this server: <Var>{installHint}</Var>
         </T>
       </span>
     );
@@ -188,17 +192,20 @@ function itemSummary({
       const authDetail = optionLabel(auth.detail);
       return (
         <>
-          <span>
-            <T>Authenticated</T>
-          </span>
           {authAccount ? (
-            <>
-              <span aria-hidden>
-                <T context="between Authenticated and an account name">as</T>
-              </span>
-              <RedactedAccount account={authAccount} />
-            </>
-          ) : null}
+            <span>
+              <T>
+                Authenticated as{" "}
+                <Var>
+                  <RedactedAccount account={authAccount} />
+                </Var>
+              </T>
+            </span>
+          ) : (
+            <span>
+              <T>Authenticated</T>
+            </span>
+          )}
           {authDetail ? <span>· {authDetail}</span> : null}
         </>
       );
@@ -208,7 +215,7 @@ function itemSummary({
       return (
         <span>
           <T>
-            Available. <Var>{item.installHint}</Var>
+            Available. <Var>{installHint}</Var>
           </T>
         </span>
       );
@@ -244,7 +251,7 @@ function itemSummary({
     return (
       <span>
         <T>
-          Could not verify <Var>{item.label}</Var>. <Var>{authDetail ?? item.installHint}</Var>
+          Could not verify <Var>{item.label}</Var>. <Var>{authDetail ?? installHint}</Var>
         </T>
       </span>
     );
@@ -313,7 +320,7 @@ function DiscoveryItemRow({
               ) : null}
             </div>
             <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
-              {itemSummary({ item, auth, authAccount })}
+              {itemSummary({ item, auth, authAccount, resolve: messages })}
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -466,6 +473,7 @@ export function SourceControlSettingsPanel() {
           environmentId,
           input: {},
         }),
+    useMessages(),
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasVersionControlSystems = result.versionControlSystems.length > 0;

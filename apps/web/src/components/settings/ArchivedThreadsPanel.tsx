@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { Spinner } from "~/components/ui/spinner";
@@ -162,7 +162,7 @@ export function ArchivedThreadsPanel() {
         title,
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
             : gt("An error occurred."),
       }),
     );

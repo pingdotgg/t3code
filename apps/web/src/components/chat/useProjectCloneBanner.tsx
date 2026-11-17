@@ -1,5 +1,5 @@
 import { T, msg, useGT, useMessages } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -44,7 +44,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         stackedThreadToast({
           type: "error",
           title,
-          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     }
@@ -65,7 +65,7 @@ export function useProjectCloneBanner(activeProjectRef: ScopedProjectRef | null)
         id: `project-file-copy:${activeProjectRef.projectId}`,
         variant: "error",
         icon: <DownloadIcon />,
-        title: activeProjectFileCopy.title,
+        title: messages(activeProjectFileCopy.title),
         description: activeProjectFileCopy.failures.join("\n"),
         onDismiss: () => dismissProjectFileCopy(activeProjectRef),
       };

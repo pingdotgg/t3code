@@ -1,5 +1,5 @@
 import { m } from "../i18n/messages";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
   type EditorId,
@@ -45,7 +45,7 @@ export function KeybindingsConfigWarning({
               stackedThreadToast({
                 type: "error",
                 title: gt("Unable to open keybindings file"),
-                description: errorDisplayMessage(error, m) ?? gt("Unknown error opening file."),
+                description: thrownErrorMessage(error, m) ?? gt("Unknown error opening file."),
               }),
             );
           }}

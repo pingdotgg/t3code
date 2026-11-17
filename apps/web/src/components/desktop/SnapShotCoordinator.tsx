@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type DesktopBridge,
   type DesktopPendingSnapShot,
@@ -408,7 +408,7 @@ export function SnapShotCoordinator() {
                 description: m(
                   msg("Capture {id}: {error}", {
                     id: item.id,
-                    error: errorDisplayMessage(error, m) ?? m(msg("Try the capture again.")),
+                    error: thrownErrorMessage(error, m) ?? m(msg("Try the capture again.")),
                   }),
                 ),
               }),
@@ -424,7 +424,7 @@ export function SnapShotCoordinator() {
           stackedThreadToast({
             type: "error",
             title: m(msg("Snapshot failed")),
-            description: errorDisplayMessage(error, m) ?? m(msg("Try the capture again.")),
+            description: thrownErrorMessage(error, m) ?? m(msg("Try the capture again.")),
           }),
         );
       })

@@ -7,6 +7,7 @@ import {
   openSpeechStream,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
+  type VoiceInputErrorCode,
   VoiceTranscriptionError,
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
@@ -34,7 +35,7 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
   readonly onText: (text: SpeechStreamText) => void;
-  readonly onError: (message: string) => void;
+  readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
 }) {
   return createBrowserPcmCapture(input, async (options) => {
     const recordingOptions = input.getTranscriptionOptions();

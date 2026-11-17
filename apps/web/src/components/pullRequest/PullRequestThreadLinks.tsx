@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -121,7 +121,7 @@ function EnabledPullRequestThreadLinks({
                 { term },
               ),
             ),
-        description: errorDisplayMessage(error, m) ?? String(error),
+        description: thrownErrorMessage(error, m) ?? String(error),
       });
       return;
     }

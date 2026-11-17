@@ -1,5 +1,5 @@
 import { msg } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { ModelSelection, RuntimeMode, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -49,7 +49,7 @@ export function useSideChat(input: {
   ) => {
     if (isAtomCommandInterrupted(failure)) return;
     const error = squashAtomCommandFailure(failure);
-    input.onError(errorDisplayMessage(error, m) ?? fallback);
+    input.onError(thrownErrorMessage(error, m) ?? fallback);
   };
   const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
     const { runtimeMode, modelSelection } = input.readSettings();

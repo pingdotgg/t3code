@@ -147,7 +147,11 @@ export function ConnectionDiagnosisPanel({
   const gt = useGT();
   const m = useMessages();
   const { copyToClipboard } = useCopyToClipboard({
-    target: "connection diagnostics",
+    target: {
+      target: "connection diagnostics",
+      unavailableMessage: msg("Clipboard API is unavailable while copying connection diagnostics."),
+      failureMessage: msg("Failed to copy connection diagnostics to the clipboard."),
+    },
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
@@ -1445,7 +1445,7 @@ export function KeybindingsSettingsPanel() {
         title: gt("Unable to open keybindings file"),
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
             : gt("The keybindings file was not opened."),
         type: "error",
       });
@@ -1485,7 +1485,7 @@ export function KeybindingsSettingsPanel() {
           title: gt("Unable to save keybinding"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
               : gt("The keybinding was not saved."),
           type: "error",
         });
@@ -1519,7 +1519,7 @@ export function KeybindingsSettingsPanel() {
           title: gt("Unable to remove keybinding"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
               : gt("The keybinding was not removed."),
           type: "error",
         });

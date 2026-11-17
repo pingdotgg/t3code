@@ -8,7 +8,11 @@ import {
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionErrorText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
-import { errorDisplayMessage, safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  errorDisplayMessage,
+  safeErrorLogAttributes,
+  thrownErrorMessage,
+} from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -204,11 +208,12 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
   return (
     <span>
       {lastCheckedRelative.suffix ? (
-        <T>
+        <T context="the time is an elapsed time such as 5m">
           Checked{" "}
           <span className="font-mono tabular-nums">
-            <Var>{lastCheckedRelative.label}</Var>
-          </span>
+            <Var>{lastCheckedRelative.value}</Var>
+          </span>{" "}
+          ago
         </T>
       ) : (
         gt("Checked {time}", { time: lastCheckedRelative.value })
@@ -634,7 +639,7 @@ export function EnvironmentProviderSettings({
             title: gt("Could not continue authentication"),
             description:
               error instanceof Error
-                ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+                ? (thrownErrorMessage(error, resolveNow) ?? error.message)
                 : gt("The authentication request expired."),
           });
         }
@@ -836,7 +841,7 @@ export function EnvironmentProviderSettings({
         title: gt("Could not update provider instance"),
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            ? (thrownErrorMessage(error, resolveNow) ?? error.message)
             : gt("The settings update failed."),
       });
     }
@@ -886,7 +891,7 @@ export function EnvironmentProviderSettings({
           title: gt("Could not delete provider instance"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+              ? (thrownErrorMessage(error, resolveNow) ?? error.message)
               : gt("The settings update failed."),
         });
         return;
@@ -909,7 +914,7 @@ export function EnvironmentProviderSettings({
           title: gt("Provider deleted, but managed files remain"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+              ? (thrownErrorMessage(error, resolveNow) ?? error.message)
               : gt("Managed binary cleanup failed."),
         });
       }
@@ -937,7 +942,7 @@ export function EnvironmentProviderSettings({
         title: gt("Could not reset provider instance"),
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            ? (thrownErrorMessage(error, resolveNow) ?? error.message)
             : gt("The settings update failed."),
       });
     }

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import { attachSidebarTree } from "../lib/sidebarTree";
@@ -956,19 +956,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         stackedThreadToast({
           type: "error",
           title: gt("Failed to copy path"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     },
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
-    target: "branch name",
+    target: {
+      target: "branch name",
+      unavailableMessage: msg("Clipboard API is unavailable while copying branch name."),
+      failureMessage: msg("Failed to copy branch name to the clipboard."),
+    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: gt("Failed to copy branch"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     },
@@ -979,7 +983,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         stackedThreadToast({
           type: "error",
           title: gt("Failed to copy thread ID"),
-          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     },
@@ -1562,7 +1566,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to rename thread"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -1634,7 +1638,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             stackedThreadToast({
               type: "error",
               title: gt("Failed to settle thread"),
-              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             }),
           );
         }
@@ -1672,7 +1676,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to un-settle thread"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -1687,7 +1691,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to wake thread"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -1890,7 +1894,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to pin thread"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -1905,7 +1909,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to unpin thread"),
-            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -2173,7 +2177,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             stackedThreadToast({
               type: "error",
               title,
-              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             }),
           );
         }
@@ -2285,7 +2289,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             stackedThreadToast({
               type: "error",
               title: gt("Failed to snooze thread"),
-              description: errorDisplayMessage(outcome.error, m) ?? gt("An error occurred."),
+              description: thrownErrorMessage(outcome.error, m) ?? gt("An error occurred."),
             }),
           );
           return;
@@ -2451,7 +2455,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         { count: failures.length },
                       )
                     : gt("Failed to snooze threads"),
-                description: errorDisplayMessage(firstError, m) ?? gt("An error occurred."),
+                description: thrownErrorMessage(firstError, m) ?? gt("An error occurred."),
               }),
             );
           }
@@ -2537,7 +2541,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           stackedThreadToast({
             type: "error",
             title: gt("Failed to delete threads"),
-            description: errorDisplayMessage(firstError, m) ?? gt("An error occurred."),
+            description: thrownErrorMessage(firstError, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -2727,7 +2731,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: gt("Could not create thread"),
-                  description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
             }
@@ -2762,7 +2766,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: gt("Could not turn thread into a project"),
-                  description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
             }
@@ -2780,7 +2784,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: gt("Failed to update auto-settle"),
-                  description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
             }
@@ -2853,7 +2857,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   title: didArchive
                     ? gt("Thread archived, but navigation failed")
                     : gt("Failed to archive thread"),
-                  description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
               return;
@@ -2880,7 +2884,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 stackedThreadToast({
                   type: "error",
                   title: gt("Failed to delete thread"),
-                  description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
+                  description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                 }),
               );
               return;

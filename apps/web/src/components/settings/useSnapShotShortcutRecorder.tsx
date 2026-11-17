@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
   isModifierPairShortcut,
@@ -76,7 +76,7 @@ export function useSnapShotShortcutRecorder({
       requests.clear();
       onError(
         error instanceof Error
-          ? (errorDisplayMessage(error, m) ?? error.message)
+          ? (thrownErrorMessage(error, m) ?? error.message)
           : gt("Could not start shortcut recording."),
       );
     }

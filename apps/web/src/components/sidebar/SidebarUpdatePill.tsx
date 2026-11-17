@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
@@ -164,7 +164,7 @@ export async function downloadLocalUpdate(
   } catch (error) {
     reportError(
       m(msg("Could not start update download")),
-      errorDisplayMessage(error, m) ?? m(msg("An unexpected error occurred.")),
+      thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
     );
     return false;
   }
@@ -190,7 +190,7 @@ export async function installLocalUpdate(
   } catch (error) {
     reportError(
       m(msg("Could not install update")),
-      errorDisplayMessage(error, m) ?? m(msg("An unexpected error occurred.")),
+      thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
     );
     return false;
   }
@@ -324,7 +324,7 @@ function SidebarUpdateControl() {
           stackedThreadToast({
             type: "error",
             title: gt("Could not confirm update"),
-            description: errorDisplayMessage(error, m) ?? gt("Update confirmation failed."),
+            description: thrownErrorMessage(error, m) ?? gt("Update confirmation failed."),
           }),
         );
         return;
@@ -361,7 +361,7 @@ function SidebarUpdateControl() {
           stackedThreadToast({
             type: "error",
             title: gt("Could not check for updates"),
-            description: errorDisplayMessage(error, m) ?? gt("Update check failed."),
+            description: thrownErrorMessage(error, m) ?? gt("Update check failed."),
           }),
         );
       });
@@ -393,7 +393,7 @@ function SidebarUpdateControl() {
         stackedThreadToast({
           type: "error",
           title: gt("Could not update everything"),
-          description: errorDisplayMessage(error, m) ?? gt("An unexpected error occurred."),
+          description: thrownErrorMessage(error, m) ?? gt("An unexpected error occurred."),
         }),
       );
     }

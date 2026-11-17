@@ -6,10 +6,11 @@ import {
   type SecretProviderKind,
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
+import { invalidSecretReferenceText } from "@t3tools/client-runtime/secret-request";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { AlertTriangleIcon, CheckIcon, KeyRoundIcon, RefreshCwIcon, TypeIcon } from "lucide-react";
 import { useState, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
@@ -237,6 +238,7 @@ export function SecretSourceInput({
 }: SecretSourceInputProps) {
   // A provider picked here applies once a reference for it is committed.
   const gt = useGT();
+  const messages = useMessages();
   const [pendingProvider, setPendingProvider] = useState<SecretProviderId | null>(null);
   const [rejectedReference, setRejectedReference] = useState<string | null>(null);
   const secret = typeof value === "string" ? undefined : value;
@@ -319,7 +321,9 @@ export function SecretSourceInput({
         </div>
         {rejectedReference !== null ? (
           <p className="text-2xs text-destructive">
-            {definition?.invalidReferenceMessage ?? gt("Enter a valid secret reference.")}
+            {definition
+              ? invalidSecretReferenceText(definition.invalidReferenceMessage, messages)
+              : gt("Enter a valid secret reference.")}
           </p>
         ) : null}
       </div>

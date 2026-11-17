@@ -68,8 +68,9 @@ const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
 
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const messages = useMessages();
   return isSecretsFeatureEnabled
-    ? secretRequestSources(config, config?.settings.secretProviders ?? {})
+    ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
 

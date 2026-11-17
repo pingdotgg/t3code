@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
   isAtomCommandInterrupted,
@@ -12,7 +12,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { T, useGT, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { lazy, Suspense, useRef, useState } from "react";
 import { CopyIcon } from "lucide-react";
 
@@ -46,7 +46,7 @@ export function ProviderAuthenticationSection({
 }) {
   const gt = useGT();
   const target = { environmentId, input: { instanceId } };
-  const query = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
+  const query = useEnvironmentQuery(serverEnvironment.providerAuthState(target), useMessages());
   const commands = { reportFailure: false, reportDefect: false };
   const start = useAtomCommand(serverEnvironment.startProviderAuth, commands);
   const respond = useAtomCommand(serverEnvironment.respondProviderAuth, commands);
@@ -124,7 +124,7 @@ export function ProviderAuthenticationSection({
         const failure = squashAtomCommandFailure(result);
         setError(
           failure instanceof Error
-            ? (errorDisplayMessage(failure, m) ?? failure.message)
+            ? (thrownErrorMessage(failure, m) ?? failure.message)
             : gt("Provider sign-in failed. Try again."),
         );
       }
@@ -250,7 +250,15 @@ export function ProviderAuthenticationSection({
                       onClick={() => {
                         // Copy during the click to retain clipboard activation; consent must still be
                         // recorded before use.
-                        const copied = writeTextToClipboard(url, "Provider sign-in link");
+                        const copied = writeTextToClipboard(url, {
+                          target: "Provider sign-in link",
+                          unavailableMessage: msg(
+                            "Clipboard API is unavailable while copying Provider sign-in link.",
+                          ),
+                          failureMessage: msg(
+                            "Failed to copy Provider sign-in link to the clipboard.",
+                          ),
+                        });
                         void (async () => {
                           await copied;
                           if (interaction?.type === "browser" && interaction.requiresConsent)

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   formatFilePathForClipboard,
   type MediaActionId,
@@ -200,7 +200,20 @@ export function MediaActions({
       if (text !== undefined) {
         const clipboardText =
           reference?.kind === "file" ? formatFilePathForClipboard(text, reference.path) : text;
-        await writeTextToClipboard(clipboardText, reference?.kind === "file" ? "file path" : "URL");
+        await writeTextToClipboard(
+          clipboardText,
+          reference?.kind === "file"
+            ? {
+                target: "file path",
+                unavailableMessage: msg("Clipboard API is unavailable while copying file path."),
+                failureMessage: msg("Failed to copy file path to the clipboard."),
+              }
+            : {
+                target: "URL",
+                unavailableMessage: msg("Clipboard API is unavailable while copying URL."),
+                failureMessage: msg("Failed to copy URL to the clipboard."),
+              },
+        );
       } else if (action === "open-file") {
         assertCanReadMedia();
         source.onOpenFile?.();
@@ -223,7 +236,7 @@ export function MediaActions({
       const toast = stackedThreadToast({
         type: "error",
         title: failureTitle,
-        description: errorDisplayMessage(error, m) ?? m(msg("The media action failed.")),
+        description: thrownErrorMessage(error, m) ?? m(msg("The media action failed.")),
       });
       if (progressToast) toastManager.update(progressToast, toast);
       else toastManager.add(toast);

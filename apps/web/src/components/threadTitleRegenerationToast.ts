@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { ThreadTitleRegenerationOutcome } from "@t3tools/contracts";
 import {
   type AtomCommandResult,
@@ -16,7 +16,7 @@ function failureMessage(result: TitleRegenerationResult): string | null {
   if (result._tag === "Failure") {
     if (isAtomCommandInterrupted(result)) return null;
     const error = squashAtomCommandFailure(result);
-    return errorDisplayMessage(error, m) ?? m(msg("An error occurred."));
+    return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
   }
   return result.value?.status === "failed"
     ? (result.value.message ?? m(msg("Title generation failed.")))

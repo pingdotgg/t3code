@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
   cancelEnvironmentSpeechModelDownload,
@@ -696,7 +696,7 @@ function useVoiceModels(prepared: PreparedConnection | null) {
           title: gt("Could not load transcription models"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : String(error),
         });
       }
@@ -743,7 +743,7 @@ function useVoiceModels(prepared: PreparedConnection | null) {
           title: label,
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : String(error),
         });
     }

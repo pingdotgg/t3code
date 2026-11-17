@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { SessionPermissions } from "./SessionPermissions";
@@ -416,6 +416,7 @@ function ConnectionsSettingsContent({
           input: null,
         })
       : null,
+    m,
   );
   const revokePairingLink = useAtomCommand(authEnvironment.revokePairingLink, {
     reportFailure: false,
@@ -426,9 +427,11 @@ function ConnectionsSettingsContent({
   });
   const desktopNetworkAccess = useEnvironmentQuery(
     showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    m,
   );
   const desktopWsl = useEnvironmentQuery(
     showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
+    m,
   );
   const desktopWslState = desktopWsl.data;
   const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
@@ -497,7 +500,7 @@ function ConnectionsSettingsContent({
     } catch (error) {
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to update network exposure.");
       setPendingDesktopServerExposureMode(null);
       setDesktopServerExposureMutationError(message);
@@ -540,7 +543,7 @@ function ConnectionsSettingsContent({
       const error = Cause.squash(settled.cause);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to configure Tailscale HTTPS.");
       setDesktopServerExposureMutationError(message);
       toastManager.add(
@@ -582,7 +585,7 @@ function ConnectionsSettingsContent({
       const error = Cause.squash(settled.cause);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to disable Tailscale HTTPS.");
       setDesktopServerExposureMutationError(message);
       toastManager.add(
@@ -613,7 +616,7 @@ function ConnectionsSettingsContent({
       const error = squashAtomCommandFailure(result);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to revoke pairing link.");
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
@@ -642,7 +645,7 @@ function ConnectionsSettingsContent({
       const error = squashAtomCommandFailure(result);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to revoke client access.");
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
@@ -678,7 +681,7 @@ function ConnectionsSettingsContent({
       const error = squashAtomCommandFailure(result);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to revoke other clients.");
       setDesktopAccessManagementMutationError(message);
       toastManager.add(
@@ -724,7 +727,7 @@ function ConnectionsSettingsContent({
       const error = squashAtomCommandFailure(result);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to remove backend.");
       setSavedBackendError(message);
       toastManager.add(
@@ -876,7 +879,7 @@ function ConnectionsSettingsContent({
       const error = Cause.squash(settled.cause);
       const message =
         error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+          ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
           : gt("Failed to update WSL backend.");
       setDesktopWslMutationError(message);
       toastManager.add(

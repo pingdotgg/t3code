@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useLocale, Var } from "gt-react";
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
 
@@ -50,6 +50,7 @@ export function UsageModelDialog({
   readonly onClose: () => void;
 }) {
   const gt = useGT();
+  const locale = useLocale();
   const usage = mergeAnsweredUsage(
     environments,
     (bucket) => bucket.provider === model.provider && bucket.model === model.model,
@@ -60,9 +61,11 @@ export function UsageModelDialog({
   const hitRate = cacheHitRate(model);
   const perMillion = costPerMillionTokens(model);
   const stats = [
-    { label: gt("Cost"), value: costUnknown ? gt("Unpriced") : formatUsd(model.costUsd) },
+    { label: gt("Cost"), value: costUnknown ? gt("Unpriced") : formatUsd(model.costUsd, locale) },
     { label: gt("Tokens"), value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: gt("Per 1M tokens"), value: formatUsd(perMillion) },
+    perMillion === null
+      ? null
+      : { label: gt("Per 1M tokens"), value: formatUsd(perMillion, locale) },
     hitRate === null ? null : { label: gt("Cache hit"), value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
@@ -120,7 +123,7 @@ export function UsageModelDialog({
                 <UsageShareBar
                   label={gt("Cost by type")}
                   segments={costTypeSegments(usage.categoryCost)}
-                  format={formatUsd}
+                  format={(value: number) => formatUsd(value, locale)}
                 />
               )}
               <UsageShareBar
@@ -132,7 +135,7 @@ export function UsageModelDialog({
                 <UsageShareBar
                   label={gt("Cost by speed")}
                   segments={speedCostSegments(usage.speedCost)}
-                  format={formatUsd}
+                  format={(value: number) => formatUsd(value, locale)}
                   aside={<SpeedPremium premiumUsd={usage.speedCost.premium} />}
                 />
               ) : null}
@@ -157,12 +160,13 @@ export function UsageModelDialog({
 }
 
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
+  const locale = useLocale();
   return (
     <span className="text-xs text-muted-foreground">
       <T>
         Premium{" "}
         <span className="text-foreground tabular-nums">
-          <Var>{formatUsd(premiumUsd)}</Var>
+          <Var>{formatUsd(premiumUsd, locale)}</Var>
         </span>
       </T>
     </span>

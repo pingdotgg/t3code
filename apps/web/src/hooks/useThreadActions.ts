@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -220,7 +220,7 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
       stackedThreadToast({
         type: "error",
         title: m(msg("Thread deleted, but navigation failed")),
-        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+        description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
       }),
     );
   }
@@ -708,7 +708,7 @@ export function useThreadActions() {
     if (cleanupFailure) {
       const removalFailed = removeResult._tag === "Failure";
       const error = squashAtomCommandFailure(cleanupFailure);
-      const message = errorDisplayMessage(error, m) ?? m(msg("An error occurred."));
+      const message = thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
       console.error("Worktree cleanup failed after thread deletion", {
         threadId: threadRef.threadId,
         projectCwd: threadProject.workspaceRoot,

@@ -7,7 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "../i18n/messages";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useRef, useState } from "react";
@@ -161,7 +161,7 @@ export function PullRequestThreadDialog({
       } else {
         const error = squashAtomCommandFailure(result);
         setPrepareErrorMessage(
-          errorDisplayMessage(error, m) ??
+          thrownErrorMessage(error, m) ??
             gt(
               "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
               { term },
@@ -200,7 +200,7 @@ export function PullRequestThreadDialog({
     (resolvedPullRequest === null && pullRequestResolution.error
       ? pullRequestResolution.error
       : preparePullRequestThreadAction.error
-        ? (errorDisplayMessage(preparePullRequestThreadAction.error, messages) ??
+        ? (thrownErrorMessage(preparePullRequestThreadAction.error, messages) ??
           gt(
             "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
             { term },

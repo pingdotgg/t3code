@@ -26,7 +26,7 @@ import type {
   ThreadContextRecord,
   ThreadId,
 } from "@t3tools/contracts";
-import { msg } from "gt-react";
+import { decodeMsg, msg } from "gt-react";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
@@ -112,6 +112,71 @@ export function reviewCommentContextLabel(
   const sectionPullRequest = /^pull-request:(\d+)$/u.exec(comment.sectionId)?.[1];
   const prefix = sectionPullRequest === undefined ? "" : `#${sectionPullRequest} `;
   return `${prefix}${basename(comment.filePath)} ${rangeLabel}`;
+}
+
+const REVIEW_SECTION_TITLES: ReadonlyMap<string, string> = new Map([
+  ["File comment", msg("File comment")],
+  ["Review guide", msg("Review guide")],
+]);
+
+/** A stored review comment `sectionTitle` for display; the record itself stays English. */
+export function reviewCommentSectionText(sectionTitle: string, resolve: MessageResolver): string {
+  const known = REVIEW_SECTION_TITLES.get(sectionTitle);
+  if (known !== undefined) return resolve(known);
+  const number = /^PR #(\d+) review$/u.exec(sectionTitle)?.[1];
+  return number === undefined ? sectionTitle : resolve(msg("PR #{number} review", { number }));
+}
+
+/** A stored `rangeLabel` such as "+12 to +15" or "L3 to L9" for display. */
+export function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
+  const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
+  return range === null
+    ? rangeLabel
+    : resolve(msg("{start} to {end}", { $context: "a range of lines in a file or diff" }), {
+        start: range[1]!,
+        end: range[2]!,
+      });
+}
+
+/** A preview annotation record's `targetSummary` rebuilt in the UI language when it has counts. */
+export function previewAnnotationTargetText(
+  record: Pick<
+    PreviewAnnotationContextRecord,
+    "targetSummary" | "elementIds" | "regionCount" | "strokeCount"
+  >,
+  resolve: MessageResolver,
+): string {
+  const parts: string[] = [];
+  const elements = record.elementIds?.length ?? 0;
+  if (elements > 0) {
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} selected element} other {{count} selected elements}}", {
+          count: elements,
+        }),
+      ),
+    );
+  }
+  if ((record.regionCount ?? 0) > 0) {
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} marked region} other {{count} marked regions}}", {
+          count: record.regionCount!,
+        }),
+      ),
+    );
+  }
+  if ((record.strokeCount ?? 0) > 0) {
+    parts.push(
+      resolve(
+        msg("{count, plural, one {{count} drawing} other {{count} drawings}}", {
+          count: record.strokeCount!,
+        }),
+      ),
+    );
+  }
+  // Older records carry only the English summary.
+  return parts.length === 0 ? record.targetSummary : parts.join(", ");
 }
 
 export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
@@ -205,7 +270,7 @@ export function previewAnnotationContextLabel(
     return `${comment.slice(0, end)}…`;
   }
   const fallback = msg("Preview annotation");
-  return annotation.pageTitle?.trim() || (resolve ? resolve(fallback) : fallback);
+  return annotation.pageTitle?.trim() || (resolve ? resolve(fallback) : decodeMsg(fallback));
 }
 
 export function terminalContextReference(context: TerminalContextDraft): ComposerContextReference {

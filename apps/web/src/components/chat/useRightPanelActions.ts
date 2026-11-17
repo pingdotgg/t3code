@@ -1,5 +1,5 @@
 import { msg } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -276,7 +276,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Failed to copy path")),
-          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });

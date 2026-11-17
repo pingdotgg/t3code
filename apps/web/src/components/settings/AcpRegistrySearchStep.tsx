@@ -16,7 +16,7 @@ import type {
   ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, SearchIcon } from "lucide-react";
-import { msg, T, useGT, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type FormEvent, useState } from "react";
 
 import { useDeadlinePassed } from "../../hooks/useDeadline";
@@ -84,6 +84,7 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
             : { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
         })
       : null,
+    useMessages(),
   );
   const prepareAgent = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {
     reportFailure: false,

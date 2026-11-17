@@ -3,7 +3,7 @@ import { fileBasename } from "@t3tools/shared/path";
 import { useLocation } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, FolderIcon, LayersIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
@@ -80,21 +80,67 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  const group = scope.groups.find((candidate) => candidate.projectKey === scope.search.project);
+  const hasCheckouts = group ? settingsScopeCheckoutChoices(group, scope.search).length > 0 : false;
+  const project = <ProjectScopeMenu {...props} />;
+  const environment = <EnvironmentScopeMenu {...props} />;
+  const checkout = <CheckoutScopeMenu {...props} />;
+  const onEnvironment = scope.search.machine || scope.scope.kind === "checkout";
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">
-          <T>Applying settings for</T>
-        </span>
-        <ProjectScopeMenu {...props} />
-      </span>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
-        </span>
-        <EnvironmentScopeMenu {...props} />
-      </span>
-      <CheckoutScopeMenu {...props} />
+      {onEnvironment && hasCheckouts ? (
+        <T context="settings scope sentence; each variable is a menu">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">Applying settings for</span>
+            <Var>{project}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">on</span>
+            <Var>{environment}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">in</span>
+            <Var>{checkout}</Var>
+          </span>
+        </T>
+      ) : onEnvironment ? (
+        <T context="settings scope sentence; each variable is a menu">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">Applying settings for</span>
+            <Var>{project}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">on</span>
+            <Var>{environment}</Var>
+          </span>
+        </T>
+      ) : hasCheckouts ? (
+        <T context="settings scope sentence; each variable is a menu">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">Applying settings for</span>
+            <Var>{project}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">across</span>
+            <Var>{environment}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">in</span>
+            <Var>{checkout}</Var>
+          </span>
+        </T>
+      ) : (
+        <T context="settings scope sentence; each variable is a menu">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">Applying settings for</span>
+            <Var>{project}</Var>
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0">across</span>
+            <Var>{environment}</Var>
+          </span>
+        </T>
+      )}
     </p>
   );
 }
@@ -325,36 +371,33 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
   if (checkouts.length === 0) return null;
   const selected = checkouts.find((member) => member.physicalProjectKey === value.checkout);
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      <span className="shrink-0">in</span>
-      <ScopeMenu
-        ariaLabel={gt("Checkout scope")}
-        icon={<FolderIcon aria-hidden className="size-3.5 shrink-0" />}
-        label={
-          selected
-            ? settingsScopeCheckoutLabel(selected, checkouts)
-            : value.checkout
-              ? gt("Unavailable checkout")
-              : gt("All checkouts")
-        }
-        value={value.checkout ?? ALL_CHECKOUTS_VALUE}
-        onChange={(next) =>
-          onChange(
-            selectCheckoutAxis(
-              value,
-              checkouts.find((member) => member.physicalProjectKey === next) ?? null,
-            ),
-          )
-        }
-        searchLabel={gt("Search checkouts")}
-        allOption={{ value: ALL_CHECKOUTS_VALUE, label: gt("All checkouts") }}
-        options={checkouts.map((member) => ({
-          value: member.physicalProjectKey,
-          label: fileBasename(member.workspaceRoot),
-          secondary: member.workspaceRoot,
-        }))}
-      />
-    </span>
+    <ScopeMenu
+      ariaLabel={gt("Checkout scope")}
+      icon={<FolderIcon aria-hidden className="size-3.5 shrink-0" />}
+      label={
+        selected
+          ? settingsScopeCheckoutLabel(selected, checkouts)
+          : value.checkout
+            ? gt("Unavailable checkout")
+            : gt("All checkouts")
+      }
+      value={value.checkout ?? ALL_CHECKOUTS_VALUE}
+      onChange={(next) =>
+        onChange(
+          selectCheckoutAxis(
+            value,
+            checkouts.find((member) => member.physicalProjectKey === next) ?? null,
+          ),
+        )
+      }
+      searchLabel={gt("Search checkouts")}
+      allOption={{ value: ALL_CHECKOUTS_VALUE, label: gt("All checkouts") }}
+      options={checkouts.map((member) => ({
+        value: member.physicalProjectKey,
+        label: fileBasename(member.workspaceRoot),
+        secondary: member.workspaceRoot,
+      }))}
+    />
   );
 }
 

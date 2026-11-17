@@ -10,7 +10,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -179,6 +179,7 @@ export function UsagePage() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const gt = useGT();
+  const locale = useLocale();
   const m = useMessages();
   const shortcutTitle = (
     option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
@@ -359,12 +360,12 @@ export function UsagePage() {
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? gt("{start} to {end}", {
-          start: formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12),
-          end: formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12),
+          start: formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12, locale),
+          end: formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12, locale),
         })
       : gt("{start} to {end}", {
-          start: formatDayShort(shownWindow.sinceDay),
-          end: formatDayShort(shownWindow.untilDay),
+          start: formatDayShort(shownWindow.sinceDay, locale),
+          end: formatDayShort(shownWindow.untilDay, locale),
         });
   const windowOptionLabel = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label;
   const metricOptionLabel = METRIC_OPTIONS.find((option) => option.value === metric)?.label;
@@ -628,6 +629,7 @@ function UsageOverview({
   readonly onSelectModel: (key: string) => void;
 }) {
   const gt = useGT();
+  const locale = useLocale();
   const m = useMessages();
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
@@ -685,14 +687,16 @@ function UsageOverview({
                 figureClass(loadingPartial),
               )}
             >
-              {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
+              {metric === "cost"
+                ? formatUsd(merged.costUsd, locale)
+                : formatTokens(merged.totalTokens)}
             </p>
             <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
                   {gt("{count, plural, one {{formatted} sessions} other {{formatted} sessions}}", {
                     count: merged.sessions,
-                    formatted: formatCount(merged.sessions),
+                    formatted: formatCount(merged.sessions, locale),
                   })}
                 </span>
                 {metric === "cost" && ` · ${gt("API estimate")}`}
@@ -732,7 +736,7 @@ function UsageOverview({
             const providerSessions = totals?.sessions ?? 0;
             const sessionLabel = gt(
               "{count, plural, one {{formatted} session} other {{formatted} sessions}}",
-              { count: providerSessions, formatted: formatCount(providerSessions) },
+              { count: providerSessions, formatted: formatCount(providerSessions, locale) },
             );
             const providerLoading = loadingProviders.has(provider);
             const awaitingData = providerLoading && !providersWithData.has(provider);
@@ -770,7 +774,7 @@ function UsageOverview({
                     {awaitingData
                       ? "-"
                       : metric === "cost"
-                        ? formatUsd(totals?.costUsd ?? 0)
+                        ? formatUsd(totals?.costUsd ?? 0, locale)
                         : formatTokens(totals?.totalTokens ?? 0)}
                   </dd>
                 </dl>
@@ -788,7 +792,7 @@ function UsageOverview({
                       })
                     : gt("{share} of tokens · {cost}", {
                         share: formatPercent(share),
-                        cost: formatUsd(totals?.costUsd ?? 0),
+                        cost: formatUsd(totals?.costUsd ?? 0, locale),
                       })}
                 </p>
               </div>
@@ -850,7 +854,7 @@ function UsageOverview({
           <Metric
             loading={loadingPartial}
             label={gt("Cache savings")}
-            value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+            value={formatUsd(merged.costQuality.cacheSavingsUsd, locale)}
           />
         </dl>
       </section>
@@ -870,13 +874,13 @@ function UsageOverview({
               <UsageShareBar
                 label={gt("Cost by type")}
                 segments={costTypeSegments(merged.categoryCost)}
-                format={formatUsd}
+                format={(value: number) => formatUsd(value, locale)}
               />
               {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
                   label={gt("Cost by speed")}
                   segments={speedCostSegments(merged.speedCost)}
-                  format={formatUsd}
+                  format={(value: number) => formatUsd(value, locale)}
                   aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
                 />
               ) : null}
@@ -981,7 +985,7 @@ function UsageOverview({
                             <T>Unpriced</T>
                           </span>
                         ) : (
-                          formatUsd(model.costUsd)
+                          formatUsd(model.costUsd, locale)
                         )}
                       </td>
                       <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
@@ -1041,8 +1045,8 @@ function UsageOverview({
                     >
                       <td className="py-2 pl-2 text-foreground">
                         {"hourStart" in period
-                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
-                          : formatDayShort(period.day)}
+                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12, locale)
+                          : formatDayShort(period.day, locale)}
                       </td>
                       {activeProviders.map((provider) => (
                         <td
@@ -1052,7 +1056,7 @@ function UsageOverview({
                             figureClass(loadingProviders.has(provider)),
                           )}
                         >
-                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0, locale)}
                         </td>
                       ))}
                       <td
@@ -1061,7 +1065,7 @@ function UsageOverview({
                           figureClass(loadingPartial),
                         )}
                       >
-                        {formatUsd(period.costUsd)}
+                        {formatUsd(period.costUsd, locale)}
                       </td>
                       <td
                         className={cn(

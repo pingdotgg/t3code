@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ChevronRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -53,7 +53,7 @@ const licenseManifestAtom = Atom.make(
         new LicenseManifestLoadError({
           message:
             error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
+              ? (thrownErrorMessage(error, m) ?? error.message)
               : m(msg("The license manifest could not load.")),
         }),
     });

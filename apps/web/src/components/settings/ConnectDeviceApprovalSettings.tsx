@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { AuthConnectDevice, EnvironmentId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -31,7 +31,7 @@ function reportFailure(title: string, result: Parameters<typeof isAtomCommandInt
       title,
       description:
         error instanceof Error
-          ? (errorDisplayMessage(error, m) ?? error.message)
+          ? (thrownErrorMessage(error, m) ?? error.message)
           : m(msg("An error occurred.")),
     }),
   );

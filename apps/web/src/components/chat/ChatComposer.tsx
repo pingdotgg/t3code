@@ -2578,7 +2578,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? gt("Replying to {titles}", {
                 titles: replyTo.subagents.map((subagent) => subagent.title).join(", "),
               })
-            : gt("Replying to"),
+            : gt("Replying to", { $context: "banner title; the message being replied to follows" }),
           description: (
             <button
               type="button"

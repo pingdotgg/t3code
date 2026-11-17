@@ -195,7 +195,7 @@ export function CloudVoiceConfiguration({
   const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
   const sources =
     isSecretsFeatureEnabled && environment.serverConfig?.secretReferences
-      ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {})
+      ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {}, messages)
       : [];
   const reference =
     isSecretReference(existing) && sources.some((s) => s.id === existing.provider)

@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
@@ -199,7 +199,11 @@ function DiagnosticsTable({
 function TraceIdCell({ traceId }: { traceId: string }) {
   const gt = useGT();
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
-    target: "trace ID",
+    target: {
+      target: "trace ID",
+      unavailableMessage: msg("Clipboard API is unavailable while copying trace ID."),
+      failureMessage: msg("Failed to copy trace ID to the clipboard."),
+    },
     timeout: 1_200,
   });
 
@@ -727,11 +731,12 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
   return (
     <span className="text-2xs text-muted-foreground/60">
       {relative.suffix ? (
-        <T>
+        <T context="the time is an elapsed time such as 5m">
           Checked{" "}
           <span className="font-mono tabular-nums">
-            <Var>{relative.label}</Var>
-          </span>
+            <Var>{relative.value}</Var>
+          </span>{" "}
+          ago
         </T>
       ) : (
         gt("Checked {time}", { time: relative.value })
@@ -786,6 +791,7 @@ function DiagnosticsSettingsBody() {
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const session = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+    m,
   );
   const diagnosticsAccess = resolveUsageAccess(
     {
@@ -808,6 +814,7 @@ function DiagnosticsSettingsBody() {
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
+    m,
   );
   const {
     data: processData,
@@ -818,6 +825,7 @@ function DiagnosticsSettingsBody() {
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
+    m,
   );
   const {
     data: resourceData,
@@ -834,6 +842,7 @@ function DiagnosticsSettingsBody() {
             bucketMs: selectedResourceWindow.bucketMs,
           },
         }),
+    m,
   );
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
@@ -860,7 +869,7 @@ function DiagnosticsSettingsBody() {
         const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
             : gt("Unable to open logs folder."),
         );
       }
@@ -912,7 +921,7 @@ function DiagnosticsSettingsBody() {
           title: gt("Could not confirm signal"),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
               : gt("Failed to send {signal}.", { signal }),
         });
         return;
@@ -942,7 +951,7 @@ function DiagnosticsSettingsBody() {
           title: gt("Could not send {signal}", { signal }),
           description:
             error instanceof Error
-              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
               : gt("Failed to send {signal}.", { signal }),
         });
       }

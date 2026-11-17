@@ -1,5 +1,5 @@
 import { m } from "../i18n/messages";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -237,7 +237,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
     } catch (cause) {
-      setError(errorDisplayMessage(cause, m) ?? gt("Could not start the clone."));
+      setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
       setSubmitting(false);
     }
   };

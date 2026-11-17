@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -22,7 +22,11 @@ import { useScratchProject } from "./useScratchProject";
 export const TRIAGE_CLI_COMMAND = "npx t3 triage";
 
 const copyTriageCliCommand = () =>
-  writeTextToClipboard(TRIAGE_CLI_COMMAND, "command").catch(() =>
+  writeTextToClipboard(TRIAGE_CLI_COMMAND, {
+    target: "command",
+    unavailableMessage: msg("Clipboard API is unavailable while copying command."),
+    failureMessage: msg("Failed to copy command to the clipboard."),
+  }).catch(() =>
     toastManager.add({
       type: "error",
       title: m(msg("Could not copy. Type {command} instead.", { command: TRIAGE_CLI_COMMAND })),
@@ -68,7 +72,7 @@ export function useStartTriage() {
   ) => {
     if (isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
-    fail(errorDisplayMessage(error, m) ?? m(msg("An error occurred.")));
+    fail(thrownErrorMessage(error, m) ?? m(msg("An error occurred.")));
   };
 
   // `routeChanged` tells the steps the user went elsewhere while they waited;

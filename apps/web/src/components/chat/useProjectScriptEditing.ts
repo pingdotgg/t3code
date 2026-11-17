@@ -1,5 +1,5 @@
 import { msg } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type {
   KeybindingCommand,
@@ -275,7 +275,7 @@ export function useProjectScriptEditing(input: {
         stackedThreadToast({
           type: "error",
           title: m(msg("Could not delete action")),
-          description: errorDisplayMessage(error, m) ?? m(msg("An unexpected error occurred.")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
         }),
       );
     }

@@ -1,5 +1,5 @@
 import { msg } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
@@ -1411,7 +1411,7 @@ export function useComposerSend(input: ComposerSendInput) {
             stackedThreadToast({
               type: "warning",
               title: m(msg("Could not open a fresh composer")),
-              description: errorDisplayMessage(error, m) ?? undefined,
+              description: thrownErrorMessage(error, m) ?? undefined,
             }),
           );
         }
@@ -1513,9 +1513,13 @@ export function useComposerSend(input: ComposerSendInput) {
                   actionProps: {
                     children: m(msg("Copy message")),
                     onClick: () => {
-                      void writeTextToClipboard(failedText, "failed message").catch(
-                        () => undefined,
-                      );
+                      void writeTextToClipboard(failedText, {
+                        target: "failed message",
+                        unavailableMessage: msg(
+                          "Clipboard API is unavailable while copying failed message.",
+                        ),
+                        failureMessage: msg("Failed to copy failed message to the clipboard."),
+                      }).catch(() => undefined);
                     },
                   },
                 }
@@ -1543,7 +1547,7 @@ export function useComposerSend(input: ComposerSendInput) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
           threadIdForSend,
-          errorDisplayMessage(error, m) ?? m(msg("Failed to send message.")),
+          thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),
         );
         if (
           draftId &&
@@ -1556,7 +1560,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 submissionIntent === "background"
                   ? m(msg("Background task failed"))
                   : m(msg("Could not start thread")),
-              description: errorDisplayMessage(error, m) ?? m(msg("Failed to send message.")),
+              description: thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),
               actionProps: {
                 children: m(msg("Open draft")),
                 onClick: () => {

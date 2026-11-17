@@ -41,6 +41,7 @@ function LazyChecksBody({
   const gt = useGT();
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
+    useMessages(),
   );
   if (detailQuery.error !== null) {
     return <p className="text-muted-foreground text-xs">{detailQuery.error}</p>;

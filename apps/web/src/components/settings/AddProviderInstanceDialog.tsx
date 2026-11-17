@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
@@ -418,7 +418,7 @@ export function AddProviderInstanceDialog({
         title: gt("Could not add provider instance"),
         description:
           error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
             : gt("The settings update failed."),
       });
       return;

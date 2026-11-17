@@ -1,5 +1,5 @@
 import { m } from "../i18n/messages";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -120,7 +120,7 @@ export function DevReplayHost() {
       toastManager.add({
         type: "error",
         title: gt("Replay failed"),
-        description: errorDisplayMessage(error, m) ?? String(error),
+        description: thrownErrorMessage(error, m) ?? String(error),
       }),
     );
   };

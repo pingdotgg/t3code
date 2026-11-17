@@ -39,7 +39,7 @@ import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
@@ -196,7 +196,7 @@ export function ServerBrowserSurface(props: {
       toastManager.add({
         type: "error",
         title: gt("Could not send the files to the page"),
-        description: errorDisplayMessage(cause, m) ?? undefined,
+        description: thrownErrorMessage(cause, m) ?? undefined,
       }),
     );
   };

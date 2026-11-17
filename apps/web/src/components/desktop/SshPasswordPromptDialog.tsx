@@ -1,4 +1,4 @@
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -32,7 +32,7 @@ function formatRemainingSeconds(seconds: number): string {
 }
 
 function getPromptErrorMessage(error: unknown): string {
-  const message = errorDisplayMessage(error, m) ?? m(msg("SSH verification prompt failed."));
+  const message = thrownErrorMessage(error, m) ?? m(msg("SSH verification prompt failed."));
   return message.includes("expired") || message.includes("no longer pending")
     ? m(msg("This SSH verification prompt expired. Try connecting again."))
     : message;

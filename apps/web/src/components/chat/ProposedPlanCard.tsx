@@ -1,5 +1,5 @@
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, useState, useId } from "react";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -65,10 +65,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     reportFailure: false,
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: gt("plan", {
-      $context:
-        'noun inserted into clipboard errors like "Failed to copy {target} to the clipboard."',
-    }),
+    target: {
+      target: "plan",
+      unavailableMessage: msg("Clipboard API is unavailable while copying plan."),
+      failureMessage: msg("Failed to copy plan to the clipboard."),
+    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({

@@ -1,5 +1,5 @@
 import { msg } from "gt-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import type {
   EnvironmentProject,
@@ -274,7 +274,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         const error = squashAtomCommandFailure(openResult);
         setThreadError(
           activeThreadId,
-          errorDisplayMessage(error, m) ??
+          thrownErrorMessage(error, m) ??
             m(msg('Failed to run script "{name}".', { name: script.name })),
         );
       }
@@ -293,7 +293,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         const error = squashAtomCommandFailure(writeResult);
         setThreadError(
           activeThreadId,
-          errorDisplayMessage(error, m) ??
+          thrownErrorMessage(error, m) ??
             m(msg('Failed to run script "{name}".', { name: script.name })),
         );
       }
@@ -315,7 +315,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           stackedThreadToast({
             type: "error",
             title: m(msg("Could not open preview")),
-            description: errorDisplayMessage(error, m) ?? m(msg("An unexpected error occurred.")),
+            description: thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
           }),
         );
       }
