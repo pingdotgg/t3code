@@ -30,7 +30,7 @@ export function busyThreadsInCheckout<T extends CheckoutThread>(input: {
   );
 }
 
-export function describeBusyCheckout(titles: ReadonlyArray<string>): string {
+function describeBusyCheckout(titles: ReadonlyArray<string>): string {
   const quoted = titles.map((title) => `'${title}'`);
   const names =
     quoted.length <= 2

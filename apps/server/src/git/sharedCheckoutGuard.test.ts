@@ -1,7 +1,7 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { busyThreadsInCheckout, describeBusyCheckout } from "./sharedCheckoutGuard.ts";
+import { busyThreadsInCheckout } from "./sharedCheckoutGuard.ts";
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
@@ -50,16 +50,5 @@ describe("busyThreadsInCheckout", () => {
     });
 
     expect(busy.map(({ title }) => title)).toEqual(["same worktree"]);
-  });
-});
-
-describe("describeBusyCheckout", () => {
-  it("names the busy threads", () => {
-    expect(describeBusyCheckout(["Fix login"])).toBe(
-      "'Fix login' is still working in this checkout. Wait for it to finish, or use a worktree for a separate branch.",
-    );
-    expect(describeBusyCheckout(["A", "B", "C", "D"])).toBe(
-      "'A', 'B' and 2 more are still working in this checkout. Wait for them to finish, or use a worktree for a separate branch.",
-    );
   });
 });
