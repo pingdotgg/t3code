@@ -740,8 +740,13 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
-              submodules: resolveProjectSettings(yield* serverSettings.getSettings, input.projectId)
-                .settings.worktreeSubmodules,
+              submodules: yield* serverSettings.getSettings.pipe(
+                Effect.map(
+                  (settings) =>
+                    resolveProjectSettings(settings, input.projectId).settings.worktreeSubmodules,
+                ),
+                Effect.orElseSucceed(() => null),
+              ),
               ...(input.workspaceStrategy.memberBaseCommits === undefined
                 ? {}
                 : { memberBaseCommits: input.workspaceStrategy.memberBaseCommits }),
