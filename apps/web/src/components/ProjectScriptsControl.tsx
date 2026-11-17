@@ -89,6 +89,10 @@ export default function ProjectScriptsControl({
   onDeleteScript,
 }: ProjectScriptsControlProps) {
   const isPanel = displayMode === "panel";
+  const scriptMenuHeightClass =
+    presentation === "menu"
+      ? "[&>div]:max-h-[25.5rem]"
+      : "[&>div]:max-h-[20.5rem] sm:[&>div]:max-h-[18rem]";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const keybindings =
@@ -263,7 +267,7 @@ export default function ProjectScriptsControl({
                 <ScriptIcon icon="play" className="size-4" />
                 <MenuItemLabel>Project actions</MenuItemLabel>
               </MenuSubTrigger>
-              <MenuSubPopup>{scriptItems}</MenuSubPopup>
+              <MenuSubPopup className={scriptMenuHeightClass}>{scriptItems}</MenuSubPopup>
             </MenuSub>
           ) : (
             <MenuItem
@@ -356,7 +360,7 @@ export default function ProjectScriptsControl({
             <MenuPopup
               align="end"
               {...(isPanel ? { anchor: panelAnchorRef } : {})}
-              className={isPanel ? "w-(--anchor-width)" : undefined}
+              className={cn(scriptMenuHeightClass, isPanel && "w-(--anchor-width)")}
             >
               {scriptItems}
             </MenuPopup>
@@ -402,7 +406,11 @@ export default function ProjectScriptsControl({
               >
                 <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
               </MenuTrigger>
-              <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
+              <MenuPopup
+                align="end"
+                anchor={panelAnchorRef}
+                className={cn(scriptMenuHeightClass, "w-(--anchor-width)")}
+              >
                 {scriptItems}
               </MenuPopup>
             </Menu>
@@ -424,7 +432,9 @@ export default function ProjectScriptsControl({
               </span>
               <ChevronDownIcon className="size-3.5" />
             </MenuTrigger>
-            <MenuPopup align="end">{scriptItems}</MenuPopup>
+            <MenuPopup align="end" className={scriptMenuHeightClass}>
+              {scriptItems}
+            </MenuPopup>
           </Menu>
         )
       ) : (
