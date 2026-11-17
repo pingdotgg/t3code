@@ -420,6 +420,11 @@ function SidebarUpdateControl() {
       providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
+      releaseNotes={
+        localUpdateVersion !== null && state && state.releaseNotes.length > 0 ? (
+          <SidebarUpdateReleaseNotes shell={window.desktopBridge} state={state} tooltip={tooltip} />
+        ) : null
+      }
       checking={providerCheck === "dialog"}
       onConfirm={() => void runEverything()}
     />
