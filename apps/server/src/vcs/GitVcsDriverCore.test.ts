@@ -6903,14 +6903,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             (yield* Ref.get(lines)).some((line) => line.startsWith("Receiving objects")),
           );
         }
+      }).pipe(withGitFileProtocol),
+    );
 
-        // Sparse patterns that leave out .gitmodules and t3.json still honor both.
+    it.effect("sparse worktrees read .gitmodules and t3.json from HEAD", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const submoduleRepo = yield* makeTmpDir("git-submodule-");
+        yield* initRepoWithCommit(submoduleRepo);
+        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+        yield* git(submoduleRepo, ["add", "."]);
+        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["submodule", "add", NodeURL.pathToFileURL(submoduleRepo).href, "shared"]);
         yield* writeTextFile(cwd, "sparse-patterns.txt", "/shared/\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktrees = yield* makeTmpDir("git-worktrees-");
+
         const createSparse = Effect.fn(function* (projectFile: string, branch: string) {
           yield* writeTextFile(cwd, "t3.json", projectFile);
           yield* git(cwd, ["add", "."]);
           yield* git(cwd, ["commit", "-m", branch]);
-          const sparsePath = pathService.join(pathService.dirname(worktreePath), branch);
+          const sparsePath = pathService.join(worktrees, branch);
           // A relative path also covers the git commands that run inside the new worktree.
           yield* driver.createWorktree({
             cwd,

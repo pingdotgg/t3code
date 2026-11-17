@@ -5443,8 +5443,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           yield* runGitStdout("GitVcsDriver.createWorktree.listSubmodules", worktreePath, [
             "config",
             "-z",
-            "--file",
-            ".gitmodules",
+            // HEAD, not the working tree: sparse patterns can leave .gitmodules out.
+            "--blob",
+            "HEAD:.gitmodules",
             "--get-regexp",
             "^submodule\\..*\\.path$",
           ]),
