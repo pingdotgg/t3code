@@ -19,6 +19,8 @@ You are a maestro worker. Your task names the issue `<n>` and the repo. You own 
    - **Asking.** Wherever `full-send` would ask the user, ask for help (below) instead.
    - **Reporting.** End with the final message below, not `full-send`'s report.
 
+6. After the merge, if the issue's parent `epic` has no open sub-issues left, close it: `gh issue close <epic> --comment "every sub-issue is closed."`
+
 ## Ask for help
 
 Do not merge when the change adds or edits a database migration, when a rebase conflict touches logic you do not understand or would drop someone else's work, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over:

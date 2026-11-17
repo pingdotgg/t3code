@@ -85,6 +85,16 @@ flowchart LR
     takeover["takeover"]
   end
   ak_help --> automate_me
+  ak_help --> bcheck
+  ak_help --> full_send
+  ak_help --> implement_spec
+  ak_help --> maestro
+  ak_help --> maestro_worker
+  ak_help --> plan_to_issues
+  ak_help --> replan
+  ak_help --> to_spec
+  ak_help --> to_tickets
+  ak_help --> wayfinder
   ak_help --> writing_for_agents
   architect --> interrogate
   architect --> principles

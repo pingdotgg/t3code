@@ -28,7 +28,7 @@ To run an issue on another provider, label it `provider:<instanceId>`, for examp
 
 ### needs-help
 
-The maestro sends you two kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
+The maestro sends you two kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue, and close its `epic` if that was the last open sub-issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
 
 ## Labels
 

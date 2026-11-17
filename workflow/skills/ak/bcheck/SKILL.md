@@ -130,6 +130,8 @@ gh issue edit <id> --add-label in-progress
 
 5. Get the user's approval of the audited plan, then implement it and ship it with the `full-send` skill.
 
+Whichever path you took: after the merge, if the issue's parent `epic` has no open sub-issues left, close it: `gh issue close <epic> --comment "every sub-issue is closed."`
+
 ## Rules
 
 - Do NOT default to "needs planning" out of caution. Small, clear tasks should just start.
