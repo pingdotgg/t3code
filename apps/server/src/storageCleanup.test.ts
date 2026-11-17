@@ -3927,4 +3927,47 @@ describe("Workler cleanup safety on v2 threads", () => {
       }),
     ),
   );
+
+  it.live.each(["clone", "group"] as const)(
+    "keeps a %s with tracked edits that git status hides",
+    (kind) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, worktree, fs, command } = yield* cleanupFixture(
+            undefined,
+            undefined,
+            kind,
+          );
+          const cwd = kind === "group" ? `${worktree}/web` : worktree;
+          yield* command(cwd, ["update-index", "--assume-unchanged", "tracked.txt"]);
+          yield* fs.writeFileString(`${cwd}/tracked.txt`, "hidden edit\n");
+          yield* service.runNow;
+          expect(yield* fs.readFileString(`${cwd}/tracked.txt`)).toBe("hidden edit\n");
+        }),
+      ),
+  );
+
+  it.live("keeps a clone on a git worktree's dev home", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const checkout = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-dev-checkout-" });
+        yield* fs.writeFileString(`${checkout}/.git`, "gitdir: /repo/.git/worktrees/dev\n");
+        const baseDir = `${checkout}/.t3`;
+        const fixture = yield* cleanupFixture(undefined, undefined, "clone").pipe(
+          Effect.provideService(ServerConfig.ServerConfig, {
+            ...config,
+            baseDir,
+            worktreesDir: `${baseDir}/worktrees`,
+          }),
+        );
+        const { entries } = yield* fixture.service.runNow;
+        expect(entries.find((entry) => entry.path === fixture.worktree)).toMatchObject({
+          outcome: "kept",
+        });
+        expect(yield* fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
 });
