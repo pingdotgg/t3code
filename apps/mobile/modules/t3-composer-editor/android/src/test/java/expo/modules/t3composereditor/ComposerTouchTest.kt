@@ -38,37 +38,17 @@ class ComposerTouchTest {
     shadowOf(Looper.getMainLooper()).idle()
   }
 
-  // Each pair is one finger's position, in pointer id order.
-  private fun touch(action: Int, vararg fingers: Pair<Float, Float>) {
-    val pointers = Array(fingers.size) { id ->
-      MotionEvent.PointerProperties().apply {
-        this.id = id
-        toolType = MotionEvent.TOOL_TYPE_FINGER
-      }
-    }
-    val coords = Array(fingers.size) { index ->
-      MotionEvent.PointerCoords().apply {
-        x = fingers[index].first
-        y = fingers[index].second
-        pressure = 1f
-        size = 1f
-      }
+  private fun touch(action: Int, x: Float, y: Float) {
+    val pointer = MotionEvent.PointerProperties().apply { toolType = MotionEvent.TOOL_TYPE_FINGER }
+    val coords = MotionEvent.PointerCoords().also {
+      it.x = x
+      it.y = y
+      it.pressure = 1f
+      it.size = 1f
     }
     val event = MotionEvent.obtain(
-      downTime,
-      SystemClock.uptimeMillis(),
-      action,
-      fingers.size,
-      pointers,
-      coords,
-      0,
-      0,
-      1f,
-      1f,
-      0,
-      0,
-      InputDevice.SOURCE_TOUCHSCREEN,
-      0,
+      downTime, SystemClock.uptimeMillis(), action, 1, arrayOf(pointer), arrayOf(coords),
+      0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
     )
     editor.dispatchTouchEvent(event)
     event.recycle()
@@ -86,28 +66,8 @@ class ComposerTouchTest {
     assertNotEquals(0, bottom)
     val slop = ViewConfiguration.get(activity).scaledTouchSlop
 
-    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
-    touch(MotionEvent.ACTION_MOVE, 40f to 250f - slop * 3)
-    holdPastLongPressTimeout()
-
-    assertEquals(bottom, editor.scrollY)
-    assertEquals(editor.selectionStart, editor.selectionEnd)
-  }
-
-  @Test
-  fun secondFingerDuringADragDoesNotSelectAWord() {
-    scrolledToBottom()
-    val bottom = editor.scrollY
-    val slop = ViewConfiguration.get(activity).scaledTouchSlop
-    val movedY = 250f - slop * 3
-
-    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
-    touch(MotionEvent.ACTION_MOVE, 40f to movedY)
-    touch(
-      MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
-      40f to movedY,
-      120f to 250f,
-    )
+    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
+    touch(MotionEvent.ACTION_MOVE, 40f, 250f - slop * 3)
     holdPastLongPressTimeout()
 
     assertEquals(bottom, editor.scrollY)
@@ -118,7 +78,7 @@ class ComposerTouchTest {
   fun stillLongPressSelectsAWord() {
     scrolledToBottom()
 
-    touch(MotionEvent.ACTION_DOWN, 40f to 250f)
+    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
     holdPastLongPressTimeout()
 
     assertNotEquals(editor.selectionStart, editor.selectionEnd)

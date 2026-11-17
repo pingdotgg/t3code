@@ -848,7 +848,7 @@ internal class SelectionAwareEditText(
   // Touch drops a pending long press only if a drag scrolls, so at a scroll limit it would select.
   override fun performLongClick(): Boolean = !touchDragged && super.performLongClick()
 
-  // Latched until the touch ends, so a second finger's pointer events cannot reopen the long press.
+  // Latched until the touch ends, so sliding back within slop does not re-enable the long press.
   private fun updateTouchDragged(event: MotionEvent) {
     touchDragged = when (event.actionMasked) {
       MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
