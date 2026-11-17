@@ -150,12 +150,15 @@ export function PullRequestsScreen(
     [allProjects, savedControls],
   );
   const projects = useMemo(
-    () => pullRequestProjectChoices(allProjects, {
-      environmentId,
-      controls,
-      environmentLabels: new Map(environments.map((item) => [item.environmentId, item.environmentLabel])),
-      servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
-    }),
+    () =>
+      pullRequestProjectChoices(allProjects, {
+        environmentId,
+        controls,
+        environmentLabels: new Map(
+          environments.map((item) => [item.environmentId, item.environmentLabel]),
+        ),
+        servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+      }),
     [allProjects, environmentId, controls, environments, configs],
   );
   const projectGroup = useMemo(
