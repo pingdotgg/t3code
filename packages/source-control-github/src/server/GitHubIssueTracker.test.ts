@@ -390,22 +390,27 @@ describe("GitHubIssueTracker", () => {
     }),
   );
 
-  it.effect("withholds comment permission on a locked issue from an outside reader", () =>
+  it.effect("offers comments on a locked issue only to writers", () =>
     Effect.gen(function* () {
-      const response = DETAIL_RESPONSE.replace(
-        '"viewerPermission":"TRIAGE"',
-        '"viewerPermission":"READ"',
-      )
-        .replace('"locked":false', '"locked":true')
-        .replace('"viewerCanReopen":true', '"viewerCanReopen":false');
-      const api = yield* tracker(() => {}, undefined, response);
-      const issue = yield* api.getIssue({
-        cwd: "/w",
-        host: "github.com",
-        scope: "acme/web",
-        key: "42",
-      });
-      expect(issue.viewerPermissions.comment).toBe(false);
+      // A null permission is an app installation, which GitHub lets comment on locked issues.
+      for (const [permission, comment] of [
+        ["READ", false],
+        ["WRITE", true],
+        [null, true],
+      ] as const) {
+        const response = DETAIL_RESPONSE.replace(
+          '"viewerPermission":"TRIAGE"',
+          `"viewerPermission":${JSON.stringify(permission)}`,
+        ).replace('"locked":false', '"locked":true');
+        const api = yield* tracker(() => {}, undefined, response);
+        const issue = yield* api.getIssue({
+          cwd: "/w",
+          host: "github.com",
+          scope: "acme/web",
+          key: "42",
+        });
+        expect([permission, issue.viewerPermissions.comment]).toEqual([permission, comment]);
+      }
     }),
   );
 
@@ -626,28 +631,6 @@ Redact secrets before uploading.`);
           closesIssue: true,
         },
       ]);
-      for (const [permission, comment, metadata] of [
-        ["READ", false, false],
-        ["WRITE", true, true],
-        [null, true, false],
-      ] as const) {
-        const lockedResponse = DETAIL_RESPONSE.replace(
-          '"viewerPermission":"TRIAGE"',
-          `"viewerPermission":${JSON.stringify(permission)}`,
-        ).replace('"locked":false', '"locked":true');
-        const viewerApi = yield* tracker(() => {}, undefined, lockedResponse);
-        const lockedIssue = yield* viewerApi.getIssue({
-          cwd: "/w",
-          host: "github.com",
-          scope: "acme/web",
-          key: "42",
-        });
-        expect(lockedIssue.viewerPermissions).toMatchObject({
-          comment,
-          labels: metadata,
-          assignees: metadata,
-        });
-      }
       // An event kind this page has no vocabulary for is dropped rather than guessed at.
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],

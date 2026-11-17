@@ -217,9 +217,9 @@ function toViewerPermissions(raw: {
   } | null;
 }): IssueViewerPermissions {
   const canUpdate = raw.issue?.viewerCanUpdate !== false;
-  const permission = raw.viewerPermission?.trim().toUpperCase() ?? "";
-  const canWrite = ["ADMIN", "MAINTAIN", "WRITE"].includes(permission);
-  const canTriage = canWrite || permission === "TRIAGE";
+  const canTriage = ["ADMIN", "MAINTAIN", "WRITE", "TRIAGE"].includes(
+    raw.viewerPermission?.trim().toUpperCase() ?? "",
+  );
   return {
     // Triage may close and reopen an issue it may not edit, so this is not `viewerCanUpdate`.
     setState:
