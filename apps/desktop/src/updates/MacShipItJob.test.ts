@@ -30,20 +30,20 @@ const run = (input: {
   readonly platform: NodeJS.Platform;
   readonly isPackaged: boolean;
   readonly print: { readonly output: string; readonly exitCode: number };
+  readonly reprint?: { readonly output: string; readonly exitCode: number };
 }) =>
   Effect.gen(function* () {
     const commands: Array<ReadonlyArray<string>> = [];
+    let prints = 0;
     yield* removeLeftoverShipItJob().pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make((command) => {
           if (command._tag !== "StandardCommand") return Effect.die("unexpected piped command");
           commands.push([command.command, ...command.args.map(String)]);
-          return Effect.succeed(
-            command.args[0] === "print"
-              ? makeHandle(input.print.output, input.print.exitCode)
-              : makeHandle("", 0),
-          );
+          if (command.args[0] !== "print") return Effect.succeed(makeHandle("", 0));
+          const print = prints++ === 0 ? input.print : (input.reprint ?? input.print);
+          return Effect.succeed(makeHandle(print.output, print.exitCode));
         }),
       ),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
@@ -67,7 +67,7 @@ describe("removeLeftoverShipItJob", () => {
         isPackaged: true,
         print: { output: IDLE_JOB, exitCode: 0 },
       });
-      assert.deepEqual(commands, [PRINT, ["/bin/launchctl", "bootout", TARGET]]);
+      assert.deepEqual(commands, [PRINT, PRINT, ["/bin/launchctl", "bootout", TARGET]]);
     }),
   );
 
@@ -88,6 +88,20 @@ describe("removeLeftoverShipItJob", () => {
           print: { output: "Could not find service", exitCode: 113 },
         }),
         [PRINT],
+      );
+    }),
+  );
+
+  it.effect("leaves the job alone when ShipIt starts before the unload", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(
+        yield* run({
+          platform: "darwin",
+          isPackaged: true,
+          print: { output: IDLE_JOB, exitCode: 0 },
+          reprint: { output: RUNNING_JOB, exitCode: 0 },
+        }),
+        [PRINT, PRINT],
       );
     }),
   );

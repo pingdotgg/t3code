@@ -38,9 +38,13 @@ export const removeLeftoverShipItJob = Effect.fn("desktop.macShipItJob.removeLef
     if (environment.platform !== "darwin" || !environment.isPackaged || uid === undefined) return;
 
     const target = `gui/${uid}/${SHIPIT_LABEL}`;
-    const job = yield* launchctl(["print", target]);
     // A running ShipIt is installing an update or relaunching us; the next launch removes it.
-    if (job.exitCode !== 0 || /^\s*pid = \d+\s*$/m.test(job.output)) return;
+    const isLoadedAndIdle = launchctl(["print", target]).pipe(
+      Effect.map((job) => job.exitCode === 0 && !/^\s*pid = \d+\s*$/m.test(job.output)),
+    );
+    if (!(yield* isLoadedAndIdle)) return;
+    // ShipIt can start between the check and the unload, so check again right before it.
+    if (!(yield* isLoadedAndIdle)) return;
 
     const bootout = yield* launchctl(["bootout", target]);
     if (bootout.exitCode !== 0) {
