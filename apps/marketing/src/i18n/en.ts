@@ -13,9 +13,6 @@ export const en = {
     githubStars: "{stars} GitHub stars",
     language: "Language",
     mitLicensed: "MIT licensed",
-    terms: "Terms",
-    privacy: "Privacy",
-    security: "Security",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

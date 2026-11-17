@@ -12,9 +12,6 @@ export const de: Messages = {
     githubStars: "{stars} GitHub-Sterne",
     language: "Sprache",
     mitLicensed: "MIT-lizenziert",
-    terms: "Nutzungsbedingungen",
-    privacy: "Datenschutz",
-    security: "Sicherheit",
   },
   home: {
     title: `${APP_NAME} | ${APP_SLOGAN}`,

@@ -85,17 +85,8 @@ const BRAND_ALLOWLIST: ReadonlyArray<BrandAllowance> = [
   },
   // Functional endpoints the fork still uses. Renaming them would break the feature, not rebrand it.
   { file: /./, text: "t3.codes/schema/t3.json", why: "Published t3.json schema URL." },
-  // Legal: upstream's privacy policy and terms, which the marketing site still carries.
   {
-    file: /^apps\/marketing\/src\/pages\/(?:privacy-policy|terms-of-service|security-policy|legal)\.astro$/,
-    why: "Legal text is not ours to rewrite.",
-  },
-  {
-    file: /^apps\/marketing\/src\/pages\/\.well-known\/security\.txt\.ts$/,
-    why: "Security contact belongs with the security policy.",
-  },
-  {
-    file: /^(?:apps\/desktop\/resources\/linux\/com\.t3tools\.t3code\.metainfo\.xml|apps\/marketing\/src\/components\/LegalPage\.astro|scripts\/build-desktop-artifact\.ts)$/,
+    file: /^(?:apps\/desktop\/resources\/linux\/com\.t3tools\.t3code\.metainfo\.xml|scripts\/build-desktop-artifact\.ts)$/,
     text: "T3 Tools",
     why: "Upstream's company, the copyright holder in LICENSE.",
   },
