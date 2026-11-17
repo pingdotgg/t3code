@@ -57,7 +57,7 @@ export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: st
   const path = yield* Path.Path;
   // The previous run's server is in its own process group, which e2e does not wait for, and can
   // still hold the database open. Some filesystems refuse the unlink until it lets go.
-  yield* fs.remove(home, { recursive: true, force: true }).pipe(
+  yield* Effect.suspend(() => fs.remove(home, { recursive: true, force: true })).pipe(
     Effect.retry({
       schedule: Schedule.spaced("500 millis"),
       times: 60,
