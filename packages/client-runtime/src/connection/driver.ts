@@ -15,6 +15,7 @@ import type {
   PreparedConnection,
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
+import { isHostCredentialRefusal } from "./errors.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRoutes,
@@ -39,14 +40,22 @@ export type ConnectionDriverProgress =
       readonly prepared: PreparedConnection;
     };
 
-export interface EnvironmentConnectionLease {
+export interface RouteConnection {
   readonly prepared: PreparedConnection;
   readonly session: RpcSession.RpcSession;
 }
 
+export interface EnvironmentConnectionLease extends RouteConnection {
+  /** Saved routes whose host refused this device's credential before another route connected. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
+}
+
 export type RouteCheck = "answered" | "silent" | "unchecked";
-/** "unprepared" means the route answered its check but could not be prepared. */
-export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
+/**
+ * "unprepared" means the route answered its check but could not be prepared;
+ * "refused" means its host refused this device's credential.
+ */
+export type RoutePreflight = "ready" | "refused" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
@@ -79,7 +88,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   checkRoute: (route: ConnectionRoute) => Effect.Effect<RouteCheck>,
   connectRoute: (
     route: ConnectionRoute,
-  ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  ) => Effect.Effect<RouteConnection, ConnectionAttemptError, R | Scope.Scope>,
 ) {
   const routes = usableRoutes(entry);
   const checks =
@@ -91,6 +100,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const transient = new Map<string, ConnectionAttemptError>();
   const rejectedCredentials = new Set<string>();
   let blocked: ConnectionAttemptError | undefined;
+  const refusedRouteIds: Array<string> = [];
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const routeScope = yield* Scope.fork(attemptScope);
@@ -107,6 +117,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
         blocked ??= result.failure;
         if (result.failure.reason === "authentication") rejectedCredentials.add(credentialId);
       }
+      if (isHostCredentialRefusal(result.failure))
+        refusedRouteIds.push(connectionRouteId(route.target));
     }
     return result;
   });
@@ -124,7 +136,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       continue;
     }
     const result = yield* attempt(route);
-    if (result._tag === "Success") return result.success;
+    if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
@@ -139,7 +151,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // retries, the retry reaches it sooner than waiting here would.
     if (transient.size > 0 && stillSilent.some((entry) => entry.route === route)) break;
     const result = yield* attempt(route);
-    if (result._tag === "Success") return result.success;
+    if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   return yield* (
@@ -151,6 +163,25 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       })
   );
 });
+
+export const preflightRoute = (
+  check: Effect.Effect<RouteCheck>,
+  prepare: Effect.Effect<unknown, ConnectionAttemptError>,
+): Effect.Effect<RoutePreflight> =>
+  check.pipe(
+    Effect.filterOrElse(
+      (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+      () =>
+        prepare.pipe(
+          Effect.as<RoutePreflight>("ready"),
+          Effect.catch((error) =>
+            Effect.succeed<RoutePreflight>(
+              isHostCredentialRefusal(error) ? "refused" : "unprepared",
+            ),
+          ),
+        ),
+    ),
+  );
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -238,26 +269,18 @@ export const make = Effect.gen(function* () {
               Effect.forkScoped,
             );
         }
-        return { prepared, session } satisfies EnvironmentConnectionLease;
+        return { prepared, session } satisfies RouteConnection;
       }),
     );
   });
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (sendsTokenInClear(connectionRoutes(entry), route)
-      ? Effect.succeed("silent" as const)
-      : checkRoute(entry, route)
-    ).pipe(
-      Effect.filterOrElse(
-        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
-        () =>
-          resolver.prepare(routeEntry(entry, route)).pipe(
-            Effect.as<RoutePreflight>("ready"),
-            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
-          ),
-      ),
-      Effect.withSpan("ConnectionDriver.preflight"),
-    );
+    preflightRoute(
+      sendsTokenInClear(connectionRoutes(entry), route)
+        ? Effect.succeed("silent" as const)
+        : checkRoute(entry, route),
+      resolver.prepare(routeEntry(entry, route)),
+    ).pipe(Effect.withSpan("ConnectionDriver.preflight"));
 
   return ConnectionDriver.of({
     connect,

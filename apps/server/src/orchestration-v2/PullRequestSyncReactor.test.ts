@@ -186,6 +186,7 @@ interface HarnessOptions {
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
+  readonly onLink?: Effect.Effect<void>;
   readonly onSync?: (command: SyncCommand) => Effect.Effect<unknown>;
 }
 
@@ -228,6 +229,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     }
     if (command.type === "thread.pull-request.link") {
       return Ref.update(linkCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.andThen(options.onLink ?? Effect.void),
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
@@ -324,6 +326,24 @@ const sweepAgain = Effect.fn("sweepPullRequestSyncHarness")(function* (
   yield* TestClock.adjust("1 minute");
   yield* Queue.take(fixture.snapshotReads);
   yield* reactor.drain;
+});
+
+const sweepFor = Effect.fn("sweepPullRequestSyncHarnessFor")(function* (
+  fixture: Harness,
+  reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"],
+  minutes: number,
+) {
+  for (let minute = 0; minute < minutes; minute++) yield* sweepAgain(fixture, reactor);
+});
+
+const failingGitLabLink = makeLink(13, null, {
+  host: "gitlab.com",
+  url: "https://gitlab.com/owner/repository/-/merge_requests/13",
+});
+
+const gitLabCliFailure = new PullRequestOperationError({
+  operation: "summary",
+  detail: "GitLab CLI command failed",
 });
 
 function runUpdated(
@@ -1840,6 +1860,76 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
+  it.effect(
+    "caps the failed-read backoff at the slow cadence and restarts it after a success",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const failing = yield* Ref.make(true);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+            summary: (input) =>
+              Ref.get(failing).pipe(
+                Effect.flatMap((fails) =>
+                  fails ? Effect.fail(gitLabCliFailure) : Effect.succeed(makeSummary(input)),
+                ),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            const readMinutes = [0];
+            const sweepMinutes = Effect.fnUntraced(function* (from: number, to: number) {
+              for (let minute = from; minute <= to; minute++) {
+                const before = (yield* Ref.get(fixture.summaryCalls)).length;
+                yield* sweepAgain(fixture, reactor);
+                if ((yield* Ref.get(fixture.summaryCalls)).length > before)
+                  readMinutes.push(minute);
+              }
+            });
+
+            yield* sweepMinutes(1, 60);
+            assert.deepStrictEqual(readMinutes, [0, 1, 3, 7, 15, 30, 45, 60]);
+
+            yield* Ref.set(failing, false);
+            yield* sweepMinutes(61, 75);
+            yield* Ref.set(failing, true);
+            readMinutes.length = 0;
+            yield* sweepMinutes(76, 80);
+            assert.deepStrictEqual(readMinutes, [76, 77, 79]);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
+  it.effect("reads a backed-off link at once when a refresh asks, then keeps backing off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+          summary: () => Effect.fail(gitLabCliFailure),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepFor(fixture, reactor, 4);
+          const backedOffReads = (yield* Ref.get(fixture.summaryCalls)).length;
+
+          yield* reactor.requestSync(failingGitLabLink);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+
+          // The refresh failed at minute 4 with the backoff doubled to 8 minutes.
+          yield* sweepFor(fixture, reactor, 7);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect.each([
     "gh pr merge 7 --squash 2>&1 | tail -3",
     "cafe pr merge 7 --squash",
@@ -2181,11 +2271,11 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
-  it.effect("counts a forge command once per settled command, labelled by provider", () =>
+  it.effect("counts a forge command once while a link dispatch is blocked", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const fixture = yield* makeHarness({ snapshot: mergingSnapshot() });
+        const fixture = yield* makeHarness({ snapshot: mergingSnapshot(), onLink: Effect.never });
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
@@ -2194,7 +2284,16 @@ describe("PullRequestSyncReactor", () => {
             ...commandRan(child, "gh pr checks 4497 --json bucket", "[]", "checks"),
             driver: ProviderDriverKind.make("counted-driver"),
           };
-          yield* linksFrom(fixture, reactor, [ran, ran]);
+          yield* linksFrom(fixture, reactor, [
+            commandRan(
+              child,
+              "gh pr create --fill",
+              "https://github.com/owner/repository/pull/124",
+            ),
+            ran,
+            ran,
+            runUpdated(child, "completed"),
+          ]);
 
           const counted = (yield* Metric.snapshot).filter(
             (snapshot) =>

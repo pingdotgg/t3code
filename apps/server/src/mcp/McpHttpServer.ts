@@ -87,6 +87,8 @@ import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import * as IssuesHandlers from "./toolkits/issues/handlers.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -1315,6 +1317,18 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsHandlers.layer,
 ).pipe(Layer.provide(PullRequestWatchService.layer));
 
+export const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer).pipe(
+  Layer.provide(
+    McpServer.visibility(({ method }) =>
+      method === "tools/list"
+        ? Effect.map(McpInvocationContext.McpInvocationContext, (scope) =>
+            scope.capabilities.has("issues"),
+          )
+        : Effect.succeed(true),
+    ).layer,
+  ),
+);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1376,6 +1390,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerIssuesToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,

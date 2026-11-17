@@ -366,7 +366,10 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       expect(refused.reason).toBe("pairing_rejected");
       expect(yield* linkedSessions(b)).toEqual([]);
 
-      const pairing = yield* b.auth.issuePairingCredential();
+      const pairing = yield* b.auth.issuePairingCredential({
+        access: "auto",
+        purpose: "peer-link",
+      });
       const linked = yield* a.links.link({
         url: b.url,
         pairingCode: pairing.credential,

@@ -1604,6 +1604,52 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("recovers inspection from a corrupt cache once the registry is reachable", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let online = false;
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-offline-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, "{not json");
+      const options = { cacheDir, toolsDir: `${cacheDir}/tools`, registryUrl };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+
+      const offline = yield* resolver.inspect(settings()).pipe(Effect.flip);
+      expect(offline.reason).toBe("registry_unavailable");
+
+      online = true;
+      const concurrent = yield* Effect.all(
+        [resolver.inspect(settings()), resolver.inspect(settings())],
+        { concurrency: "unbounded" },
+      );
+      expect(concurrent).toMatchObject([{ status: "ready" }, { status: "ready" }]);
+      expect(requests).toBe(2);
+
+      const restarted = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(requests).toBe(2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              online
+                ? new Response(makeRegistry(agent))
+                : new Response("unavailable", { status: 503 }),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect("uses the effective provider environment for inspection and resolution", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {

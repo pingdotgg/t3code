@@ -2115,24 +2115,31 @@ describe("ThreadSettlementServiceV2 worker", () => {
 });
 
 describe("ThreadSettlementServiceV2 terminals", () => {
-  it.effect("keeps the terminals of a thread re-engaged before the event ran", () =>
-    Effect.gen(function* () {
-      const settled = appThread("reengaged-thread", "settled");
-      const reengaged = appThread("reengaged-thread", "active");
-      const marker = appThread("marker-thread", "settled");
-      const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([]),
-        currentThreads: [reengaged, marker],
-      });
+  it.effect.each(["re-engaged", "deleted"] as const)(
+    "skips settlement actions for a thread %s before the event ran",
+    (state) =>
+      Effect.gen(function* () {
+        const settled = appThread("stale-thread", "settled", "/worktrees/stale");
+        const current =
+          state === "re-engaged"
+            ? { ...settled, settledOverride: "active" as const }
+            : { ...settled, deletedAt: DateTime.makeUnsafe(NOW) };
+        const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [current, marker],
+          existingWorktreePaths: ["/worktrees/stale", "/worktrees/marker"],
+        });
 
-      yield* Effect.gen(function* () {
-        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-        yield* fixture.publishEvent(settledEvent(settled));
-        yield* fixture.publishEvent(settledEvent(marker));
-        assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
-      }).pipe(Effect.provide(fixture.layer));
-    }),
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
   );
 
   it.effect("runs the settle script in the thread's own worktree", () =>
@@ -2160,29 +2167,34 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     }),
   );
 
-  it.effect("skips the settle script for a thread re-engaged while its shells close", () =>
-    Effect.gen(function* () {
-      const settled = appThread("reengaging-thread", "settled", "/worktrees/reengaging");
-      const marker = appThread("marker-thread", "settled", "/worktrees/marker");
-      const currentThreads = [settled, marker];
-      const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([]),
-        currentThreads,
-        existingWorktreePaths: ["/worktrees/reengaging", "/worktrees/marker"],
-        onCloseIdle: () =>
-          Effect.sync(() => {
-            currentThreads[0] = { ...settled, settledOverride: "active" };
-          }),
-      });
+  it.effect.each(["re-engaged", "deleted"] as const)(
+    "skips the settle script for a thread %s while its shells close",
+    (state) =>
+      Effect.gen(function* () {
+        const settled = appThread("stale-thread", "settled", "/worktrees/stale");
+        const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+        const currentThreads = [settled, marker];
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads,
+          existingWorktreePaths: ["/worktrees/stale", "/worktrees/marker"],
+          onCloseIdle: () =>
+            Effect.sync(() => {
+              currentThreads[0] =
+                state === "re-engaged"
+                  ? { ...settled, settledOverride: "active" }
+                  : { ...settled, deletedAt: DateTime.makeUnsafe(NOW) };
+            }),
+        });
 
-      yield* Effect.gen(function* () {
-        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-        yield* fixture.publishEvent(settledEvent(settled));
-        yield* fixture.publishEvent(settledEvent(marker));
-        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
-      }).pipe(Effect.provide(fixture.layer));
-    }),
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(settled));
+          yield* fixture.publishEvent(settledEvent(marker));
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
   );
 
   it.effect("skips the settle script for a subagent in its parent's worktree", () =>

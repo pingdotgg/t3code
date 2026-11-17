@@ -18,6 +18,8 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -64,6 +66,12 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
 
+const POWERSHELL_ARGS = [
+  "-NoLogo",
+  "-NoExit",
+  "-Command",
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()",
+];
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
@@ -318,7 +326,7 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, (command) => command));
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -2210,6 +2218,91 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    { platform: "win32", shell: String.raw`C:\Program Files\Git\bin\bash.exe` },
+    { platform: "linux", shell: "/opt/custom shell/bin/bash" },
+  ] as const)("prefers the configured terminal shell on $platform: $shell", ({ platform, shell }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: ` ${shell} `, SHELL: "/bin/zsh" },
+      }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(shell);
+    }),
+  );
+
+  it.effect("lets script terminals keep the default shell without changing other terminals", () =>
+    Effect.gen(function* () {
+      const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { T3CODE_TERMINAL_SHELL: gitBash },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      yield* manager.open(openInput({ env: { T3CODE_TERMINAL_SHELL: "" } }));
+      yield* manager.open(openInput({ terminalId: "interactive" }));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["pwsh.exe", gitBash]);
+    }),
+  );
+
+  // POSIX exec failures are asynchronous in node-pty; ConPTY has a separate readiness protocol.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves configured shells and falls back from invalid paths with the real PTY adapter",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-real-shell-" });
+        const nonExecutable = path.join(baseDir, "not-executable");
+        yield* fs.writeFileString(nonExecutable, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(nonExecutable, 0o644);
+        const ptyAdapter = yield* PtyAdapter.PtyAdapter.pipe(Effect.provide(NodePtyAdapter.layer));
+        const toolsDir = path.join(baseDir, "tools");
+        const customShell = path.join(toolsDir, "custom-shell");
+        yield* fs.makeDirectory(toolsDir);
+        yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(customShell, 0o755);
+        const spacedDir = path.join(baseDir, "shells ");
+        const spacedShell = path.join(spacedDir, "custom-shell");
+        yield* fs.makeDirectory(spacedDir);
+        yield* fs.writeFileString(spacedShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(spacedShell, 0o755);
+        for (const { shell, searchPath, cwd, expectedShell } of [
+          { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: "custom-shell", searchPath: "./tools", expectedShell: customShell },
+          { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
+          { shell: "custom-shell", searchPath: ":/bin", cwd: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: `${spacedDir}:/bin`, expectedShell: spacedShell },
+        ] as ReadonlyArray<{
+          shell: string;
+          searchPath: string;
+          cwd?: string;
+          expectedShell: string;
+        }>) {
+          const spawnedShells: string[] = [];
+          const manager = yield* TerminalManager.makeWithOptions({
+            logsDir: path.join(baseDir, "logs"),
+            ptyAdapter: {
+              spawn: (input) => {
+                spawnedShells.push(input.shell);
+                return ptyAdapter.spawn(input);
+              },
+            },
+            shellResolver: () => "/bin/sh",
+            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
+          });
+          const snapshot = yield* manager.open(openInput({ cwd: cwd ?? baseDir }));
+          expect(spawnedShells).toEqual([expectedShell]);
+          expect(snapshot.status).toBe("running");
+          yield* manager.close({ threadId: "thread-1" });
+        }
+      }),
+  );
+
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2279,8 +2372,8 @@ it.layer(
       const ptyAdapter = new FakePtyAdapter();
       const { manager } = yield* createManager(5, {
         ptyAdapter,
-        shellResolver: () => "C:\\missing\\custom-shell.exe",
         env: {
+          T3CODE_TERMINAL_SHELL: "C:\\missing\\custom-shell.exe",
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
@@ -2298,8 +2391,8 @@ it.layer(
         "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       ]);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
-      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual(POWERSHELL_ARGS);
+      expect(ptyAdapter.spawnInputs[2]?.args).toEqual(POWERSHELL_ARGS);
     }),
   );
 
@@ -3031,16 +3124,16 @@ it.layer(
     }),
   );
 
-  it.effect("starts bash as a login shell on macOS only", () =>
+  it.effect("starts bash as a login shell on macOS and Windows", () =>
     Effect.gen(function* () {
       for (const [platform, shell, args] of [
         ["darwin", "/bin/bash", ["-l"]],
         ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
         ["linux", "/bin/bash", undefined],
-        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["win32", "pwsh.exe", ["-NoLogo"]],
+        ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
           shellResolver: () => shell,

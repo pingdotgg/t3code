@@ -45,6 +45,7 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { WindowsShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -1664,48 +1665,15 @@ it.layer(
       );
     });
 
-    it("drops Grok models a completed probe no longer advertises", () => {
+    it.each([
+      ["grok", "warning"],
+      ["cursor", "error"],
+      ["muse", "error"],
+      ["fx", "warning"],
+    ] as const)("drops %s models a completed listing no longer returns", (driver, failedStatus) => {
       const previousProvider = {
-        instanceId: ProviderInstanceId.make("grok"),
-        driver: ProviderDriverKind.make("grok"),
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        checkedAt: "2026-09-30T00:00:00.000Z",
-        version: "1.0.44",
-        models: [
-          { slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null },
-          { slug: "codexhub-removed", name: "Removed", isCustom: false, capabilities: null },
-        ],
-        slashCommands: [],
-        skills: [],
-      } as const satisfies ServerProvider;
-      const refreshedProvider = {
-        ...previousProvider,
-        checkedAt: "2026-09-30T00:01:00.000Z",
-        models: [previousProvider.models[0]],
-      } satisfies ServerProvider;
-      const acpFailedProvider = {
-        ...refreshedProvider,
-        status: "warning",
-        message: "Grok CLI is installed but ACP initialize failed.",
-      } satisfies ServerProvider;
-
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
-        [previousProvider.models[0]],
-      );
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, acpFailedProvider).models,
-        [...previousProvider.models],
-      );
-    });
-
-    it("drops Cursor models a completed catalog read no longer returns", () => {
-      const previousProvider = {
-        instanceId: ProviderInstanceId.make("cursor"),
-        driver: ProviderDriverKind.make("cursor"),
+        instanceId: ProviderInstanceId.make(driver),
+        driver: ProviderDriverKind.make(driver),
         status: "ready",
         enabled: true,
         installed: true,
@@ -1713,8 +1681,8 @@ it.layer(
         checkedAt: "2026-10-30T00:00:00.000Z",
         version: "1.0.0",
         models: [
-          { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: null },
-          { slug: "retired-model-x", name: "Retired", isCustom: false, capabilities: null },
+          { slug: "current-model", name: "Current", isCustom: false, capabilities: null },
+          { slug: "retired-model", name: "Retired", isCustom: false, capabilities: null },
         ],
         slashCommands: [],
         skills: [],
@@ -1726,9 +1694,7 @@ it.layer(
       } satisfies ServerProvider;
       const failedProvider = {
         ...refreshedProvider,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Cursor SDK model discovery timed out.",
+        status: failedStatus,
       } satisfies ServerProvider;
 
       assert.deepStrictEqual(
@@ -1740,6 +1706,38 @@ it.layer(
         [...previousProvider.models],
       );
     });
+
+    it.each(["kiro", "claudeAgent"] as const)(
+      "keeps %s models a ready probe can omit",
+      (driver) => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make(driver),
+          driver: ProviderDriverKind.make(driver),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-30T00:00:00.000Z",
+          version: "1.0.0",
+          models: [
+            { slug: "built-in-model", name: "Built-in", isCustom: false, capabilities: null },
+            { slug: "listed-model", name: "Listed", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const partialProvider = {
+          ...previousProvider,
+          checkedAt: "2026-10-30T00:01:00.000Z",
+          models: [previousProvider.models[0]],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(previousProvider, partialProvider).models,
+          [...previousProvider.models],
+        );
+      },
+    );
 
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
@@ -2766,6 +2764,93 @@ it.layer(
             assert.strictEqual(yield* Ref.get(scans), 1);
           }).pipe(Effect.provide(runtimeServices));
         }),
+    );
+
+    it.effect(
+      "rebuilds only instances missing their CLI when a refresh finds a new Windows PATH",
+      () => {
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+        return Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("codex");
+          const makeInstance = (id: string, installed: boolean): ProviderInstance => {
+            const instanceId = ProviderInstanceId.make(id);
+            const provider = {
+              instanceId,
+              driver,
+              status: installed ? "ready" : "error",
+              enabled: true,
+              installed,
+              auth: { status: "unknown" },
+              checkedAt: "1970-01-01T00:00:00.000Z",
+              version: null,
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            return {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: { driverKind: driver, continuationKey: `codex:${id}` },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+                markLimited: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            };
+          };
+          const instances = [makeInstance("present", true), makeInstance("missing", false)];
+          const rebuilt: Array<ReadonlyArray<ProviderInstanceId>> = [];
+          const changes = yield* PubSub.unbounded<void>();
+          const registry = yield* ProviderRegistry.ProviderRegistry.pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                    rebuild: (ids) => Effect.sync(() => void rebuilt.push(ids)),
+                  }),
+                ),
+                Layer.provideMerge(
+                  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                    getInstance: (id) => Effect.succeed(instances.find((i) => i.instanceId === id)),
+                    listInstances: Effect.succeed(instances),
+                    listUnavailable: Effect.succeed([]),
+                    streamChanges: Stream.fromPubSub(changes),
+                    subscribeChanges: PubSub.subscribe(changes),
+                  }),
+                ),
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-path-" }),
+                ),
+                Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              ),
+            ),
+          );
+
+          yield* registry.refresh();
+
+          assert.strictEqual(env.PATH, "C:\\Windows;C:\\Tools");
+          assert.deepStrictEqual(rebuilt, [[ProviderInstanceId.make("missing")]]);
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provideService(WindowsShellEnvironment, () =>
+            Effect.succeed({ PATH: "C:\\Windows;C:\\Tools" }),
+          ),
+        );
+      },
     );
 
     it.effect("rescans a requested cwd whose snapshot is still current", () =>

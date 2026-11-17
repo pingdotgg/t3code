@@ -4,6 +4,7 @@ import type {
 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
+  type EnvironmentId,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -12,6 +13,12 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import {
+  hasThreadLinks,
+  parseThreadLinkHref,
+  threadLinkCandidates,
+  threadLinkRefs,
+} from "@t3tools/shared/threadLinks";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
@@ -32,11 +39,24 @@ const suggestedThreadId = (threadId: ThreadId) => {
   return encoded === rest ? null : ThreadId.make(`${delegatedTaskPrefix}${encoded}`);
 };
 
+// A pasted link (bare, Markdown, or hosted) names its thread; only this environment's can be read here.
+const candidateThreadIds = (threadId: ThreadId, environmentId: EnvironmentId) => {
+  if (!hasThreadLinks(threadId)) {
+    const suggested = suggestedThreadId(threadId);
+    return suggested === null ? [] : [suggested];
+  }
+  const link = parseThreadLinkHref(threadId);
+  const refs =
+    link === null
+      ? threadLinkRefs(threadId, environmentId)
+      : threadLinkCandidates(link, environmentId);
+  return refs.filter((ref) => ref.environmentId === environmentId).map((ref) => ref.threadId);
+};
+
 /**
- * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, or the session
- * id their provider exposes. The id is never rewritten, so permission checks keyed on it still
- * hold; the miss only names a live thread the caller could read by its full id. Ids from another
- * machine miss here too. The link hint is static: listing links probes peers.
+ * Permission checks use the exact id. Hints may name a live local thread for a pasted link,
+ * incomplete id, or provider session id. Cross-environment hints stay static because listing
+ * links probes peers.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<
@@ -52,16 +72,31 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
       Effect.map((shell) => shell !== null && shell.deletedAt === null),
       Effect.orElseSucceed(() => false),
     );
-  const suggested = suggestedThreadId(threadId);
-  const suggestedLive = suggested !== null && (yield* isLive(suggested));
-  const owner = suggestedLive
-    ? null
-    : yield* threads.findThreadIdByNativeThreadId(threadId).pipe(Effect.orElseSucceed(() => null));
-  const idHint = suggestedLive
-    ? ` Did you mean \`${suggested}\`?`
-    : owner !== null && (yield* isLive(owner))
-      ? ` That is a provider's session id. This thread's T3 id is \`${owner}\`.`
-      : "";
+  let suggested: ThreadId | null = null;
+  for (const candidate of candidateThreadIds(threadId, scope.environmentId)) {
+    if (yield* isLive(candidate)) {
+      suggested = candidate;
+      break;
+    }
+  }
+  if (suggested !== null && hasThreadLinks(threadId)) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_not_found",
+      message: `\`${threadId}\` is a thread link, not a thread id. Pass \`${suggested}\` instead.`,
+    });
+  }
+  const owner =
+    suggested !== null
+      ? null
+      : yield* threads
+          .findThreadIdByNativeThreadId(threadId)
+          .pipe(Effect.orElseSucceed(() => null));
+  const idHint =
+    suggested !== null
+      ? ` Did you mean \`${suggested}\`?`
+      : owner !== null && (yield* isLive(owner))
+        ? ` That is a provider's session id. This thread's T3 id is \`${owner}\`.`
+        : "";
   const caller =
     scope.thread === undefined
       ? null

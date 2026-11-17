@@ -395,6 +395,16 @@ describe("instance-scoped model selection", () => {
 
   describe.each([
     {
+      driverName: "pi",
+      availableModel: "default",
+      missingModel: "anthropic/claude-sonnet-4",
+    },
+    {
+      driverName: "acpRegistry",
+      availableModel: "default",
+      missingModel: "gateway/chosen-model",
+    },
+    {
       driverName: "opencode",
       availableModel: "opencode/big-pickle",
       missingModel: "opencode/kimi-k3",
@@ -664,66 +674,61 @@ describe("instance-scoped model selection", () => {
     }
   });
 
-  it("resolves the Antigravity default marker without creating an unavailable model", () => {
-    const instanceId = ProviderInstanceId.make("antigravity_work");
-    const nativeModel = "gemini-3.1-pro";
-    const base = provider({
-      provider: ProviderDriverKind.make("antigravity"),
-      instanceId,
-      models: [nativeModel],
-    });
-    const liveProvider = {
-      ...base,
-      models: base.models.map((model) => ({
-        ...model,
-        isDefault: true,
-        aliases: [ANTIGRAVITY_DEFAULT_MODEL],
-      })),
-    };
-    const settings = settingsWithProviderInstances();
-
-    expect(
-      getAppModelOptionsForInstance(
-        settings,
-        deriveProviderInstanceEntries([liveProvider])[0]!,
-        ANTIGRAVITY_DEFAULT_MODEL,
-      ).map((model) => model.slug),
-    ).toEqual([nativeModel]);
-    expect(
-      resolveAppModelSelectionForInstance(
+  it.each([
+    { driver: "antigravity", marker: ANTIGRAVITY_DEFAULT_MODEL, nativeModel: "gemini-3.1-pro" },
+    { driver: "acpRegistry", marker: "default", nativeModel: "agent-model" },
+  ])(
+    "resolves the $driver default marker without creating an unavailable model",
+    ({ driver, marker, nativeModel }) => {
+      const instanceId = ProviderInstanceId.make(`${driver}_work`);
+      const base = provider({
+        provider: ProviderDriverKind.make(driver),
         instanceId,
-        settings,
-        [liveProvider],
-        ANTIGRAVITY_DEFAULT_MODEL,
-        {
+        models: [nativeModel],
+      });
+      const liveProvider = {
+        ...base,
+        models: base.models.map((model) => ({
+          ...model,
+          isDefault: true,
+          ...(driver === "antigravity" ? { aliases: [marker] } : {}),
+        })),
+      };
+      const settings = settingsWithProviderInstances();
+
+      expect(
+        getAppModelOptionsForInstance(
+          settings,
+          deriveProviderInstanceEntries([liveProvider])[0]!,
+          marker,
+        ).map((model) => model.slug),
+      ).toEqual([nativeModel]);
+      expect(
+        resolveAppModelSelectionForInstance(instanceId, settings, [liveProvider], marker, {
           preserveUnavailableSelection: true,
-        },
-      ),
-    ).toBe(nativeModel);
+        }),
+      ).toBe(nativeModel);
 
-    const hiddenSettings: UnifiedSettings = {
-      ...settings,
-      providerModelPreferences: {
-        [instanceId]: { hiddenModels: [nativeModel], modelOrder: [] },
-      },
-    };
-    expect(
-      resolveAppModelSelectionForInstance(
-        instanceId,
-        hiddenSettings,
-        [liveProvider],
-        ANTIGRAVITY_DEFAULT_MODEL,
-        { preserveUnavailableSelection: true },
-      ),
-    ).toBeNull();
-    expect(
-      getAppModelOptionsForInstance(
-        settings,
-        deriveProviderInstanceEntries([{ ...base, models: [] }])[0]!,
-        ANTIGRAVITY_DEFAULT_MODEL,
-      ),
-    ).toEqual([]);
-  });
+      const hiddenSettings: UnifiedSettings = {
+        ...settings,
+        providerModelPreferences: {
+          [instanceId]: { hiddenModels: [nativeModel], modelOrder: [] },
+        },
+      };
+      expect(
+        resolveAppModelSelectionForInstance(instanceId, hiddenSettings, [liveProvider], marker, {
+          preserveUnavailableSelection: true,
+        }),
+      ).toBeNull();
+      expect(
+        getAppModelOptionsForInstance(
+          settings,
+          deriveProviderInstanceEntries([{ ...base, models: [] }])[0]!,
+          marker,
+        ),
+      ).toEqual([]);
+    },
+  );
 
   it("preserves saved options through dispatch when the model is absent from the catalog", () => {
     const instanceId = ProviderInstanceId.make("opencode");

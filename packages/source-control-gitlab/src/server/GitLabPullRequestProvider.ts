@@ -47,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {

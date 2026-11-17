@@ -281,6 +281,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 CLAUDE_INVESTIGATION_DENIED,
               ]
             : ["--tools", ""]),
+          ...(investigate ? ["--setting-sources", "user"] : []),
           "--disable-slash-commands",
           // Safe mode isolates customizations while retaining subscription authentication.
           ...(isolated ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""] : []),

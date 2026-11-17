@@ -97,6 +97,9 @@ describe("V2 preview upgrade", () => {
         [115, "ProjectKnowledgeFactVerdict"],
         [116, "ConversationSummarySearch"],
         [117, "ToolOutputSearch"],
+        [118, "RepairStaleTitleRegeneration"],
+        [119, "IssueTrackerBindings"],
+        [120, "ActiveShellIndexIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -237,6 +240,9 @@ describe("V2 preview upgrade", () => {
         [115, "ProjectKnowledgeFactVerdict"],
         [116, "ConversationSummarySearch"],
         [117, "ToolOutputSearch"],
+        [118, "RepairStaleTitleRegeneration"],
+        [119, "IssueTrackerBindings"],
+        [120, "ActiveShellIndexIndexes"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

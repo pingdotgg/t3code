@@ -33,12 +33,15 @@ import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attach
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
+  readonly activeAttemptId?: string;
 }
 
 const mocks = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
+    promoteQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
+    promoteCommand: {},
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
       Atom.make<ReadonlyArray<RunStatus> | null>(null).pipe(Atom.keepAlive),
@@ -47,7 +50,8 @@ const mocks = await vi.hoisted(async () => {
 });
 
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.editQueuedRun,
+  useAtomCommand: (command: unknown) =>
+    command === mocks.promoteCommand ? mocks.promoteQueuedRun : mocks.editQueuedRun,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -63,13 +67,35 @@ vi.mock("../../state/threads", async () => {
     threadEnvironment: {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
+      promoteQueuedRun: mocks.promoteCommand,
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),
       quietThreadAtom: (ref: ScopedThreadRef) =>
         Atom.make((get) => {
           const runs = get(mocks.threadRuns(key(ref)));
-          return runs === null ? null : { projection: { runs } };
+          if (runs === null) return null;
+          // A Claude-like session whose running turn takes steering.
+          return {
+            projection: {
+              thread: { id: ref.threadId, activeProviderThreadId: null },
+              runs,
+              messages: [],
+              providerThreads: [],
+              providerSessions: [
+                {
+                  id: "session",
+                  status: "running",
+                  capabilities: { turns: { supportsActiveSteering: true } },
+                },
+              ],
+              providerTurns: runs.flatMap((run) =>
+                run.activeAttemptId
+                  ? [{ runAttemptId: run.activeAttemptId, status: "running" }]
+                  : [],
+              ),
+            },
+          };
         }),
     },
     environmentThreadShells: {
@@ -154,6 +180,7 @@ function view(
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  mocks.promoteQueuedRun.mockReset();
   useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
@@ -246,6 +273,42 @@ describe("useQueuedRunEdit", () => {
             edit: expect.objectContaining({ attachments }),
           }),
         }),
+      );
+    },
+  );
+
+  it.each([
+    // Cmd+Enter or Cmd-click with Queue as the default: save, then steer.
+    { dispatchMode: "steer", submissionIntent: "alternate", steers: true },
+    // Enter or the Update button with Steer as the default: save in place only.
+    { dispatchMode: "steer", submissionIntent: "foreground", steers: false },
+    // Cmd+Enter with Steer as the default queues, so the message stays queued.
+    { dispatchMode: "queue", submissionIntent: "alternate", steers: false },
+  ] as const)(
+    "a saved edit sent as $submissionIntent/$dispatchMode steers: $steers",
+    async (submission) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      mocks.promoteQueuedRun.mockResolvedValue({ _tag: "Success" });
+      const activeRun = RunId.make("run-active");
+      appAtomRegistry.set(mocks.threadRuns(runsKey(THREAD_A)), [
+        { id: activeRun, status: "running", activeAttemptId: "attempt-1" },
+        { id: RUN, status: "queued" },
+      ]);
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      await act(() => requireHook(hook).saveEdit(savedContent("changed"), () => {}, submission));
+      expect(mocks.editQueuedRun).toHaveBeenCalledOnce();
+      if (!submission.steers) {
+        expect(mocks.promoteQueuedRun).not.toHaveBeenCalled();
+        return;
+      }
+      expect(mocks.promoteQueuedRun).toHaveBeenCalledExactlyOnceWith({
+        environmentId: ENV,
+        input: { threadId: THREAD_A.threadId, queuedRunId: RUN, targetRunId: activeRun },
+      });
+      expect(mocks.editQueuedRun.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.promoteQueuedRun.mock.invocationCallOrder[0]!,
       );
     },
   );

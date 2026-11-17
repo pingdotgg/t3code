@@ -938,23 +938,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return yield* refreshRegistry();
   });
 
-  const loadCachedRegistry = Effect.fn("AcpRegistryCatalog.loadCachedRegistry")(function* () {
+  const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
     const current = yield* Ref.get(registryRef);
     if (current !== undefined) return current;
 
     const cached = yield* readCachedRegistry;
-    if (Option.isNone(cached)) {
-      return yield* new AcpRegistryError({
-        reason: "registry_unavailable",
-        detail: "No valid cached ACP Registry index is available.",
-      });
-    }
+    if (Option.isNone(cached)) return yield* refreshRegistry();
     yield* Ref.set(registryRef, cached.value);
     return cached.value;
-  });
-
-  const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
-    return yield* loadCachedRegistry().pipe(Effect.catch(() => refreshRegistry()));
   });
 
   const runCommand = Effect.fn("AcpRegistryCatalog.runCommand")(function* (
@@ -1799,7 +1790,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
       const agentId = settings.agentId.trim();
       if (agentId.length === 0) return { status: "unconfigured" } as const;
-      const registry = yield* loadCachedRegistry();
+      const registry = yield* loadRegistry();
       const agent = registry.agents.find((candidate) => candidate.id === agentId);
       if (agent === undefined) return { status: "not_found", agentId } as const;
       const documentationUrl = agent.website ?? agent.repository;

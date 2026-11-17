@@ -547,6 +547,10 @@ export function chatMarkdownClipboardPayload(
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     keepStartListNumbers(range, container);
+    // The indentation typed at a line start only shows; pasted, it would turn lines into code.
+    for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {
+      indentation.remove();
+    }
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;

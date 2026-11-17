@@ -1030,38 +1030,36 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (!editsOnly) invalidateSymlinkScan();
   };
   // fff refuses subscriptions until its watcher is up, which can trail the initial scan, so
-  // each read retries until one is in place.
+  // each read retries until one is in place. Subscribing waits on fff's picker lock, which its
+  // watcher holds while it indexes a new folder, so it runs off the JS thread.
   let unwatch: WatchUnsubscribe | undefined;
   yield* Effect.addFinalizer(() => Effect.sync(() => unwatch?.()));
-  const ensureWatching = () => {
+  const ensureWatching = Effect.fn("WorkspaceSearchIndex.ensureWatching")(function* () {
     if (unwatch) return true;
-    try {
-      const result = finder.watch(onWatchBatch);
-      if (result.ok) unwatch = result.value;
-    } catch {
-      // Not ready yet; the next read tries again.
-    }
+    const result = yield* Effect.promise(() =>
+      finder.watchAsync(onWatchBatch).catch(() => undefined),
+    );
+    if (result?.ok) unwatch = result.value;
     return unwatch !== undefined;
-  };
+  });
   const indexScope = yield* Effect.scope;
   const startSymlinkScan = Effect.fn("WorkspaceSearchIndex.startSymlinkScan")(function* () {
     symlinkScanStale = false;
-    // Subscribing before the scan starts means no change during it goes unseen.
-    const watched = ensureWatching();
     const done = yield* Deferred.make<SymlinkScan>();
     pendingSymlinkScan = done;
-    yield* scanSymlinkEntries().pipe(
-      Effect.tap((result) =>
-        Effect.gen(function* () {
-          lastSymlinkScan = result;
-          knownLinkPaths = result.linkPaths;
-          // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
-          lastSymlinkScanExpiresAt =
-            watched && result.indexComplete
-              ? undefined
-              : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
-        }),
-      ),
+    yield* Effect.gen(function* () {
+      // Subscribing before the scan starts means no change during it goes unseen.
+      const watched = yield* ensureWatching();
+      const result = yield* scanSymlinkEntries();
+      lastSymlinkScan = result;
+      knownLinkPaths = result.linkPaths;
+      // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
+      lastSymlinkScanExpiresAt =
+        watched && result.indexComplete
+          ? undefined
+          : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
+      return result;
+    }).pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
           pendingSymlinkScan = undefined;

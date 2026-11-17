@@ -345,12 +345,14 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     makeRawThreadShell({
       id: ThreadId.make("parent"),
       projectId: ProjectId.make("parent-project"),
+      settledOverride: "settled",
     }),
   );
   const task = presentThreadShell(
     otherEnvironmentId,
     makeRawThreadShell({
       id: ThreadId.make("task"),
+      settledOverride: "settled",
       delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
     }),
   );
@@ -368,9 +370,13 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     ...input,
     threads: [parent, task, subagent, archived],
     hideOfflineEnvironments: true,
+    settledShelfExpanded: false,
+    selectedThreadKey: `${otherEnvironmentId}:${subagent.id}`,
   };
   await act(async () => registry.set(offlineIds, []));
   await act(async () => root.render(<Probe input={delegationInput} tab="chats" />));
+  expect(seen.at(-1)!.layout.items.map((item) => item.thread.id)).toEqual([parent.id]);
+  await act(async () => registry.set(offlineIds, [otherEnvironmentId]));
   expect(seen.at(-1)!.layout.items.map((item) => item.thread.id)).toEqual([parent.id]);
   await act(async () => registry.set(offlineIds, [environmentId]));
   expect(seen.at(-1)!.layout.items.map((item) => item.thread.id)).toEqual([task.id]);

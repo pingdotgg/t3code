@@ -129,6 +129,9 @@ import Migration0114 from "./Migrations/114_ProjectKnowledgeRecallIndex.ts";
 import Migration0115 from "./Migrations/115_ProjectKnowledgeFactVerdict.ts";
 import Migration0116 from "./Migrations/116_ConversationSummarySearch.ts";
 import Migration0117 from "./Migrations/117_ToolOutputSearch.ts";
+import Migration0118 from "./Migrations/118_RepairStaleTitleRegeneration.ts";
+import Migration0119 from "./Migrations/119_IssueTrackerBindings.ts";
+import Migration0120 from "./Migrations/120_ActiveShellIndexIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -249,6 +252,9 @@ const migrationEntries = [
   [115, "ProjectKnowledgeFactVerdict", Migration0115],
   [116, "ConversationSummarySearch", Migration0116],
   [117, "ToolOutputSearch", Migration0117],
+  [118, "RepairStaleTitleRegeneration", Migration0118],
+  [119, "IssueTrackerBindings", Migration0119],
+  [120, "ActiveShellIndexIndexes", Migration0120],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -336,24 +342,26 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+  const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   const knowledgePreviewMigrations =
-    toMigrationInclusive === undefined || toMigrationInclusive >= 80
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 80)
       ? yield* reconcileProjectKnowledgePreviewMigration(migrationManifest)
       : [];
   const savedKnowledgePreviewMigrations =
-    toMigrationInclusive === undefined || toMigrationInclusive >= 92
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 92)
       ? yield* reconcileSavedKnowledgePreviewMigration(migrationManifest)
       : [];
   const knowledgeViewsPreviewMigrations =
-    toMigrationInclusive === undefined || toMigrationInclusive >= 96
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 96)
       ? yield* reconcileKnowledgeViewsPreviewMigration(migrationManifest)
       : [];
   const conversationSearchPreviewMigrations =
-    toMigrationInclusive === undefined || toMigrationInclusive >= 117
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 117)
       ? yield* reconcileConversationSearchPreviewMigration(migrationManifest)
       : [];
   if (includesV2) {

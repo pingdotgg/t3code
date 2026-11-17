@@ -1,3 +1,4 @@
+import { resolveListedAncestorThreadRef } from "@t3tools/client-runtime/state/threads";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
@@ -11,7 +12,6 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
-  resolveSidebarRowThreadRef,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -159,8 +159,15 @@ describe("sidebar thread lineage helpers", () => {
     });
 
     expect(
-      resolveSidebarRowThreadRef(ref(remote), [parent, remote], new Set([threadKey(ref(remote))])),
+      resolveListedAncestorThreadRef(
+        ref(remote),
+        [parent, remote],
+        new Set([threadKey(ref(remote))]),
+      ),
     ).toEqual(ref(parent));
+    expect(resolveListedAncestorThreadRef(ref(remote), [parent, remote], new Set())).toEqual(
+      ref(remote),
+    );
   });
 
   it("walks local and remote ancestry without confusing equal ids on different machines", () => {
@@ -184,8 +191,10 @@ describe("sidebar thread lineage helpers", () => {
     const threads = [remote, parent, grandchild];
     const delegated = new Set([threadKey(ref(remote))]);
 
-    expect(resolveSidebarRowThreadRef(ref(remote), threads, delegated)).toEqual(ref(parent));
-    expect(resolveSidebarRowThreadRef(ref(grandchild), threads, delegated)).toEqual(ref(parent));
+    expect(resolveListedAncestorThreadRef(ref(remote), threads, delegated)).toEqual(ref(parent));
+    expect(resolveListedAncestorThreadRef(ref(grandchild), threads, delegated)).toEqual(
+      ref(parent),
+    );
   });
 
   it("keeps a remote task's own row when its parent is unavailable", () => {
@@ -201,11 +210,11 @@ describe("sidebar thread lineage helpers", () => {
       delegatedFrom: { environmentId, threadId: parent.id, title: parent.title },
     });
 
-    expect(resolveSidebarRowThreadRef(ref(remote), [parent, remote], new Set())).toEqual(
+    expect(resolveListedAncestorThreadRef(ref(remote), [parent, remote], new Set())).toEqual(
       ref(remote),
     );
     expect(
-      resolveSidebarRowThreadRef(ref(remote), [remote], new Set([threadKey(ref(remote))])),
+      resolveListedAncestorThreadRef(ref(remote), [remote], new Set([threadKey(ref(remote))])),
     ).toEqual(ref(remote));
   });
 
@@ -230,47 +239,7 @@ describe("sidebar thread lineage helpers", () => {
     });
     const delegated = new Set([threadKey(firstRef), threadKey(secondRef)]);
 
-    expect(resolveSidebarRowThreadRef(firstRef, [first, second], delegated)).toEqual(firstRef);
-  });
-
-  it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
-    const environmentId = EnvironmentId.make("environment-row");
-    const otherEnvironmentId = EnvironmentId.make("environment-other");
-    const subagentOf = (id: string, parentId: ThreadId, environment = environmentId) =>
-      makeThreadFixture({
-        id: ThreadId.make(id),
-        environmentId: environment,
-        lineage: {
-          rootThreadId: parentId,
-          parentThreadId: parentId,
-          relationshipToParent: "subagent",
-        },
-      });
-    const root = makeThreadFixture({ id: ThreadId.make("thread-root"), environmentId });
-    const fork = makeThreadFixture({
-      id: ThreadId.make("thread-fork"),
-      environmentId,
-      lineage: {
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        relationshipToParent: "fork",
-      },
-    });
-    const child = subagentOf("thread-child", root.id);
-    const grandchild = subagentOf("thread-grandchild", child.id);
-    const forkChild = subagentOf("thread-fork-child", fork.id);
-    const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
-    const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
-    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
-
-    expect(resolveSidebarRowThreadRef(ref(child), threads, new Set())).toEqual(ref(root));
-    expect(resolveSidebarRowThreadRef(ref(grandchild), threads, new Set())).toEqual(ref(root));
-    expect(resolveSidebarRowThreadRef(ref(forkChild), threads, new Set())).toEqual(ref(fork));
-    expect(resolveSidebarRowThreadRef(ref(elsewhere), threads, new Set())).toEqual(ref(elsewhere));
-    expect(resolveSidebarRowThreadRef(ref(orphan), threads, new Set())).toEqual(ref(orphan));
-    const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
-    const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(resolveSidebarRowThreadRef(ref(loopA), [loopA, loopB], new Set())).toEqual(ref(loopA));
+    expect(resolveListedAncestorThreadRef(firstRef, [first, second], delegated)).toEqual(firstRef);
   });
 });
 
@@ -453,6 +422,19 @@ describe("resolveSidebarRowStatus", () => {
     expect(hasUnseenCompletion(opened)).toBe(false);
     // A runtime failure without a failed run has no date, so a visit cannot settle it.
     expect(resolveSidebarRowStatus({ ...opened, latestRun: null })).toBe("failed");
+  });
+
+  it("does not show a stopped run as an unseen completion", () => {
+    for (const status of ["interrupted", "cancelled"] as const) {
+      const stopped = {
+        ...failed,
+        runtime: { ...failedRuntime, status, lastError: null },
+        latestRun: { ...makeLatestRun(), status },
+        lastVisitedAt: "2026-03-09T10:01:00.000Z",
+      };
+      expect(hasUnseenCompletion(stopped)).toBe(false);
+      expect(resolveThreadStatusPill({ thread: stopped })).toBeNull();
+    }
   });
 });
 
@@ -1746,6 +1728,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: "environment-test:other", pendingKey: null },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1760,6 +1743,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: hiddenKey, pendingKey: null },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1776,6 +1760,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal,
         routeKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1790,6 +1775,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: true,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),

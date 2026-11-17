@@ -204,7 +204,7 @@ it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
     using _setup = setup();
     await using screen = await renderMarkdown(text);
     screen.anchor().focus();
-    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await userEvent.keyboard("{ContextMenu}");
     await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
     await userEvent.click(screen.anchor(), { button: "right" });
     await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
@@ -308,6 +308,7 @@ it("preserves keyboard activation of a file-options button", async () => {
       copyMarkdown="[Readme](readme.md)"
       theme="dark"
       onOpenInPanel={vi.fn()}
+      resolveDragPath={async () => "/work/readme.md"}
       resolveCopyPaths={async () => ({ relativePath: "readme.md", fullPath: "/work/readme.md" })}
       openInEditorMenuLabel="Open in editor"
     />,
