@@ -16,7 +16,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { EDITORS } from "@t3tools/contracts";
+import { EDITORS, type LaunchEditorInput } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -451,6 +451,72 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
     assert.equal(spawned.options.detached, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Windows drive letters cannot resolve the POSIX stubs.
+it.effect.skipIf(windowsHost)("opens Neovim in a kitty window at the project and position", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
+    // A fresh PATH folder per launch: command lookup caches folder listings.
+    const launch = (names: ReadonlyArray<string>, input: Omit<LaunchEditorInput, "editor">) =>
+      Effect.gen(function* () {
+        const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        for (const name of names) {
+          const filePath = path.join(binDir, name);
+          yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+          yield* fileSystem.chmod(filePath, 0o755);
+        }
+        const spawned: ChildProcess.StandardCommand[] = [];
+        const result = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          const editors = yield* launcher.resolveAvailableEditors();
+          const opened = yield* launcher
+            .launchEditor({ ...input, editor: "neovim" })
+            .pipe(Effect.exit);
+          return { offered: editors.includes("neovim"), opened };
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "linux",
+              env: { PATH: binDir, DISPLAY: ":0" },
+              onSpawn: (command) => spawned.push(command),
+            }),
+          ),
+          Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+        );
+        const kitty = spawned.find((command) => command.command === "kitty");
+        return { ...result, args: kitty?.args };
+      });
+
+    // nvim alone is not enough: it needs a terminal to run in.
+    const noTerminal = yield* launch(["nvim"], { cwd: project });
+    assert.equal(noTerminal.offered, false);
+    assert.equal(Exit.isFailure(noTerminal.opened), true);
+
+    const terminal = ["nvim", "kitty"];
+    const folder = yield* launch(terminal, { cwd: project });
+    assert.equal(folder.offered, true);
+    assert.deepEqual(folder.args, ["--directory", project, "nvim", project]);
+
+    const file = path.join(project, "src", "index.ts");
+    assert.deepEqual(
+      (yield* launch(terminal, {
+        cwd: file,
+        position: { line: 12, column: 4 },
+        projectRoot: project,
+      })).args,
+      ["--directory", project, "nvim", "+call cursor(12, 4)", file],
+    );
+    assert.deepEqual((yield* launch(terminal, { cwd: `${file}:7` })).args, [
+      "--directory",
+      path.join(project, "src"),
+      "nvim",
+      "+7",
+      file,
+    ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

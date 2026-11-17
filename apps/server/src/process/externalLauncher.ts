@@ -173,6 +173,18 @@ function resolveCommandEditorArgs(
       )
         return [target];
       return Option.isSome(parsedTarget) ? ["--goto", positionedTarget] : [target];
+    case "terminal":
+      if (isDirectory) return [target];
+      return Option.match(parsedTarget, {
+        onNone: () => [target],
+        onSome: ({ path, line, column }) => [
+          Option.match(column, {
+            onNone: () => `+${line}`,
+            onSome: (value) => `+call cursor(${line}, ${value})`,
+          }),
+          path,
+        ],
+      });
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],
@@ -458,6 +470,14 @@ function buildBrowserLaunch(
   };
 }
 
+// Terminal editors open in a new kitty window.
+const TERMINAL_COMMAND = "kitty";
+
+const hasTerminalFor = (editor: (typeof EDITORS)[number], env: NodeJS.ProcessEnv) =>
+  editor.launchStyle === "terminal"
+    ? isCommandAvailable(TERMINAL_COMMAND, { env })
+    : Effect.succeed(true);
+
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -477,7 +497,7 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
     }
 
     const command = yield* resolveEditorCommand(editor, env);
-    if (Option.isSome(command)) {
+    if (Option.isSome(command) && (yield* hasTerminalFor(editor, env))) {
       available.push(editor.id);
     }
   }
@@ -568,11 +588,34 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     }
     const { command, baseArgs } = resolved.value;
     const isDirectory =
-      editorDef.launchStyle === "goto" &&
+      (editorDef.launchStyle === "goto" || editorDef.launchStyle === "terminal") &&
       (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
       ));
+    if (editorDef.launchStyle === "terminal") {
+      if (!(yield* isCommandAvailable(TERMINAL_COMMAND, { env }))) {
+        return yield* new ExternalLauncherCommandNotFoundError({
+          editor: editorDef.id,
+          command: TERMINAL_COMMAND,
+        });
+      }
+      const directory = isDirectory
+        ? target
+        : (input.projectRoot ?? (yield* Path.Path).dirname(target));
+      return {
+        editor: editorDef.id,
+        target: input.cwd,
+        command: TERMINAL_COMMAND,
+        args: [
+          "--directory",
+          directory,
+          command,
+          ...baseArgs,
+          ...resolveCommandEditorArgs(editorDef, target, isDirectory, input.projectRoot, position),
+        ],
+      };
+    }
     return {
       editor: editorDef.id,
       target: input.cwd,

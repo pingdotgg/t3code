@@ -53,6 +53,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  NeovimIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -93,6 +94,11 @@ const resolveOpenInOptions = (
   resolve: MessageResolver,
 ) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
+    {
+      Icon: NeovimIcon,
+      value: "neovim",
+      kind: "brand",
+    },
     {
       Icon: CursorIcon,
       value: "cursor",

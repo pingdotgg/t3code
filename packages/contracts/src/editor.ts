@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "terminal",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -15,6 +20,8 @@ type EditorDefinition = {
 };
 
 export const EDITORS = [
+  // Runs inside a kitty window; see resolveEditorLaunch.
+  { id: "neovim", label: "Neovim", commands: ["nvim"], launchStyle: "terminal" },
   {
     id: "cursor",
     label: "Cursor",
