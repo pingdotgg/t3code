@@ -415,12 +415,15 @@ const recordPendingCard = (a: Laptop, key: string) =>
 
 /**
  * Every row of every table in the laptop's database, as text, to scan for
- * anything leaked: events, projections, receipts and outbox alike.
+ * anything leaked: events, projections, receipts and outbox alike. Virtual
+ * tables store nothing themselves: FTS rows live in shadow tables, and some
+ * (fts3tokenize) cannot be scanned at all.
  */
 const storedText = (a: Laptop) =>
   Effect.gen(function* () {
     const tables = yield* a.sql<{ name: string }>`
-      SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      SELECT name FROM pragma_table_list
+      WHERE schema = 'main' AND type IN ('table', 'shadow') AND name NOT LIKE 'sqlite_%'
     `;
     const rows = yield* Effect.forEach(tables, ({ name }) =>
       a.sql.unsafe<Record<string, unknown>>(`SELECT * FROM "${name}"`),
