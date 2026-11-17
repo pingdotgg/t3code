@@ -6,24 +6,33 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-17T02:15:40+00:00
+  at: 2026-11-17T17:27:55+00:00
 verified:
   - by: opencode/gpt-6.1-sol
-    at: 2026-11-16T18:15:36+00:00
+    at: 2026-11-17T17:27:55+00:00
 snapshot:
-  at: 2026-11-16T18:15:36+00:00
-  fork_main: eda7ca8f3ffac9a7d46b68815c9603193db80eae
-  upstream_main: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
+  at: 2026-11-17T17:27:55+00:00
+  fork_main: 38ba9f1c7a493a0dbf8fed634f7ec04808c430ae
+  upstream_main: a99faf5a629023a5aca16fc8422553a5a4a9067f
   shared_baseline: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
   last_main_integration: b20d057b87353167849d02e1031a334a91298dd7
   last_main_upstream: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
-  missing_upstream_on_main: 0
+  missing_upstream_on_main: 201
   missing_upstream_at_integrated_tip: 0
-  branch_integration: b20d057b87353167849d02e1031a334a91298dd7
-  branch_parent: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
-  branch_code_tip: 85f0a6c418ecdfe82fdbe713055a706c9a782ca3
+  branch_integration: 423f20588f1dbb437367d966a4f2617338263b87
+  branch_parent: 38ba9f1c7a493a0dbf8fed634f7ec04808c430ae
+  branch_code_tip: 7678c303a8989633165be0e9ff745b3a8b9635c0
   missing_upstream_on_branch: 0
 sources:
+  - id: november-17-candidate
+    resource: "Local candidate verification at 2026-11-17T17:27:55+00:00: merge 423f20588f1dbb437367d966a4f2617338263b87 has parents fetched fork main 38ba9f1c7a493a0dbf8fed634f7ec04808c430ae and upstream a99faf5a629023a5aca16fc8422553a5a4a9067f. Code tip 7678c303a8989633165be0e9ff745b3a8b9635c0 contains the merge and all 201 incoming commits, with zero branch gap; fork main still lacks them. Of 742 incoming paths without prior fork changes, 724 match upstream exactly; the other 18 register the fork's Prompts label in every web/mobile locale. Reference repositories match upstream. Shared recovery preserves upstream's empty worktree directory and Git/Jujutsu ownership; the real-repository case fails before the empty-directory guard is adapted and passes afterward. Upstream's fully-pushed-branch PR action already exists in the fork, so the merge retains one implementation. No live deployment occurred. This candidate has not reached main."
+    title: November 17 candidate ancestry and compatibility verification
+  - id: november-17-verification
+    resource: "Verification at 2026-11-17T17:27:55+00:00: all 42 affected-package typechecks, production web/server/desktop builds, frozen dependency/patch checks, changed-file static checks, generated server/GitHub/Linear GraphQL checks and 261 selected React Compiler cases pass. The 360-file selection initially passes 9341 tests with three inherited skips. Focused recovery/workflow checks pass 110 tests; additional fork checks pass 92 and persistence checks pass 15. After fixing two retained settings fixtures and invoking Vite+ directly under Node 26 rather than pnpm's Node 24, the five-file failure selection passes all 247 tests. Final fixture check passes format, lint, both knip passes, three affected typechecks and 49 tests. All 16 remaining browser failures reproduce on pristine upstream a99faf5a62 with frozen dependencies; the keybinding case passes in isolation on both. Both SSH archive-launch cases fail on upstream too because their fake runtime has no node on its restricted PATH; temporarily naming process.execPath makes both pass, and that fixture workaround is not retained. Real web verification covers free Replay approval/completion, Issues, saved-prompt creation/insertion and Vim delete/undo. Managed device access is refused; iOS is unavailable. Offline theme-tool eval request generation passes; paid evals, native packaging and live deployment are not performed."
+    title: Verified candidate and reproduced baseline limitations
+  - id: november-17-upstream
+    resource: https://github.com/pingdotgg/t3code/commit/a99faf5a629023a5aca16fc8422553a5a4a9067f
+    title: Pinned upstream tip for the November 17 sync
   - id: november-16-main-git
     resource: "Local main verification at 2026-11-16T18:15:36+00:00: fetched origin/main equals eda7ca8f3ffac9a7d46b68815c9603193db80eae, with parents fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and PR tip 05785227d98f6ed0c5c2a71a4a5d71ad47fc66e3. Initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411, follow-up integration b20d057b87353167849d02e1031a334a91298dd7, final code tip 85f0a6c418ecdfe82fdbe713055a706c9a782ca3 and pinned upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541 are ancestors of main. All 967 incoming commits are incorporated, the shared baseline equals pinned upstream and zero upstream commits are missing on main. PR 81 merged at 2026-11-16T18:15:25Z without registered checks, workflow runs, reviews or pending reviewers. Local verification and reproduced baseline failures are recorded on the PR. No live deployment occurred."
     title: Completed November 16 main ancestry and merge verification
@@ -415,13 +424,35 @@ sources:
 
 # Upstream integration
 
-Fork `main` at `eda7ca8f3f` incorporates upstream through `c8c51af4e3`.
-PR #81 merged all 967 incoming commits with ancestry preserved and zero main gap.
-Remote deployment remains separate.[^november-16-main-git]
+Fork `main` at `38ba9f1c7a` incorporates upstream through `c8c51af4e3`.
+The November 17 candidate incorporates 201 newer commits through `a99faf5a62`,
+with zero branch gap; those commits have not reached fork `main` yet.
+Remote deployment remains separate.[^november-17-candidate]
 
 This is a revision-pinned snapshot, not a claim about newer upstream work.
 Refresh it after the next review or integration using the
 [maintenance guidance](maintenance.md).
+
+## November 17 candidate
+
+Merge `423f20588f` retains both fresh fork `main` and the pinned upstream tip.
+Of 742 incoming paths without prior fork changes, 724 match upstream exactly;
+the other 18 add the fork's Prompts label to every web/mobile locale.
+[^november-17-candidate][^november-17-upstream]
+
+Keep upstream's Windows recovery fix: clear dependency leftovers inside the
+worktree without removing the directory that a terminal may still use. The
+shared recovery service must recognize that empty directory as needing a
+checkout, while preserving its recorded Git/Jujutsu owner. Upstream's
+fully-pushed-branch PR action already exists in the fork; keep one implementation.
+[^november-17-candidate]
+
+The 16 remaining browser failures reproduce on pristine upstream. Both SSH
+archive-launch failures also reproduce there; their fake runtime cannot find
+Node on its restricted PATH. Naming the current Node executable makes both pass,
+but that fixture workaround is not retained. No integration-only failure remains
+in those comparisons. Native verification is blocked by device access.
+[^november-17-verification]
 
 ## Completed November 16 sync
 
@@ -1445,3 +1476,9 @@ git log --reverse --oneline origin/main..upstream/main
 [^november-12-main]: PR #73 and its recorded merge time.
 
 [^november-12-main-git]: Completed main integration, exact parents, and zero ancestry gap against the pinned upstream tip.
+
+[^november-17-candidate]: Exact candidate parents, code tip, separate main and branch gaps, and upstream-first source comparison.
+
+[^november-17-upstream]: Exact upstream revision incorporated into the November 17 candidate.
+
+[^november-17-verification]: Local verification, corrected Node runtime, passing fixture repairs, and reproduced baseline failures.

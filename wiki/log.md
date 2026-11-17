@@ -2,6 +2,8 @@
 
 ## 2026-11-17
 
+- **Integration candidate**: [Upstream integration](upstream-integration.md#november-17-candidate) records merge `423f20588f` through `a99faf5a62`, retaining all 201 incoming commits with zero branch gap. Fork `main` remains at `38ba9f1c7a`. Recovery keeps upstream's empty-directory fix alongside Git/Jujutsu ownership; the overlapping PR action stays a single implementation. No live deployment occurred.
+
 - **Compatibility**: Recorded [PR #83](https://github.com/NicholasZolton/t3code/pull/83)'s [opt-in PR approval wait](upstream-integration.md#opt-in-pull-request-approval-waits). Default watches retain upstream's checks-only waiting; `waitForApproval` also waits for a host-reported approval and releases automatically without unwatching.
 
 ## 2026-11-16
