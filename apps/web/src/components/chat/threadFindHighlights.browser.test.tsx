@@ -70,6 +70,63 @@ it("paints only matches near the viewport plus the active one, in a row with mor
   expect(painted().length).toBeLessThan(5_000);
 });
 
+it("paints every match near the viewport when cells lay text out in a different order than the DOM", async () => {
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="row"><div data-thread-find-text><table style="width: 100%"><tr>
+       <td style="vertical-align: top">${"e x ".repeat(5_000)}</td>
+       <td style="vertical-align: top">${"e x ".repeat(5_000)}</td>
+     </tr></table></div></div>`,
+  );
+  const cells = [...timeline.container.querySelectorAll("td")];
+  const ranges = collectThreadFindRanges(timeline.container, "e");
+  const key = (range: Range) =>
+    `${cells.indexOf(range.startContainer.parentElement as HTMLTableCellElement)}:${range.startOffset}`;
+  const missing = () => {
+    const viewport = timeline.container.getBoundingClientRect();
+    const [top, bottom] = [viewport.top - viewport.height, viewport.bottom + viewport.height];
+    const shown = new Set(painted().map(key));
+    return ranges.filter(({ range }) => {
+      const rect = range.getBoundingClientRect();
+      return rect.bottom >= top && rect.top <= bottom && !shown.has(key(range));
+    }).length;
+  };
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect(missing()).toBe(0);
+
+  timeline.container.scrollTop = 1_000;
+  await vi.waitFor(() => expect(missing()).toBe(0));
+  expect(painted().length).toBeLessThan(ranges.length / 2);
+});
+
+it("skips a hidden block's matches without measuring each one", async () => {
+  using timeline = mountTimeline(
+    `<div data-timeline-row-id="row"><div data-thread-find-text>
+       <div style="display: none">${"e x ".repeat(10_000)}</div><p>e</p>
+     </div></div>`,
+  );
+  const visible = timeline.container.querySelector("p")!;
+  using measure = vi.spyOn(Range.prototype, "getBoundingClientRect");
+  await using _screen = await render(
+    <Highlights
+      container={timeline.container}
+      query="e"
+      activeRowId={null}
+      activeOccurrence={0}
+      onActiveRange={() => {}}
+    />,
+  );
+  expect([painted().length, paintedIn(visible)]).toEqual([1, 1]);
+  expect(measure.mock.calls.length).toBeLessThan(100);
+});
+
 it("registers a row's matches only while it is near the viewport, and again after its text changes", async () => {
   using timeline = mountTimeline(
     `<div data-timeline-row-id="near"><div data-thread-find-text>e e e</div></div>

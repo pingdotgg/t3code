@@ -237,61 +237,123 @@ type ThreadFindSelection = Pick<
   "activeRowId" | "activeOccurrence" | "onActiveRange"
 >;
 
+interface TextRun {
+  readonly start: number;
+  end: number;
+  readonly box: Element;
+  readonly item: Node | null;
+  readonly ordered: boolean;
+  readonly hidden: boolean;
+}
+
+const INLINE_DISPLAYS = new Set(["inline", "contents"]);
+const textRunsByMatches = new WeakMap<readonly ThreadFindRange[], readonly TextRun[]>();
+
+// Splits a row's matches into runs that each lie in one inline formatting context,
+// where a later match is never higher on screen. Cells, flex and grid items, and
+// inline blocks each start a run, since their text can sit beside earlier text.
+function textRuns(row: Element, matches: readonly ThreadFindRange[]): readonly TextRun[] {
+  const cached = textRunsByMatches.get(matches);
+  if (cached) return cached;
+  const displays = new Map<Element, string>();
+  const displayOf = (element: Element) => {
+    let display = displays.get(element);
+    if (display === undefined) {
+      display = getComputedStyle(element).display;
+      displays.set(element, display);
+    }
+    return display;
+  };
+  const columns = new Map<Element, boolean>();
+  const inColumns = (element: Element): boolean => {
+    let multicol = columns.get(element);
+    if (multicol === undefined) {
+      const style = getComputedStyle(element);
+      multicol =
+        style.columnCount !== "auto" ||
+        style.columnWidth !== "auto" ||
+        (element !== row && element.parentElement !== null && inColumns(element.parentElement));
+      columns.set(element, multicol);
+    }
+    return multicol;
+  };
+  const runs: TextRun[] = [];
+  let text: Node | null = null;
+  for (const [index, { range }] of matches.entries()) {
+    const last = runs.at(-1);
+    if (last && range.startContainer === text) {
+      last.end = index + 1;
+      continue;
+    }
+    const parent = range.startContainer.parentElement;
+    if (!parent) continue;
+    text = range.startContainer;
+    let box = parent;
+    while (box !== row && box.parentElement && INLINE_DISPLAYS.has(displayOf(box)))
+      box = box.parentElement;
+    // Text directly inside a flex or grid container is an anonymous item of its own.
+    const item = /flex|grid/.test(displayOf(box)) ? text : null;
+    const hidden = parent.closest("[hidden]") !== null;
+    if (last?.end === index && last.box === box && last.item === item && last.hidden === hidden) {
+      last.end = index + 1;
+      continue;
+    }
+    runs.push({ start: index, end: index + 1, box, item, hidden, ordered: !inColumns(box) });
+  }
+  textRunsByMatches.set(matches, runs);
+  return runs;
+}
+
 // Blink rebuilds every registered highlight Range on any DOM or style change, so
 // only matches within a screen of the viewport are painted; the active one always is.
 function matchesInZone(
-  container: HTMLElement,
   row: Element,
   matches: readonly ThreadFindRange[],
   zone: { top: number; bottom: number },
-): [number, number] {
-  const box = row.getBoundingClientRect();
-  if (matches.length === 0 || box.bottom < zone.top || box.top > zone.bottom) return [0, 0];
-  // Matches run top to bottom once folded ones are skipped, a whole fold at a time.
-  const firstShown = (index: number, high: number): [number, DOMRect | null] => {
-    while (index < high) {
-      const range = matches[index]!.range;
-      const fold = foldsHiding(range, container).at(-1);
-      if (!fold) {
-        const rect = range.getBoundingClientRect();
+  shown: Set<Range>,
+): void {
+  const rowBox = row.getBoundingClientRect();
+  if (matches.length === 0 || rowBox.bottom < zone.top || rowBox.top > zone.bottom) return;
+  const intersects = (rect: DOMRect) => rect.bottom >= zone.top && rect.top <= zone.bottom;
+  for (const run of textRuns(row, matches)) {
+    if (run.hidden) continue;
+    const boxes = run.box.getClientRects();
+    if (boxes.length === 0 || ![...boxes].some(intersects)) continue;
+    if (!run.ordered) {
+      for (let index = run.start; index < run.end; index++)
+        if (intersects(matches[index]!.range.getBoundingClientRect()))
+          shown.add(matches[index]!.range);
+      continue;
+    }
+    const firstShown = (index: number, high: number): [number, DOMRect | null] => {
+      for (; index < high; index++) {
+        const rect = matches[index]!.range.getBoundingClientRect();
         if (rect.height > 0) return [index, rect];
-        index++;
-        continue;
       }
-      let after = high;
-      while (index < after) {
-        const mid = (index + after) >>> 1;
-        if (fold.contains(matches[mid]!.range.startContainer)) index = mid + 1;
-        else after = mid;
+      return [high, null];
+    };
+    const firstWhere = (isPast: (rect: DOMRect) => boolean) => {
+      let low = run.start;
+      let high = run.end;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        const [probe, rect] = firstShown(mid, high);
+        if (!rect || isPast(rect)) high = mid;
+        else low = probe + 1;
       }
-    }
-    return [high, null];
-  };
-  const firstWhere = (isPast: (rect: DOMRect) => boolean) => {
-    let low = 0;
-    let high = matches.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      const [probe, rect] = firstShown(mid, high);
-      if (!rect || isPast(rect)) high = mid;
-      else low = probe + 1;
-    }
-    return low;
-  };
-  return [
-    firstWhere((rect) => rect.bottom >= zone.top),
-    firstWhere((rect) => rect.top > zone.bottom),
-  ];
+      return low;
+    };
+    const end = firstWhere((rect) => rect.top > zone.bottom);
+    for (let index = firstWhere((rect) => rect.bottom >= zone.top); index < end; index++)
+      shown.add(matches[index]!.range);
+  }
 }
 
 function makeThreadFindHighlightPainter(container: HTMLElement) {
   const inactive = new Highlight();
   const active = new Highlight();
   const zoned = new Set<Range>();
-  const windows = new Map<
-    Element,
-    { matches: readonly ThreadFindRange[]; start: number; end: number }
-  >();
+  const windows = new Map<Element, Set<Range>>();
   const rangesByRow = new Map<string, Range[]>();
   let selected: Range | null = null;
   CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
@@ -309,19 +371,16 @@ function makeThreadFindHighlightPainter(container: HTMLElement) {
     const zone = { top: viewport.top - viewport.height, bottom: viewport.bottom + viewport.height };
     for (const [row, previous] of windows) {
       if (rows.has(row)) continue;
-      for (let i = previous.start; i < previous.end; i++) hide(previous.matches[i]!.range);
+      for (const range of previous) hide(range);
       windows.delete(row);
     }
     for (const [row, matches] of rows) {
-      const [start, end] = matchesInZone(container, row, matches, zone);
+      const shown = new Set<Range>();
+      matchesInZone(row, matches, zone, shown);
       const previous = windows.get(row);
-      const kept = previous?.matches === matches ? previous : null;
-      if (previous)
-        for (let i = previous.start; i < previous.end; i++)
-          if (!kept || i < start || i >= end) hide(previous.matches[i]!.range);
-      for (let i = start; i < end; i++)
-        if (!kept || i < kept.start || i >= kept.end) show(matches[i]!.range);
-      windows.set(row, { matches, start, end });
+      if (previous) for (const range of previous) if (!shown.has(range)) hide(range);
+      for (const range of shown) if (!previous?.has(range)) show(range);
+      windows.set(row, shown);
     }
   };
   const select = (selection: ThreadFindSelection) => {
