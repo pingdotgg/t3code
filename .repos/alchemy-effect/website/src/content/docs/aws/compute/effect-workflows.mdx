@@ -1,0 +1,252 @@
+---
+title: Effect workflows
+description: Run Effect workflows on AWS Lambda durable functions. Host them in an AWS.Lambda.WorkflowFunction, start runs from other functions with AWS.Lambda.DurableFunctionEngine, and let them sleep and wait durably.
+---
+
+An Effect workflow is a durable process written with `effect/workflow`: a
+series of steps whose results are stored, so a run that's interrupted
+resumes after its last finished step, and a run can wait hours or days for
+a timer or a signal. On AWS they run on Lambda durable functions: each run
+is one durable execution.
+
+The same workflow code runs on Cloudflare too. See
+[Effect workflows on Cloudflare](/cloudflare/compute/effect-workflows).
+
+## Define a workflow
+
+`Workflow.make` declares the workflow, and `Workflows.layer` implements it.
+Each step is an `Activity`: a named Effect whose result is stored the first
+time it completes.
+
+```typescript
+// src/orders.ts
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Activity, Workflow } from "effect/workflow";
+
+export const PlaceOrder = Workflow.make("PlaceOrder", {
+  payload: { orderId: Schema.String },
+  success: Schema.String,
+  idempotencyKey: ({ orderId }) => orderId,
+});
+
+export const PlaceOrderLive = Workflows.layer(
+  PlaceOrder,
+  Effect.fn(function* ({ orderId }) {
+    return yield* Activity.make({
+      name: "charge",
+      success: Schema.String,
+      execute: Effect.succeed(`charged ${orderId}`),
+    });
+  }),
+);
+```
+
+## Use bindings in a step
+
+Pass `Workflows.layer` an Effect that returns the handler instead of the
+handler itself. The Effect runs once, when the function starts, so resolve
+bindings there and use them in the steps:
+
+```typescript
+// src/receipts.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Activity, Workflow } from "effect/workflow";
+
+export const Receipts = AWS.S3.Bucket("Receipts");
+
+export const SendReceipt = Workflow.make("SendReceipt", {
+  payload: { orderId: Schema.String },
+  idempotencyKey: ({ orderId }) => orderId,
+});
+
+export const SendReceiptLive = Workflows.layer(
+  SendReceipt,
+  Effect.gen(function* () {
+    const putObject = yield* AWS.S3.PutObject(Receipts);
+    return Effect.fn(function* ({ orderId }) {
+      yield* Activity.make({
+        name: "receipt",
+        execute: putObject({
+          Key: `${orderId}.json`,
+          Body: JSON.stringify({ orderId }),
+        }).pipe(Effect.orDie),
+      });
+    });
+  }),
+);
+```
+
+The binding grants the workflow function `s3:PutObject` on the bucket.
+Provide its implementation on the Layer you deploy the function with:
+`SendReceiptLive.pipe(Layer.provide(AWS.S3.PutObjectHttp))`.
+
+## Host it in a workflow function
+
+`AWS.Lambda.WorkflowFunction` is a durable function that runs workflows.
+Declare the workflows it runs, then deploy it with the Layer that
+implements them:
+
+```typescript
+// src/OrderWorkflows.ts
+import * as AWS from "@alchemy.run/aws";
+import { PlaceOrder, PlaceOrderLive } from "./orders.ts";
+
+export class OrderWorkflows extends AWS.Lambda.WorkflowFunction<OrderWorkflows>()(
+  "OrderWorkflows",
+  { workflows: [PlaceOrder] },
+) {}
+
+export default OrderWorkflows.make(
+  { main: import.meta.url, executionTimeout: "7 days" },
+  PlaceOrderLive,
+);
+```
+
+Each run is one durable execution of the function. `executionTimeout` caps
+how long one run may take in total, waits included, up to a year.
+
+## Host several workflows
+
+One function can run many workflows. List them all, and merge their Layers:
+
+```typescript
+// src/OrderWorkflows.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Layer from "effect/Layer";
+import { PlaceOrder, PlaceOrderLive, RefundOrder, RefundOrderLive } from "./orders.ts";
+
+export class OrderWorkflows extends AWS.Lambda.WorkflowFunction<OrderWorkflows>()(
+  "OrderWorkflows",
+  { workflows: [PlaceOrder, RefundOrder] },
+) {}
+
+export default OrderWorkflows.make(
+  { main: import.meta.url, executionTimeout: "7 days" },
+  Layer.mergeAll(PlaceOrderLive, RefundOrderLive),
+);
+```
+
+The Layer must implement every workflow the function lists: leaving one out
+is a type error. A workflow's child workflows run in the same function, so
+list them too.
+
+## Start a run from another function
+
+`AWS.Lambda.DurableFunctionEngine` runs workflows on the functions that host
+them. Provide it to the calling function, and get a client with
+`Workflows.RunWorkflow`:
+
+```typescript
+// src/Api.ts
+import * as AWS from "@alchemy.run/aws";
+import * as Workflows from "alchemy/Workflows";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { OrderWorkflows } from "./OrderWorkflows.ts";
+import { PlaceOrder } from "./orders.ts";
+
+export class Api extends AWS.Lambda.Function<Api>()("Api") {}
+
+export default Api.make(
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const placeOrder = yield* Workflows.RunWorkflow(PlaceOrder);
+    return {
+      fetch: Effect.gen(function* () {
+        const run = yield* placeOrder.start({ orderId: "o-1" });
+        return HttpServerResponse.text(run.executionId);
+      }),
+    };
+  }).pipe(Effect.provide(AWS.Lambda.DurableFunctionEngine(OrderWorkflows))),
+);
+```
+
+The engine grants the caller what it needs on `OrderWorkflows`: invoking it,
+and reading and signalling its durable executions. `start` returns as soon
+as the run is started. Starting again with the same key returns the run
+already started, so a retried request never starts a second one.
+
+Running a workflow that none of the engine's functions list is a type error.
+
+## Route across functions
+
+Pass every function whose workflows the caller runs. Each run goes to the
+function that hosts its workflow:
+
+```typescript
+Effect.provide(AWS.Lambda.DurableFunctionEngine(OrderWorkflows, BillingWorkflows))
+```
+
+## Read a run
+
+Store the run's `executionId`, and get the run back with `get`:
+
+```typescript
+const run = placeOrder.get(executionId);
+const status = yield* run.status;
+```
+
+`status` is `NotStarted`, `Running`, `Completed` with its result, `Failed`
+with its error, `Interrupted`, or `Died` with a defect. `run.result` waits
+for the run to finish, which suits tests and scripts more than requests.
+
+## Sleep durably
+
+`DurableClock.sleep` is a durable wait: the invocation ends, nothing is
+billed while it waits, and Lambda invokes the function again when it's due.
+
+```typescript
+yield* DurableClock.sleep({ name: "cool-off", duration: "1 hour" });
+```
+
+Sleeps of a minute or less run in memory by default. Pass
+`inMemoryThreshold: 0` to make a short sleep durable too. Durable sleeps
+round up to whole seconds.
+
+## Wait for a signal
+
+A `DurableDeferred` is a value a run waits for, delivered from outside. The
+run waits on a Lambda callback until it arrives.
+
+```typescript
+export const Approval = DurableDeferred.make("approval", { success: Schema.String });
+
+const approvedBy = yield* DurableDeferred.await(Approval);
+```
+
+Send it with the run's `signal`:
+
+```typescript
+yield* approve.get(executionId).signal(Approval, "agent-7");
+```
+
+The engine finds the run's callback in its execution history. A callback
+only exists once the run reaches its wait, so `signal` retries for up to a
+few minutes while the run gets there.
+
+## Undo a step when a later one fails
+
+`withCompensation` attaches what to do if the run fails after the step
+succeeded. Compensations run last step first.
+
+```typescript
+yield* Activity.make({ name: "reserve", execute: reserve(order) }).pipe(
+  Checkout.withCompensation(() => Activity.make({ name: "release", execute: release(order) })),
+);
+```
+
+`run.interrupt` wakes a run that's waiting on a signal, which then
+fails where it waits and runs its compensations. A run that's busy in a step
+can only be stopped, with `StopDurableExecution`, and its compensations don't
+run.
+
+## See what a run did
+
+Every step is a named operation in the durable execution, so the Lambda
+console and `GetDurableExecutionHistory` show which steps ran, with their
+names (`charge/1`: the step and its attempt), results and timings.

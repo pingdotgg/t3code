@@ -18,10 +18,16 @@ import {
   resolveHandoffEndpoints,
   type HandoffEndpoints,
   type HandoffTimelineRun,
+  resolveModelSwitchChange,
 } from "@t3tools/client-runtime/handoff";
-import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  formatSubagentDisplayTitle,
+  subagentCardDetail,
+} from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  type ModelSelection,
+  type OrchestrationV2ModelSwitch,
   type OrchestrationV2Notification,
   type OrchestrationV2TurnItem,
   type OrchestrationV2RemoteTaskChild,
@@ -40,6 +46,7 @@ import {
   CircleStopIcon,
   ArrowRightLeftIcon,
   ArrowRightIcon,
+  EraserIcon,
   GitForkIcon,
   MessageSquareIcon,
 } from "lucide-react";
@@ -47,7 +54,9 @@ import {
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
   applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderInstanceEntries,
+  hasInstanceBadge,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -72,7 +81,12 @@ export function V2LifecycleRow(props: {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
     return (
-      <TimelineSystemDivider label="Run interrupted" detail={item.message} icon={CircleStopIcon} />
+      <TimelineSystemDivider
+        label="Run interrupted"
+        detail={item.message}
+        icon={CircleStopIcon}
+        wrapDetail
+      />
     );
   }
   if (item.type === "handoff") {
@@ -183,17 +197,6 @@ const SETTLED_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
   "interrupted",
 ]);
 
-const GENERIC_CHILD_END = /^Child task ended with status\b/i;
-
-function plainDetail(text: string): string {
-  return text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/`/g, "")
-    .replace(/^[ \t]*[-*][ \t]+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
   return value ? DateTime.formatIso(value) : null;
 }
@@ -206,12 +209,18 @@ function SubagentAvatar({
   driver,
   displayName,
   iconUrl,
+  accentColor,
+  showBadge,
+  anyInstanceBadge,
   status,
   className,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
   iconUrl?: string | undefined;
+  accentColor?: string | undefined;
+  showBadge: boolean;
+  anyInstanceBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
   className?: string;
 }) {
@@ -227,7 +236,10 @@ function SubagentAvatar({
         <ProviderInstanceIcon
           driverKind={driver}
           displayName={displayName ?? driver}
+          accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
+          showBadge={showBadge}
+          size="compact"
           className="z-auto"
           iconClassName="size-3.5"
         />
@@ -237,7 +249,8 @@ function SubagentAvatar({
       {status ? (
         <span
           className={cn(
-            "absolute -right-px -bottom-px size-2 rounded-full ring-2 ring-background",
+            "absolute -right-px size-2 rounded-full ring-2 ring-background",
+            anyInstanceBadge ? "-top-px" : "-bottom-px",
             subagentStatusVisual(status).dotClass,
           )}
         />
@@ -261,9 +274,13 @@ export function EnvironmentSubagentAvatar({
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
 }) {
-  const providersAtom = serverEnvironment.providersValueAtom(
-    remote?.environmentId ?? environmentId,
-  );
+  const providerEnvironmentId = remote?.environmentId ?? environmentId;
+  const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(providerEnvironmentId));
+  const entries = (providers: ReadonlyArray<ServerProvider> | null | undefined) => {
+    const derived = deriveProviderInstanceEntries(providers ?? []);
+    return settings ? brandProviderInstanceEntries(derived, settings) : derived;
+  };
   const providerDriver = useAtomValue(
     providersAtom,
     (providers) =>
@@ -272,7 +289,20 @@ export function EnvironmentSubagentAvatar({
   const displayName = useAtomValue(
     providersAtom,
     (providers) =>
-      providers?.find((provider) => provider.instanceId === providerInstanceId)?.displayName,
+      entries(providers).find((entry) => entry.instanceId === providerInstanceId)?.displayName,
+  );
+  const accentColor = useAtomValue(
+    providersAtom,
+    (providers) =>
+      entries(providers).find((entry) => entry.instanceId === providerInstanceId)?.accentColor,
+  );
+  const showBadge = useAtomValue(providersAtom, (providers) => {
+    const all = entries(providers);
+    const entry = all.find((candidate) => candidate.instanceId === providerInstanceId);
+    return entry !== undefined && shouldShowInstanceBadge(entry, all);
+  });
+  const anyInstanceBadge = useAtomValue(providersAtom, (providers) =>
+    hasInstanceBadge(entries(providers)),
   );
   const iconUrl = useAtomValue(
     providersAtom,
@@ -285,6 +315,9 @@ export function EnvironmentSubagentAvatar({
       driver={providerDriver ?? (remote === undefined ? driver : undefined)}
       displayName={displayName}
       iconUrl={iconUrl}
+      accentColor={accentColor}
+      showBadge={showBadge}
+      anyInstanceBadge={anyInstanceBadge}
     />
   );
 }
@@ -408,8 +441,7 @@ function SubagentTimelineLink(props: {
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
   const rawDetail = settled ? result || progress : progress || result;
-  const detail =
-    rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
+  const detail = subagentCardDetail(rawDetail);
   const failed = status === "failed";
   const timing = {
     status: liveStatus,
@@ -562,6 +594,35 @@ function EnvironmentHandoffRow({
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   return <HandoffRow {...props} environmentId={environmentId} providers={providers} />;
+}
+
+/** Marks where `/clear` or an automation started a new provider session in this thread. */
+export function FreshSessionRow() {
+  return <TimelineSystemDivider label="New session" icon={EraserIcon} />;
+}
+
+/** A same-harness model or effort change. Shows only what changed. */
+export function ModelSwitchRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly modelSwitch: OrchestrationV2ModelSwitch;
+}) {
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
+    EMPTY_SERVER_PROVIDERS;
+  const change = resolveModelSwitchChange(props.modelSwitch, providers);
+  if (change === null) return null;
+  const describe = (selection: ModelSelection, effort: string | undefined) => {
+    const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+    const modelName = model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
+    return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
+  };
+  const { from, to } = props.modelSwitch;
+  return (
+    <TimelineSystemDivider
+      label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
+    />
+  );
 }
 
 export function HandoffRow(props: {

@@ -2,6 +2,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { ProjectId, type PullRequestStack, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  pullRequestLayerParams,
   pullRequestStackMerge,
   savedPullRequestStack,
   singlePullRequestMergeAllowed,
@@ -121,6 +122,26 @@ describe("mobile stack merge scope", () => {
         isFresh: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("mobile stack layer navigation", () => {
+  it("opens another layer without the summary of the layer it came from", () => {
+    const route = {
+      environmentId: "environment",
+      projectId: "project",
+      repository: "acme/web",
+      host: "github.com",
+      number: 2,
+      initialSummary: { number: 2, url: "https://github.com/acme/web/pull/2" },
+    };
+    expect(pullRequestLayerParams(route, 3)).toEqual({
+      environmentId: "environment",
+      projectId: "project",
+      repository: "acme/web",
+      host: "github.com",
+      number: 3,
+    });
   });
 });
 

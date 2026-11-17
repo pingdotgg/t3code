@@ -1,0 +1,247 @@
+---
+title: Effect RPC on Cloud Run
+description: Build a typed RPC API with Effect's Rpc module, deploy it to Cloud Run, and call its procedures from a typed client.
+sidebar:
+  order: 3
+---
+
+Effect RPC gives you procedures instead of URLs, and a typed client
+with no codegen. Every request is checked against a schema, so use it
+where a web app or another service calls into yours. The concept lives
+at [Effect RPC](/apis/effect-rpc). This page wires it onto Cloud Run.
+
+## Define the schemas
+
+```typescript
+// src/Job.ts
+import * as Schema from "effect/Schema";
+
+export const JobId = Schema.String;
+
+export class Job extends Schema.Class<Job>("Job")({
+  id: JobId,
+  content: Schema.String,
+}) {}
+
+export class JobNotFound extends Schema.TaggedClass<JobNotFound>()(
+  "JobNotFound",
+  { jobId: JobId },
+) {}
+
+export class PutJobFailed extends Schema.TaggedClass<PutJobFailed>()(
+  "PutJobFailed",
+  { reason: Schema.String },
+) {}
+```
+
+The client receives these errors as typed values it can `catchTag`.
+
+## Declare the procedures
+
+```typescript
+// src/JobRpcs.ts
+import * as Schema from "effect/Schema";
+import { Rpc, RpcGroup } from "effect/rpc";
+import { Job, JobId, JobNotFound, PutJobFailed } from "./Job.ts";
+
+const getJob = Rpc.make("getJob", {
+  success: Job,
+  error: JobNotFound,
+  payload: { jobId: JobId },
+});
+
+const createJob = Rpc.make("createJob", {
+  success: JobId,
+  error: PutJobFailed,
+  payload: { content: Schema.String },
+});
+
+export class JobRpcs extends RpcGroup.make(getJob, createJob) {}
+```
+
+## Implement it on Cloud Run
+
+`GCP.Run.ServeRpc` turns the group into a `fetch` handler. It serves
+NDJSON, so streaming procedures work, and builds the server once per
+instance:
+
+```typescript
+// src/JobService.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { Job, JobNotFound, PutJobFailed } from "./Job.ts";
+import { JobRpcs } from "./JobRpcs.ts";
+
+export default class JobService extends GCP.Function<JobService>()(
+  "JobService",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const jobs = yield* GCP.Firestore.Database("Jobs", {
+      type: "FIRESTORE_NATIVE",
+    });
+    const db = yield* GCP.Firestore.ReadWriteDatabase(jobs);
+
+    const handlersLayer = JobRpcs.toLayer({
+      getJob: ({ jobId }) =>
+        db.get(`jobs/${jobId}`).pipe(
+          Effect.orDie,
+          Effect.flatMap((doc) =>
+            doc
+              ? Effect.succeed(
+                  new Job({ id: jobId, content: String(doc.fields.content ?? "") }),
+                )
+              : Effect.fail(new JobNotFound({ jobId })),
+          ),
+        ),
+      createJob: ({ content }) =>
+        Effect.gen(function* () {
+          const jobId = crypto.randomUUID();
+          yield* db.set(`jobs/${jobId}`, { content });
+          return jobId;
+        }).pipe(
+          Effect.mapError((error) => new PutJobFailed({ reason: error._tag })),
+        ),
+    });
+
+    return {
+      fetch: GCP.Run.ServeRpc(JobRpcs, handlersLayer),
+    };
+  }).pipe(Effect.provide(GCP.Firestore.ReadWriteDatabaseHttp)),
+) {}
+```
+
+`getJob` turns Firestore failures into 500s and keeps `JobNotFound`
+for the client. `createJob` maps them to the declared `PutJobFailed`.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import JobService from "./src/JobService.ts";
+
+export default Alchemy.Stack(
+  "JobRpc",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const service = yield* JobService;
+    return { url: service.uri };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+## Call it from a typed client
+
+```typescript
+// scripts/client.ts
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { JobRpcs } from "../src/JobRpcs.ts";
+
+const program = Effect.gen(function* () {
+  const client = yield* RpcClient.make(JobRpcs);
+
+  const jobId = yield* client.createJob({ content: "Ship the docs" });
+  const job = yield* client.getJob({ jobId });
+  yield* Effect.log(job.content);
+});
+
+Effect.runPromise(
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(
+      RpcClient.layerProtocolHttp({ url: process.env.JOB_RPC_URL! }).pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(RpcSerialization.layerNdjson),
+      ),
+    ),
+  ),
+);
+```
+
+```sh
+JOB_RPC_URL=https://<service>.run.app bun scripts/client.ts
+```
+
+## Call it from another service
+
+Keep the RPC service private (drop `invokerIamDisabled`) and call it
+from another Cloud Run service. `GCP.Run.InvokeService` with
+`schema` grants `roles/run.invoker`, signs each call with an ID token,
+and returns the typed client:
+
+```typescript
+// src/Gateway.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import JobService from "./JobService.ts";
+import { JobRpcs } from "./JobRpcs.ts";
+
+export default class Gateway extends GCP.Run.Service<Gateway>()(
+  "Gateway",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const jobs = yield* GCP.Run.InvokeService(JobService, { schema: JobRpcs });
+    return {
+      fetch: Effect.gen(function* () {
+        const jobId = yield* jobs.createJob({ content: "Ship the docs" });
+        return yield* HttpServerResponse.json(yield* jobs.getJob({ jobId }));
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Run.InvokeServiceHttp)),
+) {}
+```
+
+The client speaks NDJSON, the serialization `GCP.Run.ServeRpc` serves.
+
+## Run it as a sidecar
+
+The same group can run next to the caller in one instance. Declare it
+as a `GCP.Run.Container` and bind it with `GCP.Run.bindContainer`:
+
+```typescript
+// src/JobSidecar.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { JobRpcs } from "./JobRpcs.ts";
+import { handlersLayer } from "./handlers.ts";
+
+export default class JobSidecar extends GCP.Run.Container<JobSidecar>()(
+  "JobSidecar",
+  { main: import.meta.url, port: 3000, startupProbe: { tcpSocket: {} } },
+  Effect.gen(function* () {
+    return { fetch: GCP.Run.ServeRpc(JobRpcs, handlersLayer) };
+  }),
+) {}
+```
+
+```typescript
+// inside the calling service's Effect
+const jobs = yield* GCP.Run.bindContainer(JobSidecar, { schema: JobRpcs });
+const job = yield* jobs.getJob({ jobId });
+```
+
+Calls go over `localhost` and never leave the instance. Streaming
+procedures return a `Stream` on both clients.
+
+## Choosing an API style
+
+Use Effect RPC when every caller is Effect. Use
+[Effect HTTP](/gcp/apis/effect-http-api) when callers want plain
+REST. The [RPC overview](/apis) has the full decision.
+
+## Where next
+
+- [Effect RPC](/apis/effect-rpc) — procedures, streaming, and clients
+  in depth.
+- [Private services](/gcp/networking/private-services) — keep the RPC
+  service private and call it from another service.

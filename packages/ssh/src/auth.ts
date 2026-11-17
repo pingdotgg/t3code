@@ -246,3 +246,11 @@ export function isSshAuthFailure(error: unknown): boolean {
     /too many authentication failures/u.test(normalized)
   );
 }
+
+// A local agent signing failure cannot be remedied by the remote account password.
+export function isSshAgentSigningFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /sign_and_send_pubkey: signing failed(?: for [^\n]* from agent:|: (?:agent refused operation|communication with agent failed))/u.test(
+    message,
+  );
+}

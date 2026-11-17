@@ -91,7 +91,9 @@ function patchHeader(change: AzureDevOpsChangeEntry): string {
   if (change.changeKind === "new") lines.push("new file mode 100644");
   if (change.changeKind === "deleted") lines.push("deleted file mode 100644");
   if (change.changeKind === "rename-pure" || change.changeKind === "rename-changed") {
+    // Pierre needs this header to keep the rename.
     lines.push(
+      `similarity index ${change.changeKind === "rename-pure" ? 100 : 0}%`,
       `rename from ${quoteGitPatchPath(change.oldPath)}`,
       `rename to ${quoteGitPatchPath(change.path)}`,
     );

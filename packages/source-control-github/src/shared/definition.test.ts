@@ -96,6 +96,23 @@ describe("GitHub change request URLs", () => {
   });
 });
 
+describe("GitHub CLI commands", () => {
+  it("recognizes shell pull request creates, including gh's `new` alias", () => {
+    for (const command of ["gh pr create --fill", "gh pr new --fill"]) {
+      expect(definition.changeRequestCreateCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCreateCommand.test("gh pr view 7")).toBe(false);
+  });
+});
+
+describe("GitHub repository pages", () => {
+  it("leaves the tree route on other hosts to them", () => {
+    expect(
+      definition.repositoryUrlFromPage?.(new URL("https://scm.example.test/o/r/tree/main")),
+    ).toBeNull();
+  });
+});
+
 describe("GitHub remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 
@@ -132,6 +149,7 @@ describe("GitHub media URLs", () => {
       fetchUrl: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
       fileName: "1a1842fb-6383-492f-873c-57aa0033fa6c",
       kind: "video",
+      immutable: true,
     });
     expect(media("https://github.com/owner/repo/blob/main/docs/shot.png")).toEqual({
       fetchUrl: "https://raw.githubusercontent.com/owner/repo/main/docs/shot.png",
@@ -147,6 +165,24 @@ describe("GitHub media URLs", () => {
     expect(media("https://raw.githubusercontent.com/o/r/main/100%.png")?.fileName).toBe("100%.png");
   });
 
+  it("marks only uploads and files at a full commit SHA as immutable", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    for (const url of [
+      "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+      "https://github.com/owner/repo/assets/45952064/1a1842fb",
+      `https://github.com/owner/repo/blob/${sha}/docs/shot.png`,
+      `https://raw.githubusercontent.com/owner/repo/${sha}/docs/shot.png`,
+    ]) {
+      expect(media(url)?.immutable, url).toBe(true);
+    }
+    for (const url of [
+      "https://raw.githubusercontent.com/owner/repo/0123456789ab/docs/shot.png",
+      `https://media.githubusercontent.com/media/owner/repo/${sha}/a.mp4`,
+    ]) {
+      expect(media(url)?.immutable, url).toBeUndefined();
+    }
+  });
+
   it("claims nothing a request without a credential loads just as well", () => {
     for (const url of [
       "https://example.com/shot.png",
@@ -157,5 +193,20 @@ describe("GitHub media URLs", () => {
     ]) {
       expect(media(url), url).toBeNull();
     }
+  });
+
+  it("addresses a committed file at a full SHA as immutable credentialed media", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const rawFileUrl = (repositoryUrl: string, path: string, revision = sha) =>
+      definition.rawFileUrl?.({ repositoryUrl, sha: revision, path }) ?? null;
+    const url = rawFileUrl("https://github.com/owner/repo", "docs/a #1?.png");
+    expect(url).toBe(`https://github.com/owner/repo/raw/${sha}/docs/a%20%231%3F.png`);
+    expect(media(url ?? "")).toEqual({
+      fetchUrl: `https://raw.githubusercontent.com/owner/repo/${sha}/docs/a%20%231%3F.png`,
+      fileName: "a #1?.png",
+      immutable: true,
+    });
+    expect(rawFileUrl("https://github.com/owner/repo", "a.png", "main")).toBeNull();
+    expect(rawFileUrl("https://github.example.com/owner/repo", "a.png")).toBeNull();
   });
 });

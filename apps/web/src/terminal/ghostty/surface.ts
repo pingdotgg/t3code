@@ -1,9 +1,11 @@
+import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
+  ghosttyColorsEqual,
   type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
@@ -35,6 +37,7 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
+const TERMINAL_LINK_HOVER_DELAY_MS = 250;
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
@@ -312,14 +315,14 @@ export function terminalLinkAtPositionWithRange(
 }
 
 export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.ctrlKey && !event.shiftKey && !event.metaKey;
   }
-  if (key !== "c") return false;
+  if (!keys.has("c")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
@@ -354,14 +357,14 @@ export function applyTerminalCopyEvent(
 }
 
 function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
-  if (key !== "v") return false;
+  if (!keys.has("v")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
@@ -397,15 +400,20 @@ function shouldReportTerminalMouse(
 }
 
 type TerminalMouseAction = "press" | "release" | "motion";
+type TerminalMouseReport = ReturnType<GhosttyTerminalCore["encodeMouse"]>;
 
 export function resolveTerminalMouseData(
   action: TerminalMouseAction,
-  data: string,
-  previousMotionData: string,
-): { readonly send: boolean; readonly nextMotionData: string } {
-  const nextMotionData = action === "motion" ? data : "";
+  report: TerminalMouseReport,
+  previousMotionData: TerminalMouseReport | null,
+): { readonly send: boolean; readonly nextMotionData: TerminalMouseReport | null } {
+  const nextMotionData = action === "motion" ? report : null;
   return {
-    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    send:
+      report.data.length > 0 &&
+      (action !== "motion" ||
+        report.data !== previousMotionData?.data ||
+        report.binary !== previousMotionData?.binary),
     nextMotionData,
   };
 }
@@ -413,11 +421,11 @@ export function resolveTerminalMouseData(
 function resolveTerminalMouseTrackingState(
   previousTracking: boolean,
   tracking: boolean,
-  motionData: string,
-): { readonly tracking: boolean; readonly motionData: string } {
+  motionData: TerminalMouseReport | null,
+): { readonly tracking: boolean; readonly motionData: TerminalMouseReport | null } {
   return {
     tracking,
-    motionData: previousTracking === tracking ? motionData : "",
+    motionData: previousTracking === tracking ? motionData : null,
   };
 }
 
@@ -520,11 +528,18 @@ export interface GhosttyTerminalSurfaceOptions {
   /** Read after font and WASM loading. */
   readonly visible?: boolean;
   readonly onData: (data: string) => void;
+  /** Input bytes that are not UTF-8, one UTF-16 code unit per byte. */
+  readonly onBinary: (data: string) => void;
+  /** The terminal's own answers to queries from the PTY (DA, DSR, DECRQM), never typed input. */
+  readonly onReply: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
+  readonly validateLink?: (text: string) => Promise<boolean>;
+  /** Reports hovered candidates once their rendered text is stable for 250 ms; null cancels. */
+  readonly onLinkHover?: (text: string | null) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
@@ -585,6 +600,8 @@ export class GhosttyTerminalSurface {
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
   private linkActivationLink: TerminalLinkWithRange | null = null;
+  private linkActivationValidation: Promise<boolean> | undefined;
+  private linkActivationRequestId = 0;
   private linkActivationOrigin: {
     x: number;
     y: number;
@@ -592,6 +609,12 @@ export class GhosttyTerminalSurface {
   } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
+  private linkHoverCandidate: TerminalLinkWithRange | null = null;
+  private linkHoverTimer: number | null = null;
+  private linkRowStability: Array<{
+    row: GhosttySnapshot["rowData"][number];
+    changedAt: number;
+  }> = [];
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
@@ -623,7 +646,7 @@ export class GhosttyTerminalSurface {
     remainder: number;
     moved: boolean;
   } | null = null;
-  private lastMouseMotionData = "";
+  private lastMouseMotionData: TerminalMouseReport | null = null;
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
@@ -659,6 +682,8 @@ export class GhosttyTerminalSurface {
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.installEvents();
+    // The input is mounted before the core loads, so focus can land before the listeners.
+    this.focused = document.activeElement === input;
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
@@ -715,7 +740,7 @@ export class GhosttyTerminalSurface {
       metrics.width,
       metrics.height,
       options.theme,
-      options.onData,
+      options.onReply,
     );
     const surface = new GhosttyTerminalSurface(
       mount,
@@ -740,6 +765,9 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     if (!visible) {
+      this.linkActivationRequestId += 1;
+      this.clearHoveredLink();
+      this.linkRowStability = [];
       this.cancelRender();
       this.setSelectionAutoscroll(0);
       return;
@@ -764,7 +792,7 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
@@ -991,6 +1019,7 @@ export class GhosttyTerminalSurface {
   }
 
   selectAll(): void {
+    this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
     const range = this.core.selectAll();
     this.selectionAnchorScreen = range?.start ?? null;
@@ -1013,27 +1042,8 @@ export class GhosttyTerminalSurface {
     return before ? { start, end } : { start: end, end: start };
   }
 
-  getSelectionEndClientRect(): { readonly right: number; readonly bottom: number } | null {
-    const position = this.getSelectionPosition();
-    if (!position) return null;
-    const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
-    if (
-      !viewportEnd ||
-      viewportEnd.x < 0 ||
-      viewportEnd.x >= this.cols ||
-      viewportEnd.y < 0 ||
-      viewportEnd.y >= this.rows
-    ) {
-      return null;
-    }
-    const bounds = this.canvas.getBoundingClientRect();
-    return {
-      right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
-      bottom: bounds.top + this.originY + (viewportEnd.y + 1) * this.metrics.height,
-    };
-  }
-
-  clearSelection(): void {
+  clearSelection({ source = "user" }: { source?: "user" | "output" } = {}): void {
+    if (source === "user") this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
@@ -1061,6 +1071,7 @@ export class GhosttyTerminalSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearHoveredLink();
     this.stopObservingResize();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
@@ -1101,7 +1112,7 @@ export class GhosttyTerminalSurface {
     const mac = isMacPlatform(navigator.platform);
     const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     const selectAllShortcut =
-      event.key.toLowerCase() === "a" &&
+      resolveEventKeys(event).has("a") &&
       primaryModifier &&
       !event.altKey &&
       (mac ? !event.shiftKey : event.shiftKey);
@@ -1236,18 +1247,26 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onFocus = () => {
-    this.focused = true;
+    this.setFocused(true);
     this.cursorOn = true;
     this.requestRender();
   };
 
   private readonly onBlur = () => {
-    this.focused = false;
+    this.setFocused(false);
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
   };
+
+  // DOM focus events can repeat without a change; report only real transitions.
+  private setFocused(focused: boolean): void {
+    if (this.focused === focused) return;
+    this.focused = focused;
+    const data = this.core.encodeFocus(focused);
+    if (data.length > 0) this.options.onData(data);
+  }
 
   private readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
@@ -1344,6 +1363,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
+    this.linkActivationRequestId += 1;
     if (event.pointerType === "touch") {
       event.preventDefault();
       if (!event.isPrimary || this.touchScroll !== null) return;
@@ -1374,17 +1394,20 @@ export class GhosttyTerminalSurface {
     }
     if (event.button === 1 && isMiddleClickPastePlatform()) {
       // Keep pointerdown uncancelled so compatibility mousedown activates the split pane.
-      this.pasteTerminalSelection();
+      if (window.desktopBridge?.getPrimaryPasteEnabled?.() !== false) {
+        this.pasteTerminalSelection();
+      }
       return;
     }
     if (event.button !== 0) return;
     const clickCount = this.recordSelectionClick(event);
-    const link = this.linkAt(event.clientX, event.clientY);
+    const link = this.linkAt(event.clientX, event.clientY, true);
     if (link && !event.shiftKey && clickCount === 1) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;
       this.linkActivationLink = link;
+      this.linkActivationValidation = this.validateLink(link.text);
       this.linkActivationOrigin = {
         x: event.clientX,
         y: event.clientY,
@@ -1470,6 +1493,7 @@ export class GhosttyTerminalSurface {
       }
       this.linkActivationPointerId = null;
       this.linkActivationLink = null;
+      this.linkActivationValidation = undefined;
       this.linkActivationOrigin = null;
       this.clearHoveredLink();
       this.beginSelection(
@@ -1493,7 +1517,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1571,20 +1595,71 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerLeave = () => {
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     this.clearHoveredLink();
   };
 
   private clearHoveredLink(cursor = ""): void {
     this.hoverPointer = null;
+    this.updateLinkHover(null);
     this.setHoveredLink(null);
     this.canvas.style.cursor = cursor;
   }
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
-    this.setHoveredLink(link);
+    const link = pointer ? this.findLinkAt(pointer.x, pointer.y) : null;
+    this.updateLinkHover(link);
+    this.setHoveredLink(link && this.options.canActivateLink?.(link.text) !== false ? link : null);
+  }
+
+  private updateLinkHover(link: TerminalLinkWithRange | null): void {
+    if (!this.options.onLinkHover) return;
+    if (link ? isSameTerminalLink(link, this.linkHoverCandidate) : this.linkHoverCandidate === null)
+      return;
+    this.linkHoverCandidate = link;
+    if (this.linkHoverTimer !== null) {
+      window.clearTimeout(this.linkHoverTimer);
+      this.linkHoverTimer = null;
+    }
+    this.options.onLinkHover(null);
+    if (link !== null) {
+      const now = performance.now();
+      let changedAt = 0;
+      for (let y = link.range.start.y; y <= link.range.end.y; y++) {
+        changedAt = Math.max(changedAt, this.linkRowStability[y]?.changedAt ?? now);
+      }
+      const delay = Math.max(0, TERMINAL_LINK_HOVER_DELAY_MS - (now - changedAt));
+      if (delay === 0) {
+        this.options.onLinkHover(link.text);
+        return;
+      }
+      this.linkHoverTimer = window.setTimeout(() => {
+        this.linkHoverTimer = null;
+        this.options.onLinkHover?.(link.text);
+      }, delay);
+    }
+  }
+
+  private updateLinkRowStability(reset: boolean): void {
+    if (!this.options.onLinkHover || !this.snapshot) return;
+    if (reset) {
+      this.updateLinkHover(null);
+      this.linkRowStability = [];
+    }
+    const now = performance.now();
+    this.snapshot.rowData.forEach((row, y) => {
+      const previous = this.linkRowStability[y]?.row;
+      if (
+        !previous ||
+        previous.text !== row.text ||
+        previous.cells.length !== row.cells.length ||
+        previous.isWrapContinuation !== row.isWrapContinuation ||
+        previous.wrapsToNext !== row.wrapsToNext
+      )
+        this.linkRowStability[y] = { row, changedAt: now };
+    });
+    this.linkRowStability.length = this.snapshot.rows;
   }
 
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
@@ -1617,8 +1692,8 @@ export class GhosttyTerminalSurface {
         this.sendMouse("press", ghosttyMouseButton(0), event);
         this.sendMouse("release", ghosttyMouseButton(0), event);
       } else {
-        const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link.text, event);
+        const link = this.linkAt(event.clientX, event.clientY, true);
+        if (link) this.activateLink(link, event);
         else this.clearSelection();
       }
       return;
@@ -1628,15 +1703,17 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       event.stopPropagation();
       const link = this.linkActivationLink;
+      const validation = this.linkActivationValidation;
       this.linkActivationPointerId = null;
       this.linkActivationLink = null;
+      this.linkActivationValidation = undefined;
       this.linkActivationOrigin = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
       if (event.type !== "pointercancel") {
-        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY))) {
-          this.options.onLinkActivate(link.text, event);
+        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY, true))) {
+          this.activateLink(link, event, validation);
         }
       }
       return;
@@ -1976,7 +2053,12 @@ export class GhosttyTerminalSurface {
       this.canvasConfigured = true;
       this.canvasDevicePixelRatio = canvasConfiguration.ratio;
     }
+    const previousBackground = this.snapshot?.background;
     this.snapshot = this.core.snapshot();
+    // Only a full render repaints the padding around the rows in the new default background.
+    if (previousBackground && !ghosttyColorsEqual(previousBackground, this.snapshot.background)) {
+      this.forceFullRender = true;
+    }
     if (!this.blinkEnabled()) this.cursorOn = true;
     // Move the origin only on full repaint; dirty-row updates cannot mix origins.
     const scrollState = this.readScrollbarState();
@@ -1988,10 +2070,12 @@ export class GhosttyTerminalSurface {
       this.metrics.height,
       anchorBottom,
     );
+    const geometryChanged = canvasConfiguration !== null || nextOriginY !== this.originY;
     if (nextOriginY !== this.originY) {
       this.originY = nextOriginY;
       this.forceFullRender = true;
     }
+    this.updateLinkRowStability(geometryChanged);
     this.refreshHoveredLink();
     renderGhosttySnapshot({
       context: this.context,
@@ -2080,9 +2164,51 @@ export class GhosttyTerminalSurface {
     };
   }
 
-  private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+  private validateLink(text: string): Promise<boolean> | undefined {
+    if (this.options.canActivateLink?.(text) !== false) return;
+    const validation = this.options.validateLink?.(text);
+    // A drag can abandon the press before activateLink subscribes to its result.
+    void validation?.catch(() => {});
+    return validation;
+  }
+
+  private activateLink(
+    link: TerminalLinkWithRange,
+    event: MouseEvent,
+    validation = this.validateLink(link.text),
+  ): void {
+    if (!validation) {
+      this.options.onLinkActivate(link.text, event);
+      return;
+    }
+    const requestId = this.linkActivationRequestId;
+    void validation.then(
+      (valid) => {
+        if (
+          this.disposed ||
+          !this.visible ||
+          requestId !== this.linkActivationRequestId ||
+          !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
+        )
+          return;
+        if (valid) this.options.onLinkActivate(link.text, event);
+        else this.clearSelection();
+      },
+      () => {},
+    );
+  }
+
+  private linkAt(
+    clientX: number,
+    clientY: number,
+    allowValidation = false,
+  ): TerminalLinkWithRange | null {
     const link = this.findLinkAt(clientX, clientY);
-    return link && this.options.canActivateLink?.(link.text) !== false ? link : null;
+    return link &&
+      ((allowValidation && this.options.validateLink) ||
+        this.options.canActivateLink?.(link.text) !== false)
+      ? link
+      : null;
   }
 
   private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
@@ -2134,7 +2260,7 @@ export class GhosttyTerminalSurface {
 
   private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
-    const data = this.core.encodeMouse({
+    const report = this.core.encodeMouse({
       action,
       button,
       mods:
@@ -2154,9 +2280,11 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    const resolution = resolveTerminalMouseData(action, report, this.lastMouseMotionData);
     this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+    if (!resolution.send) return;
+    if (report.binary) this.options.onBinary(report.data);
+    else this.options.onData(report.data);
   }
 
   private synchronizeMouseTrackingState(): boolean {

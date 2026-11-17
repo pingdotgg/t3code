@@ -17,7 +17,7 @@ import {
   readProject,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
-  useThreadShells,
+  useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 
@@ -35,7 +35,7 @@ function ChatIndexRouteView() {
 
 function IndexDraftLanding() {
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
   const router = useRouter();
@@ -45,7 +45,11 @@ function IndexDraftLanding() {
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
   const mostRecentProject =
-    sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null;
+    sortScopedProjectsForSidebar(
+      projects.filter((project) => project.archivedAt == null),
+      threads,
+      "updated_at",
+    )[0] ?? null;
   const attempt = startState.retryRequest;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index

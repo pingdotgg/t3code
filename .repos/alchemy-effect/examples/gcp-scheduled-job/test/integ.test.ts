@@ -1,19 +1,18 @@
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as bigquery from "@distilled.cloud/gcp/bigquery_v2";
 import * as scheduler from "@distilled.cloud/gcp/cloudscheduler_v1";
 import { Credentials } from "@distilled.cloud/gcp/Credentials";
 import * as run from "@distilled.cloud/gcp/run_v2";
 import * as storage from "@distilled.cloud/gcp/storage_v1";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
-import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { SUMMARY_PREFIX, type DailySummary } from "../src/resources.ts";
 
@@ -26,20 +25,10 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// The job and the service are built from `main`, which needs a local
-// image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
+describe("gcp-scheduled-job", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   afterAll.skipIf(!!process.env.NO_DESTROY)(
@@ -48,9 +37,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
       yield* destroy(Stack);
 
       const found = Effect.as("found" as const);
-      const gone = <A, E extends { readonly _tag: string }, R>(
-        self: Effect.Effect<A, E, R>,
-      ) =>
+      const gone = <A, E extends { readonly _tag: string }, R>(self: Effect.Effect<A, E, R>) =>
         self.pipe(
           Effect.catchIf(
             (error) => error._tag === "NotFound",
@@ -59,9 +46,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
         );
       const [job, schedulerJob, bucket] = yield* Effect.all([
         run.getProjectsLocationsJobs({ name: jobName }).pipe(found, gone),
-        scheduler
-          .getProjectsLocationsJobs({ name: schedulerJobName })
-          .pipe(found, gone),
+        scheduler.getProjectsLocationsJobs({ name: schedulerJobName }).pipe(found, gone),
         storage.getBuckets({ bucket: bucketName }).pipe(found, gone),
       ]).pipe(Effect.orDie, Effect.provide(GcpHttp));
       expect({ job, schedulerJob, bucket }).toEqual({
@@ -80,13 +65,11 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
 
   /** Every execution the Cloud Run job has, newest first. */
   const executionsOf = (jobName: string) =>
-    run
-      .listProjectsLocationsJobsExecutions({ parent: jobName, pageSize: 100 })
-      .pipe(
-        Effect.map((page) => page.executions ?? []),
-        Effect.orDie,
-        Effect.provide(GcpHttp),
-      );
+    run.listProjectsLocationsJobsExecutions({ parent: jobName, pageSize: 100 }).pipe(
+      Effect.map((page) => page.executions ?? []),
+      Effect.orDie,
+      Effect.provide(GcpHttp),
+    );
 
   /** Download an object's content with the test's own credentials. */
   const download = (bucket: string, object: string) =>
@@ -113,9 +96,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
       const summaries: DailySummary[] = [];
       for (const item of items) {
         if (item.name === undefined) continue;
-        summaries.push(
-          JSON.parse(yield* download(bucket, item.name)) as DailySummary,
-        );
+        summaries.push(JSON.parse(yield* download(bucket, item.name)) as DailySummary);
       }
       return summaries;
     });
@@ -159,9 +140,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
       expect(inserted.insertErrors ?? []).toEqual([]);
 
       yield* getWhenReady(`${baseUrl}/`);
-      const started = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/run`),
-      );
+      const started = yield* HttpClient.execute(HttpClientRequest.post(`${baseUrl}/run`));
       expect(started.status).toBe(202);
       const { operation } = (yield* started.json) as {
         operation: string | null;
@@ -182,8 +161,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
       );
       expect(summary).toBeDefined();
 
-      const regionOf = (name: string) =>
-        summary!.regions.find((r) => r.region === name);
+      const regionOf = (name: string) => summary!.regions.find((r) => r.region === name);
       expect(regionOf(east)).toEqual({
         region: east,
         orders: 3,
@@ -197,9 +175,9 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
       expect(summary!.orders).toBeGreaterThanOrEqual(5);
       expect(summary!.revenueCents).toBeGreaterThanOrEqual(5999);
       expect(summary!.execution).toBeTruthy();
-      expect(
-        new Date(summary!.to).getTime() - new Date(summary!.from).getTime(),
-      ).toBe(24 * 60 * 60 * 1000);
+      expect(new Date(summary!.to).getTime() - new Date(summary!.from).getTime()).toBe(
+        24 * 60 * 60 * 1000,
+      );
     }),
     { timeout: 720_000 },
   );
@@ -213,9 +191,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
         .getProjectsLocationsJobs({ name: schedulerJobName })
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
       expect(schedulerJob.schedule).toEqual("0 2 * * *");
-      expect(schedulerJob.httpTarget?.uri).toEqual(
-        `https://run.googleapis.com/v2/${jobName}:run`,
-      );
+      expect(schedulerJob.httpTarget?.uri).toEqual(`https://run.googleapis.com/v2/${jobName}:run`);
       const job = yield* run
         .getProjectsLocationsJobs({ name: jobName })
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
@@ -231,9 +207,7 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
         .pipe(Effect.orDie, Effect.provide(GcpHttp));
 
       const fresh = yield* executionsOf(jobName).pipe(
-        Effect.map((executions) =>
-          executions.filter((e) => !before.includes(e.name)),
-        ),
+        Effect.map((executions) => executions.filter((e) => !before.includes(e.name))),
         Effect.repeat({
           schedule: Schedule.spaced("10 seconds"),
           until: (executions) => executions.length > 0,
@@ -244,17 +218,15 @@ describe.skipIf(!dockerAvailable)("gcp-scheduled-job", () => {
 
       // Cloud Scheduler records the Admin API's answer; code 0 (or unset)
       // means `jobs:run` accepted the OAuth token.
-      const attempted = yield* scheduler
-        .getProjectsLocationsJobs({ name: schedulerJobName })
-        .pipe(
-          Effect.orDie,
-          Effect.provide(GcpHttp),
-          Effect.repeat({
-            schedule: Schedule.spaced("5 seconds"),
-            until: (j) => j.lastAttemptTime !== undefined,
-            times: 24,
-          }),
-        );
+      const attempted = yield* scheduler.getProjectsLocationsJobs({ name: schedulerJobName }).pipe(
+        Effect.orDie,
+        Effect.provide(GcpHttp),
+        Effect.repeat({
+          schedule: Schedule.spaced("5 seconds"),
+          until: (j) => j.lastAttemptTime !== undefined,
+          times: 24,
+        }),
+      );
       expect(attempted.status?.code ?? 0).toBe(0);
     }),
     { timeout: 600_000 },
