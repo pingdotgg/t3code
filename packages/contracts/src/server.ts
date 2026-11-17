@@ -632,7 +632,7 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
-export const THEME_CSS_MAX_LENGTH = 50_000;
+export const THEME_CSS_MAX_LENGTH = 100_000;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
@@ -658,6 +658,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Revision of the image file published beside the theme; absent without one. */
+  background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 

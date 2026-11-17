@@ -1,7 +1,6 @@
-import type { EnvironmentId, SourceControlSignInPrompt } from "@t3tools/contracts";
+import type { SourceControlSignInPrompt } from "@t3tools/contracts";
 import {
   readHostCredentialSettings,
-  sourceControlClients,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -11,13 +10,11 @@ import { useRef, useState } from "react";
 import { Linking } from "react-native";
 
 import * as Dialog from "../../../components/ui/Dialog";
-import { useEnvironmentQuery } from "../../../state/query";
 import { serverEnvironment } from "../../../state/server";
 import { sourceControlEnvironment } from "../../../state/sourceControl";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import type { SettingsTarget } from "../settings-environment-filter";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsSection } from "./SettingsSection";
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
@@ -26,73 +23,8 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
 
 const openUrl = (url: string) => void Linking.openURL(url).catch(() => undefined);
 
-const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
-  definition.credentials?.appSignIn === undefined
-    ? []
-    : [{ definition, appSignIn: definition.credentials.appSignIn }],
-);
-
-/**
- * Signing an environment in through a forge's own app, such as T3 Code for GitHub, on servers
- * configured for it.
- */
-export function SourceControlSignInSection(props: {
-  readonly environments: readonly SettingsTarget[];
-  readonly canWrite: (environmentId: EnvironmentId) => boolean;
-}) {
-  return (
-    <>
-      {appSignInHosts.flatMap(({ definition, appSignIn }) =>
-        props.environments.map((environment) => (
-          <OfferedAppSignIn
-            key={`${definition.kind}:${environment.environmentId}`}
-            environment={environment}
-            title={
-              props.environments.length > 1
-                ? `${definition.label} · ${environment.label}`
-                : definition.label
-            }
-            definition={definition}
-            appSignIn={appSignIn}
-            disabled={!props.canWrite(environment.environmentId)}
-          />
-        )),
-      )}
-    </>
-  );
-}
-
-function OfferedAppSignIn(props: {
-  readonly environment: SettingsTarget;
-  readonly title: string;
-  readonly definition: SourceControlDefinition;
-  readonly appSignIn: SourceControlAppSignIn;
-  readonly disabled: boolean;
-}) {
-  const discovery = useEnvironmentQuery(
-    sourceControlEnvironment.discovery({
-      environmentId: props.environment.environmentId,
-      input: {},
-    }),
-  );
-  const offered = discovery.data?.sourceControlProviders.some(
-    (item) => item.kind === props.definition.kind && item.appSignIn === true,
-  );
-  if (offered !== true) return null;
-  return (
-    <SettingsSection title={props.title}>
-      <AppSignInRow
-        environment={props.environment}
-        label={props.appSignIn.appName}
-        definition={props.definition}
-        appSignIn={props.appSignIn}
-        disabled={props.disabled}
-      />
-    </SettingsSection>
-  );
-}
-
-function AppSignInRow(props: {
+/** Signs an environment in through a forge's own app, such as T3 Code for GitHub. */
+export function AppSignInRow(props: {
   readonly environment: SettingsTarget;
   readonly label: string;
   readonly definition: SourceControlDefinition;
