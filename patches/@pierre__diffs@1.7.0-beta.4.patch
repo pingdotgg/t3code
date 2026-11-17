@@ -162,6 +162,19 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	}
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
+diff --git a/dist/utils/parsePatchFiles.js b/dist/utils/parsePatchFiles.js
+index 48568bd..f27123f 100644
+--- a/dist/utils/parsePatchFiles.js
++++ b/dist/utils/parsePatchFiles.js
+@@ -339,7 +339,7 @@ function parsePatchFiles(data, options = {}) {
+ 	return patches;
+ }
+ function decodeDiffFileName(value, stripGitPrefix = false) {
+-	const rawName = value.trim();
++	const rawName = value.replace(/[\t\r\n]+$/, "");
+ 	const name = rawName.startsWith("\"") ? parseQuotedDiffFileName(rawName)?.fileName ?? rawName : rawName;
+ 	return stripGitPrefix && (name.startsWith("a/") || name.startsWith("b/")) ? name.slice(2) : name;
+ }
 diff --git a/package.json b/package.json
 index d1fa4d5d79ba70b6cd990b0ac9df5206fe55b58d..0835b01213ec34ab1a943fe4d6c18a505f8038d6 100644
 --- a/package.json

@@ -106,7 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
-  "/settings/source-control": msg("Source control"),
+  "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
   "/settings/access": msg("Sharing & access"),
@@ -626,6 +626,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
   },
   {
+    id: "speech-streaming",
+    title: "Streaming transcription",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced native live preview batch after stopping slow lag"],
+  },
+  {
     id: "microphone-test",
     title: "Test microphone",
     to: "/settings/voice",
@@ -851,6 +857,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Delete confirmation"),
     to: "/settings/general",
     searchTerms: ["ask before thread chat history"],
+  },
+  {
+    id: "terminal-close-confirmation",
+    title: msg("Terminal close confirmation"),
+    to: "/settings/general",
+    searchTerms: ["ask before delete stop process shell console history"],
   },
   {
     id: "quit-confirmation",
@@ -1147,6 +1159,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: ["pull request merge squash rebase last selected"],
+  },
+  {
+    id: "issue-trackers",
+    title: "Issue trackers",
+    to: "/settings/source-control",
+    scope: "environment-defaults",
+    searchTerms: ["linear jira issues tracker team api key connect bind project"],
   },
   {
     id: "source-control",
