@@ -162,6 +162,8 @@ export default defineConfig({
                   ...TEST_EXCLUDE,
                   ...TEST_CONFIG_PACKAGES.map((dir) => `${dir}/**`),
                   "native/kde-snap-shot/**",
+                  // Vendored; its tests run under `node --test` with their own dependencies.
+                  "workflow/skills/pstack/**",
                 ],
               },
             },
