@@ -745,23 +745,24 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ...acceptedPreferenceOverride,
       ...input.preferencesOverride,
     });
-  const preferences = preferencesNow();
   if (expectedGeneration !== deviceRegistrationGeneration) return;
-  if (relayTokenProvider && relayTokenProviderIdentity) {
-    configureAndroidAgentNotifications(
-      deviceId,
-      relayTokenProviderIdentity,
-      preferences.liveActivitiesEnabled !== false,
-    );
-  }
   const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
   const bundleId =
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
       : Constants.expoConfig?.ios?.bundleIdentifier?.trim();
   yield* deviceRegistrationSendLock.withPermit(
-    Effect.suspend(() =>
-      registerDeviceWithRelay(
+    Effect.suspend(() => {
+      const preferences = preferencesNow();
+      // Configure Android with the same settings the relay gets, so the two cannot disagree.
+      if (relayTokenProvider && relayTokenProviderIdentity) {
+        configureAndroidAgentNotifications(
+          deviceId,
+          relayTokenProviderIdentity,
+          preferences.liveActivitiesEnabled !== false,
+        );
+      }
+      return registerDeviceWithRelay(
         makeRelayDeviceRegistrationRequest({
           deviceId,
           label:
@@ -783,7 +784,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
             ? { pushToken: pushTokenRegistration.pushToken }
             : {}),
           notificationsEnabled: pushTokenRegistration.notificationsEnabled,
-          preferences: preferencesNow(),
+          preferences,
           mutedEnvironmentIds,
         }),
         expectedGeneration,
@@ -798,8 +799,8 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
             }
           }),
         ),
-      ),
-    ),
+      );
+    }),
   );
 });
 

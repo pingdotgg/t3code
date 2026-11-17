@@ -642,7 +642,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       // A toggle made while the sign-in registration is in flight is still sent.
       const signInArrived = hold(0);
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
       const drain = yield* Effect.forkChild(runBackgroundOperations());
       yield* Effect.promise(() => signInArrived);
       setAgentAwarenessMutedEnvironments([disabled]);
@@ -656,10 +656,20 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: false }),
       );
       yield* Effect.promise(() => settingsArrived);
+      let markToggleLookup = () => {};
+      const toggleLookup = new Promise<void>((resolve) => {
+        markToggleLookup = resolve;
+      });
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+        markToggleLookup();
+        return Promise.resolve({ type: "ios", data: "apns-token" });
+      });
       setAgentAwarenessMutedEnvironments([]);
+      const toggleDrain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => toggleLookup);
       holds.get(2)?.release();
       yield* Fiber.join(settings);
-      yield* runBackgroundOperations();
+      yield* Fiber.join(toggleDrain);
 
       const bodies = yield* Effect.promise(() => Promise.all(deviceBodies));
       expect(bodies.map((body) => body.preferences)).toMatchObject([
@@ -670,6 +680,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       ]);
       expect(bodies[0]?.preferences.mutedEnvironmentIds).toBeUndefined();
       expect(bodies[3]?.preferences.mutedEnvironmentIds).toBeUndefined();
+      // Android's native setting follows the same preferences the relay received.
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.calls.at(-1)?.[2]).toBe(false);
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),

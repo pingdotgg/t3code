@@ -695,10 +695,9 @@ const make = Effect.gen(function* () {
     deliveryTarget = currentTarget;
     const currentPreferences = parsePreferences(currentTarget.preferences_json);
     const muted = currentPreferences?.mutedEnvironmentIds ?? [];
-    // A card queued before an environment was turned off is rebuilt without it, keeping
-    // the other environments' rows and alert.
+    // A card queued before an environment was turned off is rebuilt without it, keeping the
+    // other environments' rows and alert. If the rebuild fails, skip it; the replay repaints.
     if (aggregate?.activities.some((row) => muted.some((id) => id === row.environmentId))) {
-      const queued = aggregate;
       aggregate = yield* activityRows.listForUser({ userId: input.target.user_id }).pipe(
         Effect.map((activeStates) =>
           makeAggregateState({
@@ -709,17 +708,12 @@ const make = Effect.gen(function* () {
           }),
         ),
         Effect.catch((error) =>
-          Effect.logWarning("Card rebuild failed; dropping turned-off rows", { error }).pipe(
-            Effect.as({
-              ...queued,
-              activities: queued.activities.filter(
-                (row) => !muted.some((id) => id === row.environmentId),
-              ),
-            }),
+          Effect.logWarning("Card rebuild failed; skipping the queued update", { error }).pipe(
+            Effect.as(null),
           ),
         ),
       );
-      if (aggregate === null || aggregate.activities.length === 0) {
+      if (aggregate === null) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale agent activity state skipped.",
