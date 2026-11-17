@@ -34,6 +34,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import { expect } from "vite-plus/test";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as CodexError from "effect-codex-app-server/errors";
@@ -126,6 +127,34 @@ describe("CodexAdapterV2 context usage", () => {
 });
 
 describe("CodexAdapterV2 assistant message streaming", () => {
+  it.effect("bounds snapshot text bytes for a long steadily streamed item", () =>
+    Effect.gen(function* () {
+      const emitted = yield* Ref.make({ bytes: 0, finalText: "" });
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
+        flushIntervalMs: 50,
+        emit: (update) =>
+          Ref.update(emitted, (current) => ({
+            bytes: current.bytes + Buffer.byteLength(update.text),
+            finalText: update.completed ? update.text : current.finalText,
+          })),
+      });
+      const delta = "a".repeat(64);
+      const chunks = 1_000;
+      for (let index = 0; index < chunks; index += 1) {
+        yield* coalescer.append({ turnId: "long-turn", itemId: "long-item", delta });
+        yield* TestClock.adjust("50 millis");
+      }
+      yield* coalescer.complete({ turnId: "long-turn", itemId: "long-item" });
+
+      const result = yield* Ref.get(emitted);
+      expect(result.finalText).toBe(delta.repeat(chunks));
+      expect(
+        result.bytes,
+        "Streaming snapshot text must stay within 32 times the final answer bytes",
+      ).toBeLessThanOrEqual(32 * Buffer.byteLength(result.finalText));
+    }),
+  );
+
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {
       const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
