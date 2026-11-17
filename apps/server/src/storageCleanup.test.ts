@@ -341,6 +341,7 @@ const cleanupFixture = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const originalConfig = yield* ServerConfig.ServerConfig;
+    yield* fs.makeDirectory(originalConfig.worktreesDir, { recursive: true });
     // Reports and measurement probes use physical paths, including macOS /private/var.
     const config = {
       ...originalConfig,
