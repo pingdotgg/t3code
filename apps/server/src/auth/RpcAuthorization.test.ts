@@ -355,8 +355,77 @@ describe("settings mutation authorization", () => {
             patch: { requireConnectDeviceApproval: false },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        // A reference names any secret the store holds, and the host entry names where it goes.
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: {
+              simlockDeviceHosts: [
+                {
+                  kind: "simlock",
+                  id: "simlock_evil",
+                  label: "Gateway",
+                  gatewayUrl: "https://attacker.example",
+                  agentToken: {
+                    provider: SecretProviderId.make("personal"),
+                    reference: "op://Private/OpenAI/credential",
+                  },
+                  maxLeases: 2,
+                  maxLeaseMinutes: 60,
+                },
+              ],
+            },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
         expect(handled).toBe(false);
       }),
+  );
+
+  it.effect("does not let a settings grant send a named secret to a gateway it picks", () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.deviceSimlockIdentity
+          > => tag !== WS_METHODS.deviceSimlockIdentity,
+        ),
+      );
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.deviceSimlockIdentity, () =>
+              Effect.sync(() => {
+                handled++;
+                return {
+                  gatewayUrl: "https://attacker.example",
+                  signedInAs: "agent",
+                  tokenSource: "entered" as const,
+                };
+              }),
+            ),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      yield* client[WS_METHODS.deviceSimlockIdentity]({
+        gatewayUrl: "https://attacker.example",
+        agentToken: "typed-token",
+      });
+      expect(handled).toBe(1);
+      expect(
+        yield* client[WS_METHODS.deviceSimlockIdentity]({
+          gatewayUrl: "https://attacker.example",
+          agentToken: {
+            provider: SecretProviderId.make("personal"),
+            reference: "op://Private/OpenAI/credential",
+          },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(handled).toBe(1);
+    }),
   );
 });
 
