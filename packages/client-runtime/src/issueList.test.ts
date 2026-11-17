@@ -172,7 +172,13 @@ describe("groupIssues", () => {
     const held = holdIssuePages(
       [
         [environmentId, page],
-        ["env-2" as EnvironmentId, answer({ ...page })],
+        [
+          "env-2" as EnvironmentId,
+          answer({
+            ...page,
+            entries: page.entries.map((row) => ({ ...row, projectId: "other" as ProjectId })),
+          }),
+        ],
       ],
       new Map(),
     );
