@@ -162,16 +162,39 @@ const dialDestination = Effect.fn("LoopbackTunnel.dialDestination")(function* (
 const TCP_TABLES = ["/proc/net/tcp", "/proc/net/tcp6"];
 
 // Rows read `sl local_address rem_address st queues timer retransmits uid ...`, with addresses
-// as HEXIP:HEXPORT. The client's row has its own port local and the listener's port remote.
+// as HEXIP:HEXPORT and IPv4 bytes in little-endian order; tcp6 holds IPv4 as ::ffff:a.b.c.d.
+const procAddresses = (ip: string, port: number) => {
+  const octets = ip
+    .replace(/^::ffff:/i, "")
+    .split(".")
+    .map(Number);
+  const v4 = octets
+    .reverse()
+    .map((octet) => octet.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+  const hexPort = port.toString(16).padStart(4, "0").toUpperCase();
+  return [`${v4}:${hexPort}`, `0000000000000000FFFF0000${v4}:${hexPort}`];
+};
+
+/** The owner of the row whose local end is the client and remote end is the listener. */
 const connectionOwner = (
   tables: ReadonlyArray<string>,
-  clientPort: number,
-  listenerPort: number,
+  client: { readonly address: string; readonly port: number },
+  listener: { readonly address: string; readonly port: number },
 ) => {
-  const portOf = (address: string | undefined) => Number.parseInt(address?.split(":")[1] ?? "", 16);
+  const clientEnds = procAddresses(client.address, client.port);
+  const listenerEnds = procAddresses(listener.address, listener.port);
   for (const line of tables.flatMap((table) => table.split("\n").slice(1))) {
     const [, local, remote, , , , , uid] = line.trim().split(/\s+/);
-    if (portOf(local) === clientPort && portOf(remote) === listenerPort) return Number(uid);
+    if (
+      local !== undefined &&
+      remote !== undefined &&
+      clientEnds.includes(local.toUpperCase()) &&
+      listenerEnds.includes(remote.toUpperCase())
+    ) {
+      return Number(uid);
+    }
   }
   return undefined;
 };
@@ -245,21 +268,27 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** Serves one SOCKS connection; never falls back to a direct local connection. */
   // Chromium can't authenticate to a SOCKS proxy, so on Linux the listener checks that the
   // client belongs to this OS user. Other users could otherwise ride this user's tunnel.
   const isOwnConnection = Effect.fn("LoopbackTunnel.isOwnConnection")(function* () {
     if (platform !== "linux") return true;
     const connection = yield* Effect.serviceOption(NodeSocket.NetSocket);
     if (Option.isNone(connection)) return false;
-    const { remotePort, localPort } = connection.value;
-    if (remotePort === undefined || localPort === undefined) return false;
+    const { remoteAddress, remotePort, localAddress, localPort } = connection.value;
+    if (!remoteAddress || !remotePort || !localAddress || !localPort) return false;
     const tables = yield* Effect.forEach(TCP_TABLES, (path) =>
       fileSystem.readFileString(path).pipe(Effect.orElseSucceed(() => "")),
     );
-    return connectionOwner(tables, remotePort, localPort) === userId;
+    return (
+      connectionOwner(
+        tables,
+        { address: remoteAddress, port: remotePort },
+        { address: localAddress, port: localPort },
+      ) === userId
+    );
   });
 
+  /** Serves one SOCKS connection; never falls back to a direct local connection. */
   const serve = (environmentId: string) =>
     Effect.fn("LoopbackTunnel.serve")(
       function* (socket: Socket.Socket) {
