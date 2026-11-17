@@ -146,6 +146,15 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
         Effect.map((lines) => JSON.parse(String(lines.at(-1)))),
       );
 
+    // A file the server rejects reads as the defaults, so Off, as the server would read it.
+    const rejected = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-cli-" });
+    yield* fs.makeDirectory(path.join(rejected, "userdata"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(rejected, "userdata", "settings.json"),
+      '{"agentFeedback":{"mode":"auto"},"providers":1}',
+    );
+    yield* expectOneLine(["list"], rejected, FEEDBACK_OFF_MESSAGE);
+
     // On, a damaged database is one line too.
     const damaged = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-cli-" });
     yield* fs.makeDirectory(path.join(damaged, "userdata"), { recursive: true });
