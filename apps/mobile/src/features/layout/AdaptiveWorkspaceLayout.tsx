@@ -119,6 +119,9 @@ import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-st
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
+import { WorkspaceSidebarTabs } from "./workspace/WorkspaceSidebarTabs";
+import { WorkspaceTabsContext } from "./workspace/WorkspaceTabsContext";
+import { useSidebarTabs } from "./workspace/sidebar-tabs-bridge";
 
 export { useAdaptiveWorkspaceLayout, useWorkspacePaneState };
 
@@ -260,6 +263,7 @@ function AdaptiveWorkspaceLayoutContent(
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
+  const sidebarTabs = useSidebarTabs();
   const usesPresentationHost = use(WorkspacePresentationHostContext);
   const windowDimensions = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
@@ -1039,6 +1043,16 @@ function AdaptiveWorkspaceLayoutContent(
                 {/* Without a sidebar route (iPadOS before 26) the columns draw the thread list. */}
                 {sidebar ?? <WorkspaceThreadSidebar />}
               </RenderErrorBoundary>
+              {Platform.OS === "ios" && !nativeWorkspace && sidebarTabs && !workspacePage ? (
+                <WorkspaceTabsContext value={sidebarTabs}>
+                  <View
+                    pointerEvents="box-none"
+                    style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
+                  >
+                    <WorkspaceSidebarTabs />
+                  </View>
+                </WorkspaceTabsContext>
+              ) : null}
             </PaneContext>
             {/* Keep the pill under the content throughout the sidebar's clipping animation. */}
             {floatingTabsEnabled && !workspacePage ? (

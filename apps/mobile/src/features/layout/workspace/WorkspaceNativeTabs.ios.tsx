@@ -4,6 +4,7 @@ import {
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
 import {
+  use,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -38,6 +39,8 @@ import { useDeviceType } from "../../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
+import { publishSidebarTabs } from "./sidebar-tabs-bridge";
+import { NativeWorkspaceModeContext } from "../../../native/v5-workspace-context";
 import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
@@ -164,6 +167,18 @@ export function WorkspaceNativeTabs(props: {
     layout.usesSplitView &&
     workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
     !panes.primarySidebarVisible;
+  // JS columns put this navigator in the content pane, where a footer covers the composer.
+  const tabsInJsSidebar =
+    deviceType === "pad" &&
+    !use(NativeWorkspaceModeContext) &&
+    layout.usesSplitView &&
+    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the JS sidebar renders outside this provider
+  useEffect(() => {
+    if (!tabsInJsSidebar) return;
+    publishSidebarTabs(workspace);
+    return () => publishSidebarTabs(null);
+  }, [tabsInJsSidebar, workspace]);
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
@@ -272,7 +287,8 @@ export function WorkspaceNativeTabs(props: {
           !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
-      !hiddenWithSidebar ? (
+      !hiddenWithSidebar &&
+      !tabsInJsSidebar ? (
         <View
           pointerEvents="box-none"
           style={{
