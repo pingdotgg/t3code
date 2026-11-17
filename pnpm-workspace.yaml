@@ -248,6 +248,7 @@ patchedDependencies:
   # scroll target a Material bottom sheet picks, so sheet content can sit below its header.
   "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
+  # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
   # Measures rows in layout pixels, so a list inside the scaled workspace overview keeps true sizes.
   "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, re-measures

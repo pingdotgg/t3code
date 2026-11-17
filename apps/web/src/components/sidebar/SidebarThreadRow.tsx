@@ -70,7 +70,8 @@ import {
 } from "react";
 
 import { useRightPanelStore } from "../../rightPanelStore";
-import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
+import { readThreadPullRequestSurface, useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -661,6 +662,8 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onThreadOpen: (threadRef: ScopedThreadRef) => void;
+  onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -742,6 +745,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onStartRename,
     onThreadActivate,
     onThreadClick,
+    onThreadDoubleClick,
+    onThreadOpen,
     onUnsettle,
     onUnsnooze,
     onUnpin,
@@ -927,22 +932,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    onThreadActivate(threadRef);
+    onThreadOpen(threadRef);
   };
   const handleDoubleClick = (event: ReactMouseEvent) => {
-    if (
-      !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
-      isRenaming ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
-      return;
-    }
+    if (isRenaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("button, a, input")) return;
     event.preventDefault();
-    onStartRename(threadRef, thread.title);
+    onThreadDoubleClick(threadRef, thread.title);
   };
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = onFileDropThreads
@@ -1131,6 +1127,19 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isRouteThread) onThreadActivate(threadRef);
   };
+  const handlePrLinkPress = (event: ReactPointerEvent<HTMLElement>, url: string) => {
+    const surface = readThreadPullRequestSurface(threadRef, url);
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
+  const handlePrPress = (event: ReactPointerEvent<HTMLElement>, opensList: boolean) => {
+    const url = pr?.url ?? currentLinkedPr?.url;
+    const surface = opensList
+      ? ({ id: "pull-requests", kind: "pull-requests" } as const)
+      : url
+        ? readThreadPullRequestSurface(threadRef, url)
+        : null;
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
@@ -1149,6 +1158,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         status={prStatus}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
+        onPress={handlePrPress}
+        onPressPullRequest={handlePrLinkPress}
       />
     ) : null;
   const terminalStatusIcon = (

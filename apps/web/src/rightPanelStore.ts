@@ -278,7 +278,7 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
 
-const fileSurface = (
+export const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,

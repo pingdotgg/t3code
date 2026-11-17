@@ -7,7 +7,12 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
-import { selectFocusedTab, selectLayoutThreadKeys } from "../layout/layoutModel";
+import {
+  isLayoutGhostTabShown,
+  selectFocusedLayoutGhostId,
+  selectFocusedTab,
+  selectLayoutThreadKeys,
+} from "../layout/layoutModel";
 import { followLayoutCompanions } from "../layout/openRules";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import { useLayoutStore } from "../layout/layoutStore";
@@ -1125,6 +1130,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null;
   const [renamingTitle, setRenamingTitle] = useState("");
   const renamingOriginalTitleRef = useRef("");
+  const drawnGhostKeptByClickRef = useRef<string | null>(null);
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
@@ -1217,7 +1223,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // navigation resolves through its redirect instead, and still reveals.
   const routeKeyInPlace = routeDraftThread?.promotedTo != null;
 
-  if (routeTarget?.kind === "draft") {
+  if (routeTarget?.kind === "draft" && routeKeyInPlace) {
     observeSidebarDraftPromotion(routeReveal, routeRowThreadKey);
   }
   // History, the palette and links can open a thread the scope hides or the list
@@ -1598,6 +1604,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
+  const keepFocusedGhostChatWasDrawn = (threadRef: ScopedThreadRef) => {
+    const store = useLayoutStore.getState();
+    const ghostId = selectFocusedLayoutGhostId(store.layout, {
+      kind: "chat",
+      target: { kind: "server", threadRef },
+    });
+    if (ghostId === null) return false;
+    const wasShown = isLayoutGhostTabShown(store.layout, ghostId);
+    store.keepTab(ghostId);
+    return wasShown;
+  };
+
+  const openThreadFromRow = (threadRef: ScopedThreadRef) => {
+    const keptDrawnGhost = keepFocusedGhostChatWasDrawn(threadRef);
+    void navigateToThread(threadRef);
+    return keptDrawnGhost;
+  };
+
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
     const landedBefore =
@@ -1706,41 +1730,50 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    if (isTrailingDoubleClick(event.detail)) {
-      return;
-    }
-    if (event.button === 1) {
-      // Middle click keeps the thread open as a tab; the URL follows the focused tab.
-      event.preventDefault();
-      followLayoutCompanions(() =>
-        useLayoutStore
-          .getState()
-          .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
-      );
-      return;
-    }
-    if (event.altKey) {
-      event.preventDefault();
-      openThreadToTheSide(threadRef);
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      if (isTrailingDoubleClick(event.detail)) {
+        return;
+      }
+      if (event.button === 1) {
+        // Middle click keeps the thread open as a tab; the URL follows the focused tab.
+        event.preventDefault();
+        followLayoutCompanions(() =>
+          useLayoutStore
+            .getState()
+            .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
+        );
+        return;
+      }
+      if (event.altKey) {
+        event.preventDefault();
+        openThreadToTheSide(threadRef);
+        return;
+      }
+      drawnGhostKeptByClickRef.current = openThreadFromRow(threadRef) ? threadKey : null;
+    },
+  );
+
+  const handleThreadDoubleClick = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
+    const keptDrawnGhostByClick = drawnGhostKeptByClickRef.current === scopedThreadKey(threadRef);
+    drawnGhostKeptByClickRef.current = null;
+    if (keepFocusedGhostChatWasDrawn(threadRef) || keptDrawnGhostByClick) return;
+    startThreadRename(threadRef, title);
+  });
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -3650,6 +3683,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             timestampFormat={timestampFormat}
                             onThreadClick={handleThreadClick}
                             onThreadActivate={navigateToThread}
+                            onThreadOpen={openThreadFromRow}
+                            onThreadDoubleClick={handleThreadDoubleClick}
                             onStartRename={startThreadRename}
                             onRenameTitleChange={setRenamingTitle}
                             onCommitRename={commitThreadRename}

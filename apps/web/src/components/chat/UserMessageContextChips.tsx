@@ -5,7 +5,8 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { beginLayoutContentDrag } from "~/layout/layoutDrag";
+import { fileSurface, useRightPanelStore } from "~/rightPanelStore";
 import { COMPOSER_CONTEXT_KINDS } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { use, type ReactNode } from "react";
@@ -86,6 +87,14 @@ function UserMessageMentionChip(props: {
             onClick={() => {
               if (ctx.threadRef)
                 useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+            }}
+            onPointerDown={(event) => {
+              if (!ctx.threadRef || nativeDrag.draggable) return;
+              beginLayoutContentDrag(event, {
+                kind: "surface",
+                threadRef: ctx.threadRef,
+                surface: fileSurface(props.record.path, null, 0),
+              });
             }}
           >
             <WorkspaceEntryIcon
