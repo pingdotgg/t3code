@@ -33,6 +33,7 @@ test(
       }
       input.files = files.files;
       input.dispatchEvent(new Event("change", { bubbles: true }));
+      return null;
     });
     await expect(dialog).toBeHidden();
     await screen.getByRole("button", "Use Aurora theme", { exact: true }).tap();
