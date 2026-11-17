@@ -113,6 +113,7 @@ import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
   groupUndoByChangeKind,
+  isClipboardEdit,
   markAsClipboardEdit,
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
@@ -837,6 +838,7 @@ const ComposerInlineSuggestionExtension = Extension.create<unknown, InlineSugges
             if (
               !tr.docChanged ||
               tr.getMeta("uiEvent") ||
+              isClipboardEdit(tr) ||
               tr.getMeta("history$") ||
               tr.getMeta("preventUpdate") ||
               tr.getMeta("composition") !== undefined

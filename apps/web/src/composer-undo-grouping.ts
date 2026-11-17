@@ -17,11 +17,15 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
+export function isClipboardEdit(tr: Transaction): boolean {
+  return tr.getMeta(CLIPBOARD_EDIT_META) != null;
+}
+
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
   const uiEvent = tr.getMeta("uiEvent");
   if (uiEvent === "paste" || uiEvent === "drop" || uiEvent === "cut") return "other";
-  if (tr.getMeta(CLIPBOARD_EDIT_META) != null) return "other";
+  if (isClipboardEdit(tr)) return "other";
   // IME input replaces its own range on each keystroke; it is still typing.
   if (tr.getMeta("composition") != null) return "insert";
   let kind: ComposerChangeKind | null = null;
