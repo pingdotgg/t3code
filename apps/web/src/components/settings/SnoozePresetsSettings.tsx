@@ -19,7 +19,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.logic";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { TimeInput } from "../TimeInput";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -375,17 +375,13 @@ function SnoozePresetFields(props: {
       ) : (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">at</span>
-          <Input
-            nativeInput
+          <TimeInput
             size="sm"
-            type="time"
             className="w-32"
             aria-label="Time"
             value={preset.time}
-            onChange={(event) => {
-              if (/^\d{2}:\d{2}$/.test(event.target.value)) {
-                onChange({ ...preset, time: event.target.value });
-              }
+            onChange={(time) => {
+              if (time !== null) onChange({ ...preset, time });
             }}
           />
         </div>
