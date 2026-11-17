@@ -1059,8 +1059,8 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
         });
       }
-      const requestId = yield* crypto
-        .randomUUIDv4()
+      const requestId = yield* random
+        .uuidV4()
         .pipe(
           Effect.mapError(
             (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
