@@ -202,8 +202,21 @@ describe("DesktopPreReadyPlatform", () => {
       vi.stubEnv("VITE_DEV_SERVER_URL", "");
       getSwitchValueMock.mockReturnValue("");
       const entryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
-      const files = new Map([[entryPath, "Exec=/Applications/T3-Code-0.1.8-x86_64.AppImage %U\n"]]);
+      const replacedPath = "/Applications/T3-Code-0.1.8-x86_64.AppImage";
+      const files = new Map([
+        [entryPath, `Exec=${replacedPath} %U\n`],
+        ["/xdg/applications/t3code.desktop", `Exec=${replacedPath} %U\n`],
+      ]);
       readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
+      readdirSyncMock.mockImplementation((dir: string) =>
+        dir === "/xdg/applications" ? ["com.t3tools.T3Code.desktop", "t3code.desktop"] : [],
+      );
+      // The integrated launcher's target exists again only once the symlink is restored.
+      realpathSyncMock.mockImplementation((path: string) => {
+        if (path !== replacedPath) return path;
+        if (symlinkSyncMock.mock.calls.length === 0) throw new Error("ENOENT");
+        return "/Applications/T3-Code-x86_64.AppImage";
+      });
       writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
         files.set(path, String(contents));
       });
@@ -229,6 +242,7 @@ describe("DesktopPreReadyPlatform", () => {
               : [],
           );
           assert.include(files.get(entryPath), "Exec=/Applications/T3-Code-x86_64.AppImage %U");
+          assert.equal(files.get(entryPath)?.includes("NoDisplay=true"), restored);
         }),
       ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     },

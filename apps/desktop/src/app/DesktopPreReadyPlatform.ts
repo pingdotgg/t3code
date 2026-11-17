@@ -169,6 +169,23 @@ export const make = Effect.gen(function* () {
         }
         const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
         const { appImagePath } = linuxDesktopEntryConfig;
+        if (
+          Option.isSome(appImagePath) &&
+          Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
+          Option.contains(linuxDesktopEntryConfig.relaunchedByUpdater, "true")
+        ) {
+          try {
+            const replacedPath = replacedVersionedAppImagePath({
+              previousEntry: NodeFS.readFileSync(desktopEntryPath, "utf8"),
+              appImagePath: appImagePath.value,
+            });
+            // Relative, so the pair survives a moved folder; symlink never overwrites a file.
+            if (replacedPath !== null) {
+              NodeFS.symlinkSync(NodePath.posix.basename(appImagePath.value), replacedPath);
+            }
+          } catch {}
+        }
+        // After the restore above: a launcher naming the replaced path resolves only once it is back.
         linuxLauncherVisible =
           Option.isSome(appImagePath) &&
           Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
@@ -186,22 +203,6 @@ export const make = Effect.gen(function* () {
             ownEntryName: linux.linuxDesktopEntryName,
             appImagePath: appImagePath.value,
           });
-        if (
-          Option.isSome(appImagePath) &&
-          Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
-          Option.contains(linuxDesktopEntryConfig.relaunchedByUpdater, "true")
-        ) {
-          try {
-            const replacedPath = replacedVersionedAppImagePath({
-              previousEntry: NodeFS.readFileSync(desktopEntryPath, "utf8"),
-              appImagePath: appImagePath.value,
-            });
-            // Relative, so the pair survives a moved folder; symlink never overwrites a file.
-            if (replacedPath !== null) {
-              NodeFS.symlinkSync(NodePath.posix.basename(appImagePath.value), replacedPath);
-            }
-          } catch {}
-        }
         NodeFS.writeFileSync(
           desktopEntryPath,
           renderUrlHandlerDesktopEntry({
