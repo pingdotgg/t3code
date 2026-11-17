@@ -578,6 +578,34 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("summarizes conversations without checkout or user instructions or tools", () => {
+    const summary = { statements: [{ text: "The user asked for a rename.", citations: ["M1"] }] };
+    return withFakeCodexEnv(
+      {
+        output: JSON.stringify(summary),
+        configToml: `model_provider = "private"\ndeveloper_instructions = "Do not inherit"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+        requireIsolatedHome: true,
+        requireArg: "--config project_doc_max_bytes=0",
+        disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "skill_search"],
+        events: [
+          {
+            type: "item.completed",
+            item: { type: "agent_message", text: JSON.stringify(summary) },
+          },
+        ],
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateConversationSummary({
+            cwd: process.cwd(),
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
+            messages: [{ ref: "M1", role: "user", text: "Rename parseDate." }],
+          });
+          expect(result).toEqual(summary);
+        }),
+    );
+  });
+
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
       {

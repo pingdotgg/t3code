@@ -119,6 +119,7 @@ it.effect(
         },
       } as const;
       const runner = Layer.succeed(ConversationSummaryRuntime, {
+        stalledThreads: () => Effect.succeed([]),
         hasPendingPass: () => Effect.succeed(false),
         summarizeThread: () =>
           Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -166,6 +167,7 @@ it.effect("retries a failed summary pass before scheduling its continuation", ()
       },
     } as const;
     const runner = Layer.succeed(ConversationSummaryRuntime, {
+      stalledThreads: () => Effect.succeed([]),
       hasPendingPass: () => Effect.succeed(false),
       summarizeThread: ({ runId }) =>
         Ref.updateAndGet(calls, (count) => count + 1).pipe(
@@ -198,6 +200,73 @@ it.effect("retries a failed summary pass before scheduling its continuation", ()
       yield* TestClock.adjust(100);
       assert.equal(yield* worker.drain(), 2);
       assert.equal(yield* Ref.get(calls), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a pass that recovers its model retries threads that model left stalled", () =>
+  Effect.gen(function* () {
+    const stalledA = ThreadId.make("thread:stalled-a");
+    const stalledB = ThreadId.make("thread:stalled-b");
+    let failedAt = "2026-01-01T00:00:00.000Z";
+    const seen = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const asked = yield* Ref.make<ReadonlyArray<string>>([]);
+    const runner = Layer.succeed(ConversationSummaryRuntime, {
+      hasPendingPass: () => Effect.succeed(false),
+      summarizeThread: (input) =>
+        Ref.update(seen, (calls) => [...calls, input]).pipe(
+          Effect.as(
+            input.threadId === threadId
+              ? { hasMore: false, summarizedWithModelKey: "model:kimi" }
+              : { hasMore: false },
+          ),
+        ),
+      stalledThreads: ({ modelKey }) =>
+        Ref.update(asked, (keys) => [...keys, modelKey]).pipe(
+          Effect.as([
+            { threadId, runId: RunId.make("run:self"), retry: 1, retryAt: failedAt },
+            { threadId: stalledA, runId: RunId.make("run:stalled-a"), retry: 1, retryAt: failedAt },
+            { threadId: stalledB, runId: RunId.make("run:stalled-b"), retry: 3, retryAt: failedAt },
+          ]),
+        ),
+      forHandoff: () => Effect.succeed([]),
+    });
+    const dependencies = Layer.merge(
+      EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+      Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, { execute: () => Effect.void }),
+    );
+    const layer = EffectWorker.layer.pipe(Layer.provideMerge(dependencies), Layer.provide(runner));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* outbox.enqueue([
+        conversationSummaryEffect({ threadId, runId: RunId.make("run:recovered") }),
+      ]);
+      assert.equal(yield* worker.drain(), 3);
+      assert.deepEqual(yield* Ref.get(asked), ["model:kimi"]);
+      const retryB = conversationSummaryEffect({
+        threadId: stalledB,
+        runId: RunId.make("run:stalled-b"),
+        retry: 3,
+        retryAt: failedAt,
+      });
+      assert.equal(
+        retryB.id,
+        `effect:conversation-summary.generate:run:stalled-b:retry:3:${failedAt}`,
+      );
+      assert.deepEqual(
+        (yield* Ref.get(seen)).map((call) => call),
+        [
+          { threadId, runId: RunId.make("run:recovered"), retry: undefined },
+          { threadId: stalledA, runId: RunId.make("run:stalled-a"), retry: 1 },
+          { threadId: stalledB, runId: RunId.make("run:stalled-b"), retry: 3 },
+        ],
+      );
+      failedAt = "2026-01-02T00:00:00.000Z";
+      yield* outbox.enqueue([
+        conversationSummaryEffect({ threadId, runId: RunId.make("run:recovered-again") }),
+      ]);
+      assert.equal(yield* worker.drain(), 3);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -533,6 +602,7 @@ it.effect.each(["project-knowledge.extract", "conversation-summary.generate"] as
           drainDue: Effect.void,
         }),
         Layer.succeed(ConversationSummaryRuntime, {
+          stalledThreads: () => Effect.succeed([]),
           hasPendingPass: () => Effect.succeed(false),
           summarizeThread: () => hold.pipe(Effect.as({ hasMore: false })),
           forHandoff: () => Effect.succeed([]),

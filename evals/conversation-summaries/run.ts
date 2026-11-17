@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import * as NodeUtil from "node:util";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
+import { summaryToolText } from "@t3tools/provider-core/server/conversationEvidence";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -30,12 +32,18 @@ const { values } = NodeUtil.parseArgs({
     case: { type: "string" },
     samples: { type: "string", default: "3" },
     arm: { type: "string", default: "full" },
+    "evidence-module": { type: "string" },
   },
 });
 if (!values.model || !values.out) throw new Error("Use --model <model> --out <directory>.");
 const model = values.model;
 const outputDirectory = values.out;
 const samples = Number(values.samples);
+if (!Number.isSafeInteger(samples) || samples < 1)
+  throw new Error("--samples must be a positive integer.");
+const evidenceText: typeof summaryToolText = values["evidence-module"]
+  ? (await import(NodeURL.pathToFileURL(values["evidence-module"]).href)).summaryToolText
+  : summaryToolText;
 const arm = arms.find((candidate) => candidate === values.arm);
 if (arm === undefined) throw new Error(`Unknown --arm ${values.arm}. Use ${arms.join(", ")}.`);
 const morph = model.startsWith("morph-");
@@ -62,8 +70,14 @@ const Results = Schema.Array(
 const decodeSettings = Schema.decodeUnknownSync(CodexSettings);
 const decodeResults = Schema.decodeEffect(Schema.fromJsonString(Results));
 const encodeResults = Schema.encodeEffect(Schema.fromJsonString(Results));
+const encodeRunMetadata = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const asArm = (message: LeafMessage, index: number) => {
   const ref = `M${index + 1}`;
+  if (message.role === "tool") {
+    const text = evidenceText(message.item);
+    if (text === null) throw new Error(`Fixture tool ${ref} has no summary evidence.`);
+    return { ref, role: "tool" as const, text };
+  }
   if (message.role !== "peer" || arm === "full") return { ref, ...message };
   if (arm === "main") return { ref, role: "assistant" as const, text: message.text };
   const [, rendered] = historyResponseItems(
@@ -89,6 +103,16 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    yield* fs.makeDirectory(outputDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(outputDirectory, "run.json"),
+      yield* encodeRunMetadata({
+        model,
+        arm,
+        samples,
+        evidenceModule: values["evidence-module"] ?? "checkout",
+      }),
+    );
     const baseline = values.baseline
       ? yield* fs.readFileString(values.baseline).pipe(Effect.tap(decodeResults))
       : undefined;
@@ -108,6 +132,11 @@ await Effect.runPromise(
       failures: ReadonlyArray<string>,
     ) => {
       results.push({ id, sample, statements, failures, passed: failures.length === 0 });
+      return encodeResults(results).pipe(
+        Effect.flatMap((json) =>
+          fs.writeFileString(path.join(outputDirectory, "results.json"), json),
+        ),
+      );
     };
     for (const fixture of selectedCondensed) {
       for (let sample = 0; sample < samples; sample++) {
@@ -120,24 +149,26 @@ await Effect.runPromise(
             text,
           })),
         });
-        record(fixture.id, sample, statements, gradeCondensed(fixture, statements));
+        yield* record(fixture.id, sample, statements, gradeCondensed(fixture, statements));
       }
     }
     for (const fixture of selectedLeaf) {
+      const messages = fixture.messages.map(asArm);
+      const sourceFailures = (fixture.sourceMustNot ?? [])
+        .filter((pattern) => messages.some((message) => new RegExp(pattern).test(message.text)))
+        .map((pattern) => `source contains excluded payload: ${pattern}`);
       for (let sample = 0; sample < samples; sample++) {
         const { statements } = yield* generation.generateConversationSummary({
           cwd,
           modelSelection,
-          messages: fixture.messages.map(asArm),
+          messages,
         });
-        record(fixture.id, sample, statements, gradeLeaf(fixture, statements));
+        yield* record(fixture.id, sample, statements, [
+          ...sourceFailures,
+          ...gradeLeaf(fixture, statements),
+        ]);
       }
     }
-    yield* fs.makeDirectory(outputDirectory, { recursive: true });
-    yield* fs.writeFileString(
-      path.join(outputDirectory, "results.json"),
-      yield* encodeResults(results),
-    );
     if (baseline !== undefined)
       yield* fs.writeFileString(path.join(outputDirectory, "baseline.json"), baseline);
     for (const fixture of [...selectedCondensed, ...selectedLeaf]) {

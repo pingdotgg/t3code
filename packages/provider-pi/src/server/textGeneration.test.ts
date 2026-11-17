@@ -236,6 +236,44 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("summarizes without context files, skills, prompt templates, or tools", () =>
+  Effect.gen(function* () {
+    const summary = { statements: [{ text: "The user asked for a rename.", citations: ["M1"] }] };
+    const pi = yield* makeFakePi(JSON.stringify(summary));
+    const settings = { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] };
+    const input = {
+      cwd: process.cwd(),
+      modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "default"),
+      messages: [{ ref: "M1", role: "user" as const, text: "Rename parseDate." }],
+    };
+    const textGeneration = yield* makePiTextGeneration(settings, {}).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner),
+    );
+
+    assert.deepEqual(yield* textGeneration.generateConversationSummary(input), summary);
+    assert.include(textGeneration.supportedOperations, "generateConversationSummary");
+    for (const flag of [
+      "--no-tools",
+      "--no-extensions",
+      "--no-context-files",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--system-prompt",
+      "--append-system-prompt",
+    ])
+      assert.include(pi.launchArguments[0]!, flag);
+
+    const custom = yield* makePiTextGeneration(
+      { ...settings, launchArgs: "--append-system-prompt='Mention the release train'" },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+    assert.notInclude(custom.supportedOperations, "generateConversationSummary");
+    const error = yield* custom.generateConversationSummary(input).pipe(Effect.flip);
+    assert.include(error.detail, "cannot isolate");
+    assert.equal(pi.launchArguments.length, 1);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("selects the provider and id Pi reported when the provider contains a slash", () =>
   Effect.gen(function* () {
     const provider = "llama-server=http://127.0.0.1:8080";

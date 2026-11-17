@@ -39,6 +39,9 @@ because each summary costs one call to your text generation model, and combining
 costs one more. After a turn completes, T3 Code summarizes settled older history in small batches,
 combines summaries, and continues in the background until it catches up. You do not need to send more messages to finish an existing backlog.
 The most recent messages are never summarized.
+Summaries use the model selected in **Settings → Threads → Text generation**. If its provider cannot
+keep workspace and personal instructions out of summaries, the pass reports that it cannot run.
+Choose a supported provider there; T3 Code does not switch your summary model automatically.
 Turning summaries off stops both generation and their use in new handoffs. Existing summaries stay
 available to inspect and can be used again if you turn the setting back on.
 

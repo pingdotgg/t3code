@@ -68,6 +68,7 @@ import { contextRestartDue, contextRestartRefusal } from "./ContextRestart.ts";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { unsentManualContinuationSource } from "./manualContinuation.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -2185,7 +2186,7 @@ export const layer: Layer.Layer<
             const sideChatContext =
               sideChatHandoff === undefined || compact || goalCommand
                 ? ""
-                : sideChatHandoff.summaryText;
+                : conversationEvidenceText(sideChatHandoff.summaryText);
             const context = [delivery.context, sideChatContext, turnNotes]
               .filter((part) => part !== "")
               .join("\n\n");

@@ -36,6 +36,54 @@ const messageSearchTextMigration = [98, "ProjectionMessageSearchText"] as const;
 const turnItemConversationMigration = [99, "TurnItemConversationIndex"] as const;
 const laterMigrations = migrationManifest.filter(([id]) => id > 99);
 
+it.effect("backfills summary search and tracks replacement, scrubbing and deletion", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 114 });
+    yield* sql`INSERT INTO conversation_summaries
+      (summary_id, project_id, thread_id, position, created_at, payload_json)
+      VALUES ('first', 'project', 'thread', '1', '2026-01-01',
+        '{"statements":[{"text":"kernel extended attributes"}]}'),
+      ('scrubbed', 'project', 'thread', '2', '2026-01-01',
+        '{"statements":[{"text":"kernel secret"}],"scrubbed":true}'),
+      ('legacy', 'project', 'thread', '3', '2026-01-01',
+        '{"statements":[{"text":"[Source unavailable: removed or changed.]"}]}')`;
+    yield* runMigrations();
+    assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
+      { text: "kernel extended attributes" },
+    ]);
+    yield* sql`INSERT INTO conversation_summaries
+      SELECT 'legacy-insert', project_id, thread_id, position, created_at, payload_json
+      FROM conversation_summaries WHERE summary_id = 'legacy'`;
+    yield* sql`UPDATE conversation_summaries SET payload_json = payload_json WHERE summary_id = 'legacy'`;
+    assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
+      { text: "kernel extended attributes" },
+    ]);
+    assert.deepEqual(
+      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
+      [{ text: "kernel extended attributes" }],
+    );
+    yield* sql`UPDATE conversation_summaries SET payload_json = '{"statements":[{"text":"replacement résumé"}]}' WHERE summary_id = 'first'`;
+    assert.deepEqual(
+      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'kernel'`,
+      [],
+    );
+    assert.deepEqual(
+      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
+      [{ text: "replacement résumé" }],
+    );
+    yield* sql`UPDATE conversation_summaries SET payload_json = json_set(payload_json, '$.scrubbed', 1) WHERE summary_id = 'first'`;
+    assert.deepEqual(
+      yield* sql`SELECT text FROM conversation_summary_fts WHERE conversation_summary_fts MATCH 'resume'`,
+      [],
+    );
+    yield* sql`DELETE FROM conversation_summaries`;
+    assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_search_ids`, []);
+    assert.deepEqual(yield* sql`SELECT * FROM conversation_summary_fts`, []);
+    yield* sql`INSERT INTO conversation_summary_fts(conversation_summary_fts) VALUES ('integrity-check')`;
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

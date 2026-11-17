@@ -194,7 +194,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     input: TextGenerationOperations.Request<S>,
   ) {
     const blindEvaluation = input.operation === "generateModelEvaluation";
-    if (blindEvaluation) {
+    const isolated = BlindEvaluation.runsIsolated(input.operation);
+    if (isolated) {
       yield* BlindEvaluation.validateBlindEvaluationSelection(
         input.modelSelection,
         input.operation,
@@ -219,10 +220,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           OpenCodeRuntime.OpenCodeServerConnection,
           "url" | "serverPassword" | "version"
         >,
+        directory: string = input.cwd,
       ) {
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
-          directory: input.cwd,
+          directory,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         });
         const session = yield* Effect.tryPromise({
@@ -232,7 +234,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 title: `T3 Code ${input.operation}`,
                 permission: [
                   { permission: "*", pattern: "*", action: "deny" },
-                  ...(!blindEvaluation
+                  ...(!isolated
                     ? [{ permission: "read", pattern: "*", action: "allow" as const }]
                     : []),
                 ],
@@ -242,14 +244,14 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           catch: (cause) =>
             new OpenCodeTextGenerationSessionRequestError({
               operation: input.operation,
-              cwd: input.cwd,
+              cwd: directory,
               cause,
             }),
         });
         if (!session.data) {
           return yield* new OpenCodeTextGenerationSessionPayloadError({
             operation: input.operation,
-            cwd: input.cwd,
+            cwd: directory,
           });
         }
         yield* Effect.addFinalizer(() =>
@@ -275,7 +277,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         }
         const promptContext = {
           operation: input.operation,
-          cwd: input.cwd,
+          cwd: directory,
           sessionId: session.data.id,
           providerId: parsedModel.providerID,
           modelId: parsedModel.modelID,
@@ -404,7 +406,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     );
 
     const isolatedOutput = Effect.gen(function* () {
-      const environment = yield* BlindEvaluation.makeBlindEvaluationEnvironment({
+      const { environment, directory } = yield* BlindEvaluation.makeIsolatedGenerationEnvironment({
         generation: "v1",
         operation: input.operation,
         directory: processDirectory,
@@ -412,12 +414,12 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       });
       const server = yield* openCodeRuntime.startOpenCodeServerProcess({
         binaryPath: openCodeSettings.binaryPath,
-        directory: input.cwd,
+        directory,
         environment,
       });
-      return yield* runAgainstServer(server);
+      return yield* runAgainstServer(server, directory);
     }).pipe(Effect.scoped);
-    const serverOutput = blindEvaluation
+    const serverOutput = isolated
       ? isolatedOutput
       : openCodeSettings.serverUrl.length > 0
         ? openCodeRuntime
@@ -457,8 +459,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     return yield* TextGenerationOperations.decodeJsonReply(input, "OpenCode", rawOutput);
   });
 
+  const ownsServer = openCodeSettings.serverUrl.trim().length === 0;
   return TextGenerationOperations.fromRunner("OpenCodeTextGeneration", runOpenCodeJson, {
     supportsInvestigation: false,
-    supportsBlindEvaluation: openCodeSettings.serverUrl.trim().length === 0,
+    supportsBlindEvaluation: ownsServer,
+    supportsConversationSummary: ownsServer,
   });
 });

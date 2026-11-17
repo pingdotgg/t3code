@@ -261,7 +261,7 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
   const runIsolated = Effect.fn("OpenCode2TextGeneration.runIsolated")(function* <
     S extends Schema.Top,
   >(input: TextGenerationOperations.Request<S>) {
-    const environment = yield* BlindEvaluation.makeBlindEvaluationEnvironment({
+    const { environment, directory } = yield* BlindEvaluation.makeIsolatedGenerationEnvironment({
       generation: "v2",
       operation: input.operation,
       directory: processDirectory,
@@ -271,17 +271,16 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
       binaryPath,
       serverUrl: "",
       serverPassword: "",
-      directory: input.cwd,
+      directory,
       environment,
     });
     const raw = yield* isolatedServer.withConnection((connection) =>
-      runOnServer(connection, input),
+      runOnServer(connection, { ...input, cwd: directory }),
     );
     return yield* TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw);
   }, Effect.scoped);
   const run: TextGenerationOperations.Runner = (input) => {
-    const blindEvaluation = input.operation === "generateModelEvaluation";
-    const generated = blindEvaluation
+    const generated = BlindEvaluation.runsIsolated(input.operation)
       ? BlindEvaluation.validateBlindEvaluationSelection(
           input.modelSelection,
           input.operation,
@@ -310,8 +309,10 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
       ),
     );
   };
+  const ownsServer = !options.serverUrl?.trim();
   return TextGenerationOperations.fromRunner("OpenCode2TextGeneration", run, {
     supportsInvestigation: false,
-    supportsBlindEvaluation: !options.serverUrl?.trim(),
+    supportsBlindEvaluation: ownsServer,
+    supportsConversationSummary: ownsServer,
   });
 });

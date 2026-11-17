@@ -38,7 +38,15 @@ export function sourceRanges(source: SummarySource): ReadonlyArray<SummarySource
   if (source.text.length <= MAX_SOURCE_CHARS) return [source];
   const ranges: Array<SummarySource> = [];
   for (let start = 0; start < source.text.length;) {
-    const end = boundedTextEnd(source.text, start, MAX_SOURCE_CHARS);
+    let end = boundedTextEnd(source.text, start, MAX_SOURCE_CHARS);
+    if (end < source.text.length) {
+      // Tool evidence is JSON, so its output lines usually have escaped newlines.
+      const newline = Math.max(
+        source.text.lastIndexOf("\n", end - 1) + 1,
+        source.text.lastIndexOf("\\n", end - 2) + 2,
+      );
+      if (newline > start && end - newline <= 1_024) end = newline;
+    }
     ranges.push({
       ...source,
       ref: { ...source.ref, range: { start, end, total: source.text.length } },

@@ -95,6 +95,7 @@ export function fromRunner(
   options: {
     readonly supportsInvestigation: boolean;
     readonly supportsBlindEvaluation?: boolean;
+    readonly supportsConversationSummary?: boolean;
   } = { supportsInvestigation: false },
 ): ProviderTextGenerationRuntime {
   const generateModelEvaluation: ProviderTextGeneration["generateModelEvaluation"] = Effect.fn(
@@ -245,6 +246,13 @@ export function fromRunner(
 
   const generateConversationSummary: ProviderTextGeneration["generateConversationSummary"] =
     Effect.fn(`${name}.generateConversationSummary`)(function* (input) {
+      if (options.supportsConversationSummary === false) {
+        return yield* new TextGenerationError({
+          operation: "generateConversationSummary",
+          detail:
+            "This provider cannot isolate a conversation summary from workspace and user instructions. Choose another summary model.",
+        });
+      }
       return yield* run({
         operation: "generateConversationSummary",
         cwd: input.cwd,
@@ -257,7 +265,9 @@ export function fromRunner(
     supportedOperations: TextGenerationOperation.literals.filter(
       (operation) =>
         (operation !== "generateReviewGuide" || options.supportsInvestigation) &&
-        (operation !== "generateModelEvaluation" || options.supportsBlindEvaluation === true),
+        (operation !== "generateModelEvaluation" || options.supportsBlindEvaluation === true) &&
+        (operation !== "generateConversationSummary" ||
+          options.supportsConversationSummary !== false),
     ),
     generateCommitMessage,
     generatePrContent,

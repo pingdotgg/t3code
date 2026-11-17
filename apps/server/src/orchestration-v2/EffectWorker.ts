@@ -867,7 +867,11 @@ export const layerExecutor: Layer.Layer<
               );
           case "conversation-summary.generate":
             return conversationSummaries
-              .summarizeThread({ threadId: effect.threadId, runId: effect.request.runId })
+              .summarizeThread({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                retry: effect.request.retry,
+              })
               .pipe(
                 Effect.asVoid,
                 Effect.mapError(
@@ -953,6 +957,8 @@ const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerErro
 const isLockTimeout = (error: EffectOutbox.EffectOutboxError) =>
   SqlError.isSqlError(error.cause) && error.cause.reason._tag === "LockTimeoutError";
 const lockRetrySchedule = Schedule.spaced(Duration.millis(100));
+const STALLED_SUMMARY_RETRIES_PER_SUCCESS = 2;
+
 const retryWhileLocked = <A>(settlement: Effect.Effect<A, EffectOutbox.EffectOutboxError>) =>
   Effect.interruptible(
     Effect.retry(settlement, { schedule: lockRetrySchedule, while: isLockTimeout }),
@@ -1169,15 +1175,35 @@ export const layerWithOptions = (
                     const result = yield* conversationSummaries.summarizeThread({
                       threadId: effect.threadId,
                       runId: request.runId,
+                      retry: request.retry,
                     });
-                    if (result.hasMore) {
-                      yield* outbox.enqueue([
-                        conversationSummaryEffect({
-                          threadId: effect.threadId,
-                          runId: request.runId,
-                          pass: (request.pass ?? 0) + 1,
-                        }),
-                      ]);
+                    const stalled =
+                      result.summarizedWithModelKey === undefined
+                        ? []
+                        : yield* conversationSummaries.stalledThreads({
+                            modelKey: result.summarizedWithModelKey,
+                            limit: STALLED_SUMMARY_RETRIES_PER_SUCCESS,
+                          });
+                    const next = [
+                      ...(result.hasMore
+                        ? [
+                            conversationSummaryEffect({
+                              threadId: effect.threadId,
+                              runId: request.runId,
+                              pass: (request.pass ?? 0) + 1,
+                              ...(request.retry === undefined ? {} : { retry: request.retry }),
+                              ...(request.retryAt === undefined
+                                ? {}
+                                : { retryAt: request.retryAt }),
+                            }),
+                          ]
+                        : []),
+                      ...stalled
+                        .filter((thread) => thread.threadId !== effect.threadId)
+                        .map((thread) => conversationSummaryEffect(thread)),
+                    ];
+                    if (next.length > 0) {
+                      yield* outbox.enqueue(next);
                       yield* outbox.notifyAvailable();
                     }
                   }).pipe(

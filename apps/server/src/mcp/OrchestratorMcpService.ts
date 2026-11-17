@@ -1,3 +1,4 @@
+import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import {
   providerConstraints,
   delegationProviderConstraints,
@@ -1019,7 +1020,7 @@ function threadRun(
 
 function jsonText(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2);
+    return conversationEvidenceText(JSON.stringify(value, null, 2));
   } catch {
     return String(value);
   }
@@ -1052,7 +1053,10 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
         .filter((line): line is string => line !== undefined)
         .join("\n");
     case "command_execution":
-      return [`$ ${item.input}`, item.output]
+      return [
+        `$ ${conversationEvidenceText(item.input)}`,
+        item.output === undefined ? undefined : conversationEvidenceText(item.output),
+      ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
     case "file_search":
@@ -1107,7 +1111,8 @@ function timelineItem(input: {
   readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
-  const text = turnItemText(input.row.item);
+  const rawText = turnItemText(input.row.item);
+  const text = rawText === null ? null : conversationEvidenceText(rawText);
   const offset = input.textOffset ?? 0;
   const end = textPageEnd(text, offset, input.maxChars);
   const textTruncated = text !== null && text.length > end;

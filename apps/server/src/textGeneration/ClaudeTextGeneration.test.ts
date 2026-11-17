@@ -226,6 +226,26 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("summarizes conversations without checkout instructions or customizations", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { statements: [] } }),
+        cwdMustNotBe: process.cwd(),
+        argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
+        argsMustNotContain: "--bare",
+      },
+      (textGeneration) =>
+        textGeneration.generateConversationSummary({
+          cwd: process.cwd(),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+          },
+          messages: [{ ref: "M1", role: "user", text: "Rename parseDate." }],
+        }),
+    ),
+  );
+
   it.effect("isolates blind evaluation without disabling subscription authentication", () =>
     withFakeClaudeEnv(
       {

@@ -460,6 +460,7 @@ function makeLocalCommandHarness(input: {
    */
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
+    readonly summaryText?: string;
     readonly unsentResume?: boolean;
     readonly repeatedResume?: boolean;
     readonly acceptedResume?: boolean;
@@ -800,7 +801,7 @@ function makeLocalCommandHarness(input: {
           strategy: "manual_context",
           status: "ready",
           summaryMessageId: null,
-          summaryText: "SIDE_CHAT_CONTEXT",
+          summaryText: input.sideChat.summaryText ?? "SIDE_CHAT_CONTEXT",
           createdByProviderInstanceId: null,
           createdAt: now,
           updatedAt: now,
@@ -2439,6 +2440,13 @@ effectIt.effect("refuses unsupported resume instead of manufacturing a user prom
 effectIt.effect.each([
   { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
+  {
+    contextRun: "failed",
+    runtimeMode: "full-access",
+    summaryText:
+      "SIDE_CHAT_CONTEXT data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK38AAAAASUVORK5CYII=",
+    context: "SIDE_CHAT_CONTEXT [binary payload omitted]",
+  },
   { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   {
     contextRun: "failed",
@@ -2500,6 +2508,9 @@ effectIt.effect.each([
       expect(harness.startTurn.mock.calls[0]?.[0].resume === true).toBe(
         context === "" && !resendsOriginal,
       );
+      if ("summaryText" in sideChat) {
+        expect(harness.projection().contextHandoffs[0]?.summaryText).toBe(sideChat.summaryText);
+      }
       expect(harness.projection().contextHandoffs).toMatchObject([
         {
           id: "side-chat-context",
@@ -4628,6 +4639,7 @@ effectIt.effect("declares no replayed runs to the summary lookup on a provider s
     const lookups: Array<unknown> = [];
     yield* harness.start.pipe(
       Effect.provideService(ConversationSummaryRuntime, {
+        stalledThreads: () => Effect.succeed([]),
         hasPendingPass: () => Effect.succeed(false),
         summarizeThread: () => Effect.succeed({ hasMore: false }),
         forHandoff: (input) =>
@@ -4808,6 +4820,7 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
     );
     yield* harness.start.pipe(
       Effect.provideService(ConversationSummaryRuntime, {
+        stalledThreads: () => Effect.succeed([]),
         hasPendingPass: () => Effect.succeed(false),
         summarizeThread: () => Effect.succeed({ hasMore: false }),
         forHandoff: () =>

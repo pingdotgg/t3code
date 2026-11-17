@@ -172,7 +172,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const workingDirectory =
       operation === "generateThreadTitle" ||
       operation === "generateModelEvaluation" ||
-      operation === "generateKnowledgeCandidates"
+      operation === "generateKnowledgeCandidates" ||
+      operation === "generateConversationSummary"
         ? yield* fileSystem
             .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
             .pipe(
@@ -277,7 +278,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             : ["--tools", ""]),
           "--disable-slash-commands",
           // Safe mode isolates customizations while retaining subscription authentication.
-          ...(operation === "generateModelEvaluation" || operation === "generateKnowledgeCandidates"
+          ...(operation === "generateModelEvaluation" ||
+          operation === "generateKnowledgeCandidates" ||
+          operation === "generateConversationSummary"
             ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""]
             : []),
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),

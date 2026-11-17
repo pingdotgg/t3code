@@ -11,6 +11,7 @@ import {
   ConversationSummaryList,
   ConversationSummaryPass,
   ConversationSummaryRead,
+  ConversationSummarySearchInput,
   conversationSummarySourceKey,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -53,8 +54,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import { traceSqlRouting } from "../../persistence/testkit/SqliteRouting.ts";
 import { conversationSummariesRpcHandlers } from "../../conversationSummariesRpc.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
@@ -86,7 +89,7 @@ import {
 
 type Generate = TextGeneration.TextGeneration["Service"]["generateConversationSummary"];
 
-const projectId = ProjectId.make("summary-project");
+const projectId = ProjectId.make("00000000-0000-4000-8000-000000000001");
 const threadId = ThreadId.make("summary-thread");
 const instanceId = ProviderInstanceId.make("codex");
 const runId = RunId.make("summary-run");
@@ -96,6 +99,7 @@ const optedIn = {
   projectSettingsOverrides: { [projectId]: { enableConversationSummaries: true } },
 };
 const decodeSettings = Schema.decodeUnknownEffect(ServerSettingsSchema);
+const decodeSummarySearchInput = Schema.decodeEffect(ConversationSummarySearchInput);
 const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(ConversationSummary));
 // Freeze the protocol-2 summary codec from before ranged/tool sources. An older client
 // compiles these shapes into RpcClient; merely accepting our current schema proves nothing.
@@ -507,35 +511,83 @@ it.effect(
   },
 );
 
-it.effect("sends a peer reply to the summary model as that peer", () => {
-  const model = citing();
-  return Effect.gen(function* () {
-    yield* seed;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const peer = item(1);
-    if (peer.type !== "assistant_message") return yield* Effect.die("Expected a peer reply");
-    yield* projections.apply({
-      id: EventId.make("peer-reply-attribution"),
-      type: "turn-item.updated",
-      threadId,
-      providerInstanceId: instanceId,
-      occurredAt: at,
-      payload: { ...peer, speaker: { label: "Astra", model: "gpt-6-astra" } },
-    });
-    yield* summarize;
-    assert.deepEqual(model.calls[0]?.messages[1], {
-      ref: "M2",
-      role: "peer",
-      speaker: { label: "Astra", model: "gpt-6-astra" },
-      text: rawText(1),
-    });
-    assert.deepEqual(model.calls[0]?.messages[3], {
-      ref: "M4",
-      role: "assistant",
-      text: rawText(3),
-    });
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+it.effect(
+  "invalidates legacy peer attribution and changed speaker metadata through rollups",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seed;
+      const legacy = yield* persistSummary(
+        900,
+        Array.from({ length: 10 }, (_, index) => index),
+      );
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const peer = item(1);
+      if (peer.type !== "assistant_message") return yield* Effect.die("Expected a peer reply");
+      yield* projections.apply({
+        id: EventId.make("peer-reply-attribution"),
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: instanceId,
+        occurredAt: at,
+        payload: { ...peer, speaker: { label: "Astra", model: "gpt-6-astra" } },
+      });
+      assert.equal((yield* service.describe({ ...scope, summaryId: legacy.id })).state, "stale");
+      yield* summarize;
+      const regenerated = yield* onlySummary;
+      assert.notEqual(regenerated.id, legacy.id);
+      assert.deepEqual(model.calls[0]?.messages[1], {
+        ref: "M2",
+        role: "peer",
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+        text: rawText(1),
+      });
+      assert.deepEqual(model.calls[0]?.messages[3], {
+        ref: "M4",
+        role: "assistant",
+        text: rawText(3),
+      });
+      const sql = yield* SqlClient.SqlClient;
+      const parent = {
+        ...regenerated,
+        id: `summary:${"e".repeat(64)}`,
+        sources: [{ kind: "summary" as const, threadId, summaryId: regenerated.id }],
+        statements: [{ text: "The peer proposed the fix.", citations: [regenerated.id] }],
+      };
+      yield* sql`INSERT INTO conversation_summaries
+      (summary_id, project_id, thread_id, position, created_at, payload_json)
+      SELECT ${parent.id}, project_id, thread_id, position || ':parent', created_at, ${yield* encodeSummary(parent)}
+      FROM conversation_summaries WHERE summary_id = ${regenerated.id}`;
+      assert.equal(
+        (yield* service.describe({ ...scope, summaryId: parent.id })).state,
+        "available",
+      );
+      yield* projections.apply({
+        id: EventId.make("peer-identity-corrected"),
+        type: "turn-item.updated",
+        threadId,
+        providerInstanceId: instanceId,
+        occurredAt: at,
+        payload: { ...peer, speaker: { label: "Fable", model: "gpt-6-luna" } },
+      });
+      assert.equal((yield* service.describe({ ...scope, summaryId: parent.id })).state, "stale");
+      assert.equal(
+        (yield* service.describe({ ...scope, summaryId: regenerated.id })).state,
+        "stale",
+      );
+      yield* summarize;
+      const corrected = yield* onlySummary;
+      assert.notEqual(corrected.id, regenerated.id);
+      assert.deepEqual(model.calls.at(-1)?.messages[1], {
+        ref: "M2",
+        role: "peer",
+        speaker: { label: "Fable", model: "gpt-6-luna" },
+        text: rawText(1),
+      });
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
 
 it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
   const model = citing();
@@ -723,24 +775,77 @@ it.effect("reports a summary pass as pending until it settles", () =>
   }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
 );
 
-it.effect("records an unavailable model as a failed pass without publishing a summary", () => {
-  const model = scripted(() =>
-    Effect.fail(
-      new TextGenerationError({ operation: "generateConversationSummary", detail: "No model" }),
-    ),
-  );
-  return Effect.gen(function* () {
-    yield* seed;
-    assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
-    const result = yield* list;
-    assert.deepEqual(result.summaries, []);
-    assert.deepInclude(result.lastPass, {
-      result: "failed",
-      reason: "No model",
-      waitingMessages: 10,
-    });
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+it.effect(
+  "recovers failed and legacy summary passes with bounded model-specific retry rounds",
+  () => {
+    const model = scripted(() =>
+      Effect.fail(
+        new TextGenerationError({ operation: "generateConversationSummary", detail: "No model" }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* seed;
+      assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
+      const result = yield* list;
+      assert.deepEqual(result.summaries, []);
+      assert.deepInclude(result.lastPass, {
+        result: "failed",
+        reason: "No model",
+        waitingMessages: 10,
+      });
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const sql = yield* SqlClient.SqlClient;
+      const stored = yield* sql<{ readonly modelKey: string }>`
+      SELECT json_extract(payload_json, '$.modelKey') AS "modelKey"
+      FROM conversation_summary_passes WHERE thread_id = ${threadId}
+    `;
+      const modelKey = stored[0]?.modelKey ?? "";
+      assert.include(modelKey, "codex");
+      const stalled = (key = modelKey) => service.stalledThreads({ modelKey: key, limit: 2 });
+      assert.deepEqual(yield* stalled(), []);
+      yield* TestClock.adjust("15 minutes");
+      assert.deepInclude((yield* stalled())[0], { threadId, runId, retry: 1 });
+      assert.deepEqual(yield* stalled(`${modelKey}:other`), []);
+      yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = json_remove(payload_json, '$.modelKey') WHERE thread_id = ${threadId}
+    `;
+      assert.deepInclude((yield* stalled())[0], { threadId, runId, retry: 1 });
+      assert.deepEqual(yield* stalled(`${modelKey}:other`), []);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        yield* service.summarizeThread({ threadId, runId, retry: 1 }).pipe(Effect.flip);
+      }
+      yield* TestClock.adjust("15 minutes");
+      assert.deepEqual(yield* stalled(), []);
+      yield* TestClock.adjust("15 minutes");
+      const nextRetry = (yield* stalled())[0];
+      assert.deepInclude(nextRetry, { threadId, runId, retry: 2 });
+      yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = json_set(payload_json, '$.retries', 6) WHERE thread_id = ${threadId}
+    `;
+      yield* TestClock.adjust("2 days");
+      assert.deepEqual(yield* stalled(), []);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
+      });
+      yield* settings.updateSettings(optedIn);
+      assert.deepInclude((yield* stalled())[0], { threadId, runId, retry: 1 });
+      yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = json_set(payload_json, '$.retries', 6) WHERE thread_id = ${threadId}
+    `;
+      const freshRunId = RunId.make("summary-fresh-run");
+      yield* service.summarizeThread({ threadId, runId: freshRunId }).pipe(Effect.flip);
+      yield* TestClock.adjust("15 minutes");
+      assert.deepInclude((yield* stalled())[0], { threadId, runId: freshRunId, retry: 1 });
+      yield* sql`UPDATE projection_projects SET deleted_at = '2026-01-01T00:00:00.000Z'
+      WHERE project_id = ${projectId}`;
+      assert.deepEqual(yield* stalled(), []);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
 
 const failingStretch = (kind: "empty" | "invalid-output" | "unlabelled") =>
   kind === "unlabelled"
@@ -1234,6 +1339,52 @@ it.effect(
   },
 );
 
+it.effect("scrubs legacy binary-derived summaries and regenerates clean evidence", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seed;
+    yield* summarize;
+    const previous = yield* onlySummary;
+    const binary = "iVBORw0KGgo".repeat(200);
+    const text = `Keep the important decision. data:image/png;base64,${binary} Continue with the retry fix.`;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* projections.apply(messageEvent(0, text));
+    const crypto = yield* Digest.Digest;
+    const digest = Hex.encode(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)));
+    const legacy = {
+      ...previous,
+      sources: previous.sources.map((source, index) =>
+        index === 0
+          ? {
+              ...source,
+              digest,
+              range: { start: 0, end: text.length, total: text.length },
+            }
+          : source,
+      ),
+      statements: [
+        { text: "Polluted binary attachment claim", citations: previous.statements[0]!.citations },
+      ],
+    };
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE conversation_summaries SET payload_json = ${yield* encodeSummary(legacy)} WHERE summary_id = ${legacy.id}`;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    assert.deepEqual((yield* service.search({ projectId, query: "polluted" })).summaries, []);
+    assert.equal((yield* service.describe({ ...scope, summaryId: legacy.id })).state, "stale");
+    const original = yield* service.expand({ ...scope, summaryId: legacy.id });
+    assert.notInclude(JSON.stringify(original), binary);
+    yield* summarize;
+    assert.equal(model.calls.length, 2);
+    const regenerated = yield* onlySummary;
+    const expanded = yield* service.expand({ ...scope, summaryId: regenerated.id });
+    assert.notInclude(JSON.stringify(model.calls[1]), binary);
+    assert.notInclude(JSON.stringify(expanded), binary);
+    assert.include(JSON.stringify(expanded), "Keep the important decision.");
+    assert.include(JSON.stringify(expanded), "Continue with the retry fix.");
+    assert.equal((yield* service.search({ projectId, query: "polluted" })).summaries.length, 0);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("regenerates legacy prefix summaries while keeping their full source recoverable", () => {
   const model = citing();
   return Effect.gen(function* () {
@@ -1331,6 +1482,24 @@ it.effect(
           ? expansion.sources[0].result.text
           : null,
         supplied?.text,
+      );
+      const stale = {
+        ...summary,
+        id: `summary:${"f".repeat(64)}`,
+        sources: summary.sources.map((source) =>
+          source.kind === "turn_item" ? { ...source, digest: "0".repeat(64) } : source,
+        ),
+      };
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO conversation_summaries
+        (summary_id, project_id, thread_id, position, created_at, payload_json)
+        SELECT ${stale.id}, project_id, thread_id, position || ':stale', created_at, ${yield* encodeSummary(stale)}
+        FROM conversation_summaries WHERE summary_id = ${summary.id}`;
+      assert.deepEqual(
+        (yield* service.search({ projectId, query: "exact", limit: 20 })).summaries.map(
+          (hit) => hit.id,
+        ),
+        [summary.id],
       );
       yield* projections.apply({
         ...event,
@@ -1496,6 +1665,372 @@ it.effect("does not offer tool-only evidence from a deleted project", () => {
     assert.deepEqual(yield* service.forHandoff(input), []);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
+
+it.effect("finds summaries across project threads and expands each hit in its own scope", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const first = yield* persistSummary(1, [0]);
+    const siblingId = ThreadId.make("sibling-thread");
+    const siblingMessageId = MessageId.make("sibling-message");
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* projections.apply({
+      id: EventId.make("sibling-created"),
+      type: "thread.created",
+      threadId: siblingId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: { ...threadPayload, id: siblingId },
+    });
+    const original = messageEvent(0, rawText(0));
+    if (original.type !== "message.updated") throw new Error("Expected a message event");
+    yield* projections.apply({
+      ...original,
+      id: EventId.make("sibling-message-created"),
+      threadId: siblingId,
+      payload: { ...original.payload, id: siblingMessageId, threadId: siblingId },
+    });
+    const sibling = {
+      ...first,
+      id: `summary:${"b".repeat(64)}`,
+      threadId: siblingId,
+      sources: [
+        {
+          kind: "message" as const,
+          threadId: siblingId,
+          messageId: siblingMessageId,
+          digest: first.sources[0]!.kind === "message" ? first.sources[0]!.digest : "",
+        },
+      ],
+      statements: [{ text: "Summary sibling", citations: [siblingMessageId] }],
+    };
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO conversation_summaries
+      (summary_id, project_id, thread_id, position, created_at, payload_json)
+      VALUES (${sibling.id}, ${projectId}, ${siblingId}, 'sibling', ${sibling.createdAt}, ${yield* encodeSummary(sibling)})`;
+    const foreignProjectId = ProjectId.make("other-project");
+    const foreignThreadId = ThreadId.make("other-project-thread");
+    const foreignMessageId = MessageId.make("other-project-message");
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      SELECT ${foreignProjectId}, title, '/work/other', scripts_json, created_at, updated_at
+      FROM projection_projects WHERE project_id = ${projectId}`;
+    yield* projections.apply({
+      id: EventId.make("foreign-created"),
+      type: "thread.created",
+      threadId: foreignThreadId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: { ...threadPayload, id: foreignThreadId, projectId: foreignProjectId },
+    });
+    yield* projections.apply({
+      ...original,
+      id: EventId.make("foreign-message-created"),
+      threadId: foreignThreadId,
+      payload: {
+        ...original.payload,
+        id: foreignMessageId,
+        threadId: foreignThreadId,
+        runId: null,
+      },
+    });
+    const foreign = {
+      ...sibling,
+      id: `summary:${"0".repeat(64)}`,
+      projectId: foreignProjectId,
+      threadId: foreignThreadId,
+      createdAt: DateTime.formatIso(DateTime.add(at, { minutes: 1 })),
+      sources: [{ ...sibling.sources[0]!, threadId: foreignThreadId, messageId: foreignMessageId }],
+      statements: [{ text: "Summary foreign", citations: [foreignMessageId] }],
+    };
+    yield* sql`INSERT INTO conversation_summaries
+      (summary_id, project_id, thread_id, position, created_at, payload_json)
+      VALUES (${foreign.id}, ${foreignProjectId}, ${foreignThreadId}, 'foreign', ${foreign.createdAt}, ${yield* encodeSummary(foreign)})`;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const result = yield* service.search({ projectId, query: "summary" });
+    assert.deepEqual(
+      result.summaries.map((summary) => summary.id),
+      [first.id, sibling.id],
+    );
+    const page = yield* service.search({ projectId, query: "summary", limit: 1 });
+    assert.deepEqual(
+      page.summaries.map((hit) => hit.id),
+      [first.id],
+    );
+    assert.isNotNull(page.nextCursor);
+    assert.deepEqual(
+      (yield* service.search({
+        projectId: foreignProjectId,
+        query: "summary",
+        limit: 1,
+      })).summaries.map((hit) => hit.id),
+      [foreign.id],
+    );
+    for (const changedScope of [
+      { projectId: foreignProjectId },
+      { projectId, threadId: siblingId },
+    ]) {
+      assert.equal(
+        (yield* service
+          .search({ ...changedScope, query: "summary", cursor: page.nextCursor! })
+          .pipe(Effect.flip)).reason,
+        "invalid_cursor",
+      );
+    }
+    yield* sql`UPDATE projection_projects SET archived_at = ${DateTime.formatIso(at)} WHERE project_id = ${foreignProjectId}`;
+    assert.equal(
+      (yield* service.search({ projectId: foreignProjectId, query: "summary" })).summaries[0]?.id,
+      foreign.id,
+    );
+    yield* sql`UPDATE projection_projects SET deleted_at = ${DateTime.formatIso(at)} WHERE project_id = ${foreignProjectId}`;
+    assert.equal(
+      (yield* service.search({ projectId: foreignProjectId, query: "summary" }).pipe(Effect.flip))
+        .reason,
+      "missing_project",
+    );
+    const scoped = yield* service.search({ ...scope, query: "summary" });
+    assert.deepEqual(
+      scoped.summaries.map((summary) => summary.id),
+      [first.id],
+    );
+    const expanded = yield* service.expand({
+      projectId,
+      threadId: siblingId,
+      summaryId: sibling.id,
+    });
+    assert.equal(
+      expanded.sources[0]?.result.state === "available" ? expanded.sources[0].result.text : null,
+      rawText(0),
+    );
+    assert.equal(
+      (yield* service.expand({ ...scope, summaryId: sibling.id }).pipe(Effect.flip)).reason,
+      "missing_summary",
+    );
+  }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
+);
+
+it.effect("bounds search previews around matches and keeps their evidence handles usable", () =>
+  Effect.gen(function* () {
+    yield* seedThread(24);
+    const sql = yield* SqlClient.SqlClient;
+    for (let index = 0; index < 21; index++) {
+      const summary = yield* persistSummary(
+        index,
+        Array.from({ length: 24 }, (_, source) => source),
+      );
+      const statements = Array.from({ length: 8 }, (_, statement) => ({
+        text:
+          statement >= 6
+            ? `${statement === 6 ? "Needle" : "Tail"} ${"🧪".repeat(280)}`
+            : `Filler ${statement}: ${"padding ".repeat(70)}`.trim(),
+        citations: summary.statements[0]!.citations,
+      }));
+      yield* sql`UPDATE conversation_summaries SET payload_json = ${yield* encodeSummary({ ...summary, statements })}
+        WHERE summary_id = ${summary.id}`;
+    }
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const defaults = yield* service.search({ projectId, query: "needle" });
+    const trace = traceSqlRouting();
+    const maximum = yield* trace.trace(service.search({ projectId, query: "needle", limit: 20 }));
+    const sourceReads = trace.queries.filter(
+      ({ query }) =>
+        query.includes("orchestration_v2_projection_messages") && query.includes("payload_json"),
+    );
+    assert.isAbove(sourceReads.length, 0);
+    assert.isAtMost(sourceReads.length, 2);
+    assert.equal(defaults.summaries.length, 10);
+    assert.equal(maximum.summaries.length, 20);
+    for (const page of [defaults, maximum]) {
+      assert.isNotNull(page.nextCursor);
+      for (const hit of page.summaries) {
+        assert.doesNotHaveAnyKeys(hit, ["sources", "statements", "modelSelection"]);
+        assert.include(hit.excerpt, "Needle");
+        assert.isAtMost(hit.excerpt.length, 1_000);
+        assert.isTrue(hit.excerpt.isWellFormed());
+        assert.isTrue(hit.truncated);
+        assert.equal(hit.sourceCount, 24);
+        assert.equal(hit.kind, "leaf");
+      }
+      assert.isAtMost(
+        page.summaries.reduce((length, hit) => length + hit.excerpt.length, 0),
+        page === defaults ? 10_000 : 20_000,
+      );
+    }
+    const selected = defaults.summaries[0]!;
+    const handle = {
+      projectId: selected.projectId,
+      threadId: selected.threadId,
+      summaryId: selected.id,
+    };
+    const full = yield* service.describe(handle);
+    assert.equal(full.state === "available" ? full.summary.statements.length : 0, 8);
+    const expanded = yield* service.expand({ ...handle, maxChars: 1_000 });
+    assert.equal(expanded.sources[0]?.result.state, "available");
+  }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
+);
+
+it.effect("continues summary search after a bounded page of stale candidates", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    for (let index = 0; index < 101; index++) yield* persistSummary(index, [0], true);
+    const current = yield* persistSummary(101, [1]);
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const first = yield* service.search({ projectId, query: "summary", limit: 1 });
+    assert.deepEqual(first.summaries, []);
+    assert.isNotNull(first.nextCursor);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM conversation_summaries WHERE json_extract(payload_json, '$.scrubbed') = 1`;
+    const second = yield* service.search({
+      projectId,
+      query: "summary",
+      limit: 1,
+      cursor: first.nextCursor!,
+    });
+    assert.deepEqual(
+      second.summaries.map((summary) => summary.id),
+      [current.id],
+    );
+    assert.isNull(second.nextCursor);
+  }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
+);
+
+it.effect("ranks a focused older summary above newer passing mentions and pages exactly", () =>
+  Effect.gen(function* () {
+    yield* seedThread(24);
+    const sql = yield* SqlClient.SqlClient;
+    const restate = Effect.fn(function* (
+      summary: ConversationSummary,
+      text: string,
+      minute: number,
+    ) {
+      const statements = [{ text, citations: summary.statements[0]!.citations }];
+      yield* sql`UPDATE conversation_summaries
+        SET created_at = ${DateTime.formatIso(DateTime.add(at, { minutes: minute }))},
+          payload_json = ${yield* encodeSummary({ ...summary, statements })}
+        WHERE summary_id = ${summary.id}`;
+    });
+    const passing = (index: number) =>
+      `Run ${index} rebuilt the dashboard. ${"Unrelated layout work. ".repeat(20)}One kernel xattr warning.`;
+    const focused = yield* persistSummary(0, [0]);
+    yield* restate(focused, "Kernel xattr support stays out of scope for the kernel client.", 0);
+    const noisy: Array<ConversationSummary> = [];
+    for (let index = 1; index <= 12; index++) {
+      noisy.push(yield* persistSummary(index, [index]));
+      yield* restate(noisy.at(-1)!, passing(index), index);
+    }
+    for (let index = 13; index <= 15; index++) {
+      yield* restate(yield* persistSummary(index, [index], true), passing(index), index);
+    }
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const query = { projectId, query: "kernel xattr", limit: 3 };
+    const first = yield* service.search(query);
+    assert.equal(first.summaries[0]?.id, focused.id);
+
+    const seen = first.summaries.map((hit) => hit.id);
+    const removed = noisy.find((summary) => !seen.includes(summary.id))!;
+    yield* sql`DELETE FROM conversation_summaries WHERE summary_id = ${removed.id}`;
+    for (let index = 16; index <= 23; index++) {
+      yield* restate(
+        yield* persistSummary(index, [index]),
+        `${"kernel ".repeat(index)}xattr`,
+        100 + index,
+      );
+    }
+    let cursor = first.nextCursor;
+    while (cursor !== null) {
+      const page = yield* service.search({ ...query, limit: 2, cursor });
+      seen.push(...page.summaries.map((hit) => hit.id));
+      cursor = page.nextCursor;
+    }
+    assert.equal(new Set(seen).size, seen.length);
+    assert.notInclude(seen, removed.id);
+    for (const summary of [focused, ...noisy]) {
+      if (summary !== removed) assert.include(seen, summary.id);
+    }
+    const tokens = Array.from({ length: 128 }, (_, index) => String.fromCodePoint(0x4e00 + index));
+    for (const summary of [focused, noisy.find((entry) => entry !== removed)!]) {
+      yield* restate(summary, tokens.join(" "), 200);
+    }
+    const longQuery = { projectId, threadId, query: tokens.join("\u0001"), limit: 1 };
+    const longPage = yield* service.search(longQuery);
+    assert.isNotNull(longPage.nextCursor);
+    const nextInput = yield* decodeSummarySearchInput({
+      ...longQuery,
+      cursor: longPage.nextCursor,
+    });
+    const nextPage = yield* service.search(nextInput);
+    assert.lengthOf(nextPage.summaries, 1);
+    assert.notEqual(nextPage.summaries[0]!.id, longPage.summaries[0]!.id);
+  }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
+);
+
+it.effect("searches project summaries by indexed terms and excludes stale or hidden evidence", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const sql = yield* SqlClient.SqlClient;
+    const first = yield* persistSummary(1, [0]);
+    const second = yield* persistSummary(2, [1]);
+    const stale = yield* persistSummary(3, [2], true);
+    for (const summary of [first, second, stale]) {
+      yield* sql`UPDATE conversation_summaries SET payload_json = ${yield* encodeSummary({
+        ...summary,
+        statements: [
+          {
+            text: "Kernel extended attributes: résumé café",
+            citations: summary.statements[0]!.citations,
+          },
+        ],
+      })} WHERE summary_id = ${summary.id}`;
+    }
+    const query = { projectId, query: "kernel café", limit: 1 };
+    const page = yield* service.search(query);
+    assert.equal(page.summaries[0]?.excerpt, "Kernel extended attributes: résumé café");
+    assert.isFalse(page.summaries[0]?.truncated);
+    assert.deepEqual(
+      page.summaries.map((summary) => summary.id),
+      [first.id],
+    );
+    assert.isNotNull(page.nextCursor);
+    const next = yield* service.search({ ...query, cursor: page.nextCursor! });
+    assert.deepEqual(
+      next.summaries.map((summary) => summary.id),
+      [second.id],
+    );
+    const end =
+      next.nextCursor === null
+        ? next
+        : yield* service.search({ ...query, cursor: next.nextCursor });
+    assert.isNull(end.nextCursor);
+    assert.equal(
+      (yield* service.search({ projectId, query: "RESUME kernel" })).summaries.length,
+      2,
+    );
+    assert.equal(
+      (yield* service.search({ projectId, query: 'kernel OR "missing"' })).summaries.length,
+      0,
+    );
+    assert.equal((yield* service.search({ projectId, query: "* % : ()" })).summaries.length, 0);
+    assert.equal(
+      (yield* service.search({ projectId, threadId: ThreadId.make("other"), query: "kernel" }))
+        .summaries.length,
+      0,
+    );
+    assert.equal(
+      (yield* service
+        .search({ ...query, query: "different", cursor: page.nextCursor! })
+        .pipe(Effect.flip)).reason,
+      "invalid_cursor",
+    );
+    assert.equal(
+      (yield* service.search({ ...query, cursor: "not a cursor" }).pipe(Effect.flip)).reason,
+      "invalid_cursor",
+    );
+    yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = ${DateTime.formatIso(at)} WHERE thread_id = ${threadId}`;
+    assert.deepEqual((yield* service.search({ projectId, query: "kernel" })).summaries, []);
+    yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = NULL, deleted_at = ${DateTime.formatIso(at)} WHERE thread_id = ${threadId}`;
+    assert.deepEqual((yield* service.search({ projectId, query: "kernel" })).summaries, []);
+  }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
+);
 
 it.effect(
   "searches statements literally and expands source text within a resumable character budget",

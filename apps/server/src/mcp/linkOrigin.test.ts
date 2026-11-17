@@ -48,6 +48,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as ToolSearch from "../orchestration-v2/ToolSearch.ts";
 import * as PeerLinkRequests from "../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 
@@ -186,8 +187,9 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
   Layer.provide(
-    Layer.merge(
+    Layer.mergeAll(
       Layer.mock(ThreadSearch.ThreadSearch)({}),
+      Layer.mock(ToolSearch.ToolSearch)({}),
       Layer.mock(ThreadGroupService.ThreadGroupService)({}),
     ),
   ),

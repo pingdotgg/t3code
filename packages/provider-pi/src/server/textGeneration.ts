@@ -33,6 +33,19 @@ const piTurnErrorDetail = (errorMessage: string | undefined) => {
     : `Pi could not generate text: the model provider returned HTTP ${status}.`;
 };
 
+const ISOLATED_SYSTEM_PROMPTS: Partial<
+  Record<TextGenerationOperations.Operation, { readonly system: string; readonly append: string }>
+> = {
+  generateModelEvaluation: {
+    system: "You evaluate anonymous task outcomes using the supplied rubric and evidence.",
+    append: "Use only the supplied evidence. Do not identify the candidate or use tools.",
+  },
+  generateConversationSummary: {
+    system: "You summarize the supplied conversation sources.",
+    append: "Use only the supplied sources. Do not use tools.",
+  },
+};
+
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -42,7 +55,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
-  const supportsBlindEvaluation =
+  const supportsSourceOnlyGeneration =
     resolvedLaunchArgs.ok &&
     !resolvedLaunchArgs.args.some((argument) =>
       [
@@ -82,7 +95,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           detail: resolvedLaunchArgs.message,
         });
       }
-      if (operation === "generateModelEvaluation" && !supportsBlindEvaluation) {
+      if (operation === "generateModelEvaluation" && !supportsSourceOnlyGeneration) {
         return yield* new TextGenerationError({
           operation,
           detail:
@@ -119,10 +132,11 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         // Background naming/content helpers must never mutate the workspace.
         disableTools: true,
       });
+      const isolatedPrompts = ISOLATED_SYSTEM_PROMPTS[operation];
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
         args:
-          operation === "generateModelEvaluation"
+          isolatedPrompts !== undefined
             ? [
                 ...launch.args,
                 "--no-context-files",
@@ -130,9 +144,9 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
                 "--no-prompt-templates",
                 // Explicit sources suppress discovery of global SYSTEM.md and APPEND_SYSTEM.md.
                 "--system-prompt",
-                "You evaluate anonymous task outcomes using the supplied rubric and evidence.",
+                isolatedPrompts.system,
                 "--append-system-prompt",
-                "Use only the supplied evidence. Do not identify the candidate or use tools.",
+                isolatedPrompts.append,
               ]
             : launch.args,
         cwd,
@@ -249,6 +263,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 
   return TextGenerationOperations.fromRunner("PiTextGeneration", runPiJson, {
     supportsInvestigation: false,
-    supportsBlindEvaluation,
+    supportsBlindEvaluation: supportsSourceOnlyGeneration,
+    supportsConversationSummary: supportsSourceOnlyGeneration,
   });
 });

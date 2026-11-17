@@ -230,6 +230,7 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as ToolSearch from "./orchestration-v2/ToolSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -796,7 +797,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
         Layer.provide(HolographicMemory.layer),
       ),
     ),
-    Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+    Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, ToolSearch.layer)),
     Layer.provideMerge(SecretCheck.layer),
     Layer.provideMerge(SecretResolver.layer),
     // Above the settings it writes when a theme is applied.

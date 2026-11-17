@@ -16,6 +16,7 @@ import { isSqlError } from "effect/sql/SqlError";
 
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
+import { resetToolSearch } from "../orchestration-v2/toolSearchIndex.ts";
 
 export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
   "DatabaseMissingError",
@@ -205,6 +206,7 @@ const make = Effect.gen(function* () {
         yield* sql`VACUUM`;
         yield* onStep("rebuild-search");
         yield* rebuildMessageSearch(sql);
+        yield* resetToolSearch(sql);
         yield* onStep("checkpoint");
         yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
         return summary;

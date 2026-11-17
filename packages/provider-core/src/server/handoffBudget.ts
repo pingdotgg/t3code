@@ -11,7 +11,11 @@ import type {
 
 import * as Config from "effect/Config";
 
-import { summaryToolText } from "./conversationEvidence.ts";
+import {
+  conversationEvidenceText,
+  rawToolEvidenceBytes,
+  summaryToolText,
+} from "./conversationEvidence.ts";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -182,9 +186,17 @@ export function nativeContextHistory(
               !legacyRecoveredRunIds.has(item.runId)));
         if (!acceptedNatively && !legacyDeliveredItemIds.has(item.id)) return size;
         const historical = historicalMessage(item);
+        const nativeBytes = acceptedNatively
+          ? item.type === "user_message" || item.type === "assistant_message"
+            ? Buffer.byteLength(item.text)
+            : rawToolEvidenceBytes(item)
+          : null;
         return (
           size +
-          (historical === null ? 0 : estimateTextTokens(historical.text)) +
+          Math.max(
+            historical === null ? 0 : estimateTextTokens(historical.text),
+            Math.ceil((nativeBytes ?? 0) / 4),
+          ) +
           (item.type === "user_message" && acceptedNatively
             ? attachmentTokenAllowance(item.attachments)
             : 0)
@@ -264,9 +276,9 @@ export function historicalMessage(
       break;
     case "command_execution":
       text = [
-        `Command: ${item.input}`,
+        `Command: ${conversationEvidenceText(item.input)}`,
         `Exit code: ${item.exitCode ?? "unknown"}`,
-        item.output ?? "",
+        conversationEvidenceText(item.output ?? ""),
       ].join("\n");
       break;
     case "error":
@@ -293,7 +305,7 @@ export function historicalMessage(
   return {
     // A peer's words are input to this model, never its own, so it cannot claim them.
     role: item.type === "user_message" || speaker !== undefined ? "user" : "assistant",
-    text,
+    text: conversationEvidenceText(text),
     ...(speaker === undefined ? {} : { speaker }),
     threadId: item.threadId,
     runId: item.runId,

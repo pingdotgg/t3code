@@ -51,7 +51,12 @@ function mergeConfig(target: Config, source: Config): Config {
   return result;
 }
 
-export const makeBlindEvaluationEnvironment = Effect.fn("OpenCode.makeBlindEvaluationEnvironment")(
+export const runsIsolated = (operation: TextGenerationOperation) =>
+  operation === "generateModelEvaluation" || operation === "generateConversationSummary";
+
+export const makeIsolatedGenerationEnvironment = Effect.fn(
+  "OpenCode.makeBlindEvaluationEnvironment",
+)(
   function* (input: {
     readonly generation: "v1" | "v2";
     readonly operation: TextGenerationOperation;
@@ -67,7 +72,7 @@ export const makeBlindEvaluationEnvironment = Effect.fn("OpenCode.makeBlindEvalu
     const invalid = () =>
       new TextGenerationError({
         operation: input.operation,
-        detail: "OpenCode configuration could not be isolated for blind evaluation.",
+        detail: "OpenCode configuration could not be isolated.",
       });
     const readConfig = (filePath: string) =>
       fs.readFileString(filePath).pipe(
@@ -122,8 +127,10 @@ export const makeBlindEvaluationEnvironment = Effect.fn("OpenCode.makeBlindEvalu
     const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-evaluation-" });
     const xdgConfigHome = path.join(temporary, "xdg-config");
     const configDirectory = path.join(temporary, "config");
+    const workspace = path.join(temporary, "workspace");
     yield* fs.makeDirectory(xdgConfigHome, { recursive: true });
     yield* fs.makeDirectory(configDirectory, { recursive: true });
+    yield* fs.makeDirectory(workspace, { recursive: true });
     const {
       OPENCODE_CONFIG: _config,
       OPENCODE_CONFIG_DIR: _configDirectory,
@@ -131,7 +138,7 @@ export const makeBlindEvaluationEnvironment = Effect.fn("OpenCode.makeBlindEvalu
       XDG_CONFIG_HOME: _xdgConfigHome,
       ...preserved
     } = input.environment;
-    return {
+    const environment = {
       ...preserved,
       HOME: temporary,
       ...(input.environment.USERPROFILE === undefined ? {} : { USERPROFILE: temporary }),
@@ -146,15 +153,16 @@ export const makeBlindEvaluationEnvironment = Effect.fn("OpenCode.makeBlindEvalu
       OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: "1",
       OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: "1",
     } satisfies NodeJS.ProcessEnv;
+    return { environment, directory: workspace };
   },
-  (effect) =>
+  (effect, input) =>
     effect.pipe(
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
           ? cause
           : new TextGenerationError({
-              operation: "generateModelEvaluation",
-              detail: "OpenCode configuration could not be isolated for blind evaluation.",
+              operation: input.operation,
+              detail: "OpenCode configuration could not be isolated.",
               cause,
             }),
       ),
@@ -173,7 +181,7 @@ export const validateBlindEvaluationSelection = (
     : Effect.fail(
         new TextGenerationError({
           operation,
-          detail: `OpenCode blind evaluation does not support the '${unsupported.id}' model option.`,
+          detail: `OpenCode does not support the '${unsupported.id}' model option in an isolated generation.`,
         }),
       );
 };

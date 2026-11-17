@@ -23,6 +23,7 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import { freshTailMessages } from "./ContextHandoffDelivery.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
@@ -110,7 +111,7 @@ export class ContextHandoffServiceV2 extends Context.Service<
 >()("t3/orchestration-v2/ContextHandoffService/ContextHandoffServiceV2") {}
 
 function compactText(text: string, maxLength = 240): string {
-  const compacted = text.replace(/\s+/g, " ").trim();
+  const compacted = conversationEvidenceText(text).replace(/\s+/g, " ").trim();
   if (compacted.length <= maxLength) {
     return compacted;
   }
@@ -288,7 +289,10 @@ export function makeSideChatContext(input: {
     SIDE_CHAT_CONTEXT_MAX_CHARS - joinBlocks([framing, [header, truncated], footer]).length;
   for (let index = input.digest.length - 1; index >= 0; index--) {
     const item = input.digest[index]!;
-    const line = typeof item === "string" ? item : summarizeSideChatItem(item, input.seat === true);
+    const line =
+      typeof item === "string"
+        ? conversationEvidenceText(item)
+        : summarizeSideChatItem(item, input.seat === true);
     if (line === null) continue;
     if (line.length + 1 > remaining) {
       omitted = true;
@@ -309,9 +313,9 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
   const sections = items.flatMap((item) => {
     switch (item.type) {
       case "user_message":
-        return [{ label: "User", body: item.text }];
+        return [{ label: "User", body: conversationEvidenceText(item.text) }];
       case "assistant_message":
-        return [{ label: "Assistant", body: item.text }];
+        return [{ label: "Assistant", body: conversationEvidenceText(item.text) }];
       default:
         return [];
     }

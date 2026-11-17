@@ -3,7 +3,10 @@ import {
   ConversationSummaryError,
   ConversationSummaryPass,
   ConversationSummarySourceRange,
+  ConversationSummarySearchInput,
+  type ConversationSummarySearch,
   CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS,
+  CONVERSATION_SUMMARY_MAX_SEARCH_EXCERPT_CHARS,
   CONVERSATION_SUMMARY_MAX_SOURCES,
   conversationSummarySourceIdentity,
   conversationSummarySourceKey,
@@ -23,13 +26,15 @@ import {
   type OrchestrationV2MessageSpeaker,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
-  type ProjectId,
+  ProjectId,
+  NonNegativeInt,
   type RunId,
   type ServerSettings as ServerSettingsValue,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
 import {
+  conversationEvidenceText,
   finalizedToolStatuses,
   summaryToolText,
   summaryToolTypes,
@@ -111,6 +116,9 @@ const SCRUBBED_TEXT = "[Source unavailable: removed or changed.]";
 export class ConversationSummaries extends Context.Service<
   ConversationSummaries,
   {
+    readonly search: (
+      input: ConversationSummarySearchInput,
+    ) => Effect.Effect<ConversationSummarySearch, ConversationSummaryError>;
     readonly list: (
       input: ConversationSummaryListInput,
     ) => Effect.Effect<ConversationSummaryList, ConversationSummaryError>;
@@ -122,9 +130,51 @@ export class ConversationSummaries extends Context.Service<
     ) => Effect.Effect<ConversationSummaryExpansion, ConversationSummaryError>;
     readonly summarizeThread: ConversationSummaryRuntimeShape["summarizeThread"];
     readonly hasPendingPass: ConversationSummaryRuntimeShape["hasPendingPass"];
+    readonly stalledThreads: ConversationSummaryRuntimeShape["stalledThreads"];
     readonly forHandoff: ConversationSummaryRuntimeShape["forHandoff"];
   }
 >()("t3/project/conversationSummaries/ConversationSummaries") {}
+
+const SEARCH_CANDIDATE_LIMIT = 100;
+const STALLED_RETRY_BASE_MS = 15 * 60_000;
+const STALLED_RETRY_LIMIT = 6;
+const STALLED_CANDIDATE_LIMIT = 20;
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+const SearchCursor = Schema.Struct({
+  projectId: ConversationSummarySearchInput.fields.projectId,
+  threadId: Schema.NullOr(Schema.String),
+  queryDigest: Schema.String,
+  weights: Schema.Array(Schema.Finite),
+  averageChars: Schema.Finite.check(Schema.isGreaterThan(0)),
+  score: Schema.Finite,
+  createdAt: Schema.String,
+  summaryId: Schema.String,
+});
+interface SearchRank {
+  readonly score: number;
+  readonly createdAt: string;
+  readonly summaryId: string;
+}
+const compareSearchRank = (left: SearchRank, right: SearchRank) =>
+  right.score - left.score ||
+  (left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0) ||
+  (left.summaryId < right.summaryId ? -1 : left.summaryId > right.summaryId ? 1 : 0);
+const bm25 = (
+  frequencies: ReadonlyArray<number>,
+  chars: number,
+  weights: ReadonlyArray<number>,
+  averageChars: number,
+) => {
+  const norm = BM25_K1 * (1 - BM25_B + (BM25_B * chars) / averageChars);
+  return frequencies.reduce(
+    (score, frequency, term) =>
+      score + (weights[term]! * frequency * (BM25_K1 + 1)) / (frequency + norm),
+    0,
+  );
+};
+const decodeSearchCursor = Schema.decodeUnknownOption(Schema.fromJsonString(SearchCursor));
+const encodeSearchCursor = Schema.encodeSync(Schema.fromJsonString(SearchCursor));
 
 const decodeSummary = Schema.decodeUnknownEffect(Schema.fromJsonString(ConversationSummary));
 const decodeSources = Schema.decodeUnknownEffect(
@@ -152,6 +202,8 @@ type ChunkFailure = typeof ChunkFailure.Type;
 const StoredPass = Schema.Struct({
   ...ConversationSummaryPass.fields,
   chunkFailures: Schema.optionalKey(Schema.Array(ChunkFailure)),
+  modelKey: Schema.optionalKey(Schema.String),
+  retries: Schema.optionalKey(NonNegativeInt),
 });
 const decodeStoredPass = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredPass));
 const encodeStoredPass = Schema.encodeSync(Schema.fromJsonString(StoredPass));
@@ -227,6 +279,12 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const digest = (text: string) =>
     crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
+  const messageDigest = (text: string, speaker?: OrchestrationV2MessageSpeaker) =>
+    digest(
+      speaker === undefined
+        ? text
+        : JSON.stringify(["conversation-peer-v1", speaker.label, speaker.model, text]),
+    );
   const afterSummary = (after: SummaryCursor | undefined) =>
     after === undefined
       ? sql``
@@ -372,7 +430,10 @@ const make = Effect.gen(function* () {
       (source): source is Extract<ConversationSummaryRangeRef, { kind: "message" }> =>
         source.kind === "message",
     );
-    const messageResults = yield* knowledge.readSources({ ...input, sources: messages });
+    const messageResults = yield* knowledge.readSources({
+      ...input,
+      sources: messages.map(({ messageId }) => ({ messageId })),
+    });
     const invisible =
       messages.length === 0
         ? new Set<MessageId>()
@@ -381,14 +442,28 @@ const make = Effect.gen(function* () {
             messages.map((source) => source.messageId),
           );
     const current = new Map<string, ConversationSummarySourceResult>();
-    messages.forEach((source, index) =>
+    for (const [index, source] of messages.entries()) {
+      const result = messageResults[index]!;
+      const text = result.state === "available" ? conversationEvidenceText(result.text) : null;
       current.set(
         conversationSummarySourceIdentity(source),
         invisible.has(source.messageId)
           ? { state: "unavailable", reason: "missing" }
-          : messageResults[index]!,
-      ),
-    );
+          : result.state === "available" && text !== null
+            ? {
+                ...result,
+                text,
+                source: {
+                  ...result.source,
+                  digest:
+                    text === result.text && result.speaker === undefined
+                      ? result.source.digest
+                      : yield* messageDigest(text, result.speaker),
+                },
+              }
+            : result,
+      );
+    }
     const tools = unique.filter(
       (source): source is Extract<ConversationSummaryRangeRef, { kind: "turn_item" }> =>
         source.kind === "turn_item",
@@ -423,15 +498,13 @@ const make = Effect.gen(function* () {
                     ? "missing"
                     : text === null
                       ? "streaming"
-                      : source.digest !== (yield* digest(text))
-                        ? "changed"
-                        : null;
+                      : null;
         current.set(
           conversationSummarySourceIdentity(source),
           reason === null && item !== undefined && text !== null
             ? {
                 state: "available",
-                source,
+                source: { ...source, digest: yield* digest(text) },
                 text,
                 role: "tool",
                 title: records!.thread.title,
@@ -562,7 +635,7 @@ const make = Effect.gen(function* () {
       : new Map(summaries.map((summary) => [summary.id, storedOf(summary)]));
   });
 
-  const readAll = Effect.fn("ConversationSummaries.readAll")(function* (
+  const verifyAndReadAll = Effect.fn("ConversationSummaries.readAll")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
     summaries: ReadonlyArray<ConversationSummary>,
@@ -589,7 +662,9 @@ const make = Effect.gen(function* () {
   });
 
   const read = (summary: ConversationSummary) =>
-    readAll(summary.projectId, summary.threadId, [summary]).pipe(Effect.map((reads) => reads[0]!));
+    verifyAndReadAll(summary.projectId, summary.threadId, [summary]).pipe(
+      Effect.map((reads) => reads[0]!),
+    );
 
   /** A child summary reads as its statements, or as unavailable with the reason it is stale. */
   const readChildSummaries = Effect.fn("ConversationSummaries.readChildSummaries")(function* (
@@ -704,8 +779,184 @@ const make = Effect.gen(function* () {
         enabled: resolveProjectSettings(settings, input.projectId).settings
           .enableConversationSummaries,
         lastPass,
-        summaries: yield* readAll(input.projectId, input.threadId, page),
+        summaries: yield* verifyAndReadAll(input.projectId, input.threadId, page),
         nextCursor: matching.length > limit ? (page.at(-1)?.id ?? null) : null,
+      };
+    },
+    (effect, input) => effect.pipe(Effect.mapError(storageError(input.projectId))),
+  );
+
+  const search: ConversationSummaries["Service"]["search"] = Effect.fn(
+    "ConversationSummaries.search",
+  )(
+    function* (input) {
+      yield* requireProject(input.projectId);
+      const query = input.query.trim();
+      const queryDigest = yield* digest(query);
+      const after = input.cursor === undefined ? Option.none() : decodeSearchCursor(input.cursor);
+      if (
+        input.cursor !== undefined &&
+        (Option.isNone(after) ||
+          after.value.projectId !== input.projectId ||
+          after.value.threadId !== (input.threadId ?? null) ||
+          after.value.queryDigest !== queryDigest)
+      ) {
+        return yield* new ConversationSummaryError({
+          reason: "invalid_cursor",
+          projectId: input.projectId,
+        });
+      }
+      const terms = (yield* sql<{ readonly token: string }>`
+        SELECT DISTINCT token FROM conversation_summary_tokenizer WHERE input = ${query}
+      `).map(({ token }) => token);
+      if (terms.length === 0) return { summaries: [], nextCursor: null };
+      terms.sort();
+      if (Option.isSome(after) && after.value.weights.length !== terms.length) {
+        return yield* new ConversationSummaryError({
+          reason: "invalid_cursor",
+          projectId: input.projectId,
+        });
+      }
+      const match = terms.map((token) => `"${token.replaceAll('"', '""')}"`).join(" AND ");
+      const rows = yield* sql<{
+        readonly summary_id: string;
+        readonly created_at: string;
+        readonly chars: number;
+        readonly term: string;
+        readonly frequency: number;
+        readonly documents: number;
+        readonly total: number;
+      }>`
+        WITH matched AS MATERIALIZED (
+          SELECT ids.id AS doc, summary.summary_id, summary.created_at,
+            length(conversation_summary_fts.text) AS chars
+          FROM conversation_summary_fts
+          JOIN conversation_summary_search_ids AS ids ON ids.id = conversation_summary_fts.rowid
+          JOIN conversation_summaries AS summary ON summary.summary_id = ids.summary_id
+          JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = summary.thread_id
+            AND thread.project_id = summary.project_id
+          WHERE conversation_summary_fts MATCH ${match} AND summary.project_id = ${input.projectId}
+            AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+            ${input.threadId === undefined ? sql`` : sql`AND summary.thread_id = ${input.threadId}`}
+        ), frequencies AS MATERIALIZED (
+          SELECT doc, term, count(*) AS frequency, count(*) OVER (PARTITION BY term) AS documents
+          FROM conversation_summary_terms WHERE term IN ${sql.in(terms)} GROUP BY doc, term
+        )
+        SELECT matched.summary_id, matched.created_at, matched.chars, frequencies.term,
+          frequencies.frequency, frequencies.documents,
+          (SELECT count(*) FROM conversation_summary_search_ids) AS total
+        FROM matched JOIN frequencies USING (doc)
+      `;
+      const matches = new Map<
+        string,
+        { readonly createdAt: string; readonly chars: number; readonly frequencies: number[] }
+      >();
+      const documents = terms.map(() => 0);
+      for (const row of rows) {
+        const term = terms.indexOf(row.term);
+        if (term === -1) continue;
+        documents[term] = row.documents;
+        const entry = matches.get(row.summary_id) ?? {
+          createdAt: row.created_at,
+          chars: row.chars,
+          frequencies: terms.map(() => 0),
+        };
+        entry.frequencies[term] = row.frequency;
+        matches.set(row.summary_id, entry);
+      }
+      const total = rows[0]?.total ?? 0;
+      const weights = Option.isSome(after)
+        ? after.value.weights
+        : documents.map(
+            (count) => Math.round(Math.log(1 + (total - count + 0.5) / (count + 0.5)) * 1e4) / 1e4,
+          );
+      const averageChars = Option.isSome(after)
+        ? after.value.averageChars
+        : Math.max(
+            1,
+            Math.round(
+              [...matches.values()].reduce((sum, entry) => sum + entry.chars, 0) /
+                Math.max(1, matches.size),
+            ),
+          );
+      const ranked = [...matches]
+        .map(([summaryId, entry]) => ({
+          summaryId,
+          createdAt: entry.createdAt,
+          score: bm25(entry.frequencies, entry.chars, weights, averageChars),
+        }))
+        .filter((rank) => Option.isNone(after) || compareSearchRank(after.value, rank) < 0)
+        .sort(compareSearchRank);
+      const candidates = ranked.slice(0, SEARCH_CANDIDATE_LIMIT);
+      const loaded = new Map(
+        candidates.length === 0
+          ? []
+          : (yield* sql<{
+              readonly summary_id: string;
+              readonly payload_json: string;
+              readonly excerpt: string;
+            }>`
+              SELECT summary.summary_id, summary.payload_json,
+                snippet(conversation_summary_fts, 0, char(1), char(2), ' … ', 64) AS excerpt
+              FROM conversation_summary_fts
+              JOIN conversation_summary_search_ids AS ids ON ids.id = conversation_summary_fts.rowid
+              JOIN conversation_summaries AS summary ON summary.summary_id = ids.summary_id
+              WHERE conversation_summary_fts MATCH ${match}
+                AND summary.summary_id IN ${sql.in(candidates.map((rank) => rank.summaryId))}
+            `).map((row) => [row.summary_id, row] as const),
+      );
+      const summaries: Array<ConversationSummarySearch["summaries"][number]> = [];
+      const limit = Math.max(1, Math.min(input.limit ?? 10, 20));
+      let index = 0;
+      while (index < candidates.length && summaries.length < limit) {
+        const batch = candidates
+          .slice(index, index + limit - summaries.length)
+          .flatMap((rank) => loaded.get(rank.summaryId) ?? []);
+        index += Math.min(limit - summaries.length, candidates.length - index);
+        const decoded = yield* Effect.forEach(batch, (row) => decodeSummary(row.payload_json));
+        const byThread = Map.groupBy(decoded, (summary) => summary.threadId);
+        const verifiedById = new Map<string, ConversationSummaryRead>();
+        for (const [threadId, group] of byThread) {
+          const reads = yield* verifyAndReadAll(input.projectId, threadId, group);
+          group.forEach((summary, position) => verifiedById.set(summary.id, reads[position]!));
+        }
+        for (const row of batch) {
+          const verified = verifiedById.get(row.summary_id)!;
+          if (verified.state !== "available") continue;
+          const summary = verified.summary;
+          const preview = row.excerpt.replaceAll("\u0001", "").replaceAll("\u0002", "");
+          const matchStart = Math.max(0, row.excerpt.indexOf("\u0001") - 250);
+          const start = isTextBoundary(preview, matchStart) ? matchStart : matchStart + 1;
+          const end = boundedTextEnd(preview, start, CONVERSATION_SUMMARY_MAX_SEARCH_EXCERPT_CHARS);
+          summaries.push({
+            id: summary.id,
+            projectId: summary.projectId,
+            threadId: summary.threadId,
+            createdAt: summary.createdAt,
+            excerpt: preview.slice(start, end),
+            sourceCount: summary.sources.length,
+            kind: summary.sources[0]?.kind === "summary" ? "rollup" : "leaf",
+            truncated:
+              start > 0 ||
+              end < preview.length ||
+              preview !== summary.statements.map((statement) => statement.text).join(" "),
+          });
+        }
+      }
+      const last = candidates[index - 1];
+      return {
+        summaries,
+        nextCursor:
+          index < ranked.length && last !== undefined
+            ? encodeSearchCursor({
+                projectId: input.projectId,
+                threadId: input.threadId ?? null,
+                queryDigest,
+                weights,
+                averageChars,
+                ...last,
+              })
+            : null,
       };
     },
     (effect, input) => effect.pipe(Effect.mapError(storageError(input.projectId))),
@@ -860,6 +1111,7 @@ const make = Effect.gen(function* () {
       const rows = yield* sql<{ readonly project_id: ProjectId }>`
         SELECT DISTINCT project_id FROM conversation_summary_passes
         WHERE json_extract(payload_json, '$.chunkFailures') IS NOT NULL
+          OR json_extract(payload_json, '$.retries') IS NOT NULL
       `;
       const reenabled = rows
         .map((row) => row.project_id)
@@ -867,7 +1119,7 @@ const make = Effect.gen(function* () {
       if (reenabled.length === 0) return;
       yield* sql`
         UPDATE conversation_summary_passes
-        SET payload_json = json_remove(payload_json, '$.chunkFailures')
+        SET payload_json = json_remove(payload_json, '$.chunkFailures', '$.retries')
         WHERE ${sql.in("project_id", reenabled)}
       `;
     },
@@ -889,7 +1141,7 @@ const make = Effect.gen(function* () {
   const summarizeThread: ConversationSummaries["Service"]["summarizeThread"] = Effect.fn(
     "ConversationSummaries.summarizeThread",
   )(
-    function* ({ threadId, runId }) {
+    function* ({ threadId, runId, retry }) {
       yield* cleanupDeleted();
       const records = yield* projections
         .getThreadRecords(threadId, ["messages", "turnItems"], {
@@ -970,6 +1222,7 @@ const make = Effect.gen(function* () {
         chunkFailures.clear();
         for (const failure of charges) charge(failure);
       });
+      let passModelKey: string | undefined;
       const finish = (
         result: ConversationSummaryPass["result"],
         reason: string | null,
@@ -988,6 +1241,7 @@ const make = Effect.gen(function* () {
               ...open.filter((failure) => failure.failures > 0),
               ...failures.filter((failure) => failure.skipped === true).slice(-MAX_SKIPPED_CHUNKS),
             ].slice(-MAX_CHUNK_FAILURES);
+            const retries = result !== "failed" ? 0 : (retry ?? 0);
             return recordPass(projectId, threadId, {
               runId,
               result,
@@ -996,10 +1250,17 @@ const make = Effect.gen(function* () {
               waitingMessages,
               at: DateTime.formatIso(now),
               ...(stored.length === 0 ? {} : { chunkFailures: stored }),
+              ...(passModelKey === undefined ? {} : { modelKey: passModelKey }),
+              ...(retries === 0 ? {} : { retries }),
             });
           }),
           sql.withTransaction,
-          Effect.as({ hasMore }),
+          Effect.as({
+            hasMore,
+            ...(generated > 0 && passModelKey !== undefined
+              ? { summarizedWithModelKey: passModelKey }
+              : {}),
+          }),
         );
       if (records.thread.deletedAt !== null)
         return yield* finish("skipped", "The thread was deleted.", 0, 0);
@@ -1011,8 +1272,10 @@ const make = Effect.gen(function* () {
       ).settings;
       if (!settings.enableConversationSummaries)
         return yield* finish("skipped", "Conversation summaries are off for this project.", 0, 0);
+      passModelKey = encodeModelSelection(settings.textGenerationModelSelection);
       const project = yield* projects.get(projectId);
-      if (Option.isNone(project) || project.value.deletedAt !== null) return { hasMore: false };
+      if (Option.isNone(project) || project.value.deletedAt !== null)
+        return yield* finish("skipped", "The project was deleted.", 0, 0);
       const cwd = records.thread.worktreePath ?? project.value.workspaceRoot;
 
       const rolledBack = yield* sql<{ readonly run_id: string }>`
@@ -1036,21 +1299,26 @@ const make = Effect.gen(function* () {
       const settledMessageIds = new Set(
         finalized.slice(0, freshIndex).map((message) => message.id),
       );
+      const speakers = yield* projections.getPeerSpeakers(
+        threadId,
+        finalized.filter((message) => message.role === "assistant").map((message) => message.id),
+      );
       const all: Array<SummarySource> = [];
       for (const message of finalized) {
+        const text = conversationEvidenceText(message.text);
+        if (text.trim() === "") continue;
         all.push({
           ref: {
             kind: "message",
             threadId,
             messageId: message.id,
-            digest: yield* digest(message.text),
+            digest: yield* messageDigest(text, speakers.get(message.id)),
           },
           role: message.role,
-          text: message.text,
+          text,
           createdAt: message.createdAt,
         });
       }
-      const speakers = yield* projections.getPeerSpeakers(threadId);
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
         const text = summaryToolText(item);
@@ -1147,7 +1415,10 @@ const make = Effect.gen(function* () {
         if (!reply.ok) return reply;
         const cited: Array<ConversationSummaryStatement> = [];
         for (const statement of reply.statements.slice(0, MAX_STATEMENTS)) {
-          const text = statement.text.trim().slice(0, MAX_STATEMENT_CHARS).trim();
+          const text = conversationEvidenceText(statement.text)
+            .trim()
+            .slice(0, MAX_STATEMENT_CHARS)
+            .trim();
           const citations = [
             ...new Set(statement.citations.flatMap((ref) => refs.get(ref.trim()) ?? [])),
           ].slice(0, MAX_CITATIONS);
@@ -1249,7 +1520,7 @@ const make = Effect.gen(function* () {
         });
       });
 
-      const modelKey = encodeModelSelection(settings.textGenerationModelSelection);
+      const modelKey = passModelKey;
       const keys = new Map<string, string>();
       const keyOf = Effect.fnUntraced(function* (raw: string) {
         const known = keys.get(raw);
@@ -1619,12 +1890,87 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const stalledThreads: ConversationSummaries["Service"]["stalledThreads"] = Effect.fn(
+    "ConversationSummaries.stalledThreads",
+  )(
+    function* ({ modelKey, limit }) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const settings = yield* serverSettings.getSettings;
+      const usesRecoveredModel = (projectId: ProjectId | null) => {
+        const resolved = resolveProjectSettings(settings, projectId).settings;
+        return (
+          resolved.enableConversationSummaries &&
+          encodeModelSelection(resolved.textGenerationModelSelection) === modelKey
+        );
+      };
+      const overriddenProjects = Object.keys(settings.projectSettingsOverrides).map((id) =>
+        ProjectId.make(id),
+      );
+      const eligibleOverrides = overriddenProjects.filter(usesRecoveredModel);
+      const eligibleProjects = usesRecoveredModel(null)
+        ? sql`(NOT ${sql.in("passes.project_id", overriddenProjects)} OR ${sql.in("passes.project_id", eligibleOverrides)})`
+        : sql.in("passes.project_id", eligibleOverrides);
+      const rows = yield* sql<{ readonly threadId: ThreadId; readonly payload: string }>`
+        SELECT passes.thread_id AS "threadId", passes.payload_json AS payload
+        FROM conversation_summary_passes AS passes
+        INNER JOIN orchestration_v2_projection_threads AS thread
+          ON thread.thread_id = passes.thread_id
+        WHERE json_extract(passes.payload_json, '$.result') = 'failed'
+          AND json_extract(passes.payload_json, '$.waitingMessages') > 0
+          AND ${eligibleProjects}
+          AND EXISTS (
+            SELECT 1 FROM projection_projects AS project
+            WHERE project.project_id = passes.project_id AND project.deleted_at IS NULL
+          )
+          AND coalesce(json_extract(passes.payload_json, '$.retries'), 0) < ${STALLED_RETRY_LIMIT}
+          AND thread.deleted_at IS NULL
+          AND thread.archived_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_effect_outbox AS effect
+            WHERE effect.thread_id = passes.thread_id
+              AND effect.effect_type = 'conversation-summary.generate'
+              AND effect.status IN ('pending', 'running')
+          )
+        ORDER BY julianday(json_extract(passes.payload_json, '$.at')) +
+          ${STALLED_RETRY_BASE_MS / 86_400_000} *
+          (1 << coalesce(json_extract(passes.payload_json, '$.retries'), 0)) ASC
+        LIMIT ${STALLED_CANDIDATE_LIMIT}
+      `;
+      const due: Array<{ threadId: ThreadId; runId: RunId; retry: number; retryAt: string }> = [];
+      for (const row of rows) {
+        const pass = yield* decodeStoredPass(row.payload).pipe(Effect.option);
+        if (pass._tag === "None") continue;
+        const retries = pass.value.retries ?? 0;
+        const waitMs = STALLED_RETRY_BASE_MS * 2 ** retries;
+        if (Date.parse(pass.value.at) + waitMs > now) continue;
+        due.push({
+          threadId: row.threadId,
+          runId: pass.value.runId,
+          retry: retries + 1,
+          retryAt: pass.value.at,
+        });
+        if (due.length >= limit) break;
+      }
+      return due;
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Stalled conversation summaries unreadable", { cause }).pipe(
+            Effect.as([]),
+          ),
+        ),
+      ),
+  );
+
   return ConversationSummaries.of({
+    search,
     list,
     describe,
     expand,
     summarizeThread,
     hasPendingPass,
+    stalledThreads,
     forHandoff,
   });
 });
@@ -1639,6 +1985,7 @@ export const layerRuntime = Layer.effect(
     return {
       summarizeThread: service.summarizeThread,
       hasPendingPass: service.hasPendingPass,
+      stalledThreads: service.stalledThreads,
       forHandoff: service.forHandoff,
     };
   }),

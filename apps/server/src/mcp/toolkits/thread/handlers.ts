@@ -23,6 +23,7 @@ import {
 import * as ThreadGroupService from "../../../orchestration-v2/ThreadGroupService.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ToolSearch from "../../../orchestration-v2/ToolSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -147,9 +148,28 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
       const scope = yield* McpInvocationContext.McpInvocationContext;
-      const threadSearch = yield* ThreadSearch.ThreadSearch;
       const projectId = input.projectId ?? caller?.projectId;
-      const { environmentId: _environmentId, projectId: _projectId, ...query } = input;
+      const {
+        environmentId: _environmentId,
+        projectId: _projectId,
+        source: _source,
+        ...query
+      } = input;
+      if (input.source === "tools") {
+        const tools = yield* ToolSearch.ToolSearch;
+        const result = yield* tools
+          .search({ ...query, ...(projectId === undefined ? {} : { projectId }) })
+          .pipe(Effect.mapError(unavailable));
+        return {
+          ...result,
+          currentThreadId: scope.thread?.threadId ?? null,
+          matches: result.matches.map((match) => ({
+            ...match,
+            link: McpInvocationContext.threadLinkFor(scope, match.threadId, match.title),
+          })),
+        };
+      }
+      const threadSearch = yield* ThreadSearch.ThreadSearch;
       const result = yield* threadSearch
         .search({
           ...query,

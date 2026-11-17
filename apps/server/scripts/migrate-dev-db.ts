@@ -16,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
+import { resetToolSearch } from "../src/orchestration-v2/toolSearchIndex.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -317,6 +318,7 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
         if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
       }
       yield* rebuildMessageSearch(sql);
+      yield* resetToolSearch(sql);
       if (virtualTables.includes("project_knowledge_fts")) {
         yield* sql`INSERT INTO project_knowledge_fts(project_knowledge_fts) VALUES ('rebuild')`;
       }
