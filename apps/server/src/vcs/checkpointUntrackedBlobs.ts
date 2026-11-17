@@ -20,7 +20,6 @@ interface UntrackedBlob {
 
 interface Snapshot {
   readonly topLevel: string;
-  readonly head: string;
   readonly config: string;
   readonly blobs: ReadonlyArray<UntrackedBlob>;
   /** Files hashed without a reading of their conversion state from before staging. */
@@ -197,7 +196,6 @@ export const make = (
     function* (input: {
       readonly cwd: string;
       readonly topLevel: string;
-      readonly head: string;
       readonly env: NodeJS.ProcessEnv;
       readonly indexConfig: ReadonlyArray<string>;
     }) {
@@ -206,69 +204,36 @@ export const make = (
       snapshots.delete(input.cwd);
       if (snapshot === undefined || snapshot.topLevel !== input.topLevel) return NOTHING;
       let blobs = snapshot.blobs;
-      if (snapshot.head !== input.head) {
-        // A path HEAD now tracks, or one below a path it changed, is no longer untracked.
-        const moved = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", snapshot.head, input.head],
-          maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-          outputMode: "error",
-        });
-        const changed = new Set(moved.stdout.split("\0"));
-        blobs = blobs.filter((blob) => {
-          for (let end = blob.path.length; end > 0; end = blob.path.lastIndexOf("/", end - 1)) {
-            if (changed.has(blob.path.slice(0, end))) return false;
-          }
-          return true;
-        });
-      }
       const stats = yield* lstatAll(
         input.topLevel,
         blobs.map((blob) => blob.path),
       );
       blobs = blobs.filter((blob, index) => stats[index]?.stat === blob.stat);
-      // Git stages a directory that became a repository as one gitlink, not as its files.
-      const directories = new Set<string>();
-      for (const blob of blobs) {
-        for (
-          let end = blob.path.lastIndexOf("/");
-          end > 0 && !directories.has(blob.path.slice(0, end));
-          end = blob.path.lastIndexOf("/", end - 1)
-        ) {
-          directories.add(blob.path.slice(0, end));
-        }
-      }
-      const directoryList = [...directories];
-      const repositories = yield* lstatAll(
-        input.topLevel,
-        directoryList.map((directory) => `${directory}/.git`),
-      );
-      const nested = directoryList.filter((_, index) => repositories[index] !== undefined);
-      if (nested.length > 0) {
-        blobs = blobs.filter(
-          (blob) => !nested.some((directory) => blob.path.startsWith(`${directory}/`)),
-        );
-      }
       const paths = [...blobs.map((blob) => blob.path), ...snapshot.pending];
       if (paths.length === 0) return NOTHING;
-      const unchecked = Effect.succeed({ exitCode: 1, stdout: "" });
-      const stdin = `${blobs.map((blob) => `${blob.path}\0`).join("")}`;
-      const [config, attributes, ignored, objects] = yield* Effect.all(
+      const unchecked = Effect.succeed({ stdout: "" });
+      const [config, attributes, untracked, objects] = yield* Effect.all(
         [
           readConfig(input.cwd),
           readAttributes(input.topLevel, input.env, paths),
-          // Without --no-index this reports only untracked paths, which these are in this index.
+          // Git reports the on-disk spelling even when lstat still accepts a renamed directory's old case.
           blobs.length === 0
             ? unchecked
             : execute({
                 operation,
-                cwd: input.topLevel,
-                args: [...input.indexConfig, "check-ignore", "-z", "--stdin"],
-                stdin,
+                cwd: input.cwd,
+                args: [
+                  ...input.indexConfig,
+                  "ls-files",
+                  "--others",
+                  "--exclude-standard",
+                  "--full-name",
+                  "-z",
+                  "--",
+                  ".",
+                ],
                 env: input.env,
-                allowNonZeroExit: true,
-                maxOutputBytes: Buffer.byteLength(stdin),
+                maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
                 outputMode: "error",
               }),
           // Blobs of deleted checkpoints can be pruned while this process still remembers them.
@@ -289,13 +254,13 @@ export const make = (
         config,
         attributes: new Map(paths.map((entryPath, index) => [entryPath, attributes[index]])),
       };
-      if (config !== snapshot.config || ignored.exitCode > 1) return { reused: [], before };
-      const ignoredPaths = new Set(ignored.stdout.split("\0"));
+      if (config !== snapshot.config) return { reused: [], before };
+      const untrackedPaths = new Set(untracked.stdout.split("\0"));
       const present = new Set(objects.stdout.split("\n"));
       blobs = blobs.filter(
         (blob, index) =>
           attributes[index] === blob.attributes &&
-          !ignoredPaths.has(blob.path) &&
+          untrackedPaths.has(blob.path) &&
           present.has(`${blob.oid} blob`),
       );
       if (blobs.length === 0) return { reused: [], before };
@@ -442,7 +407,6 @@ export const make = (
       const remembered = new Set(blobs.map((blob) => blob.path));
       snapshots.set(input.cwd, {
         topLevel: input.topLevel,
-        head: input.head,
         config,
         blobs,
         pending: largest.flatMap((blob) => (remembered.has(blob.path) ? [] : [blob.path])),

@@ -831,9 +831,7 @@ export const make = Effect.gen(function* () {
             const item = event.payload;
             if (item.type !== "command_execution") return Effect.void;
             let reaction = Effect.andThen(
-              countForgeCommands(event, item).pipe(
-                Effect.andThen(linkCreatedChangeRequests(event.threadId, item)),
-              ),
+              linkCreatedChangeRequests(event.threadId, item),
               reopenWatchedChecks(event.threadId, item),
             );
             const active = isOrchestrationV2WorkActive(item.status);
@@ -845,8 +843,10 @@ export const make = Effect.gen(function* () {
                 reaction = Effect.andThen(reaction, refreshUnmergedLinks(event.threadId));
               }
             }
-            // Every reaction skips a running command, so only an ended one forks.
-            return active ? Effect.void : inThreadOrder(event.threadId, reaction);
+            if (active) return Effect.void;
+            return countForgeCommands(event, item).pipe(
+              Effect.andThen(inThreadOrder(event.threadId, reaction)),
+            );
           }
           // Settled threads are not swept, so read their links once to settle with fresh status.
           case "thread.settled":

@@ -62,7 +62,6 @@ import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
-import { useSidebarRowThreadKey } from "../threads/useSidebarRowThreadKey";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -205,8 +204,6 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const columnMetrics = useNativeColumnLayoutMetrics();
   const activeNewTask = useActiveNewTask();
-  const sidebarRowThreadKey = useSidebarRowThreadKey(primaryColumn?.selectedThreadKey ?? null);
-  const selectedThreadKey = activeNewTask ? null : sidebarRowThreadKey;
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -410,6 +407,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
+    selectedThreadKey,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -433,7 +431,7 @@ export function HomeScreen(props: HomeScreenProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
-    selectedThreadKey,
+    selectedThreadKey: activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null),
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.

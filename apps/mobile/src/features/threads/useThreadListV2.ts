@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import {
+  resolveListedAncestorThreadRef,
+  type OlderSettledScope,
+} from "@t3tools/client-runtime/state/threads";
 import { isListedThreadLineage, type EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
 
@@ -88,36 +93,45 @@ export function useThreadListV2(input: {
     input.environmentId,
     input.projectRefs,
   ]);
-  const threads = useMemo(() => {
-    const visible = input.threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        isListedThreadLineage(thread.lineage) &&
-        !hiddenEnvironmentIds.has(thread.environmentId),
+  const { threads, delegatedUnderParent } = useMemo(() => {
+    const listed = input.threads.filter(
+      (thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage),
     );
     const projectKeys =
       input.projectRefs === null || input.projectRefs === undefined
         ? null
         : new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`));
     const parentKeys = new Set(
-      visible
+      listed
         .filter(
           (thread) =>
+            !hiddenEnvironmentIds.has(thread.environmentId) &&
             (input.environmentId === null || thread.environmentId === input.environmentId) &&
             (projectKeys === null ||
               projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
         )
-        .map((thread) => `${thread.environmentId}:${thread.id}`),
+        .map((thread) => threadKey({ environmentId: thread.environmentId, threadId: thread.id })),
     );
-    return visible.filter((thread) => {
+    const delegatedUnderParent = new Set<string>();
+    const threads = listed.filter((thread) => {
       const parent = thread.delegatedFrom;
-      return (
-        parent === null ||
-        parent === undefined ||
-        !parentKeys.has(`${parent.environmentId}:${parent.threadId}`)
-      );
+      if (parent != null && parentKeys.has(threadKey(parent))) {
+        delegatedUnderParent.add(
+          threadKey({ environmentId: thread.environmentId, threadId: thread.id }),
+        );
+        return false;
+      }
+      return !hiddenEnvironmentIds.has(thread.environmentId);
     });
+    return { threads, delegatedUnderParent };
   }, [input.threads, input.environmentId, input.projectRefs, hiddenEnvironmentIds]);
+  const selectedThreadKey = useMemo(() => {
+    const ref =
+      input.selectedThreadKey === null ? null : parseScopedThreadKey(input.selectedThreadKey);
+    return ref === null
+      ? input.selectedThreadKey
+      : scopedThreadKey(resolveListedAncestorThreadRef(ref, input.threads, delegatedUnderParent));
+  }, [input.selectedThreadKey, input.threads, delegatedUnderParent]);
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -202,7 +216,7 @@ export function useThreadListV2(input: {
         isWorking: inbox.isWorking,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
-        selectedThreadKey: input.selectedThreadKey,
+        selectedThreadKey,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
           threads.filter(
@@ -234,7 +248,7 @@ export function useThreadListV2(input: {
       inbox.isWorking,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
-      input.selectedThreadKey,
+      selectedThreadKey,
       isListed,
       unloadedCount,
       scopes,
@@ -300,7 +314,7 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  return { layout, items, selectedThreadKey, contentOnlyThreadKeys, olderSettledShelf };
 }
 
 /** The list's scope per environment: its projects there, or every project. */

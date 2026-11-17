@@ -528,44 +528,51 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("installs a release published after the retained download", () => {
-    let published = "1.2.4";
-    let lastChecked: string | undefined;
-    let installedVersion: string | null | undefined;
-    const harness = makeHarness({
-      checkForUpdates: Effect.sync(() => {
-        lastChecked = published;
-        harness.emit("update-available", { version: published });
-      }),
-      downloadUpdate: Effect.sync(() => {
-        harness.emit("update-downloaded", { version: lastChecked });
-      }),
-      quitAndInstall: Effect.sync(() => {
-        installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
-      }),
-    });
+  it.effect.each([
+    { install: "local", installed: "1.2.5", checks: 1 },
+    { install: "prepared", installed: "1.2.4", checks: 0 },
+  ])(
+    "installs $installed on a $install install after a new release",
+    ({ install, installed, checks }) => {
+      let published = "1.2.4";
+      let lastChecked: string | undefined;
+      let installedVersion: string | null | undefined;
+      const harness = makeHarness({
+        checkForUpdates: Effect.sync(() => {
+          lastChecked = published;
+          harness.emit("update-available", { version: published });
+        }),
+        downloadUpdate: Effect.sync(() => {
+          harness.emit("update-downloaded", { version: lastChecked });
+        }),
+        quitAndInstall: Effect.sync(() => {
+          installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
+        }),
+      });
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        yield* updates.check("poll");
-        yield* flushCallbacks;
-        yield* updates.download;
-        yield* flushCallbacks;
-        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.check("poll");
+          yield* flushCallbacks;
+          yield* updates.download;
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
 
-        published = "1.2.5";
-        const checksBefore = harness.checkCount();
-        const result = yield* updates.installPrepared("1.2.4");
-        assert.isTrue(result.accepted);
-        // A second check before downloading could find a stale feed's older release.
-        assert.equal(harness.checkCount(), checksBefore + 1);
-        assert.equal(harness.quitAndInstalls(), 1);
-        assert.equal(installedVersion, "1.2.5");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+          published = "1.2.5";
+          const checksBefore = harness.checkCount();
+          const result = yield* install === "prepared"
+            ? updates.installPrepared("1.2.4")
+            : updates.install;
+          assert.isTrue(result.accepted);
+          assert.equal(installedVersion, installed);
+          assert.equal(harness.checkCount(), checksBefore + checks);
+          assert.equal(harness.quitAndInstalls(), 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("downloads the known offer when the check before downloading fails", () => {
     let checks = 0;
@@ -628,7 +635,7 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
 
         published = "1.2.4";
-        const result = yield* updates.installPrepared("1.2.5");
+        const result = yield* updates.install;
         assert.isTrue(result.accepted);
         assert.equal(harness.downloadCount(), 1);
         assert.equal(installedVersion, "1.2.5");

@@ -155,6 +155,7 @@ it.effect.each([
 );
 
 interface UntrackedBlobChange {
+  readonly cwd: string;
   readonly git: Effect.Success<ReturnType<typeof makeCheckpointFixture>>["git"];
   readonly write: (
     relativePath: string,
@@ -585,6 +586,16 @@ it.effect.each([
     change: ({ write }: UntrackedBlobChange) => write(".gitignore", "nested/\n"),
   },
   {
+    name: "its directory changed case",
+    reuses: false,
+    change: ({ cwd }: UntrackedBlobChange) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.rename(path.join(cwd, "nested"), path.join(cwd, "Nested"));
+      }),
+  },
+  {
     name: "HEAD now tracks it",
     reuses: false,
     change: ({ git }: UntrackedBlobChange) =>
@@ -648,11 +659,11 @@ it.effect.each([
       yield* TestClock.adjust("36500 days");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       // A file is remembered by the first capture that read its conversion rules before hashing it.
-      if (during !== undefined) afterPublish = during({ git, write, checkpointRef });
+      if (during !== undefined) afterPublish = during({ cwd, git, write, checkpointRef });
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       afterPublish = Effect.void;
 
-      yield* change({ git, write, checkpointRef });
+      yield* change({ cwd, git, write, checkpointRef });
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       const freshRef = CheckpointRef.make("refs/t3/checkpoints/fresh");
       yield* fresh.checkpoints.captureCheckpoint({ cwd, checkpointRef: freshRef });

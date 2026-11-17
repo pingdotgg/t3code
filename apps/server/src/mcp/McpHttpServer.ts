@@ -1317,7 +1317,17 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsHandlers.layer,
 ).pipe(Layer.provide(PullRequestWatchService.layer));
 
-const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
+export const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer).pipe(
+  Layer.provide(
+    McpServer.visibility(({ method }) =>
+      method === "tools/list"
+        ? Effect.map(McpInvocationContext.McpInvocationContext, (scope) =>
+            scope.capabilities.has("issues"),
+          )
+        : Effect.succeed(true),
+    ).layer,
+  ),
+);
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,

@@ -387,7 +387,12 @@ describe("IssueService", () => {
                     detail: " ",
                   });
                 if (input.scope === "acme/docs")
-                  return { items: [issue("3", "2026-07-04T00:00:00Z")], nextCursor: null };
+                  return {
+                    items: [
+                      { ...issue("3", "2026-07-04T00:00:00Z"), createdAt: "2026-07-03T00:00:00Z" },
+                    ],
+                    nextCursor: null,
+                  };
                 if (input.cursor === "next" && failContinuation) {
                   failContinuation = false;
                   return yield* new IssueTrackerError({
@@ -400,7 +405,10 @@ describe("IssueService", () => {
                 if (input.cursor === "next")
                   return { items: [issue("4", "2026-07-01T00:00:00Z")], nextCursor: null };
                 return {
-                  items: [issue("1"), issue("2", "2026-07-05T00:00:00Z")],
+                  items: [
+                    issue("1"),
+                    { ...issue("2", "2026-07-05T00:00:00Z"), createdAt: "2026-07-02T00:00:00Z" },
+                  ],
                   nextCursor: "next",
                 };
               }),
@@ -432,6 +440,9 @@ describe("IssueService", () => {
           capabilities: null,
         }),
       ]);
+
+      const byCreated = yield* service.list({ state: "open", sort: "created" });
+      expect(byCreated.entries.map((entry) => entry.key)).toEqual(["3", "2", "1"]);
 
       // Narrowing to one host still names every tracker, so the client can switch between them.
       const narrowed = yield* service.list({ state: "open", host: "github.com" });

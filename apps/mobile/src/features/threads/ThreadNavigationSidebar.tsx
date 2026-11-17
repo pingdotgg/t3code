@@ -40,7 +40,6 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadListV2 } from "./useThreadListV2";
-import { useSidebarRowThreadKey } from "./useSidebarRowThreadKey";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
@@ -128,7 +127,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { fabClearance, fabSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useAtomValue(steadyVisibleThreadShellsAtom);
-  const selectedThreadKey = useSidebarRowThreadKey(props.selectedThreadKey);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -268,6 +266,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
+    selectedThreadKey,
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
@@ -291,7 +290,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
-    selectedThreadKey,
+    selectedThreadKey: props.selectedThreadKey,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0

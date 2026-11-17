@@ -433,7 +433,8 @@ const make = Effect.gen(function* () {
         detail: "Issues cannot be browsed for this host yet.",
       });
     }
-    entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const sortField = input.sort === "created" ? "createdAt" : "updatedAt";
+    entries.sort((a, b) => Date.parse(b[sortField]) - Date.parse(a[sortField]));
     return {
       viewers: Object.fromEntries(viewers),
       trackers: [...trackers.values()],

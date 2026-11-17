@@ -46,6 +46,8 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
+import * as IssueService from "../issue/IssueService.ts";
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -60,6 +62,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -1841,7 +1844,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
+it.effect("lists issue and pull request watch tools according to the caller", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (
@@ -1857,7 +1860,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
           subagent,
         },
         client: undefined,
-        capabilities: new Set(["pull-requests"]),
+        capabilities: new Set(["pull-requests", "issues"]),
         issuedAt: 1,
       });
       const scopes = new Map([
@@ -1865,7 +1868,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
         ["childToken", scopeFor("childToken", true)],
       ]);
       const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.layerPullRequestsToolkit,
+        Layer.merge(McpHttpServer.layerPullRequestsToolkit, McpHttpServer.layerIssuesToolkit),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(
@@ -1877,6 +1880,29 @@ it.effect("lists pull request watch tools only to threads that are not delegated
           Layer.mergeAll(
             McpToolAccessTestkit.liveThreadsLayer,
             Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(IssueService.IssueService)({}),
+            Layer.mock(ThreadIssueService.ThreadIssueService)({}),
+            Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+              authenticate: (request) =>
+                Effect.succeed(
+                  request.headers.authorization === "Bearer outsideToken"
+                    ? {
+                        environmentId,
+                        requestNamespace: "client:outside",
+                        thread: undefined,
+                        client: {
+                          sessionId: "outside",
+                          label: "Outside agent",
+                          access: "full-access",
+                        },
+                        capabilities: new Set<McpInvocationContext.McpCapability>([
+                          "pull-requests",
+                        ]),
+                        issuedAt: 1,
+                      }
+                    : undefined,
+                ),
+            }),
             Layer.mock(PullRequestOracle.PullRequestOracle)({}),
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
             Layer.mock(PullRequestService.PullRequestService)({}),
@@ -1923,6 +1949,12 @@ it.effect("lists pull request watch tools only to threads that are not delegated
 
       const parentTools = yield* listedTools("parentToken");
       const childTools = yield* listedTools("childToken");
+      const outsideTools = yield* listedTools("outsideToken");
+      expect(outsideTools).toContain("link_pull_request");
+      for (const name of Object.keys(IssuesToolkit.tools)) {
+        expect(parentTools).toContain(name);
+        expect(outsideTools).not.toContain(name);
+      }
       expect(parentTools).toEqual(
         expect.arrayContaining(["link_pull_request", "watch_pull_request", "unwatch_pull_request"]),
       );
