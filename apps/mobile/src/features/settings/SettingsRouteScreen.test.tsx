@@ -18,8 +18,9 @@ const { Children, harness } = vi.hoisted(
 vi.mock("react-native", () => ({ View: Children, Platform: { OS: "ios" } }));
 vi.mock("../../i18n/I18nProvider", () => ({
   I18nProvider: Children,
+}));
+vi.mock("gt-react-native", () => ({
   useGT: () => (text: string) => text,
-  useLanguagePreference: () => "en",
 }));
 vi.mock("@clerk/expo", () => ({
   useAuth: () => ({ isLoaded: true, isSignedIn: false }),

@@ -131,6 +131,7 @@ describe("searchSettings", () => {
       "unpin-confirmation",
       "delete-confirmation",
       "archive-confirmation",
+      "terminal-close-confirmation",
     ]);
   });
 
