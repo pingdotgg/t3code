@@ -214,6 +214,7 @@ export const CursorDriver: ProviderDriver<
       auth.requireApiKey,
       auth.withAccess,
       () => catalogModels,
+      () => catalogSdkModels,
     );
 
     const checkProvider = auth.readApiKey.pipe(
@@ -227,46 +228,41 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
-          Effect.flatMap(({ provider: statusProvider, sdkModels }) =>
-            Effect.succeed(statusProvider).pipe(
-              Effect.filterOrElse(
-                (snapshot) =>
-                  !(
-                    effectiveConfig.enabled &&
-                    snapshot.installed &&
-                    snapshot.auth.status === "authenticated"
-                  ),
-                (snapshot) =>
-                  readCursorUsageLimits(effectiveConfig, {
-                    ...processEnv,
-                    CURSOR_API_KEY: apiKey,
-                  }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+          Effect.tap(({ sdkModels }) =>
+            Effect.sync(() => {
+              // A failed check carries no catalog, so keep the last loaded one.
+              if (sdkModels !== undefined) {
+                catalogSdkModels = sdkModels;
+              }
+            }),
+          ),
+          Effect.map(({ provider }) => provider),
+          Effect.filterOrElse(
+            (snapshot) =>
+              !(
+                effectiveConfig.enabled &&
+                snapshot.installed &&
+                snapshot.auth.status === "authenticated"
               ),
-              Effect.map((provider) => ({ provider, sdkModels })),
-            ),
+            (snapshot) =>
+              readCursorUsageLimits(effectiveConfig, {
+                ...processEnv,
+                CURSOR_API_KEY: apiKey,
+              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
           ),
         ),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.map(({ provider, sdkModels }) => ({
-        provider: stampSnapshot(provider),
-        sdkModels,
-      })),
-      Effect.tap(({ provider, sdkModels }) =>
+      Effect.map(stampSnapshot),
+      Effect.tap((provider) =>
         Effect.sync(() => {
           // A failed check lists only custom models, so keep the last loaded catalog.
           if (provider.models.some((model) => !model.isCustom)) {
             catalogModels = provider.models;
           }
-          // Reuse the timed status probe — a second unbounded catalog.read would
-          // defeat the probe timeout when the first request stalled.
-          if (sdkModels !== undefined) {
-            catalogSdkModels = sdkModels;
-          }
         }),
       ),
-      Effect.map(({ provider }) => provider),
       Effect.provide(CursorSdkCatalog.layer),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
