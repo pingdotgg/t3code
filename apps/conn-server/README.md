@@ -442,7 +442,7 @@ to the socket.
 The method table reports coverage at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
-length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
+length, pattern and range limits before decode (`crates/conn-support/src/input.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real
 client (`tools/decode-coverage.mjs`; the rest are in `decode-coverage.pending`). The engine's
 `dispatchCommand` coverage is in `crates/conn-engine/README.md`; each other area's crate README
 lists what it serves.

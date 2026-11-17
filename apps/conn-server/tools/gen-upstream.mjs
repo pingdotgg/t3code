@@ -39,6 +39,7 @@ import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import * as NodeURL from "node:url";
 
+import { schemaRule } from "./schema-rules.mjs";
 import { importSource, inMonorepo, packageImporter, repoRoot } from "./monorepo.mjs";
 
 const check = process.argv.includes("--check");
@@ -426,8 +427,6 @@ const LIMITED_METHODS = [
   "terminal.attach",
   "terminal.open",
 ];
-const {TrimmedString}=await importSource("packages/contracts/src/baseSchemas.ts");
-const trimTransformation=TrimmedString.ast.encoding[0].transformation;
 const rpcGroups = [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup];
 const payloadOf = (tag) => {
   for (const group of rpcGroups) {
@@ -436,84 +435,27 @@ const payloadOf = (tag) => {
   }
   throw new Error(`no RPC ${tag} in the contract`);
 };
-const representations = (ast) =>
-  (ast.checks ?? []).map((c) => c.annotations?.representation).filter((r) => r !== undefined);
-function limitNode(ast) {
-  if (ast._tag === "Suspend") return limitNode(ast.thunk());
-  if (ast._tag === "Union") {
-    const members = ast.types.filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
-    const flat = members.flatMap((t) => (t._tag === "Union" ? t.types : [t])).filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
-    const tagOf = (t,key) => t._tag === "Objects" && t.propertySignatures.find((p) => p.name === key)?.type.literal;
-    const discriminator=["_tag","kind"].find(key=>flat.length>1&&flat.every(t=>typeof tagOf(t,key)==="string"));
-    if (discriminator !== undefined) {
-      const variants = {};
-      for (const t of flat) {
-        const node = limitNode(t);
-        if (node) variants[tagOf(t,discriminator)] = node;
-      }
-      return Object.keys(variants).length ? { variants, discriminator } : null;
-    }
-    return members.length === 1 ? limitNode(members[0]) : null;
-  }
-  const node = {};
-  const nonBlank = (ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string");
-  if (nonBlank) node.nonBlank = true;
-  if (ast._tag === "String" && (nonBlank || ast.encoding?.some(link => link.transformation === trimTransformation))) node.trim = true;
-  for (const r of representations(ast)) {
-    const p = r.payload;
-    if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
-    else if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
-    else if (r.id === "effect/schema/isPattern") {
-      // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
-      const flags = p.flags.replace("u", "");
-      if (/[^ims]/.test(flags)) throw new Error(`pattern flags ${p.flags} are not supported`);
-      node.pattern = (flags ? `(?${flags})` : "") + p.source;
-    } else if (r.id === "effect/schema/isMaxProperties") node.maxProperties = p.maxProperties;
-    else if (r.id === "effect/schema/isInt") node.int = true;
-    else if (r.id === "effect/schema/isGreaterThanOrEqualTo") node.minimum = p.minimum;
-    else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
-    else if (r.id === "effect/schema/isBetween") { node.minimum=p.minimum;node.maximum=p.maximum; }
-  }
-  if(ast._tag==="Arrays") {
-    if(ast.elements.length!==0 || ast.rest.length!==1) throw new Error("Payload limits need a tuple handler");
-    const value=limitNode(ast.rest[0]);
-    if(value) node.items=value;
-  }
-  if (ast._tag === "Objects") {
-    const fields = {};
-    for (const p of ast.propertySignatures) {
-      const child = limitNode(p.type);
-      if (child) fields[p.name] = child;
-    }
-    if (Object.keys(fields).length) node.fields = fields;
-    const [index] = ast.indexSignatures ?? [];
-    if (index) {
-      const key = limitNode(index.parameter);
-      const value = limitNode(index.type);
-      if (key) node.keys = key;
-      if (value) node.values = value;
-    }
-  }
-  return Object.keys(node).length ? node : null;
-}
-const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, limitNode(payloadOf(tag).ast) ?? {}]));
+const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, schemaRule(payloadOf(tag).ast, "limits") ?? {}]));
 const previewLimits=await importSource("packages/contracts/src/preview.ts");
 for(const tag of ["preview.open","preview.resize"]) {
-  for(const variant of Object.values(limits[tag].fields.viewport.variants)) variant.maxArea=previewLimits.PREVIEW_VIEWPORT_MAX_AREA;
+  for (const variant of Object.values(limits[tag].fields.find(f => f.key === "viewport").rule.variants)) {
+    (variant.checks ??= []).unshift({id:"maxArea",maxArea:previewLimits.PREVIEW_VIEWPORT_MAX_AREA,expected:`a viewport area at most ${previewLimits.PREVIEW_VIEWPORT_MAX_AREA} pixels`});
+  }
 }
 // Review-requested caps reuse PanelName/PanelText; upstream leaves response text unbounded.
 const panelInputs = await importSource("packages/contracts/src/agentPanels.ts");
-const panelLimits = limitNode(panelInputs.AgentPanelMcpServer.ast);
-limits["panels.respond"].fields.deviceName = { maxLength: panelLimits.fields.name.maxLength };
-limits["panels.respond"].fields.error = { maxLength: panelLimits.fields.headers.values.maxLength };
+const panelLimits = schemaRule(panelInputs.AgentPanelMcpServer.ast, "limits");
+for (const [key, field] of [["deviceName", "name"], ["error", "headers"]]) {
+  const rule = panelLimits.fields.find(f => f.key === field).rule;
+  limits["panels.respond"].fields.push({key,rule:{checks:(field === "headers" ? rule.values : rule).checks.filter(c => c.id === "isMaxLength")}});
+}
+limits["panels.respond"].fields.sort((a,b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 const limitsRs = rustfmt(
   [
     ...HEADER,
     "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
     "",
-    "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`, `items`,",
-    "/// `variants` (by `discriminator`, default `_tag`), `trim`, `nonBlank`, `minLength`, `maxLength`,",
-    "/// `pattern`, `maxProperties`, `int`, `minimum`, `maximum`.",
+    "/// Payload rules for `conn_support::input`, in the shared generated schema format.",
     `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
     "",
   ].join("\n"),

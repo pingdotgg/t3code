@@ -6,6 +6,7 @@ pub mod fs;
 pub mod hex;
 pub mod hmac;
 pub mod ids;
+pub mod input;
 pub mod login_env;
 pub mod modes;
 pub mod secret_store;
