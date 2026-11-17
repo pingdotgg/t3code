@@ -12,9 +12,15 @@ import { PullRequestReactionBar } from "./PullRequestReactions";
 
 it("keeps the latest reaction choice when an older toggle fails", async () => {
   state.send.mockReset();
-  const first = Promise.withResolvers<{ _tag: "Failure" }>();
-  const later = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
-  state.send.mockReturnValueOnce(first.promise).mockReturnValue(later.promise);
+  let failFirst = () => {};
+  let finishLater = () => {};
+  state.send
+    .mockReturnValueOnce(new Promise((resolve) => (failFirst = () => resolve({ _tag: "Failure" }))))
+    .mockReturnValue(
+      new Promise(
+        (resolve) => (finishLater = () => resolve({ _tag: "Success", value: undefined })),
+      ),
+    );
   await using screen = await render(
     <PullRequestReactionBar
       environmentId={EnvironmentId.make("test")}
@@ -27,18 +33,10 @@ it("keeps the latest reaction choice when an older toggle fails", async () => {
   await userEvent.click(screen.getByRole("button", { name: "thumbs up, 1", exact: true }));
   await userEvent.click(screen.getByRole("button", { name: "thumbs up, 2", exact: true }));
   await userEvent.click(screen.getByRole("button", { name: "thumbs up, 1", exact: true }));
-  await expect
-    .element(screen.getByRole("button", { name: "thumbs up, 2", exact: true }))
-    .toHaveAttribute("aria-pressed", "true");
+  const latest = screen.getByRole("button", { name: "thumbs up, 2", exact: true });
+  await expect.element(latest).toHaveAttribute("aria-pressed", "true");
 
-  await act(() => first.resolve({ _tag: "Failure" }));
-  expect(
-    screen.container
-      .querySelector('button[aria-label^="thumbs up,"]')
-      ?.getAttribute("aria-pressed"),
-  ).toBe("true");
-  expect(screen.container.querySelector('button[aria-label^="thumbs up,"]')?.textContent).toContain(
-    "2",
-  );
-  await act(() => later.resolve({ _tag: "Success", value: undefined }));
+  await act(() => failFirst());
+  await expect.element(latest).toHaveAttribute("aria-pressed", "true");
+  await act(() => finishLater());
 });
