@@ -827,6 +827,7 @@ const ComposerInlineSuggestionExtension = Extension.create<unknown, InlineSugges
           apply: (tr, previous, _, state) => {
             const dismissing = tr.getMeta(InlineSuggestionPluginKey) === "dismiss";
             if (!tr.docChanged && !tr.selectionSet && !dismissing) return previous;
+            const appendedTo = tr.getMeta("appendedTransaction") as Transaction | undefined;
             const dismissedFrom = dismissing
               ? previous.from
               : previous.dismissedFrom === null
@@ -843,7 +844,7 @@ const ComposerInlineSuggestionExtension = Extension.create<unknown, InlineSugges
               tr.getMeta("preventUpdate") ||
               tr.getMeta("composition") !== undefined ||
               // Markdown-source normalization after a caret move rewrites text nobody typed.
-              (tr.getMeta("appendedTransaction") && previous.suggestion === null)
+              (appendedTo?.selectionSet && !appendedTo.docChanged)
             ) {
               return none;
             }

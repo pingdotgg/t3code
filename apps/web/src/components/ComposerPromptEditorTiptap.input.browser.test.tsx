@@ -480,6 +480,34 @@ it("proposes no completion for pasted text or a name crossing formatting", async
   expect(ghost()).toBeNull();
 });
 
+it("completes the first name typed inside Markdown source shown after an undo", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-vps"),
+    label: "Hetzner VPS",
+  } as const;
+  await using screen = await render(
+    <Composer
+      value="**on he z** x"
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+    />,
+  );
+  const editor = editorIn(screen.container);
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion")?.textContent;
+  await act(async () => {
+    editor.view.focus();
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  await userEvent.keyboard("y{Control>}z{/Control}");
+  await act(async () => editor.commands.setTextSelection(6));
+  expect(editor.state.doc.textContent).toBe("**on he z** x");
+
+  await userEvent.keyboard("t");
+  await vi.waitFor(() => expect(ghost()).toBe("zner VPSTab"));
+});
+
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
   const { editor } = screen;
