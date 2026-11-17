@@ -213,6 +213,36 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
+  const scratchProject =
+    scratchOption === null
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === scratchOption.environmentId &&
+            isScratchProject(
+              project,
+              serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot,
+            ),
+        );
+  const scratchTitle = scratchProject?.title ?? "No project";
+  const scratchIcon = (size: number, symbolSize: number) =>
+    scratchProject ? (
+      <ProjectFavicon
+        environmentId={scratchProject.environmentId}
+        faviconPath={scratchProject.faviconPath}
+        projectIcon={scratchProject.projectIcon}
+        size={size}
+        projectTitle={scratchProject.title}
+        workspaceRoot={scratchProject.workspaceRoot}
+      />
+    ) : (
+      <SymbolView
+        name="text.bubble"
+        size={symbolSize}
+        tintColorClassName="accent-icon-muted"
+        type="monochrome"
+      />
+    );
   const scratchStartInFlightRef = useRef(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
@@ -356,25 +386,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[28px] bg-grouped-card">
                 <NavigationRow
                   className="bg-grouped-card"
-                  title="No project"
+                  title={scratchTitle}
                   subtitle="Start a task without a project"
                   disabled={!canStartScratch}
                   onPress={() => void startScratch()}
-                  leading={
-                    <SymbolView
-                      name="text.bubble"
-                      size={22}
-                      tintColorClassName="accent-icon-muted"
-                      type="monochrome"
-                    />
-                  }
+                  leading={scratchIcon(24, 22)}
                 />
               </View>
             ) : (
               <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="No project"
+                  accessibilityLabel={scratchTitle}
                   disabled={!canStartScratch}
                   onPress={() => void startScratch()}
                   className={cn(
@@ -382,16 +405,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     !canStartScratch && "opacity-45",
                   )}
                 >
-                  <View className="h-7 w-7 items-center justify-center">
-                    <SymbolView
-                      name="text.bubble"
-                      size={18}
-                      tintColorClassName="accent-icon-muted"
-                      type="monochrome"
-                    />
-                  </View>
+                  <View className="h-7 w-7 items-center justify-center">{scratchIcon(20, 18)}</View>
                   <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">No project</Text>
+                    <Text className="text-base font-t3-bold leading-snug">{scratchTitle}</Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
                       Start a task without a project
                     </Text>

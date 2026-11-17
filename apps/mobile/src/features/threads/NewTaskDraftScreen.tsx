@@ -742,11 +742,11 @@ export function NewTaskDraftScreen(props: {
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
           accessibilityHint="Opens the project picker"
-          accessibilityLabel="No project"
+          accessibilityLabel={selectedProjectLabel ?? selectedProject.title}
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="No project"
+          label={selectedProjectLabel ?? selectedProject.title}
           onPress={chooseProject}
         />
         {environmentControl}
@@ -821,9 +821,7 @@ export function NewTaskDraftScreen(props: {
       </NativeScrollEdgeEffectsContext>
     );
 
-  const contextProjectLabel = flow.isScratchDraft
-    ? "No project"
-    : (selectedProjectLabel ?? selectedProject.title);
+  const contextProjectLabel = selectedProjectLabel ?? selectedProject.title;
   const contextControls = (
     <View className="flex-row items-center gap-1 px-2">
       <View className="min-w-0 shrink">

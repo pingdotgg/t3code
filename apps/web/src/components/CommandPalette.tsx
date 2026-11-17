@@ -257,6 +257,7 @@ import {
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { ProjectFavicon } from "./ProjectFavicon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
@@ -891,6 +892,9 @@ function OpenCommandPaletteDialog(props: {
       });
       if (scratchTargetEnvironmentId === null) return projectItems;
 
+      const scratchProject = pickerProjects.find(
+        (project) => project.environmentId === scratchTargetEnvironmentId && isScratch(project),
+      );
       const noProjectIndex = newThreadNoProjectIndex(
         projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
           isScratch: isScratchProject(
@@ -907,8 +911,12 @@ function OpenCommandPaletteDialog(props: {
           kind: "action" as const,
           value: NEW_THREAD_NO_PROJECT_VALUE,
           searchTerms: ["no project", "without project", "none"],
-          title: "No project",
-          icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+          title: scratchProject?.displayName ?? "No project",
+          icon: scratchProject ? (
+            <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
+          ) : (
+            <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />
+          ),
           shortcutCommand: "chat.newWithoutProject" as const,
           run: () => startScratchThread(scratchTargetEnvironmentId),
         },
