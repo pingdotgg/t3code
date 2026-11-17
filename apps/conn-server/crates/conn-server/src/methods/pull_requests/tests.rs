@@ -553,8 +553,13 @@ async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
     let dir = TestDir::new();
     let mut panel = panel(shell(&dir.0), &dir, "http://127.0.0.1:1");
     let environment = Arc::new(
-        ServerEnvironment::load(&dir.0, Some("Refusals".into()), dir.0.clone())
-            .expect("environment"),
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Refusals".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
     );
     Arc::get_mut(&mut panel).expect("new panel").environment = Some(environment.clone());
     let mut table = MethodTable::new();
@@ -723,8 +728,13 @@ async fn review_guide_reads_t3_storage_keeps_stale_head_and_survives_restart() {
     for _ in 0..2 {
         let mut panel = panel(shell(&dir.0), &dir, &base);
         Arc::get_mut(&mut panel).expect("new panel").environment = Some(Arc::new(
-            ServerEnvironment::load(&dir.0, Some("Guide test".into()), dir.0.clone())
-                .expect("environment"),
+            ServerEnvironment::load(
+                &dir.0,
+                Some("Guide test".into()),
+                dir.0.clone(),
+                Default::default(),
+            )
+            .expect("environment"),
         ));
         let mut table = MethodTable::new();
         register_panel(&mut table, panel);
@@ -765,8 +775,13 @@ async fn review_guide_reads_t3_storage_keeps_stale_head_and_survives_restart() {
     }
     let mut panel = panel(shell(&dir.0), &dir, &base);
     Arc::get_mut(&mut panel).expect("new panel").environment = Some(Arc::new(
-        ServerEnvironment::load(&dir.0, Some("Guide test".into()), dir.0.clone())
-            .expect("environment"),
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Guide test".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
     ));
     let mut table = MethodTable::new();
     register_panel(&mut table, panel);

@@ -10,7 +10,10 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -18,7 +21,7 @@ use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
     AwaitBackgroundTasksInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
     McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
-    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput,
+    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, StopTaskInput,
     ThreadSnapshot, TurnInput,
 };
 use serde_json::{Map, Value, json};
@@ -116,9 +119,28 @@ struct State {
     tails: HashMap<String, crate::tail::Tail>,
 }
 
+struct WorkflowStopGuard {
+    inner: Arc<Inner>,
+    thread: Value,
+    task_id: String,
+    accepted: bool,
+}
+
+impl Drop for WorkflowStopGuard {
+    fn drop(&mut self) {
+        if !self.accepted {
+            self.inner
+                .lock()
+                .mapper
+                .workflow_stop(&self.thread, &self.task_id, false);
+        }
+    }
+}
+
 struct Live {
     query: QueryHandle,
     generation: u64,
+    stopping: Arc<AtomicBool>,
     /// Becomes true when the query's `end` arrived.
     ended: watch::Receiver<bool>,
     native_thread_id: String,
@@ -442,14 +464,24 @@ async fn drive(
     query: QueryHandle,
     mut rx: mpsc::Receiver<QueryEvent>,
     ended: watch::Sender<bool>,
+    stopping: Arc<AtomicBool>,
 ) {
     loop {
-        let dirty = inner.lock().mapper.has_dirty_streams();
+        let dirty = {
+            let state = inner.lock();
+            state.generation == generation && state.mapper.has_dirty_streams()
+        };
         let event = if dirty {
             tokio::select! {
                 event = rx.recv() => event,
                 _ = tokio::time::sleep(FLUSH_INTERVAL) => {
-                    let outs = inner.lock().mapper.flush();
+                    let outs = {
+                        let mut state = inner.lock();
+                        if state.generation != generation {
+                            continue;
+                        }
+                        state.mapper.flush()
+                    };
                     inner.deliver(Some(&query), outs).await;
                     continue;
                 }
@@ -478,7 +510,7 @@ async fn drive(
             },
             Some(QueryEvent::Cancel { id }) => Inbound::ControlCancel { request_id: id },
             Some(QueryEvent::End(end)) => {
-                on_end(&inner, generation, &end).await;
+                on_end(&inner, generation, &end, stopping.load(Ordering::Relaxed)).await;
                 let _ = ended.send(true);
                 return;
             }
@@ -490,14 +522,21 @@ async fn drive(
                         helper_error: Some("the Claude helper stopped".into()),
                         ..QueryEnd::default()
                     },
+                    stopping.load(Ordering::Relaxed),
                 )
                 .await;
                 let _ = ended.send(true);
                 return;
             }
         };
-        touch(&mut inner.lock(), Some(generation));
-        let outs = inner.lock().mapper.handle(message);
+        let outs = {
+            let mut state = inner.lock();
+            if state.generation != generation {
+                continue;
+            }
+            touch(&mut state, Some(generation));
+            state.mapper.handle(message)
+        };
         inner.deliver(Some(&query), outs).await;
     }
 }
@@ -599,6 +638,7 @@ async fn end_query(helper: &Helper, live: Live) {
 /// The T3 query runner's teardown of an interrupted open: the host aborts the query (prompt
 /// stream ended, SIGKILL, up to 10 s for the exit, dispose), and `end` follows.
 async fn abort_query(helper: &Helper, live: Live) {
+    live.stopping.store(true, Ordering::Relaxed);
     let Live {
         query, mut ended, ..
     } = live;
@@ -620,20 +660,21 @@ fn abandoned_error() -> ProviderError {
     )
 }
 
-async fn on_end(inner: &Inner, generation: u64, end: &QueryEnd) {
+async fn on_end(inner: &Inner, generation: u64, end: &QueryEnd, stopping: bool) {
     let outs = {
         let mut state = inner.lock();
         let current = state
             .live
             .as_ref()
             .is_some_and(|l| l.generation == generation);
-        if !current {
-            return;
+        let expected = state.closed || stopping;
+        if current {
+            state.live = None;
+            let detail = end_detail(end);
+            state.mapper.on_exit(expected, &detail)
+        } else {
+            state.mapper.end_process_subagents(generation, expected)
         }
-        let expected = state.closed;
-        state.live = None;
-        let detail = end_detail(end);
-        state.mapper.on_exit(expected, &detail)
     };
     inner.deliver(None, outs).await;
     // The query ended by itself (crash, bad resume id): the helper may now be idle.
@@ -1356,14 +1397,16 @@ impl ClaudeSession {
         };
         let handle = query.handle();
         let (ended_tx, ended) = watch::channel(false);
+        let stopping = Arc::new(AtomicBool::new(false));
         let generation = {
             let mut state = inner.lock();
             state.generation += 1;
             let generation = state.generation;
-            state.mapper.new_process();
+            state.mapper.new_process(generation);
             state.live = Some(Live {
                 query: handle.clone(),
                 generation,
+                stopping: stopping.clone(),
                 ended,
                 native_thread_id: input.native_thread_id.clone(),
                 cwd: input.cwd.clone(),
@@ -1390,6 +1433,7 @@ impl ClaudeSession {
             handle.clone(),
             rx,
             ended_tx,
+            stopping,
         ));
         if let Some(timeout) = inner.config.idle_timeout {
             tokio::spawn(idle_watch(
@@ -1461,6 +1505,7 @@ impl ClaudeSession {
             }
         };
         if let Some(live) = live {
+            live.stopping.store(true, Ordering::Relaxed);
             end_query(&self.inner.helper, live).await;
         }
     }
@@ -1902,6 +1947,7 @@ impl Session for ClaudeSession {
                 }
             };
             if let Some(live) = live {
+                live.stopping.store(true, Ordering::Relaxed);
                 end_query(&self.inner.helper, live).await;
             }
             let outs = self.inner.lock().mapper.stop_background_work();
@@ -2166,6 +2212,49 @@ impl Session for ClaudeSession {
         })
     }
 
+    fn stop_task(&self, input: StopTaskInput) -> BoxFuture<'_, ProviderResult<()>> {
+        Box::pin(async move {
+            let row = to_json(&input.provider_thread);
+            let query = {
+                let mut state = self.inner.lock();
+                let native = native_thread_id(&input.provider_thread);
+                let live = state
+                    .live
+                    .as_ref()
+                    .filter(|l| {
+                        !*l.ended.borrow() && native.as_deref() == Some(l.native_thread_id.as_str())
+                    })
+                    .map(|l| l.query.clone());
+                let valid =
+                    live.is_some() && state.mapper.workflow_stop(&row, &input.task_id, true);
+                if !valid {
+                    return Err(failed_err(
+                        "stop_task",
+                        "No running workflow task belongs to this provider thread",
+                    ));
+                }
+                live.ok_or(ProviderError::SessionStopped)?
+            };
+            let mut guard = WorkflowStopGuard {
+                inner: self.inner.clone(),
+                thread: row,
+                task_id: input.task_id.clone(),
+                accepted: false,
+            };
+            if let Err(error) = query
+                .call("stopTask", json!([input.task_id]), Duration::from_secs(15))
+                .await
+            {
+                return Err(failed_err(
+                    "stop_task",
+                    format!("Workflow stop request failed: {error}"),
+                ));
+            }
+            guard.accepted = true;
+            Ok(())
+        })
+    }
+
     fn has_pending_background_work(&self) -> bool {
         self.inner.lock().mapper.has_pending_background_work()
     }
@@ -2196,6 +2285,7 @@ impl Session for ClaudeSession {
                 state.live.take()
             };
             if let Some(live) = live {
+                live.stopping.store(true, Ordering::Relaxed);
                 end_query(&self.inner.helper, live).await;
             }
             // A turn still open ends as interrupted; then the event channel closes.

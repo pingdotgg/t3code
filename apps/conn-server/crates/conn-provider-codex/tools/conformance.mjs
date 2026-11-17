@@ -27,8 +27,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { exampleBinary } from "../../../tools/check-binaries.mjs";
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
-import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -920,10 +921,10 @@ if (tsStatus !== 0) {
 // ---------------------------------------------------------------------------------------
 
 const rust = NodeChildProcess.spawnSync(
-  "cargo",
-  ["run", "--quiet", "-p", "conn-provider-codex", "--example", "conformance", "--", NodePath.join(work, "plan.json")],
-  // Sealed: the example and the stub it starts get a throwaway HOME; cargo keeps its folders.
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedCargoEnv(NodePath.join(work, "rust-env")) },
+  NodePath.join(repoRoot, "tools/cargo-runner"),
+  [exampleBinary("conn-provider-codex", "conformance"), NodePath.join(work, "plan.json")],
+  // The same sealed runner as cargo run gives the example and its stub a throwaway HOME.
+  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedNodeEnv(NodePath.join(work, "rust-env")) },
 );
 // A Rust call that failed is reported by the example and shows as a difference below.
 const rustFailed = rust.status !== 0;

@@ -275,6 +275,12 @@ pub struct SystemMsg {
     #[serde(default)]
     pub task_type: Option<String>,
     #[serde(default)]
+    pub workflow_name: Option<String>,
+    #[serde(default)]
+    pub workflow_progress: Option<Value>,
+    #[serde(default)]
+    pub usage: Option<Value>,
+    #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub prompt: Option<String>,

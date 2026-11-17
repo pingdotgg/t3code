@@ -81,6 +81,19 @@ builder with a test that fails without the fix.
   images inlined, the shared bootstrap, a thread attachment and signed delivery with T3's CSP.
   A deleted thread's renders are removed with it. T3's `toolOutput.ts` is ported once
   (`conn_provider::tool_output`) and shared with MCP App parsing.
+- **Workflows, tool search, restart** (PR #101): `orchestration.getWorkflowScript`,
+  `orchestration.stopWorkflow`, `t3_workflow_stop`, `tool_search`, and `server.restart`
+  (only under systemd's `t3.service` with automatic restart, and with
+  `environment:maintain`). Each thread dispatches under its own lock, as in T3.
+- **Headless previews** (PR #111): `html_preview`, the 13 `preview_*` tools,
+  `t3_preview_list` / `t3_preview_close`, eight client RPCs and the authenticated JPEG
+  stream. Orbit sets `CONN_SERVER_BROWSER_PATH` to its shared pinned Chrome bundle;
+  a missing or wrong-version configured browser fails without a runtime download.
+  Generated `chrome.json` exports the release pin. Limits: 32 tabs, eight per agent, four
+  browser hosts, two recordings and two HTML captures. Downloads, viewer HTTP
+  file transfer and clipboard are unserved; iframe snapshots fail closed; desktop relay,
+  local-server discovery and stop RPCs stay unregistered. `preview_cdp_endpoint` returns
+  T3's desktop-only error. Native GUI interaction and the Orbit image remain unproven.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

@@ -198,6 +198,12 @@ packages/shared/src/previewSessionControl.ts
 packages/shared/src/previewViewport.ts
 packages/shared/src/preview.ts
 packages/shared/src/credentialFill.ts
+
+[crates/conn-server]
+apps/server/src/orchestration-v2/workflowScriptQuery.ts
+apps/server/src/orchestration-v2/workflowFileRead.ts
+apps/server/src/serverRestart.ts
+
 [crates/conn-features/src/test_logins]
 apps/server/src/credentials/TestLoginStore.ts
 packages/contracts/src/credentials.ts

@@ -115,13 +115,13 @@ printf '%s\n' "${base_env[@]}" > "$OUT/base.env"
 
 if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
   echo "== Conn Server (helper)"
-  (cd "$workspace_root" && env "${cargo_env[@]}" cargo build -q -p conn-provider-claude --example conformance)
+  binary="$(env "${cargo_env[@]}" CONN_CHECK_BINARIES="${CONN_CHECK_BINARIES:-}" node "$workspace_root/tools/check-binaries.mjs" conn-provider-claude conformance)"
   # The same working directory as the T3 side below: the spawn script's `cd -P` gives the CLI
   # OLDPWD, which is the spawning server's own working directory on both sides.
   (
     cd "$repo/apps/server"
     env -i "${base_env[@]}" \
-      "$workspace_root/target/debug/examples/conformance" \
+      "$binary" \
       "$here/scenarios.json" "$OUT/rust" "$OUT/workspace" "$OUT/attachments" \
       "${CONFORMANCE_HELPER:-$workspace_root/helpers/sdk-host/index.mjs}" "$@"
   ) 2>&1 | tee "$OUT/rust.log"

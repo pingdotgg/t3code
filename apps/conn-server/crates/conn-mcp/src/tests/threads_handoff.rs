@@ -357,10 +357,12 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
     assert_eq!(std::fs::read(stored.path).unwrap(), b"abc");
     let mut tampered = attachment.clone();
     tampered["name"] = json!("forged.txt");
-    let reused = agent
+    // Steering may end the parent; its paired client can still reuse the attachments.
+    let mut outside = Client::open(&f.service, client(true)).await;
+    let reused = outside
         .ok(
             "t3_thread_send_attachments",
-            json!({"attachments":[tampered]}),
+            json!({"threadId":parent["threadId"],"attachments":[tampered]}),
         )
         .await;
     let projection = f
@@ -379,7 +381,6 @@ async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids
     assert_eq!(message["attachments"][0]["name"], "note.txt");
     let mut foreign = attachment.clone();
     foreign["id"] = json!("other-00000000-0000-4000-8000-000000000001-txt");
-    let mut outside = Client::open(&f.service, client(true)).await;
     assert_eq!(
         outside
             .failure(

@@ -61,15 +61,7 @@ pub struct TitlePromptInput {
     pub instructions: Option<String>,
 }
 
-/// JavaScript's `\s`: Unicode white space and U+FEFF, without U+0085.
-fn is_js_space(c: char) -> bool {
-    (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
-}
-
-/// `String.prototype.trim`.
-pub fn js_trim(value: &str) -> &str {
-    value.trim_matches(is_js_space)
-}
+pub use conn_support::text::{is_js_space, js_trim};
 
 /// `isAttachmentOnlyBootstrapPrompt`: the text a client sends for files without a message.
 pub fn is_attachment_only_bootstrap_prompt(text: &str) -> bool {

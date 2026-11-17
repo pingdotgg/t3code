@@ -129,6 +129,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 mapper.mark_interrupted();
                 vec![]
             }
+            ("end", _) => mapper.end_process_subagents(0, false),
             ("in", "control_response") | ("out", _) => vec![],
             ("in", _) => {
                 let mut outs = mapper.handle(Inbound::from_value(msg.clone()));
@@ -801,4 +802,107 @@ fn a_scheduled_wakeup_is_listed_until_cancelled() {
     })));
     assert_eq!(last_roster(&outs), Some(json!([])));
     assert!(!mapper.has_pending_background_work());
+}
+
+#[test]
+fn workflow_run_matches_the_ts_adapter() {
+    let replay = assert_same("e16_workflow", "full-access");
+    assert!(
+        replay
+            .events
+            .iter()
+            .any(|e| e["subagent"]["workflow"]["name"] == "Audit")
+    );
+}
+
+#[test]
+fn workflow_progress_after_the_root_turn_matches_the_ts_adapter() {
+    assert_same("e17_workflow_idle", "full-access");
+    let frames: Vec<Value> = testdata::cli("e17_workflow_idle")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["msg"].clone())
+        .collect();
+    let frame = |subtype: &str| {
+        frames
+            .iter()
+            .find(|msg| msg["subtype"] == subtype)
+            .unwrap()
+            .clone()
+    };
+    let result = frames
+        .iter()
+        .find(|msg| msg["type"] == "result")
+        .unwrap()
+        .clone();
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-session");
+    mapper.begin_turn(
+        &turn_input(1, &thread, "workflow", "full-access"),
+        "default",
+    );
+    mapper.handle(Inbound::from_value(frame("task_started")));
+    mapper.handle(Inbound::from_value(result.clone()));
+    mapper.begin_turn(
+        &turn_input(2, &thread, "another turn", "full-access"),
+        "default",
+    );
+    mapper.handle(Inbound::from_value(result));
+    let updates = mapper.handle(Inbound::from_value(frame("task_progress")));
+    assert!(updates.iter().any(
+        |out| matches!(out, Out::Event(ProviderEvent::SubagentUpdated { subagent })
+        if to_json(subagent)["workflow"]["agents"][0]["label"] == "Reviewer")
+    ));
+    assert!(
+        updates
+            .iter()
+            .any(|out| matches!(out, Out::Event(ProviderEvent::AppThreadCreated { .. })))
+    );
+    assert!(!updates.iter().any(
+        |out| matches!(out, Out::Event(ProviderEvent::TurnItemUpdated { turn_item })
+        if to_json(turn_item)["threadId"] == THREAD)
+    ));
+}
+
+#[test]
+fn workflow_process_exit_matches_the_ts_adapter() {
+    assert_same("e18_workflow_exit", "full-access");
+}
+
+#[test]
+fn a_retired_process_cannot_stop_or_settle_a_replacements_workflow() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-processes");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    let started = |task: &str| {
+        Inbound::from_value(json!({
+            "type":"system", "subtype":"task_started", "task_id":task, "tool_use_id":task,
+            "task_type":"local_workflow", "workflow_name":"Review"
+        }))
+    };
+    mapper.handle(started("old"));
+    mapper.new_process(1);
+    let thread = serde_json::to_value(thread).unwrap();
+    assert!(!mapper.workflow_stop(&thread, "old", true));
+    mapper.handle(started("new"));
+    let ended = mapper.end_process_subagents(0, false);
+    let events: Vec<Value> = ended
+        .into_iter()
+        .filter_map(|out| match out {
+            Out::Event(event) => Some(serde_json::to_value(event).unwrap()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "old"
+                && e["subagent"]["status"] == "failed")
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "new")
+    );
+    assert!(mapper.workflow_stop(&thread, "new", true));
+    assert!(mapper.turn_active());
 }

@@ -27,8 +27,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { exampleBinary } from "../../../../tools/check-binaries.mjs";
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -47,27 +48,14 @@ const keep = args.includes("--keep");
 const onlyAt = args.indexOf("--only");
 const only = onlyAt === -1 ? null : args[onlyAt + 1];
 
-// The driver binary, built once.
-const build = NodeChildProcess.spawnSync(
-  "cargo",
-  ["build", "--quiet", "-p", "conn-engine", "--example", "t3_fixture_replay"],
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: cargoBuildEnv() },
-);
-if (build.status !== 0) {
-  console.error("t3-fixture-replay: the driver did not build");
-  process.exit(1);
-}
-const targetDir = process.env.CARGO_TARGET_DIR
-  ? NodePath.resolve(repoRoot, process.env.CARGO_TARGET_DIR)
-  : NodePath.join(repoRoot, "target");
-const DRIVER = NodePath.join(targetDir, "debug/examples/t3_fixture_replay");
+const binary = exampleBinary("conn-engine", "t3_fixture_replay");
 
 const work = NodeFS.realpathSync(
   NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-t3-fixture-replay-")),
 );
 const config = {
   work,
-  driverBinary: DRIVER,
+  driverBinary: binary,
   codexStub: CODEX_STUB,
   claudeFakeHost: CLAUDE_FAKE_HOST,
   claudeShim: NodePath.join(HERE, "claude-session-shim.mjs"),

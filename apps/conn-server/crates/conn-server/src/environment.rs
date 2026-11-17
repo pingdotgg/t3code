@@ -29,6 +29,7 @@ use crate::{
 pub const CONTRACT_SERVER_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 
 pub struct Environment {
+    pub restart: Arc<crate::restart::Restart>,
     /// `ExecutionEnvironmentDescriptor`, served at `/.well-known/t3/environment` and inside
     /// the server config.
     pub descriptor: Value,
@@ -56,7 +57,12 @@ impl std::fmt::Debug for Environment {
 impl Environment {
     /// Reads the environment id from `state_dir`, or creates one on first start, and opens
     /// the stores. `cwd` is the folder the server reports as its own.
-    pub fn load(state_dir: &Path, label: Option<String>, cwd: PathBuf) -> io::Result<Self> {
+    pub fn load(
+        state_dir: &Path,
+        label: Option<String>,
+        cwd: PathBuf,
+        restart: crate::restart::Restart,
+    ) -> io::Result<Self> {
         fs::create_dir_all(state_dir)?;
         let environment_id = load_or_create_id(&state_dir.join("environment-id"))?;
         let label = label
@@ -65,7 +71,8 @@ impl Environment {
             .filter(|l| !l.trim().is_empty())
             .unwrap_or_else(|| "conn-server".into());
         Ok(Self {
-            descriptor: descriptor(&environment_id, label.trim()),
+            descriptor: descriptor(&environment_id, label.trim(), restart.available()),
+            restart: Arc::new(restart),
             cwd,
             state_dir: state_dir.to_owned(),
             settings: SettingsStore::open(state_dir.join("settings.json")),
@@ -130,7 +137,7 @@ fn hostname() -> Option<String> {
 
 /// `ExecutionEnvironmentDescriptor`, built from the contract type, so a new required field
 /// upstream is a compile error here.
-pub fn descriptor(environment_id: &str, label: &str) -> Value {
+pub fn descriptor(environment_id: &str, label: &str, server_restart: bool) -> Value {
     conn_contract::to_json(&ExecutionEnvironmentDescriptor {
         environment_id: environment_id.into(),
         label: label.into(),
@@ -142,7 +149,7 @@ pub fn descriptor(environment_id: &str, label: &str) -> Value {
         server_version: CONTRACT_SERVER_VERSION.into(),
         orchestration_protocol_version: Some(i64::from(ORCHESTRATION_PROTOCOL_VERSION)),
         database_migration: None,
-        capabilities: capabilities(),
+        capabilities: capabilities(server_restart),
         orbit_instance: None,
     })
 }
@@ -151,10 +158,11 @@ pub fn descriptor(environment_id: &str, label: &str) -> Value {
 /// clients then rely on, so each one here is served; every other one stays unset (off). This
 /// covers the descriptor's `capabilities` and the flags `ServerConfig` carries
 /// ([`config_flags`]).
-pub fn capabilities() -> ExecutionEnvironmentCapabilities {
+pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     // Every capability is optional; the test below proves this decode holds.
     let mut capabilities: ExecutionEnvironmentCapabilities =
         conn_contract::from_json(json!({})).expect("every capability is optional");
+    capabilities.server_restart = server_restart.then_some(true);
     capabilities.repository_identity = Some(false);
     capabilities.server_browser = Some(true);
     // Uploads are claimed by the message that sends them (`host.rs`).
@@ -214,10 +222,11 @@ mod tests {
             "0b6f1a52-3c1e-4d7a-9a55-2a1f8b0c9d10\n",
         )
         .unwrap();
-        let env = Environment::load(&dir, Some("Box".into()), dir.clone()).unwrap();
+        let env =
+            Environment::load(&dir, Some("Box".into()), dir.clone(), Default::default()).unwrap();
         assert_eq!(env.environment_id(), "0b6f1a52-3c1e-4d7a-9a55-2a1f8b0c9d10");
         let fresh = dir.join("fresh");
-        let made = Environment::load(&fresh, None, dir.clone()).unwrap();
+        let made = Environment::load(&fresh, None, dir.clone(), Default::default()).unwrap();
         assert_eq!(made.environment_id().len(), 36);
         assert_eq!(
             fs::read_to_string(fresh.join("environment-id")).unwrap(),
@@ -228,7 +237,8 @@ mod tests {
 
     #[test]
     fn the_descriptor_decodes_and_advertises_only_what_is_served() {
-        let descriptor = descriptor("0b6f1a52-3c1e-4d7a-9a55-2a1f8b0c9d10", "Box");
+        let descriptor = descriptor("0b6f1a52-3c1e-4d7a-9a55-2a1f8b0c9d10", "Box", false);
+        assert!(descriptor["capabilities"].get("serverRestart").is_none());
         let typed: ExecutionEnvironmentDescriptor =
             conn_contract::from_json(descriptor.clone()).unwrap();
         assert_eq!(typed.server_version, conn_contract::T3_SERVER_VERSION);

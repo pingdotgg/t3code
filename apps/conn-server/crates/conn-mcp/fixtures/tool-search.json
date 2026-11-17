@@ -1,0 +1,90 @@
+{
+  "initiallyListed": [
+    "orchestrator_capabilities",
+    "delegate_task",
+    "task_status",
+    "tool_search"
+  ],
+  "retainedSessions": 256,
+  "cases": [
+    {
+      "query": "T3_WORKFLOW_STOP",
+      "names": [
+        "t3_workflow_stop"
+      ]
+    },
+    {
+      "query": "thread",
+      "names": [
+        "create_threads",
+        "t3_thread_list",
+        "t3_thread_read",
+        "t3_thread_update",
+        "t3_thread_send",
+        "t3_thread_wait",
+        "t3_thread_interrupt",
+        "t3_thread_search",
+        "t3_thread_configure",
+        "t3_thread_organize"
+      ]
+    },
+    {
+      "query": "project",
+      "names": [
+        "t3_project_list",
+        "t3_project_read",
+        "preview_cdp_endpoint",
+        "annotations_list",
+        "list_scheduled_tasks",
+        "create_threads",
+        "t3_thread_list",
+        "t3_thread_search",
+        "t3_thread_launch",
+        "t3_worktree_status"
+      ]
+    },
+    {
+      "query": "thread thread",
+      "names": [
+        "create_threads",
+        "t3_thread_list",
+        "t3_thread_read",
+        "t3_thread_update",
+        "t3_thread_send",
+        "t3_thread_wait",
+        "t3_thread_interrupt",
+        "t3_thread_search",
+        "t3_thread_configure",
+        "t3_thread_organize"
+      ]
+    },
+    {
+      "query": "t3_thread_read",
+      "names": [
+        "t3_thread_read",
+        "t3_workflow_stop",
+        "t3_thread_launch"
+      ]
+    },
+    {
+      "query": "@!!",
+      "names": []
+    },
+    {
+      "query": "tool_search",
+      "names": []
+    },
+    {
+      "query": "environment, schedule",
+      "names": [
+        "schedule_task",
+        "list_scheduled_tasks",
+        "delete_scheduled_task",
+        "run_scheduled_task_now",
+        "t3_environment_read",
+        "preview_navigate",
+        "t3_project_list"
+      ]
+    }
+  ]
+}

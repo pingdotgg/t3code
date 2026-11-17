@@ -34,8 +34,13 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
     std::fs::create_dir_all(state_dir).expect("state directory");
     let root = project.to_string_lossy().into_owned();
     let environment = Arc::new(
-        Environment::load(state_dir, Some("mcp-agent".into()), project.to_path_buf())
-            .expect("environment"),
+        Environment::load(
+            state_dir,
+            Some("mcp-agent".into()),
+            project.to_path_buf(),
+            Default::default(),
+        )
+        .expect("environment"),
     );
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {

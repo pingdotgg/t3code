@@ -33,6 +33,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       reply(cmd.id, null);
+      if (["workflow", "workflow-background"].includes(cmd.message.message.content)) {
+        write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"system",subtype:"task_started",task_id:"wf1",tool_use_id:"run1",task_type:"local_workflow",workflow_name:"Review",description:"Review",prompt:"workflow()"}});
+      }
+      if (cmd.message.message.content === "workflow-background") {
+        write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"result",subtype:"success",is_error:false,result:"started",duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{},modelUsage:{},session_id:"fake"}});
+      }
       if (fs.existsSync(LOG + ".frames")) {
         for (const frame of JSON.parse(fs.readFileSync(LOG + ".frames", "utf8")))
           write({ch:"sdk",t:"msg",...sessions.get(cmd.sessionId),m:{...frame,session_id:cmd.message.session_id}});
@@ -40,6 +46,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       break;
     case "call":
       log(`call ${cmd.method}`);
+      if (cmd.method === "stopTask") log(`stop ${JSON.stringify(cmd.args)}`);
       // A CLI still booting: `initializationResult` does not answer.
       if (["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(cmd.method)) log(`mcp ${JSON.stringify(cmd)}`);
       if (fs.existsSync(LOG + ".errors")) {
@@ -448,6 +455,141 @@ async fn an_abandoned_start_aborts_the_booting_query() {
     );
     assert!(session.live_query().is_none());
     session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workflow_stop_calls_the_sdk_without_interrupting_the_turn() {
+    use conn_provider::StopTaskInput;
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("workflow-stop");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let input = turn(1, &thread, "workflow", "full-access", &cwd);
+    session.start_turn(input).await.unwrap();
+    let _ = until(&mut events, |e| e["type"] == "subagent.updated").await;
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread.clone(),
+            task_id: "unknown".into(),
+        })
+        .await
+        .unwrap_err();
+    session
+        .stop_task(StopTaskInput {
+            provider_thread: thread,
+            task_id: "wf1".into(),
+        })
+        .await
+        .unwrap();
+    let text = std::fs::read_to_string(log).unwrap();
+    assert!(text.contains("stop [\"wf1\"]"), "{text}");
+    assert!(!text.contains("call interrupt"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn replacing_a_query_settles_its_workflow_and_refuses_a_stale_stop() {
+    use conn_provider::StopTaskInput;
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("workflow-replacement");
+    let (helper, log) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow-background", "full-access", &cwd))
+        .await
+        .unwrap();
+    let seen = until(&mut events, is_terminal).await;
+    assert!(seen.iter().any(|e| e["subagent"]["status"] == "running"));
+    // A changed policy forces a new CLI for the same native thread.
+    session
+        .start_turn(turn(2, &thread, "replacement", "approval-required", &cwd))
+        .await
+        .unwrap();
+    let error = session
+        .stop_task(StopTaskInput {
+            provider_thread: thread,
+            task_id: "wf1".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("No running workflow task belongs to this provider thread"),
+        "{error}"
+    );
+    let seen = until(&mut events, |e| {
+        e["type"] == "provider_turn.updated" && e["providerTurn"]["status"] == "running"
+    })
+    .await;
+    assert!(
+        seen.iter().any(|e| e["subagent"]["status"] == "failed"),
+        "{seen:?}"
+    );
+    assert!(
+        !seen.iter().any(is_terminal),
+        "the replacement stays running: {seen:?}"
+    );
+    let text = std::fs::read_to_string(log).unwrap();
+    assert_eq!(
+        text.lines()
+            .filter(|line| line.starts_with("open "))
+            .count(),
+        2,
+        "{text}"
+    );
+    assert!(!text.contains("call stopTask"), "{text}");
+    session.close().await;
+    helper.stop_if_idle().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn releasing_a_query_cancels_its_background_workflow() {
+    use conn_provider::{RollbackTarget, RollbackThreadInput};
+    if !node_available() {
+        return;
+    }
+    let dir = Scratch::new("workflow-release");
+    let (helper, _) = fake_host(&dir.0, true);
+    let (session, mut events) = session(&helper);
+    let cwd = dir.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    session
+        .start_turn(turn(1, &thread, "workflow-background", "full-access", &cwd))
+        .await
+        .unwrap();
+    until(&mut events, is_terminal).await;
+    session
+        .rollback_thread(RollbackThreadInput {
+            provider_thread: thread,
+            target: RollbackTarget::ThreadStart {
+                checkpoint_id: "checkpoint-start".into(),
+            },
+            provider_thread_turns: vec![],
+        })
+        .await
+        .unwrap();
+    let mut settled = false;
+    while let Ok(event) = events.try_recv() {
+        let event = conn_contract::to_json(&event);
+        settled |= event["subagent"]["status"] == "cancelled";
+    }
+    assert!(
+        settled,
+        "release must settle its query's workflow before returning"
+    );
+    assert!(!session.has_pending_background_work());
+    session.close().await;
+    helper.stop_if_idle().await;
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -28,8 +28,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { exampleBinary } from "../../../tools/check-binaries.mjs";
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
-import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
 import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
@@ -266,10 +267,10 @@ const planFile = NodePath.join(work, "plan.json");
 const rustParentEnv = NodePath.join(work, "rust-parent-env.json");
 NodeFS.writeFileSync(planFile, JSON.stringify({ scenarios: plan, parentEnv: rustParentEnv }));
 NodeChildProcess.execFileSync(
-  "cargo",
-  ["run", "--quiet", "-p", "conn-provider-acp", "--example", "conformance", "--", planFile],
-  // Sealed: the example and the stub it starts get a throwaway HOME; cargo keeps its folders.
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedCargoEnv(NodePath.join(work, "rust-env")) },
+  NodePath.join(repoRoot, "tools/cargo-runner"),
+  [exampleBinary("conn-provider-acp", "conformance"), planFile],
+  // The same sealed runner as cargo run gives the example and its stub a throwaway HOME.
+  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedNodeEnv(NodePath.join(work, "rust-env")) },
 );
 
 // ---- compare ------------------------------------------------------------------------------

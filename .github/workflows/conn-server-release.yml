@@ -41,7 +41,7 @@ jobs:
   tarball:
     name: Release tarball (linux-x64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
@@ -117,7 +117,7 @@ jobs:
     needs: tarball
     if: ${{ needs.tarball.outputs.release == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 3
     permissions:
       contents: write
     steps:

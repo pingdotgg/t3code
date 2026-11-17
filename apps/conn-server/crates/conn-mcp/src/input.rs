@@ -153,7 +153,7 @@ fn decode(
     if rule["trim"] == true
         && let Some(s) = value.as_str()
     {
-        *value = json!(js_trim(s));
+        *value = json!(conn_support::text::js_trim(s));
     }
     if rule["fromRecord"] == true
         && let Some(map) = value.as_object()
@@ -201,8 +201,12 @@ fn decode(
             .map(|s| s.encode_utf16().count())
             .or_else(|| value.as_array().map(Vec::len));
         let valid = match check["id"].as_str().unwrap_or_default() {
-            "nonBlank" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
-            "isTrimmed" => value.as_str().is_some_and(|s| s == js_trim(s)),
+            "isTrimmed" => value
+                .as_str()
+                .is_some_and(|s| s == conn_support::text::js_trim(s)),
+            "nonBlank" => value
+                .as_str()
+                .is_some_and(|s| !conn_support::text::js_trim(s).is_empty()),
             "isMinLength" => {
                 length.is_some_and(|n| n as u64 >= check["minLength"].as_u64().unwrap_or(0))
             }
@@ -229,10 +233,6 @@ fn decode(
         }
     }
     Ok(())
-}
-
-pub(crate) fn js_trim(value: &str) -> &str {
-    value.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 #[cfg(test)]

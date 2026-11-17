@@ -1705,7 +1705,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 8] = [
+const NAMED_NOT_SERVED: &[&str] = &[
     "device_list",
     "device_open",
     "device_screenshot",
@@ -2270,6 +2270,169 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
 }
 
 mod threads_handoff;
+
+#[tokio::test(flavor = "current_thread")]
+async fn workflow_stop_reports_the_same_failure_and_write_guards_as_t3() {
+    let f = fixture("workflow-stop");
+    let mut c = Client::open(&f.service, client(true)).await;
+    assert_eq!(
+        c.failure(
+            "t3_workflow_stop",
+            json!({"threadId":"none", "subagentId":"none"})
+        )
+        .await,
+        (
+            "orchestration_error".into(),
+            "This workflow has no live provider task.".into()
+        )
+    );
+    let invalid = c
+        .request(
+            "tools/call",
+            json!({
+                "name":"t3_workflow_stop", "arguments":{"threadId":" ","subagentId":"task"}
+            }),
+        )
+        .await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    let mut c = Client::open(&f.service, client(false)).await;
+    assert_eq!(
+        c.failure(
+            "t3_workflow_stop",
+            json!({"threadId":"none", "subagentId":"none"})
+        )
+        .await
+        .0,
+        "capability_denied"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn deferred_clients_load_tools_by_provider_session_and_receive_list_changed() {
+    let f = fixture("deferred-tools");
+    let caller = Caller::Thread(ThreadCaller {
+        thread_id: "t".into(),
+        provider_session_id: "s".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: true,
+    });
+    let client = Client::open(&f.service, caller.clone()).await;
+    let session = client.session.as_deref().unwrap();
+    let request = |method: &str, params: Value| {
+        json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string()
+    };
+    let mut pairs = POST.to_vec();
+    pairs.extend([
+        ("mcp-session-id", session),
+        ("t3-tool-exposure", "deferred"),
+    ]);
+    let names = |value: &Value| {
+        value["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let list = f
+        .service
+        .handle(
+            caller.clone(),
+            &Method::POST,
+            &headers(&pairs),
+            request("tools/list", json!({})).as_bytes(),
+        )
+        .await;
+    let initial: Value = serde_json::from_str(list.body.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        names(&initial),
+        [
+            "orchestrator_capabilities",
+            "delegate_task",
+            "task_status",
+            "tool_search"
+        ]
+    );
+    let reply = f
+        .service
+        .handle(
+            caller.clone(),
+            &Method::POST,
+            &headers(&pairs),
+            request(
+                "tools/call",
+                json!({"name":"tool_search","arguments":{"query":"T3_WORKFLOW_STOP"}}),
+            )
+            .as_bytes(),
+        )
+        .await;
+    assert!(
+        reply
+            .headers
+            .iter()
+            .any(|(key, value)| *key == "content-type" && value == "text/event-stream")
+    );
+    let events: Vec<Value> = reply
+        .body
+        .as_deref()
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(events[0]["method"], "notifications/tools/list_changed");
+    assert_eq!(
+        events[1]["result"]["structuredContent"]["tools"][0]["name"],
+        "t3_workflow_stop"
+    );
+    let list = f
+        .service
+        .handle(
+            caller.clone(),
+            &Method::POST,
+            &headers(&pairs),
+            request("tools/list", json!({})).as_bytes(),
+        )
+        .await;
+    let loaded: Value = serde_json::from_str(list.body.as_deref().unwrap()).unwrap();
+    assert!(names(&loaded).contains(&"t3_workflow_stop".into()));
+    let ordinary = client
+        .raw(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))
+        .await
+        .1
+        .unwrap();
+    assert!(!names(&ordinary).contains(&"tool_search".into()));
+    let empty = f
+        .service
+        .handle(
+            caller,
+            &Method::POST,
+            &headers(&pairs),
+            request(
+                "tools/call",
+                json!({"name":"tool_search","arguments":{"query":"@!!"}}),
+            )
+            .as_bytes(),
+        )
+        .await;
+    assert!(
+        empty
+            .headers
+            .iter()
+            .any(|(key, value)| *key == "content-type" && value == "application/json")
+    );
+    let mut outside = Client::open(&f.service, crate::tests::client(true)).await;
+    assert_eq!(
+        outside
+            .request(
+                "tools/call",
+                json!({"name":"tool_search","arguments":{"query":"thread"}})
+            )
+            .await["error"]["message"],
+        "Tool 'tool_search' not found"
+    );
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn secret_request_requires_an_active_owned_run_and_stays_hidden() {

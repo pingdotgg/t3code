@@ -4157,6 +4157,119 @@ async fn work_queued_behind_an_abandoned_start_runs_after_it() {
     assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
 }
 
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_pending_workflow_stop_does_not_block_another_threads_dispatch() {
+    use std::hash::{Hash, Hasher};
+    let stripe = |id: &str| {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut hash);
+        hash.finish() % 64
+    };
+    // Exercise two ids that collided in the old stripe table.
+    let other = (0..4096)
+        .map(|n| format!("other-{n}"))
+        .find(|id| stripe(id) == stripe("t1"))
+        .unwrap();
+    let db = TempDb::new("workflow-stop-isolation");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_control_delay(Duration::from_secs(60)),
+    );
+    let engine = Arc::new(engine);
+    dispatch(&engine, create("t1", "create-workflow")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    let _ = next(&mut stream).await;
+    dispatch(&engine, message("t1", "start-workflow", "workflow")).await;
+    loop {
+        if next(&mut stream).await["event"]["type"] == "subagent.updated" {
+            break;
+        }
+    }
+    let stopping = engine.clone();
+    let mut stop = tokio::spawn(async move {
+        stopping
+            .call(
+                "orchestration.stopWorkflow",
+                json!({"threadId":"t1","subagentId":"workflow-coordinator"}),
+            )
+            .await
+    });
+    provider.workflow_stop_entered.notified().await;
+    tokio::select! {
+        biased;
+        _ = dispatch(&engine, create(&other, "create-other")) => {},
+        result = &mut stop => panic!("another thread waited for workflow Stop: {result:?}"),
+    }
+    stop.abort();
+    assert!(stop.await.unwrap_err().is_cancelled());
+    engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn workflow_stop_uses_the_run_session_and_keeps_the_thread_running() {
+    let db = TempDb::new("workflow-stop");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "create-workflow")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    let _ = next(&mut stream).await;
+    dispatch(&engine, message("t1", "start-workflow", "workflow")).await;
+    loop {
+        let item = next(&mut stream).await;
+        if item["event"]["type"] == "subagent.updated" {
+            break;
+        }
+    }
+    let request = json!({"threadId":"t1","subagentId":"workflow-coordinator"});
+    let mut limited = request.clone();
+    limited["modeLimit"] = json!({"runtimeMode":"auto-accept-edits","interactionMode":"default"});
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", limited).await
+    else {
+        panic!("a narrower caller stopped the workflow");
+    };
+    assert_eq!(error["code"], "runtime_mode_escalation_denied");
+    let expected_message = "Thread t1 now runs in full-access/default mode, above this caller's. Its user changed it while this call ran.";
+    assert_eq!(error["message"], expected_message);
+    let mut limited = request.clone();
+    limited["modeLimit"] = json!({"runtimeMode":"full-access","interactionMode":"plan"});
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", limited).await
+    else {
+        panic!("a plan caller stopped the workflow");
+    };
+    assert_eq!(error["code"], "interaction_mode_escalation_denied");
+    assert_eq!(error["message"], expected_message);
+
+    assert!(
+        !crate::lock(&provider.calls)
+            .iter()
+            .any(|c| c.starts_with("stop workflow"))
+    );
+    assert_eq!(
+        engine
+            .call("orchestration.stopWorkflow", request.clone())
+            .await
+            .unwrap(),
+        Value::Null
+    );
+    assert!(crate::lock(&provider.calls).contains(&"stop workflow wf1".to_owned()));
+    let projection = engine.get_thread_projection("t1".into()).await.unwrap();
+    assert_eq!(projection["runs"][0]["status"], "running");
+    engine.shutdown().await;
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", request).await
+    else {
+        panic!("stopped a released session");
+    };
+    assert_eq!(error["reason"], "unavailable");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart() {
     let db = TempDb::new("secret-cards");

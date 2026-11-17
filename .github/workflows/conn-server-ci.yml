@@ -45,7 +45,7 @@ jobs:
   rust:
     name: Format, Clippy, Tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 12
     env:
       # The test build of the whole workspace filled the runner's disk on 2026-11-14 ("No space
       # left on device" in the Tests step). Smaller debug info and no incremental data keep
@@ -69,8 +69,9 @@ jobs:
       - name: Disk space at the start
         run: df -h /
 
-      - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -120,10 +121,21 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/apps/conn-server/target
 
+      - name: Save Cargo on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-server/target
+          key: conn-server-test-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -143,7 +155,7 @@ jobs:
   musl:
     name: Linux musl release build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -162,8 +174,9 @@ jobs:
       - name: Install musl tools
         run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
 
-      - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -193,3 +206,13 @@ jobs:
           name: conn-server-x86_64-unknown-linux-musl
           path: apps/conn-server/target/x86_64-unknown-linux-musl/release/conn-server
           retention-days: 14
+      - name: Save Cargo on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-server/target
+          key: conn-server-musl-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}

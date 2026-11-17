@@ -777,7 +777,7 @@ mod tests {
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
-            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
+            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test", false)),
             engine,
             deps: Default::default(),
         };
@@ -1353,7 +1353,7 @@ mod tests {
         let state = AppState {
             table: Arc::new(MethodTable::new()),
             auth: auth.clone(),
-            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test")),
+            descriptor: Arc::new(crate::environment::descriptor("env-test", "Test", false)),
             engine: None,
             deps: Default::default(),
         };

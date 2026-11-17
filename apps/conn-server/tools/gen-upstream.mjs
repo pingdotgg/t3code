@@ -410,6 +410,8 @@ const LIMITED_METHODS = [
   "preview.open", "preview.list", "preview.close", "preview.resize", "preview.adjust",
   "preview.clearProfile", "preview.reportStatus", "preview.reportProfiles",
   "assets.createUrl",
+  "orchestration.getWorkflowScript",
+  "orchestration.stopWorkflow",
   "git.resolvePullRequest",
   "git.preparePullRequestThread",
   "git.runStackedAction",

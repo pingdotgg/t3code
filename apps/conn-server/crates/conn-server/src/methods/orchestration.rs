@@ -179,6 +179,15 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         get_thread_family,
         "orchestration.getThreadFamily"
     );
+    unary!(table, &engine, stop_workflow, "orchestration.stopWorkflow");
+    table.unary(
+        "orchestration.getWorkflowScript",
+        |_, input: conn_contract::rpc::orchestration::get_workflow_script::Payload| async move {
+            crate::workflow_script::get(input.script_path)
+                .await
+                .map_err(|error| Failure::fail(&error))
+        },
+    );
     unary!(table, &engine, get_turn_item, "orchestration.getTurnItem");
     unary!(table, &engine, get_turn_diff, "orchestration.getTurnDiff");
     unary!(

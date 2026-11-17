@@ -439,7 +439,7 @@ to the socket.
 
 ## Status
 
-**Coverage:** 102 of 236 methods (20 of 33 streams), from the method table at startup. Every
+The method table reports coverage at startup. Every
 registered method checks the scope the T3 server requires (`src/scopes.rs`, its table
 generated). `assets.createUrl`, `terminal.open` and `terminal.attach` also get the contract's
 length, pattern and range limits before decode (`src/limits.rs`, its table generated). Every registered method but two has a run that decodes its answer with the real

@@ -32,6 +32,7 @@ fn main() {
             state_dir.as_ref(),
             Some("Fixture".into()),
             std::env::current_dir().unwrap(),
+            Default::default(),
         )
         .unwrap(),
     );

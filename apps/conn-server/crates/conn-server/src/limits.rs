@@ -122,10 +122,7 @@ impl Limit {
         match value {
             Value::String(text) => {
                 if self.trim {
-                    // ECMAScript trims BOM but keeps NEXT LINE.
-                    let trimmed = text.trim_matches(|c: char| {
-                        (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
-                    });
+                    let trimmed = conn_support::text::js_trim(text);
                     if trimmed.len() != text.len() {
                         *text = trimmed.to_owned();
                     }
