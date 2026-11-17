@@ -41,7 +41,8 @@ const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
 const CLIENT_KEYS = new Set<string>(Object.keys(ClientSettingsSchema.fields));
 const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
 
-// A path on one machine may not exist on another, so "All environments" saves it on the shown one only.
+// A path on one machine may not exist on another, so "All environments" saves it on the shown one
+// only. Clearing it still reaches every machine, since the default "~/" exists everywhere.
 export const MACHINE_LOCAL_SETTING_KEYS: ReadonlySet<string> = new Set<keyof ServerSettings>([
   "addProjectBaseDirectory",
 ]);
@@ -302,7 +303,9 @@ export function planScopedSettingsPatch(
                   ? serverPatch
                   : (Object.fromEntries(
                       Object.entries(serverPatch).filter(
-                        ([key]) => !MACHINE_LOCAL_SETTING_KEYS.has(key),
+                        ([key, value]) =>
+                          !MACHINE_LOCAL_SETTING_KEYS.has(key) ||
+                          (typeof value === "string" && value.trim() === ""),
                       ),
                     ) as ServerSettingsPatch);
               if (Object.keys(ownPatch).length === 0) return [];

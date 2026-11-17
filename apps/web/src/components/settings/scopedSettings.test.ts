@@ -259,6 +259,12 @@ describe("scoped settings writes", () => {
       [laptop.environmentId, { ghqCloneLayout: true }],
       [server.environmentId, { addProjectBaseDirectory: "/srv/code/", ghqCloneLayout: true }],
     ]);
+
+    const reset = planScopedSettingsPatch(all, environments, { addProjectBaseDirectory: "" });
+    expect(reset.serverWrites.map(({ environmentId }) => environmentId)).toEqual([
+      laptop.environmentId,
+      server.environmentId,
+    ]);
   });
 
   describe("an environment that saves but drops keys it does not know", () => {
