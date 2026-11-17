@@ -197,6 +197,46 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
+  it.effect("keeps system events after the first hundred notes in the issue timeline", () =>
+    Effect.gen(function* () {
+      const firstPage = Array.from({ length: 100 }, (_, index) => ({
+        id: index + 1000,
+        body: "Discussion",
+        author: { username: "julius" },
+        created_at: "2026-07-02T00:00:00Z",
+      }));
+      const api = yield* tracker((args) => {
+        const path = args[1]!;
+        if (path.includes("/notes?")) {
+          const page = new URLSearchParams(path.split("?")[1]).get("page");
+          if (page === "1") return encode(firstPage);
+          if (page === "2") {
+            return encode([
+              {
+                id: 1100,
+                body: "closed",
+                system: true,
+                author: { username: "theo" },
+                created_at: "2026-07-03T00:00:00Z",
+              },
+            ]);
+          }
+          return encode([]);
+        }
+        return answer(path);
+      });
+      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      const issue = yield* api.getIssue(target);
+      let cursor = issue.commentsCursor;
+      while (cursor !== null) {
+        cursor = (yield* api.getComments({ ...target, cursor })).nextCursor;
+      }
+      expect(issue.events).toContainEqual(
+        expect.objectContaining({ id: "note-1100", kind: "closed" }),
+      );
+    }),
+  );
+
   it.effect("pages a listing by GitLab's page number and stops on a short page", () =>
     Effect.gen(function* () {
       const paths: string[] = [];
