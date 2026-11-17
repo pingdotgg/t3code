@@ -4,6 +4,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { isPullRequestWatchTask } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { useState } from "react";
 
 import { InlineButton } from "../ui/button";
@@ -59,7 +60,7 @@ export function BackgroundWorkDetails(props: {
                   <div className="flex items-baseline justify-between gap-3">
                     <h3 className="font-medium">{title}</h3>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {task.awaited ? "Waiting" : "Running"}
+                      {task.awaited || isPullRequestWatchTask(task) ? "Waiting" : "Running"}
                     </span>
                   </div>
                   {command ? (
