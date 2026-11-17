@@ -62,9 +62,12 @@ describe("continueIssuePage", () => {
       cursors,
     );
     expect(failed.errors.map((error) => error.message)).toEqual(["boom", "rate limited"]);
+    // The server keeps a failed scope's cursor, so only a retry may ask for that page again.
+    expect(failed.moreFailure).toBe("api: rate limited");
     const retried = continueIssuePage(failed, answer({ entries: [entry({ key: "2" })] }), cursors);
     // The first page's failure has no cursor, so no continuation retried it.
     expect(retried.errors.map((error) => error.message)).toEqual(["boom"]);
+    expect(retried.moreFailure).toBeNull();
   });
 
   it("moves only the cursors asked for and keeps the other trackers' errors", () => {
