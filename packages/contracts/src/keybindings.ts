@@ -83,6 +83,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "preview.find",
   "commandPalette.toggle",
   "filePicker.toggle",
+  "projectFilter.toggle",
   "projectSearch.toggle",
   "usage.open",
   "theme.select",
