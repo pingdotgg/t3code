@@ -1275,8 +1275,10 @@ Sources:
    them:
    - `apps/server/src/persistence/Migrations.ts`: keep Conn's
      `reconcileConnPeerLinksMigration` call in `runMigrations`, before
-     upstream's `assertV2MigrationsCanRun`, and keep `070_PeerLinks` after
-     upstream's IDs (move it past any new upstream ID and extend the reconcile).
+     upstream's `assertV2MigrationsCanRun`, behind the same `hasPending` gate
+     as upstream's V2-preview reconcile (the CLI must not take the write lock
+     on a current schema), and keep `070_PeerLinks` after upstream's IDs (move
+     it past any new upstream ID and extend the reconcile).
    - `apps/web/src/components/chat/ChatComposer.tsx`: take upstream's draft
      changes, but keep `composerEnvironmentContexts` from `composerDraft`.
    - Composer: upstream's composer redesign (#25869) is adopted as of
@@ -1546,6 +1548,30 @@ Merge of upstream `6b7027b1f4` (302 commits). Decisions worth keeping in mind:
   now always replaces the history entry.
 - `agentContextBudget.json` `mcpToolListJsonBytes` is 59,401 with the fork's
   toolkits.
+
+### Upstream sync: 2026-11-17
+
+Merge of upstream `9e32c95576` (139 commits). Decisions worth keeping in mind:
+
+- `Migrations.ts`: upstream gates the V2-preview reconcile on `hasPending`
+  (#37564); Conn's PeerLinks reconcile takes the same gate. No migration id
+  changed: the registry equals upstream's (1-96).
+- Upstream #31396 moved `resolveDesktopSshCliRunner` into
+  `apps/desktop/src/ssh/DesktopSshEnvironment.ts`; Conn's
+  `upstreamReleaseVersion(appVersion)` archive version moved with it.
+- Mobile composer: upstream's animated compact/multiline editor (#37562) with
+  Conn's Dynamic Type text and measured `expandedToolbarReserve`.
+- Mobile thread status: upstream's rework (#37508, #37767, #37797); Conn keeps
+  `connectionCheckOnly` so a connecting pill floats over the feed.
+- Upstream #37500 removed `isSidebarHiddenThread`; `OrbitInstancesPage`
+  filters with `isListedThreadLineage`.
+- `react-native-screens` is on upstream's `5.0.0-t3.58` with a rebuilt
+  `-conn.tgz`; the Conn patch applied without changes.
+- Conn Server followed (see `apps/conn-server/docs/status.md`).
+- Out of scope, taken as upstream without build or test: GitLab
+  (`packages/source-control-gitlab`), Azure DevOps
+  (`packages/source-control-azure-devops`), Android (`AppSymbol.android.tsx`),
+  Windows PATH probe (#37632), Forgejo/Gitea links (#37703).
 
 ### Vendored dependency patches
 
