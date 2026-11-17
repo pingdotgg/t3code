@@ -403,6 +403,7 @@ function draftWithInsertedContext(
   draft: ComposerDraft,
   content: { text: string; context: OrchestrationMessageContext },
   target?: ComposerDraftInsertion,
+  maxContextRecords = COMPOSER_CONTEXT_MAX_RECORDS,
 ): ComposerDraft | null {
   const { start, end } = contextInsertionRange(draftKey, draft, target);
   const before = draft.text.slice(0, start);
@@ -412,7 +413,7 @@ function draftWithInsertedContext(
   const records = new Map(draft.context?.records.map((record) => [record.contextId, record]));
   for (const record of content.context.records) records.set(record.contextId, record);
   const context = referencedComposerContext(text, { version: 1, records: [...records.values()] });
-  if ((context?.records.length ?? 0) > COMPOSER_CONTEXT_MAX_RECORDS) return null;
+  if ((context?.records.length ?? 0) > maxContextRecords) return null;
   rememberComposerDraftSelection(
     draftKey,
     text,
@@ -1412,8 +1413,14 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-function attachmentDedupKey(attachment: DraftComposerAttachment): string {
-  return `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`;
+// Pasted images all share one name, so an image's inline bytes decide whether it is a repeat.
+function isSameAttachment(a: DraftComposerAttachment, b: DraftComposerAttachment): boolean {
+  return (
+    a.mimeType === b.mimeType &&
+    a.sizeBytes === b.sizeBytes &&
+    a.name === b.name &&
+    (a.type !== "image" || b.type !== "image" || a.dataUrl === b.dataUrl)
+  );
 }
 
 /**
@@ -1441,13 +1448,12 @@ export function appendComposerDraftAttachments(
     const retained = options?.appendReference
       ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
       : existing;
-    const keys = new Set(retained.attachments.map(attachmentDedupKey));
+    const seen = [...retained.attachments];
     const attachments = options?.restore
       ? incoming
       : incoming.filter((attachment) => {
-          const key = attachmentDedupKey(attachment);
-          if (keys.has(key)) return false;
-          keys.add(key);
+          if (seen.some((other) => isSameAttachment(other, attachment))) return false;
+          seen.push(attachment);
           return true;
         });
     duplicates = incoming.filter((attachment) => !attachments.includes(attachment));
@@ -1460,9 +1466,10 @@ export function appendComposerDraftAttachments(
             options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           ) - retained.attachments.length,
         );
-    const contextCapacity = options?.appendReference
-      ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
-      : attachments.length;
+    const contextCapacity =
+      options?.appendReference && !options.restore
+        ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
+        : attachments.length;
     const accepted = attachments.slice(0, Math.min(remaining, contextCapacity));
     rejected = attachments.slice(accepted.length);
     if (accepted.length === 0) {
@@ -1478,7 +1485,8 @@ export function appendComposerDraftAttachments(
           text: records.map(formatComposerContextReference).join(" "),
           context: { version: 1, records },
         },
-        options?.insertion,
+        options.insertion,
+        options.restore ? Infinity : COMPOSER_CONTEXT_MAX_RECORDS,
       );
       if (!inserted) {
         rejected = attachments;

@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import { responsePayloads } from "./mcpResponsePayloads.ts";
@@ -90,4 +91,39 @@ it.effect("picks the SSE reader from the media type alone, whatever its case", (
     );
     expect(Array.from(jsonPayloads)).toEqual([{ jsonrpc: "2.0", id: 1, result: {} }]);
   }),
+);
+
+it.effect.each(["text/event-stream", "application/json"])(
+  "releases a stalled %s response body when its consumer is interrupted",
+  (contentType) =>
+    Effect.gen(function* () {
+      const reading = Promise.withResolvers<void>();
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(value) {
+            controller = value;
+          },
+          pull() {
+            reading.resolve();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const response = new Response(body, { headers: { "content-type": contentType } });
+      const consumer = yield* Stream.runDrain(responsePayloads(response, String)).pipe(
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => reading.promise);
+      yield* Fiber.interrupt(consumer);
+      try {
+        expect(
+          () => controller.enqueue(new TextEncoder().encode("late response bytes")),
+          "interrupted MCP response must stop accepting body bytes",
+        ).toThrow(TypeError);
+        expect(body.locked, "interrupted MCP response must release its body").toBe(false);
+      } finally {
+        if (body.locked) controller.close();
+      }
+    }),
 );

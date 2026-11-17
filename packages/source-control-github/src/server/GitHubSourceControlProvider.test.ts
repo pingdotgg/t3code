@@ -453,11 +453,11 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
-      const probe = (defaultBranchHeadSelector?: string) =>
+      const probe = (ownerHeadSelector?: string) =>
         gh.headBranchProbe?.({
           headSelectors: ["me:main", "main"],
           state: "all",
-          defaultBranchHeadSelector,
+          ownerHeadSelector,
         }).headSelectors;
       assert.deepStrictEqual([probe(), probe("me:main")], [["main"], ["me:main"]]);
       const read = (state: "open" | "merged") =>
@@ -1058,7 +1058,9 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
     auth.detail,
-    Option.some("Every GitHub host gh is signed in to is turned off in Settings → Source Control."),
+    Option.some(
+      "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues.",
+    ),
   );
 });
 
