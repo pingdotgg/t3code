@@ -14,6 +14,7 @@ import {
   clampMcpAppHeight,
   MCP_APP_COLOR_SCHEME_PARAM,
   MCP_APP_DEFAULT_HEIGHT,
+  MCP_APP_MIN_HEIGHT,
   MCP_APP_MAX_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
@@ -438,7 +439,7 @@ export function McpAppFrame(props: {
   const fullscreen = displayMode === "fullscreen";
   return (
     // Preserve inline row height during fullscreen to prevent timeline jumps.
-    <div style={{ height }}>
+    <div style={{ height: navigatedAway ? Math.max(height, MCP_APP_MIN_HEIGHT) : height }}>
       <div
         ref={attachBox}
         // Preserve the frame's parent to avoid reloads; the top layer escapes timeline containment.
