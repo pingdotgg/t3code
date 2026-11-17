@@ -1,5 +1,5 @@
 import type { IssueRef } from "@t3tools/contracts";
-import { isIssueOnProjectHost } from "@t3tools/source-control-core/shared/definition";
+import { projectsOnIssueHost } from "@t3tools/source-control-core/shared/definition";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
@@ -11,12 +11,14 @@ function projectIssueBinding(project: LinkProject): {
   readonly tracker: string;
   readonly host: string;
   readonly scope: string;
+  readonly repositoryIdentity: NonNullable<LinkProject["repositoryIdentity"]>;
 } | null {
   const identity = project.repositoryIdentity;
   const scope = sourceControlClients.issueScope(identity);
   const kind = identity?.provider;
   if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
   return {
+    repositoryIdentity: identity,
     tracker: kind,
     host: sourceControlClients.changeRequestHost(identity, kind),
     scope: scope.toLowerCase(),
@@ -38,27 +40,28 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   const parsed = sourceControlClients.parseIssueUrl(input.url);
   if (parsed === null) return null;
   const { definition, link } = parsed;
-  const bound = input.projects.flatMap((project) => {
-    const binding = projectIssueBinding(project);
-    return binding === null ||
-      binding.tracker !== definition.kind ||
-      !isIssueOnProjectHost(binding.host, project.repositoryIdentity, link)
-      ? []
-      : [{ project, binding }];
-  });
+  const bound = projectsOnIssueHost(
+    input.projects.flatMap((project) => {
+      const binding = projectIssueBinding(project);
+      return binding === null || binding.tracker !== definition.kind
+        ? []
+        : [{ project, ...binding }];
+    }),
+    link,
+  );
   const preferFirst = (candidates: typeof bound) =>
     candidates.find((candidate) => candidate.project.id === input.preferredProjectId) ??
     candidates[0];
-  const own = preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope));
+  const own = preferFirst(bound.filter((candidate) => candidate.scope === link.scope));
   const lender = own ?? preferFirst(bound);
   if (lender === undefined) return null;
   return {
     project: lender.project,
     ref: {
       projectId: lender.project.id,
-      tracker: lender.binding.tracker as IssueRef["tracker"],
-      host: lender.binding.host,
-      scope: own === undefined ? link.scope : lender.binding.scope,
+      tracker: lender.tracker as IssueRef["tracker"],
+      host: lender.host,
+      scope: own === undefined ? link.scope : lender.scope,
       key: link.key,
     },
   };

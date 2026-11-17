@@ -36,28 +36,33 @@ describe("resolveIssueLinkTarget", () => {
     expect(target?.ref).toMatchObject({ tracker: "github", host: "github.com", ...expected });
   });
 
-  it("prefers the project bound to the link's own port over one on the bare hostname", () => {
-    const enterprise = (id: string, host: string) =>
-      ({
-        id: ProjectId.make(id),
-        environmentId: EnvironmentId.make("env"),
-        repositoryIdentity: {
-          canonicalKey: `${host}/acme/web`,
-          provider: SourceControlProviderKind.make("github"),
-          displayName: "acme/web",
-          owner: "acme",
-          name: "web",
-        },
-      }) as never;
-    const target = resolveIssueLinkTarget({
-      url: "https://github.example.com:8443/acme/web/issues/7",
-      projects: [
-        enterprise("bare", "github.example.com"),
-        enterprise("ported", "github.example.com:8443"),
-      ],
-    });
-    expect(target?.ref.projectId).toBe("ported");
-  });
+  it.each(["github.example.com", "github.example.com:8443"])(
+    "prefers the configured authority with binding host %s over a preferred SSH project",
+    (portedHost) => {
+      const enterprise = (id: string, host: string, remoteUrl = `git@${host}:acme/web.git`) =>
+        ({
+          id: ProjectId.make(id),
+          environmentId: EnvironmentId.make("env"),
+          repositoryIdentity: {
+            canonicalKey: `${host}/acme/web`,
+            locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          },
+        }) as never;
+      const target = resolveIssueLinkTarget({
+        url: "https://github.example.com:8443/acme/web/issues/7",
+        preferredProjectId: "bare",
+        projects: [
+          enterprise("bare", "github.example.com"),
+          enterprise("ported", portedHost, "https://github.example.com:8443/acme/web.git"),
+        ],
+      });
+      expect(target?.ref).toMatchObject({ projectId: "ported", host: portedHost });
+    },
+  );
 
   it.each([
     "https://github.com:8443/acme/web/issues/7",

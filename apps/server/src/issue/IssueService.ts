@@ -31,7 +31,7 @@ import {
   type OrchestrationProjectShell,
   type ProjectId,
 } from "@t3tools/contracts";
-import { isIssueOnProjectHost } from "@t3tools/source-control-core/shared/definition";
+import { projectsOnIssueHost } from "@t3tools/source-control-core/shared/definition";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   IssueTrackerError,
@@ -631,10 +631,9 @@ const make = Effect.gen(function* () {
       }
       const { definition, link } = parsed;
       const { supported } = yield* listProjects({});
-      const onTracker = supported.filter(
-        (project) =>
-          project.tracker === IssueTrackerKind.make(definition.kind) &&
-          isIssueOnProjectHost(project.host, project.repositoryIdentity, link),
+      const onTracker = projectsOnIssueHost(
+        supported.filter((project) => project.tracker === IssueTrackerKind.make(definition.kind)),
+        link,
       );
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];

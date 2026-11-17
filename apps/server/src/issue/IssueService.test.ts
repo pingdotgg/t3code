@@ -242,6 +242,13 @@ describe("IssueService", () => {
       // A link's port picks the server: the project bound with it, not a default-port namesake.
       const ported = yield* makeService({
         projects: [
+          project({
+            id: "ssh",
+            repository: "acme/web",
+            provider: "forgejo",
+            host: "gitea.test",
+            remoteUrl: "git@gitea.test:acme/web.git",
+          }),
           project({ id: "plain", repository: "acme/web", provider: "forgejo", host: "gitea.test" }),
           project({
             id: "ported",
@@ -258,6 +265,9 @@ describe("IssueService", () => {
         key: "3",
         writable: true,
       });
+      expect(
+        yield* ported.resolveUrl("https://gitea.test:8443/acme/web/issues/3", "ssh" as ProjectId),
+      ).toMatchObject({ projectId: "ported", host: "gitea.test:8443", writable: true });
       expect(yield* ported.resolveUrl("https://gitea.test/acme/web/issues/3")).toMatchObject({
         projectId: "plain",
         host: "gitea.test",

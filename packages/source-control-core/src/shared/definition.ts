@@ -508,15 +508,25 @@ function issueWebUrl(identity: ChangeRequestHostIdentity): URL | null {
   return httpUrl(identity?.webUrl ?? "") ?? httpUrl(identity?.locator?.remoteUrl ?? "");
 }
 
-export function isIssueOnProjectHost(
-  projectHost: string,
-  identity: ChangeRequestHostIdentity,
-  link: IssueLink,
-): boolean {
-  const web = issueWebUrl(identity);
-  return web === null
-    ? projectHost === link.host || projectHost === link.authority
-    : web.host.toLowerCase() === (link.authority ?? link.host);
+/** A configured web authority wins over an SSH-only host, before repository or project preference. */
+export function projectsOnIssueHost<
+  Project extends {
+    readonly host: string;
+    readonly repositoryIdentity?: ChangeRequestHostIdentity;
+  },
+>(projects: ReadonlyArray<Project>, link: IssueLink): ReadonlyArray<Project> {
+  const matches = projects.flatMap((project) => {
+    const web = issueWebUrl(project.repositoryIdentity);
+    if (web !== null) {
+      return web.host.toLowerCase() === (link.authority ?? link.host)
+        ? [{ project, authority: true }]
+        : [];
+    }
+    if (project.host === link.authority) return [{ project, authority: true }];
+    return project.host === link.host ? [{ project, authority: false }] : [];
+  });
+  const configured = matches.filter((match) => match.authority);
+  return (configured.length > 0 ? configured : matches).map((match) => match.project);
 }
 
 export function isChangeRequestAuthorityOfProject(
