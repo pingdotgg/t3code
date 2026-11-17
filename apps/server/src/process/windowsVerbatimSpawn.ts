@@ -9,19 +9,26 @@ export type WindowsVerbatimSpawner = (
   args: ReadonlyArray<string>,
 ) => Effect.Effect<void, Error>;
 
-const spawnDetachedVerbatim: WindowsVerbatimSpawner = (command, args) =>
+/** Succeeds once a detached child has started and no longer holds this process open; fails if it cannot start. */
+export const awaitDetachedSpawn = (child: NodeChildProcess.ChildProcess) =>
   Effect.callback<void, Error>((resume) => {
-    const child = NodeChildProcess.spawn(command, args, {
-      detached: true,
-      stdio: "ignore",
-      windowsVerbatimArguments: true,
-    });
     child.once("error", (error) => resume(Effect.fail(error)));
     child.once("spawn", () => {
       child.unref();
       resume(Effect.void);
     });
   });
+
+const spawnDetachedVerbatim: WindowsVerbatimSpawner = (command, args) =>
+  Effect.suspend(() =>
+    awaitDetachedSpawn(
+      NodeChildProcess.spawn(command, args, {
+        detached: true,
+        stdio: "ignore",
+        windowsVerbatimArguments: true,
+      }),
+    ),
+  );
 
 export const WindowsVerbatimSpawn = Context.Reference<WindowsVerbatimSpawner>(
   "t3/process/WindowsVerbatimSpawn",
