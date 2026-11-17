@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { isMacPlatform } from "./lib/utils";
 import { useAtomValue } from "@effect/atom-react";
@@ -41,7 +42,7 @@ export function useNativeFileDrag(
         toastManager.add({
           type: "error",
           title: m(msg("Unable to drag file")),
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         });
       });
     },

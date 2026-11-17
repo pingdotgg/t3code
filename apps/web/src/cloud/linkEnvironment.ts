@@ -155,17 +155,18 @@ function findEnvironmentCloudApiError(cause: unknown): { readonly message: strin
   return "cause" in cause ? findEnvironmentCloudApiError(cause.cause) : null;
 }
 
-const environmentApiError = (message: string) => (cause: unknown) => {
+/** `msg()` sentences: the failure alone, and the same failure followed by the server's `{detail}`. */
+interface EnvironmentFailureCopy {
+  readonly message: string;
+  readonly withDetail: string;
+}
+
+const environmentApiError = (copy: EnvironmentFailureCopy) => (cause: unknown) => {
   const environmentError = findEnvironmentCloudApiError(cause);
   return new CloudEnvironmentLinkError({
     message: environmentError
-      ? m(
-          msg("{message}: {detail}", {
-            message: message.replace(/[.:]$/, ""),
-            detail: environmentError.message,
-          }),
-        )
-      : message,
+      ? m(copy.withDetail, { detail: environmentError.message })
+      : m(copy.message),
     cause,
   });
 };
@@ -216,7 +217,7 @@ type ConnectedEnvironmentHttpRequest<A, E, R> = Parameters<
 const connectRequest = <A, E, R>(
   target: CloudLinkTarget,
   input: Omit<ConnectedEnvironmentHttpRequest<A, E, R>, "group" | "timeoutMs">,
-  failureMessage: string,
+  failure: EnvironmentFailureCopy,
 ) =>
   Effect.flatMap(EnvironmentRegistry.EnvironmentRegistry, (registry) =>
     registry.run(
@@ -227,7 +228,7 @@ const connectRequest = <A, E, R>(
         timeoutMs: CLOUD_LINK_REQUEST_TIMEOUT_MS,
       }),
     ),
-  ).pipe(Effect.mapError(environmentApiError(failureMessage)));
+  ).pipe(Effect.mapError(environmentApiError(failure)));
 
 const preparedEndpoint = (target: CloudLinkTarget) =>
   Effect.flatMap(EnvironmentRegistry.EnvironmentRegistry, (registry) =>
@@ -238,7 +239,12 @@ const preparedEndpoint = (target: CloudLinkTarget) =>
       ),
     ),
   ).pipe(
-    Effect.mapError(environmentApiError(m(msg("Could not reach the environment.")))),
+    Effect.mapError(
+      environmentApiError({
+        message: msg("Could not reach the environment."),
+        withDetail: msg("Could not reach the environment: {detail}"),
+      }),
+    ),
     Effect.flatMap(
       Option.match({
         onNone: () =>
@@ -272,7 +278,10 @@ export const readCloudLinkState: (input: {
         url: (urls) => urls.linkState(),
         request: ({ client, headers }) => client.linkState({ headers }),
       },
-      m(msg("Could not read environment cloud link state.")),
+      {
+        message: msg("Could not read environment cloud link state."),
+        withDetail: msg("Could not read environment cloud link state: {detail}"),
+      },
     );
   });
 
@@ -290,7 +299,10 @@ export const checkCloudReachability: (input: {
         url: (urls) => urls.checkReachability(),
         request: ({ client, headers }) => client.checkReachability({ headers }),
       },
-      m(msg("Could not check T3 Connect.")),
+      {
+        message: msg("Could not check T3 Connect."),
+        withDetail: msg("Could not check T3 Connect: {detail}"),
+      },
     );
   });
 
@@ -313,7 +325,10 @@ export const updateCloudPreferences: (input: {
       url: (urls) => urls.preferences(),
       request: ({ client, headers }) => client.preferences({ headers, payload }),
     },
-    m(msg("Could not update environment cloud preferences.")),
+    {
+      message: msg("Could not update environment cloud preferences."),
+      withDetail: msg("Could not update environment cloud preferences: {detail}"),
+    },
   );
 });
 
@@ -335,7 +350,10 @@ export const unlinkEnvironmentFromCloud: (input: {
       url: (urls) => urls.unlink(),
       request: ({ client, headers }) => client.unlink({ headers }),
     },
-    m(msg("Could not unlink the environment from cloud.")),
+    {
+      message: msg("Could not unlink the environment from cloud."),
+      withDetail: msg("Could not unlink the environment from cloud: {detail}"),
+    },
   );
 
   const configuredRelayUrl = relayUrl();
@@ -430,7 +448,10 @@ export const linkEnvironmentToCloud: (input: {
           },
         }),
     },
-    m(msg("Could not obtain environment link proof.")),
+    {
+      message: msg("Could not obtain environment link proof."),
+      withDetail: msg("Could not obtain environment link proof: {detail}"),
+    },
   );
   const link = yield* relayClient
     .linkEnvironment({
@@ -473,6 +494,9 @@ export const linkEnvironmentToCloud: (input: {
           },
         }),
     },
-    m(msg("Could not configure environment relay access.")),
+    {
+      message: msg("Could not configure environment relay access."),
+      withDetail: msg("Could not configure environment relay access: {detail}"),
+    },
   );
 });

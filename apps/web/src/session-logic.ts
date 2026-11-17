@@ -17,12 +17,8 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
-import {
-  classifyToolActivity,
-  collectToolFilePaths,
-  formatReadToolLabel,
-  formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivityCopy";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -57,7 +53,7 @@ import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
-export { formatDuration } from "@t3tools/shared/orchestrationTiming";
+export { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 export {
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolFailure,
@@ -326,15 +322,31 @@ export function providerErrorPresentation(
     item.retry.maxAttempts === null
       ? `${item.retry.attempt}`
       : `${item.retry.attempt}/${item.retry.maxAttempts}`;
+  const counts = { progress, attempt: item.retry.attempt };
   const label =
     item.status === "running"
       ? resolve(msg("Retrying provider ({progress})", { progress }))
       : item.status === "completed"
-        ? resolve(msg("Provider recovered ({progress} retries)", { progress }))
+        ? resolve(
+            msg(
+              "{attempt, plural, one {Provider recovered ({progress} retries)} other {Provider recovered ({progress} retries)}}",
+            ),
+            counts,
+          )
         : item.status === "failed"
           ? item.failure.class === "usage_limit"
-            ? resolve(msg("Usage limit reached after {progress} retries", { progress }))
-            : resolve(msg("Provider error after {progress} retries", { progress }))
+            ? resolve(
+                msg(
+                  "{attempt, plural, one {Usage limit reached after {progress} retries} other {Usage limit reached after {progress} retries}}",
+                ),
+                counts,
+              )
+            : resolve(
+                msg(
+                  "{attempt, plural, one {Provider error after {progress} retries} other {Provider error after {progress} retries}}",
+                ),
+                counts,
+              )
           : resolve(msg("Provider retry stopped ({progress})", { progress }));
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
@@ -404,7 +416,10 @@ function projectedWorkEntry(
         label:
           title ??
           (item.changes !== undefined && item.changes.length > 1
-            ? resolve(msg("Changed {count} files", { count: item.changes.length }))
+            ? resolve(
+                msg("{count, plural, one {Changed {count} file} other {Changed {count} files}}"),
+                { count: item.changes.length },
+              )
             : resolve(msg("Changed {fileName}", { fileName: item.fileName }))),
         changedFiles: item.changes?.length
           ? item.changes.map((change) => change.path)
@@ -416,7 +431,7 @@ function projectedWorkEntry(
     case "file_search":
       return {
         ...common,
-        label: title ?? formatSearchToolLabel(item) ?? resolve(msg("Searched files")),
+        label: title ?? formatSearchToolLabel(item, resolve) ?? resolve(msg("Searched files")),
         ...(item.pattern ? { detail: item.pattern } : {}),
         toolTitle: title ?? resolve(msg("File search", { $context: "noun, a tool title" })),
         toolData: item,
@@ -466,9 +481,9 @@ function projectedWorkEntry(
         label:
           title ??
           (classified === "read"
-            ? formatReadToolLabel(readPath ?? "")
+            ? formatReadToolLabel(readPath ?? "", 0, resolve)
             : classified === "search"
-              ? (formatSearchToolLabel({ input: item.input }) ??
+              ? (formatSearchToolLabel({ input: item.input }, resolve) ??
                 item.toolName ??
                 resolve(msg("Tool call", { $context: "noun" })))
               : (item.toolName ?? resolve(msg("Tool call", { $context: "noun" })))),
@@ -485,7 +500,13 @@ function projectedWorkEntry(
         item.steps.find((step) => step.status === "pending");
       return {
         ...common,
-        label: `${resolve(msg("Tasks {done}/{total}", { done, total: item.steps.length }))}${current ? ` · ${current.text}` : ""}`,
+        label: current
+          ? resolve(msg("Tasks {done}/{total} · {current}"), {
+              done,
+              total: item.steps.length,
+              current: current.text,
+            })
+          : resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
       };
     }
     case "approval_request":

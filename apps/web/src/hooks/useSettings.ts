@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useRef, useSyncExternalStore, use } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -637,9 +638,8 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           msg("Could not save on {label}: {error}", {
             label,
             error:
-              error instanceof Error
-                ? error.message
-                : m(msg("The save failed. Try reconnecting and saving again.")),
+              (error instanceof Error ? errorDisplayMessage(error, m) : null) ??
+              m(msg("The save failed. Try reconnecting and saving again.")),
           }),
         ),
       });
@@ -759,9 +759,8 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                   msg("Could not save on {label}: {error}", {
                     label,
                     error:
-                      error instanceof Error
-                        ? error.message
-                        : m(msg("The save failed. Try reconnecting and saving again.")),
+                      (error instanceof Error ? errorDisplayMessage(error, m) : null) ??
+                      m(msg("The save failed. Try reconnecting and saving again.")),
                   }),
                 ),
               ];

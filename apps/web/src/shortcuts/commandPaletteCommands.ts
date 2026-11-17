@@ -67,8 +67,8 @@ export function installCommandPaletteCommands(
         consume(event);
         if (event.repeat) return;
         const { appearanceMode } = getThemeSnapshot();
-        const nextMode =
-          appearanceMode === "system" ? "light" : appearanceMode === "light" ? "dark" : "system";
+        const index = APPEARANCE_OPTIONS.findIndex((option) => option.mode === appearanceMode);
+        const nextMode = APPEARANCE_OPTIONS[(index + 1) % APPEARANCE_OPTIONS.length]!.mode;
         if (!setAppearanceMode(nextMode)) {
           notifyThemeSaveFailure();
           return;
@@ -76,9 +76,10 @@ export function installCommandPaletteCommands(
         toastManager.add({
           id: "appearance-cycle",
           title: m(
-            msg("Appearance: {mode}", {
-              mode: m(APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label ?? ""),
-            }),
+            msg(
+              "{mode, select, system {Appearance: System} light {Appearance: Light} other {Appearance: Dark}}",
+            ),
+            { mode: nextMode },
           ),
           timeout: 1500,
         });

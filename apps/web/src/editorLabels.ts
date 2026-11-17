@@ -13,7 +13,7 @@ export function editorLabelForPlatform(
   resolve: MessageResolver = m,
 ): string {
   if (editorId === "file-manager") {
-    return getLocalFileManagerName(platform);
+    return getLocalFileManagerName(platform, resolve);
   }
 
   return (

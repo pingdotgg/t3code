@@ -1,8 +1,9 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { msg, useMessages } from "gt-react";
+import { msg } from "gt-react";
 import { useContext } from "react";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -26,9 +27,10 @@ export function formatEnvironmentQueryError(
   resolve: MessageResolver = m,
 ): string {
   const error = Cause.squash(cause);
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : resolve(msg("The environment request failed."));
+  return (
+    (error instanceof Error ? errorDisplayMessage(error, resolve) : null) ??
+    resolve(msg("The environment request failed."))
+  );
 }
 
 function queryUpdatedAt(result: AsyncResult.AsyncResult<unknown, unknown>): number {
@@ -41,8 +43,8 @@ function queryUpdatedAt(result: AsyncResult.AsyncResult<unknown, unknown>): numb
 
 export function useEnvironmentQuery<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
+  resolve: MessageResolver = m,
 ): EnvironmentQueryView<A, E> {
-  const resolve = useMessages();
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);

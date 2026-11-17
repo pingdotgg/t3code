@@ -37,6 +37,7 @@ export function usePullRequestStack(
   const saved = reference === null ? null : savedPullRequestStack(links, reference);
   const query = useEnvironmentQuery(
     reference === null ? null : pullRequestStackAtom({ environmentId, input: reference }),
+    resolve,
   );
   const answered = useAtomValue(
     reference === null

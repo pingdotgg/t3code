@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -278,7 +279,7 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
         stackedThreadToast({
           type: "error",
           title: m(msg("Unable to open pull request link")),
-          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+          description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });

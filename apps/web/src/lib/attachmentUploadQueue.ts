@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   attachmentUploadError,
@@ -312,7 +313,7 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
           ? m(msg("Not connected"))
           : m(msg("This connection cannot upload attachments."))
         : result.error instanceof Error
-          ? result.error.message
+          ? (errorDisplayMessage(result.error, m) ?? result.error.message)
           : m(msg("Upload failed")),
     result.attachmentId ?? undefined,
   );

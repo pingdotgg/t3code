@@ -72,10 +72,12 @@ export function buildFileReviewComment(input: {
   return {
     id: input.id,
     sectionId: `file:${input.filePath}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- stored in the review comment record sent to the agent
     sectionTitle: "File comment",
     filePath: input.filePath,
     startIndex: startLine - 1,
     endIndex: endLine - 1,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- stored in the review comment record sent to the agent
     rangeLabel: startLine === endLine ? `L${startLine}` : `L${startLine} to L${endLine}`,
     text: input.text.trim(),
     diff: selectedLines.join("\n"),

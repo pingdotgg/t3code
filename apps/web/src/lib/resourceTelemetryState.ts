@@ -6,7 +6,7 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 
 import { m } from "../i18n/messages";
 import { usePrimaryEnvironment } from "../state/environments";
@@ -32,10 +32,12 @@ export function useResourceTelemetry(
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
   const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
+  const resolve = useMessages();
   const query = useEnvironmentQuery(
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetry({ environmentId, input: {} }),
+    resolve,
   );
   const retryCommand = useAtomCommand(serverEnvironment.retryResourceTelemetry, {
     reportFailure: false,
@@ -71,9 +73,11 @@ export function useResourceTelemetryHistory(
       ? (primaryEnvironment?.environmentId ?? null)
       : targetEnvironmentId;
   const canReadDiagnostics = useEnvironmentScope(environmentId, AuthDiagnosticsReadScope);
+  const resolve = useMessages();
   return useEnvironmentQuery(
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.resourceTelemetryHistory({ environmentId, input }),
+    resolve,
   );
 }

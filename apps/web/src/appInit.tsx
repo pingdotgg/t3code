@@ -139,8 +139,7 @@ function readOpenThreadRef(router: AppRouter): ScopedThreadRef | null {
 function windowTitleThreadStatus(
   thread: Parameters<typeof resolveWindowTitleThreadStatus>[0] | null,
 ): string | null {
-  const status = thread === null ? null : resolveWindowTitleThreadStatus(thread);
-  return status === null ? null : m(status);
+  return thread === null ? null : resolveWindowTitleThreadStatus(thread, m);
 }
 
 /**

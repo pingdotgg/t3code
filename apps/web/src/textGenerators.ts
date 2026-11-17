@@ -15,7 +15,7 @@ import {
   type TextGeneratorModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -251,6 +251,7 @@ function textGeneratorSnapshot(
   config: TextGeneratorConfig,
   result: AsyncResult.AsyncResult<ReadonlyArray<TextGeneratorModel>, string>,
   selectedModels: ReadonlyArray<string>,
+  resolve: MessageResolver,
 ): ServerProvider {
   const discovered = AsyncResult.isSuccess(result) ? result.value.map(toProviderModel) : [];
   const missing = [...new Set(selectedModels)]
@@ -265,7 +266,7 @@ function textGeneratorSnapshot(
   return {
     instanceId: id,
     driver: textGeneratorBrand(config),
-    displayName: textGeneratorDisplayName(config),
+    displayName: textGeneratorDisplayName(config, resolve),
     supportsTextGeneration: true,
     enabled: config.enabled,
     installed: true,
@@ -299,6 +300,7 @@ export function useTextGenerationTargets(input: {
   readonly entries: ReadonlyArray<ProviderInstanceEntry>;
 } {
   const { environmentId, settings } = input;
+  const resolve = useMessages();
   const generators =
     environmentId === null
       ? []
@@ -330,6 +332,7 @@ export function useTextGenerationTargets(input: {
       input.selections.flatMap((selection) =>
         selection?.instanceId === id && selection.model ? [selection.model] : [],
       ),
+      resolve,
     ),
   );
   const providers = input.providers.filter(

@@ -545,6 +545,7 @@ export function readResponseSubagents(
           }),
         )
         ?.title.trim() ||
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- subagent title stored in the reply record sent to the agent
       "Agent",
   }));
 }

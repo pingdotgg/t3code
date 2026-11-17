@@ -1,4 +1,4 @@
-import { msg } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AtomCommandFailure,
@@ -386,6 +386,7 @@ export function readCachedPullRequestResolution(
 }
 
 export function usePullRequestResolutionState(target: PullRequestResolutionTarget) {
+  const resolve = useMessages();
   const query = useEnvironmentQuery(
     target.environmentId !== null && target.cwd !== null && target.reference !== null
       ? gitEnvironment.pullRequestResolution({
@@ -396,6 +397,7 @@ export function usePullRequestResolutionState(target: PullRequestResolutionTarge
           },
         })
       : null,
+    resolve,
   );
   const cached = readCachedPullRequestResolution(target);
 

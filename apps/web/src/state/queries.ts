@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { msg } from "gt-react";
 import {
@@ -243,9 +244,10 @@ export function usePaginatedBranches(target: VcsRefTarget, resolve: MessageResol
     failed?._tag === "Failure"
       ? (() => {
           const cause = Cause.squash(failed.cause);
-          return cause instanceof Error && cause.message.trim().length > 0
-            ? cause.message
-            : resolve(msg("Failed to load refs."));
+          return (
+            (cause instanceof Error ? errorDisplayMessage(cause, resolve) : null) ??
+            resolve(msg("Failed to load refs."))
+          );
         })()
       : null;
   const refresh = () => {
@@ -312,7 +314,7 @@ export function useProjectPathSearch(
     imageOnly: target.imageOnly,
   };
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
-  const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
+  const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId, resolve);
   const { canReadFiles } = fileAccess;
   const searchTarget =
     debouncedTarget.environmentId !== null &&
@@ -332,6 +334,7 @@ export function useProjectPathSearch(
       : null;
   const result = useEnvironmentQuery(
     canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
+    resolve,
   );
   const hasTarget = searchTarget !== null;
 
@@ -379,7 +382,7 @@ export function useProjectContentSearch(
   resolve: MessageResolver = m,
 ) {
   const hasTarget = target.environmentId !== null && target.cwd !== null;
-  const fileAccess = useFilesystemReadAccess(target.environmentId);
+  const fileAccess = useFilesystemReadAccess(target.environmentId, resolve);
   const canReadFiles = hasTarget && fileAccess.canReadFiles;
   const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Preserve query whitespace; trim only to detect blank input.
@@ -407,6 +410,7 @@ export function useProjectContentSearch(
           },
         })
       : null,
+    resolve,
   );
   // Only once the timeout has come back: a refresh restarts a search still in flight.
   const settledScanTimeout =

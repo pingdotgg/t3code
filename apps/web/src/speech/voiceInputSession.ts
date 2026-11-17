@@ -197,6 +197,7 @@ export class VoiceInputSession {
       ).then((result) => result.text);
     };
     this.controller = new VoiceInputController({
+      resolve: m,
       retryFailedRecording: true,
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,

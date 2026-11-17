@@ -7,7 +7,7 @@ import inputUrl from "./assets/notification-input.mp3";
 
 type NotificationMode = ClientSettings["notificationMode"];
 export const NOTIFICATION_MODE_LABELS = {
-  off: msg("Off"),
+  off: msg("Off", { $context: "notification setting, no notifications or sound" }),
   notifications: msg("Notifications only"),
   sound: msg("Sound only"),
   "notifications-and-sound": msg("Notifications with sound"),
