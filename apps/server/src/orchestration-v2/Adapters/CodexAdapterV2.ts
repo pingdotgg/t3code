@@ -1278,6 +1278,7 @@ function failureResetAt(
 
 interface ActiveCodexTurnContext {
   hookStopReason?: string;
+  appliedServiceTier?: string;
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
@@ -7239,6 +7240,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     yield* startNativeTurn(
                       {
                         ...context.input,
+                        // A speed changed during the failed attempt outlives the retry.
+                        ...(context.appliedServiceTier === undefined
+                          ? {}
+                          : {
+                              modelSelection: {
+                                ...context.input.modelSelection,
+                                options: [
+                                  ...(context.input.modelSelection.options ?? []).filter(
+                                    (option) =>
+                                      option.id !== "serviceTier" && option.id !== "fastMode",
+                                  ),
+                                  { id: "serviceTier", value: context.appliedServiceTier },
+                                ],
+                              },
+                            }),
                         providerTurnOrdinal: context.providerTurnOrdinal + 1,
                       },
                       [],
@@ -7855,13 +7871,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ? getCodexServiceTierOptionValue(modelSelection)
               : undefined;
           if (serviceTier === undefined) return;
-          yield* client
+          const applied = yield* client
             .request("thread/settings/update", { threadId, serviceTier })
             .pipe(
+              Effect.as(true),
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.codex-service-tier-update-failed", { cause }),
+                Effect.logWarning("orchestration-v2.codex-service-tier-update-failed", {
+                  cause,
+                }).pipe(Effect.as(false)),
               ),
             );
+          if (!applied) return;
+          for (const turn of (yield* Ref.get(activeTurns)).values()) {
+            if (turn.providerThread.nativeThreadRef?.nativeId === threadId) {
+              turn.appliedServiceTier = serviceTier;
+            }
+          }
         });
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
