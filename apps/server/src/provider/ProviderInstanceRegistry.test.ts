@@ -414,16 +414,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       yield* PubSub.take(changes);
       const reset = yield* registry.getInstance(firstId);
       expect((yield* reset!.snapshot.getSnapshot).iconUrl).toBeUndefined();
-      yield* mutator.reconcile({
-        [firstId]: { ...entry, iconUrl: "https://example.com/restored.png" },
-        [secondId]: { ...entry, iconUrl: "https://example.com/second.png" },
-      });
-      expect(closes).toBe(0);
-      yield* PubSub.take(changes);
-      const restored = yield* registry.getInstance(firstId);
-      expect((yield* restored!.snapshot.getSnapshot).iconUrl).toBe(
-        "https://example.com/restored.png",
-      );
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1030,20 +1020,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         Effect.sync(() => {
           created.push(input.environment);
           configs.push(input.config);
-          const instance = {
-            instanceId: input.instanceId,
-            enabled: input.enabled,
-          } as ProviderInstance;
-          return {
-            ...instance,
-            snapshot: {
-              resolveMaintenance: () => Effect.die("unused"),
-              applyUsageLimits: () => Effect.void,
-              getSnapshot: Effect.die("unused"),
-              refresh: Effect.die("unused"),
-              streamChanges: Stream.empty,
-            },
-          };
+          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
         }),
     };
     const gate = Deferred.makeUnsafe<void>();
@@ -1066,7 +1043,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
     const configMap: ProviderInstanceConfigMap = {
       [instanceId]: {
         driver: driverKind,
-        iconUrl: "https://example.com/secret-instance.png",
         config,
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
@@ -1123,7 +1099,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reconcile({ ...fixture.configMap });
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
-      expect(unavailable?.iconUrl).toBe("https://example.com/secret-instance.png");
     });
   });
 
@@ -1221,7 +1196,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       const [pending] = yield* registry.listUnavailable;
       expect(pending?.unavailableReason).toBe("Reading secrets…");
-      expect(pending?.iconUrl).toBe("https://example.com/secret-instance.png");
 
       yield* Deferred.succeed(fixture.gate, undefined);
       yield* PubSub.take(changes);

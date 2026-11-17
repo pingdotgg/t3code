@@ -190,11 +190,6 @@ before sharing.
 
 ## Providers
 
-To distinguish accounts or models running through the same provider, open an instance in
-**Settings → Providers** and set its **Icon** to an HTTPS image URL. The icon is shared with
-all clients connected to that environment, including mobile. Choose **Reset** to restore
-the provider's default icon. The default also appears if the image cannot load.
-
 Open **Settings → Providers** in the web or desktop app, select the environment,
 and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
@@ -247,6 +242,11 @@ Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
+
+To tell instances of the same provider apart, set an instance's **Icon** to an
+HTTPS image URL. Every client connected to that environment shows it, including
+mobile. **Reset** restores the provider's icon, which also appears whenever the
+image cannot load.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
