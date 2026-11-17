@@ -1,3 +1,5 @@
+import { useNativeFileDrag } from "../useNativeFileDrag";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
@@ -136,7 +138,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText, readPastedPlainText } from "./composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  readPastedComposerContext,
+  readPastedPlainText,
+} from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
   captureComposerAttachmentInsertion,
@@ -281,8 +287,12 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
+  const nativeDrag = useNativeFileDrag(actions.environmentId, () =>
+    resolvePathLinkTarget(path, actions.cwd ?? ""),
+  );
   const chip = (
     <ContextChip
+      {...nativeDrag}
       kind={documentChipKindForFileName(path) ?? "mention"}
       dir="ltr"
       render={<button type="button" />}
@@ -1398,7 +1408,12 @@ function ComposerPromptEditorTiptapInner(
         },
         handlePaste: (view, event) => {
           const clipboardData = event.clipboardData;
-          if (!clipboardData || clipboardData.files.length > 0) return false;
+          if (!clipboardData) return false;
+          if (
+            clipboardData.files.length > 0 &&
+            (literalText || !readPastedComposerContext(clipboardData)?.records.length)
+          )
+            return false;
           const pastedText = readPastedPlainText(clipboardData);
           if (!pastedText) return false;
           event.preventDefault();

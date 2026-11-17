@@ -1321,6 +1321,7 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    isScratchProject: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
     phase: "ready" as const,
@@ -1339,6 +1340,12 @@ describe("planComposerTurn", () => {
   it("refuses a new worktree without a base branch", () => {
     expect(planComposerTurn({ ...base, activeThreadBranch: null })).toMatchObject({
       missingWorktreeBaseBranch: true,
+      baseBranchForWorktree: null,
+    });
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
+    ).toMatchObject({
+      missingWorktreeBaseBranch: false,
       baseBranchForWorktree: null,
     });
   });

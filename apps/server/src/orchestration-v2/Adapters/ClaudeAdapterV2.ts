@@ -383,6 +383,8 @@ const CLAUDE_DESCENDANT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
+// Claude Code's answer to a --resume whose session store is gone, as a result error and on stderr.
+const CLAUDE_CONVERSATION_NOT_FOUND = "No conversation found with session ID:";
 
 // fd 4 gates the launch until the server has recorded the process it is about to become.
 // The shell enters the cwd itself: as a native cwd, a mount that hangs chdir freezes the server.
@@ -725,6 +727,17 @@ export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRoo
   }
 }
 
+export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeConversationNotFoundError>()(
+  "ClaudeConversationNotFoundError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Claude Code could not find this conversation to resume. Send the message again to continue in a new Claude session with this thread's history.";
+  }
+}
+
 class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
   "ClaudeMcpRegistrationTimeoutError",
   { phase: Schema.Literals(["initialize", "setMcpServers"]) },
@@ -821,6 +834,14 @@ export interface ClaudeAgentSdkSubagentLookupInput {
 }
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+
+const isClaudeConversationNotFound = (cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>) => {
+  const error = Cause.squash(cause);
+  return (
+    isClaudeAgentSdkQueryRunnerError(error) &&
+    Predicate.isTagged(error.cause, "ClaudeConversationNotFoundError")
+  );
+};
 const isClaudeMcpRegistrationTimeoutError = Schema.is(ClaudeMcpRegistrationTimeoutError);
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
@@ -1517,6 +1538,7 @@ export const layerQueryRunner: Layer.Layer<
           let stderrTail = "";
           let stderrClosed: Promise<void> = Promise.resolve();
           let answered = false;
+          let conversationMissing = false;
           const appendStderr = (text: string) => {
             if (answered) return;
             stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
@@ -1695,15 +1717,27 @@ export const layerQueryRunner: Layer.Layer<
                     }
                     const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
                     return yield* queryRunnerError(
-                      refusedRoot ? new ClaudeCodeRootRefusalError({ cause }) : cause,
+                      refusedRoot
+                        ? new ClaudeCodeRootRefusalError({ cause })
+                        : conversationMissing ||
+                            (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
+                          ? new ClaudeConversationNotFoundError({ cause })
+                          : cause,
                       "fromAsyncIterable",
                     );
                   }),
                 ),
               ),
-              Stream.tap(() =>
+              Stream.tap((message) =>
                 Effect.sync(() => {
                   answered = true;
+                  if (
+                    message.type === "result" &&
+                    message.subtype !== "success" &&
+                    message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
+                  ) {
+                    conversationMissing = true;
+                  }
                 }),
               ),
               Stream.tap((message) =>
@@ -4735,12 +4769,16 @@ function providerFailureFromResult(
     apiErrorStatus === 429 && message.result.startsWith("API Error:")
       ? gatewayCooldownResetAt(
           // CLIProxyAPI nests upstream errors in its message; only its own cooldown counts.
-          (message.result.startsWith(
+          message.result.startsWith(
             "API Error: Request rejected (429) · All credentials for model ",
           )
-            ? /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-          ).exec(message.result),
+            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+                message.result,
+              ) ??
+                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
+                  message.result,
+                ))
+            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
           receivedAt,
         )
       : undefined;
@@ -4911,6 +4949,8 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 
 interface ActiveClaudeTurnContext {
   retryBudgetFailure?: OrchestrationV2ProviderFailure;
+  // Set when the prompt starts or a request goes out; cleared by the turn's next frame.
+  unansweredRequestSince?: DateTime.Utc | undefined;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly autoCompactWindow: string;
@@ -5843,6 +5883,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
         const openedNativeThreads = yield* Ref.make(new Set<string>());
+        // Sessions Claude Code reported gone on resume; resumeThread fails them into a fresh session.
+        const missingNativeThreads = new Set<string>();
         const pdfBudgets = new Map<string, ReturnType<typeof makeClaudeAttachmentBudget>>();
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         // Claude 5 task tools edit one list per native session, across turns.
@@ -6357,39 +6399,72 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : undefined;
             });
             const retry = yield* isCurrentRetry;
-            // A user Stop already in flight keeps its interrupted outcome.
-            if (
-              retry === undefined ||
-              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
-            )
-              return;
-            context.retryBudgetFailure = { ...retry.failure, retryable: false };
-            const liveQuery = yield* Ref.get(queryContext);
-            yield* interruptTurn({
-              providerThread: context.input.providerThread,
-              providerTurnId: context.providerTurnId,
-            }).pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
-              ),
+            if (retry === undefined) return;
+            yield* failStalledTurn(
+              context,
+              { ...retry.failure, retryable: false },
+              Effect.map(isCurrentRetry, (current) => current !== undefined),
             );
-            if (liveQuery === null || (yield* isCurrentRetry) === undefined) return;
-            // The CLI did not confirm the stop; settle the turn without it.
-            const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
-              current?.query === liveQuery.query ? [true, null] : [false, current],
-            );
-            if (!ownedLiveQuery) return;
-            liveQuery.stopping = true;
-            yield* liveQuery.query.close.pipe(
-              Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
-              Effect.ignore,
-            );
-            yield* finalizeActiveTurnAfterQueryExit(liveQuery);
-            yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
-            yield* Deferred.succeed(liveQuery.closed, undefined);
           },
         );
+
+        // Partial messages are on, so a started prompt or a sent request streams within seconds.
+        // A gateway can hold the request open without ever letting the CLI time out and retry.
+        const failUnansweredRequest = Effect.fn("ClaudeAdapterV2.failUnansweredRequest")(function* (
+          context: ActiveClaudeTurnContext,
+          since: DateTime.Utc,
+        ) {
+          const isUnanswered = Effect.map(
+            Ref.get(activeTurn),
+            (active) => active === context && context.unansweredRequestSince === since,
+          );
+          if (!(yield* isUnanswered)) return;
+          yield* failStalledTurn(
+            context,
+            makeProviderFailure({
+              class: "transport_error",
+              code: "claude_request_unanswered",
+              message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
+              retryable: false,
+            }),
+            // Once the stop is sent, a frame clearing the silence must not skip forced settlement.
+            Effect.map(Ref.get(activeTurn), (active) => active === context),
+          );
+        });
+
+        const failStalledTurn = Effect.fn("ClaudeAdapterV2.failStalledTurn")(function* (
+          context: ActiveClaudeTurnContext,
+          failure: OrchestrationV2ProviderFailure,
+          stillStalled: Effect.Effect<boolean>,
+        ) {
+          // A user Stop already in flight keeps its interrupted outcome.
+          if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return;
+          context.retryBudgetFailure = failure;
+          const liveQuery = yield* Ref.get(queryContext);
+          yield* interruptTurn({
+            providerThread: context.input.providerThread,
+            providerTurnId: context.providerTurnId,
+          }).pipe(
+            Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.claude-retry-budget-stop-failed", { cause }),
+            ),
+          );
+          if (liveQuery === null || !(yield* stillStalled)) return;
+          // The CLI did not confirm the stop; settle the turn without it.
+          const ownedLiveQuery = yield* Ref.modify(queryContext, (current) =>
+            current?.query === liveQuery.query ? [true, null] : [false, current],
+          );
+          if (!ownedLiveQuery) return;
+          liveQuery.stopping = true;
+          yield* liveQuery.query.close.pipe(
+            Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
+            Effect.ignore,
+          );
+          yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+          yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "interrupted");
+          yield* Deferred.succeed(liveQuery.closed, undefined);
+        });
 
         const rememberProviderThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -10516,6 +10591,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (context === (yield* Ref.get(activeTurn))) {
+            const lifecycle = claudePromptLifecycle(message);
+            if (
+              (message.type === "system" &&
+                message.subtype === "status" &&
+                message.status === "requesting") ||
+              (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
+            ) {
+              const since = yield* DateTime.now;
+              context.unansweredRequestSince = since;
+              yield* failUnansweredRequest(context, since).pipe(
+                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+                Effect.forkIn(sessionScope),
+              );
+            } else if (
+              // Background tasks from earlier turns keep streaming while the root request hangs.
+              // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.
+              Reflect.get(message, "parent_tool_use_id") == null &&
+              !(
+                message.type === "system" &&
+                message.subtype.startsWith("task_") &&
+                !(message.subtype === "task_started" && (message.spawn_depth ?? 1) <= 1)
+              )
+            ) {
+              context.unansweredRequestSince = undefined;
+            }
+          }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
           if (focusedPlugin !== null && context === (yield* Ref.get(activeTurn))) {
             yield* Effect.logWarning("orchestration-v2.claude-mod-pane-focus-unsupported", {
@@ -12910,7 +13012,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
-                if (exit._tag === "Failure") context.exitCause = exit.cause;
+                if (exit._tag === "Failure") {
+                  context.exitCause = exit.cause;
+                  if (isClaudeConversationNotFound(exit.cause)) {
+                    missingNativeThreads.add(context.nativeThreadId);
+                  }
+                }
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -13877,6 +13984,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // A live process holds the conversation even before saving it.
                 (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId
               ) {
+                if (missingNativeThreads.has(nativeThreadId)) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: `Claude Code has no conversation ${nativeThreadId} to resume.`,
+                  });
+                }
                 // An unreadable transcript leaves the resume to the CLI.
                 const transcript = yield* claudeTranscriptState(nativeThreadId).pipe(
                   Effect.orElseSucceed(() => "missing" as const),

@@ -102,7 +102,7 @@ export function sanitizeThreadTitle(raw: string): string {
     .trim()
     .split(/\r?\n/g)[0]
     ?.trim()
-    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/^(['"`])((?:(?!\1).)*)\1$/, "$2")
     .trim()
     .replace(/\s+/g, " ");
 
