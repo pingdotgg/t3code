@@ -16,6 +16,7 @@ import {
   ProjectKnowledgeContext,
   ProjectKnowledgePreparedContext,
 } from "@t3tools/contracts";
+import { MEMORY_WRITING_RULES } from "@t3tools/provider-core/server/memoryWritingRules";
 import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 import * as ProjectKnowledge from "../../../project/knowledge/ProjectKnowledge.ts";
@@ -107,7 +108,8 @@ export const KnowledgeToolkit = Toolkit.make(
   Tool.make("t3_knowledge_mutate", {
     ...shared,
     description:
-      "Create or edit project knowledge, supersede a fact with a replacement, forget a fact, or give trust feedback. When a fact comes from a conversation message, attach that exact message citation. Leave sources empty only for an agent observation with no message source; its origin is recorded from this authenticated caller. Facts are saved immediately. Search finds them, and related ones are sent with later user messages. Saving records a claim with its origin, not proof that it is true. Agents cannot claim direct user assertions. Reuse commandId when retrying. Updates require the current revision. Supersede creates replacementFactId and keeps the old fact's content but removes it from recall; prefer it over forget when knowledge changed. Created, edited and replacement facts return hints naming possible duplicates or conflicts to review. Forgotten facts cannot be restored.",
+      MEMORY_WRITING_RULES.join(" ") +
+      " Search for an existing fact before adding or correcting one. Create or edit project knowledge, supersede a fact with a replacement, forget a fact, or give trust feedback. Create, edit and supersede require content, kind, entities, tags and sources (arrays may be empty); create also needs a new factId. When a fact comes from a conversation message, attach that exact message citation. Leave sources empty only for an agent observation with no message source; its origin is recorded from this authenticated caller. Facts are saved immediately. Search finds them, and related ones are sent with later user messages. Saving records a claim with its origin, not proof that it is true. Agents cannot claim direct user assertions. Reuse commandId when retrying. Updates require the current revision. Supersede creates replacementFactId and keeps the old fact's content but removes it from recall; prefer it over forget when knowledge changed. Created, edited and replacement facts return hints naming possible duplicates or conflicts to review. Forgotten facts cannot be restored.",
     parameters: Schema.Struct({
       mutation: ProjectKnowledgeMutation,
       environmentId: OrchestratorMcpEnvironmentTarget,
