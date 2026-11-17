@@ -642,7 +642,25 @@ const make = Effect.gen(function* () {
 
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
-      const gitHost = sourceControlDefinitions.parseIssueUrl(url);
+      const urlHost = parseUrl(url);
+      const authority = urlHost?.host.toLowerCase();
+      const { supported } =
+        urlHost === null
+          ? { supported: [] }
+          : yield* listProjects({ host: urlHost.hostname.toLowerCase(), authority });
+      const onUrlAuthority = supported.filter((project) => project.host === authority);
+      const urlBindings = onUrlAuthority.length > 0 ? onUrlAuthority : supported;
+      const gitHost =
+        sourceControlDefinitions.parseIssueUrl(url) ??
+        urlBindings
+          .map((project) => {
+            const definition = sourceControlDefinitions.find(project.tracker);
+            return definition === undefined
+              ? null
+              : sourceControlDefinitions.parseIssueUrl(url, definition.kind);
+          })
+          .find((candidate) => candidate !== null) ??
+        null;
       const standalone = gitHost === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
       const parsed =
         gitHost === null
@@ -656,9 +674,6 @@ const make = Effect.gen(function* () {
         });
       }
       const { tracker, link } = parsed;
-      // A link names its server's port; a binding does only when its remote or web URL did.
-      const authority = new URL(url).host.toLowerCase();
-      const { supported } = yield* listProjects({ host: link.host, authority });
       const onHost = supported.filter((project) => project.tracker === tracker);
       const onAuthority = onHost.filter((project) => project.host === authority);
       const onTracker = onAuthority.length > 0 ? onAuthority : onHost;
