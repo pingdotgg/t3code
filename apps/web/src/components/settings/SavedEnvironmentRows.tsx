@@ -122,13 +122,6 @@ export function SavedBackendListRow({
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
-    onCopy: ({ traceId }) => {
-      toastManager.add({
-        type: "success",
-        title: "Trace ID copied",
-        description: traceId,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({

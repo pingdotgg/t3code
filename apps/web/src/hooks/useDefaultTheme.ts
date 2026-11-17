@@ -4,12 +4,7 @@ import { themeServerSettingsAtom } from "../state/server";
 import { MOBILE_DEFAULT_THEME_ID } from "@t3tools/shared/themePalettes";
 
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
-import {
-  readAppearanceModePreference,
-  readThemePreference,
-  setAppearanceMode,
-  setTheme,
-} from "./useTheme";
+import { getThemeSnapshot, setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
 const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
@@ -26,7 +21,9 @@ export function defaultThemeToApply(input: {
   readonly appliedGeneration: string | null;
   readonly resolves: boolean;
 }): string | null {
-  if (input.environmentId === null || input.defaultTheme.length === 0) return null;
+  // Empty with a set time means the stock theme was set; with none, no theme was.
+  if (input.environmentId === null) return null;
+  if (input.defaultTheme.length === 0 && input.defaultThemeSetAt.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
   // The setting and the palette it names arrive independently, so an id that
@@ -76,16 +73,14 @@ function adoptDefaultTheme(): void {
     defaultTheme,
     defaultThemeSetAt,
     appliedGeneration: readAppliedGeneration(storageKey),
-    resolves: standard || definition !== null,
+    resolves: standard || definition !== null || defaultTheme === "",
   });
   if (generation === null) return;
-  if (standard) {
-    if (setTheme(readAppearanceModePreference(readThemePreference()))) {
-      writeAppliedGeneration(storageKey, generation);
-    }
+  if (definition === null) {
+    // The stock theme keeps the client's own light, dark, or system mode.
+    if (setTheme(getThemeSnapshot().appearanceMode)) writeAppliedGeneration(storageKey, generation);
     return;
   }
-  if (definition === null) return;
 
   // A single-appearance theme needs both preference and appearance writes to take effect.
   if (!setTheme(defaultTheme)) return;

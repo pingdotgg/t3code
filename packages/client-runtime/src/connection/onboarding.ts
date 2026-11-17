@@ -365,7 +365,9 @@ const registerSshConnection = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* releaseNetworkMember(
     registration.target.environmentId,
-    registry.register(registration).pipe(Effect.as(true)),
+    registry
+      .register(registration, { knownAddressOnly: input.expectedEnvironmentId === undefined })
+      .pipe(Effect.as(true)),
   );
   return registration.target.environmentId;
 });

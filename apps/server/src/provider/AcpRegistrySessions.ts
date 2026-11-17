@@ -1,6 +1,7 @@
 import {
   AcpRegistryOperationError,
   CommandId,
+  ThreadId,
   type AcpRegistryImportSessionInput,
   type AcpRegistryImportSessionResult,
   type Project,
@@ -16,6 +17,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -48,6 +50,11 @@ export class AcpRegistrySessions extends Context.Service<
       },
       AcpRegistryOperationError
     >;
+    readonly findOwner: (input: {
+      readonly driver: ProviderDriverKind;
+      readonly instanceId: ProviderInstanceId;
+      readonly sessionId: string;
+    }) => Effect.Effect<ThreadId | null, AcpRegistryOperationError>;
     /**
      * Binds a native ACP session to a T3 thread and copies its history in. Importing a
      * session whose thread still lacks its history repairs that thread instead.
@@ -68,6 +75,35 @@ const make = Effect.gen(function* () {
   const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
   const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
   const random = yield* SecureRandom.SecureRandom;
+  const sql = yield* SqlClient.SqlClient;
+
+  const findOwner = Effect.fn("AcpRegistrySessions.findOwner")(function* (input: {
+    readonly driver: ProviderDriverKind;
+    readonly instanceId: ProviderInstanceId;
+    readonly sessionId: string;
+  }) {
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT provider.thread_id
+      FROM orchestration_v2_projection_provider_threads AS provider
+      JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = provider.thread_id
+      WHERE provider.driver = ${input.driver}
+        AND provider.provider_instance_id = ${input.instanceId}
+        AND json_extract(provider.payload_json, '$.nativeThreadRef.nativeId') = ${input.sessionId}
+        AND thread.deleted_at IS NULL
+      ORDER BY thread.updated_at DESC
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new AcpRegistryOperationError({
+            reason: "session_import_failed",
+            message: "Could not inspect ACP session ownership.",
+            cause,
+          }),
+      ),
+    );
+    return rows[0] ? ThreadId.make(rows[0].thread_id) : null;
+  });
 
   const project = Effect.fn("AcpRegistrySessions.project")(function* (projectId: ProjectId) {
     const found = yield* projectService.getById(projectId).pipe(
@@ -129,6 +165,12 @@ const make = Effect.gen(function* () {
       instanceId: input.instanceId,
       sessionId: input.sessionId,
     });
+    const owner = yield* findOwner({
+      driver: instance.driverKind,
+      instanceId: input.instanceId,
+      sessionId: input.sessionId,
+    });
+    if (owner !== null && owner !== threadId) return { threadId: owner, imported: false } as const;
     const existing = yield* threadManagement.getThreadShell(threadId).pipe(
       Effect.mapError(
         (cause) =>
@@ -224,7 +266,7 @@ const make = Effect.gen(function* () {
     return { threadId, imported: true } as const;
   }, coordinator.withSessionMutation);
 
-  return AcpRegistrySessions.of({ project, sessionManager, importSession });
+  return AcpRegistrySessions.of({ project, sessionManager, findOwner, importSession });
 });
 
 export const layer = Layer.effect(AcpRegistrySessions, make);

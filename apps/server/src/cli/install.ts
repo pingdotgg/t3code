@@ -17,7 +17,9 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
   generatedWindowsShimTarget,
   isVersionExecutable,
+  readPosixLauncherTarget,
   recordPinnedRuntimeLauncher,
+  writePosixLauncher,
 } from "../service/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
@@ -43,7 +45,7 @@ const standaloneRuntime = Effect.gen(function* () {
   return Option.some({ executable, versionsDir, runtimeDir });
 });
 
-/** Links this runtime as the `ada` and `t3` commands the way the install scripts do, replacing only our own links. */
+/** Installs this runtime as the `ada` and `t3` commands the way the install scripts do, replacing only our own launchers. */
 export const installCli = Effect.fn("cli.install.install")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -76,7 +78,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
-  /** Links `command` to this runtime, replacing only our own link; none when another program has it. */
+  /** Installs `command` as a launcher for this runtime, replacing only our own; none when another program has it. */
   const linkCommand = Effect.fn("cli.install.link")(function* (command: string) {
     const name = windows ? `${command}.cmd` : command;
     const link = path.join(binDir, name);
@@ -86,7 +88,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
           Effect.flatMap((target) =>
             fs.realPath(link).pipe(Effect.orElseSucceed(() => path.resolve(binDir, target))),
           ),
+          // Not a link: the script this command and the install scripts write.
+          Effect.catch(() => readPosixLauncherTarget(link)),
           Effect.option,
+          Effect.map(Option.filter((target) => target !== undefined)),
         );
     // A dangling symlink is occupied too: writing the shim would follow it.
     const occupied =
@@ -115,22 +120,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       yield* fs
         .writeFileString(link, `@echo off\r\n"${executable}" %*`, occupied ? {} : { flag: "wx" })
         .pipe(Effect.mapError(failed(`Could not write ${link}.`)));
-    } else if (!occupied) {
-      yield* fs.symlink(executable, link).pipe(Effect.mapError(failed(`Could not link ${link}.`)));
     } else {
-      // Swap a temporary link into place so a running command never sees it missing.
-      const staging = `${link}.${process.pid}.tmp`;
-      // Clean up only a staging link this call made, never a file that was already there.
-      yield* fs
-        .symlink(executable, staging)
-        .pipe(
-          Effect.andThen(
-            fs
-              .rename(staging, link)
-              .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
-          ),
-          Effect.mapError(failed(`Could not link ${link}.`)),
-        );
+      yield* writePosixLauncher({ launcher: link, executable, exclusive: !occupied }).pipe(
+        Effect.mapError(failed(`Could not write ${link}.`)),
+      );
     }
 
     // Pruning keeps what recorded launchers point at; a background service cannot see binDir otherwise.

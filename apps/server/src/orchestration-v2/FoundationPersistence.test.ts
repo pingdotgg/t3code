@@ -2752,6 +2752,94 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
+  it.effect("fails an effect this build cannot decode and claims the thread's next effect", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const workerId = "undecodable-worker";
+      const commandId = CommandId.make("command:foundation-undecodable");
+      const threadId = ThreadId.make("thread:foundation-undecodable");
+      yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox (
+          effect_id, command_id, thread_id, effect_type, payload_json, status,
+          available_at, created_at, updated_at
+        )
+        VALUES (
+          'effect:foundation-undecodable:a', ${commandId}, ${threadId}, 'future-effect.kind',
+          '{"type":"future-effect.kind"}', 'pending', ${nowIso}, ${nowIso}, ${nowIso}
+        )
+      `;
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-undecodable:b",
+          commandId,
+          threadId,
+          request: { type: "provider-turn.start", runId: RunId.make("run:foundation-undecodable") },
+        },
+      ]);
+
+      const claimed = yield* Effect.exit(outbox.claimNext({ workerId }));
+
+      const rows = yield* sql<{
+        readonly effect_id: string;
+        readonly status: string;
+        readonly lease_owner: string | null;
+        readonly last_error: string | null;
+      }>`
+        SELECT effect_id, status, lease_owner, last_error
+        FROM orchestration_v2_effect_outbox
+        ORDER BY effect_id
+      `;
+      assert.deepEqual(rows, [
+        {
+          effect_id: "effect:foundation-undecodable:a",
+          status: "failed",
+          lease_owner: null,
+          last_error: "This server build cannot decode the future-effect.kind effect.",
+        },
+        {
+          effect_id: "effect:foundation-undecodable:b",
+          status: "running",
+          lease_owner: workerId,
+          last_error: null,
+        },
+      ]);
+      assert.equal(
+        Exit.isSuccess(claimed) ? Option.getOrUndefined(claimed.value)?.id : undefined,
+        "effect:foundation-undecodable:b",
+      );
+    }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
+  it.effect.each(["queued", "waiting"])(
+    "keeps a %s continuation's crash budget past outbox retention",
+    (status) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const old = DateTime.formatIso(DateTime.subtractDuration(now, Duration.days(8)));
+        const timestamp = DateTime.formatIso(now);
+        yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox
+          (effect_id, command_id, thread_id, effect_type, payload_json, status, available_at, created_at, updated_at, completed_at)
+        VALUES ('effect:retained-recovery', 'command:retained-recovery', 'thread:retained-recovery',
+          'provider-runtime.continue', '{"type":"provider-runtime.continue","sourceRunId":"run:retained-source","processLossCount":3}',
+          'succeeded', ${old}, ${old}, ${old}, ${old})
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('run:retained-recovery', 'thread:retained-recovery', 1, 'codex', ${status}, ${timestamp},
+          '{"restartContinuationOfRunId":"run:retained-source"}')
+      `;
+        assert.equal(yield* outbox.pruneSettled, 0);
+        yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'run:retained-recovery'`;
+        assert.equal(yield* outbox.pruneSettled, 1);
+      }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
   it.effect("wakes claimers when cancellation unblocks same-thread work", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -3402,6 +3490,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.deepEqual(effects[0]?.request, {
           type: "provider-runtime.continue",
           sourceRunId: runId,
+          processLossCount: 0,
         });
         yield* outbox.cancelUnsettled({
           threadId,

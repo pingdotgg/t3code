@@ -323,6 +323,7 @@ export const AuthPairingCredentialResult = Schema.Struct({
   credential: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
+  purpose: Schema.optionalKey(Schema.Literal("peer-link")),
   /** Set when the code approves one agent sign-in at this level. Older servers omit it. */
   access: Schema.optionalKey(AuthMcpClientAccess),
 });
@@ -451,16 +452,28 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
-export const AuthCreatePairingCredentialInput = Schema.Struct({
+const pairingCredentialFields = {
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
-  /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
-  access: Schema.optionalKey(AuthMcpClientAccess),
   /** The app joins the whole network, so every member lets it in without another code. */
   network: Schema.optionalKey(Schema.Boolean),
   /** With `network`: the app this pairs again for, removed everywhere once the code is redeemed. */
   replacesAppId: Schema.optionalKey(TrimmedNonEmptyString),
-});
+};
+
+export const AuthCreatePairingCredentialInput = Schema.Union([
+  Schema.Struct({
+    ...pairingCredentialFields,
+    /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
+    access: Schema.optionalKey(AuthMcpClientAccess),
+    purpose: Schema.optionalKey(Schema.Undefined),
+  }),
+  Schema.Struct({
+    ...pairingCredentialFields,
+    access: AuthMcpClientAccess,
+    purpose: Schema.Literal("peer-link"),
+  }),
+]);
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
 export const AuthSessionState = Schema.Struct({

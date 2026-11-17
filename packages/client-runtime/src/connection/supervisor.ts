@@ -23,6 +23,7 @@ import {
   type ConnectionTarget,
   ConnectionTransientError,
   type NetworkStatus,
+  NO_REFUSED_ROUTES,
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -106,7 +107,19 @@ interface PendingRetryTrace {
 
 type ConnectedLease = ConnectionDriver.EnvironmentConnectionLease & {
   readonly activeRoute: ConnectionRoute | undefined;
+  readonly generation: number;
 };
+
+function mergeRefusedRoutes(
+  known: ReadonlyArray<string>,
+  refused: ReadonlyArray<string>,
+  keep: (routeId: string) => boolean,
+): ReadonlyArray<string> {
+  const next = [...new Set([...known, ...refused])].filter(keep);
+  return next.length === known.length && next.every((id, index) => id === known[index])
+    ? known
+    : next;
+}
 
 interface TracedAttemptFailure {
   readonly error: ConnectionAttemptError;
@@ -196,6 +209,7 @@ function availableState(intent: SupervisorIntent, generation: number): Superviso
     generation,
     lastFailure: null,
     retryAt: null,
+    refusedRouteIds: NO_REFUSED_ROUTES,
   };
 }
 
@@ -214,6 +228,7 @@ function offlineState(
     generation,
     lastFailure,
     retryAt: null,
+    refusedRouteIds: NO_REFUSED_ROUTES,
   };
 }
 
@@ -233,6 +248,7 @@ function connectingState(
     generation,
     lastFailure,
     retryAt: null,
+    refusedRouteIds: NO_REFUSED_ROUTES,
   };
 }
 
@@ -330,6 +346,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
+  // Outlives sessions so a reconnect shows a refusal seen earlier; a route leaves once it connects.
+  const refusedRoutes = yield* Ref.make(NO_REFUSED_ROUTES);
   // The generation keeps a check that started before a reset from recording
   // its stale failures after it.
   const silentRoutes = yield* Ref.make({
@@ -427,10 +445,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       return { generation: previous.generation, routes };
     });
-    const index = results.indexOf("ready");
-    if (index === -1) return;
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
+    const refused = better
+      .filter((_route, position) => results[position] === "refused")
+      .map((route) => connectionRouteId(route.target));
+    if (refused.length > 0) {
+      const known = yield* Ref.updateAndGet(refusedRoutes, (current) =>
+        mergeRefusedRoutes(current, refused, () => true),
+      );
+      yield* SubscriptionRef.updateSome(state, (current) =>
+        current.phase === "connected" &&
+        current.generation === lease.generation &&
+        current.refusedRouteIds !== known
+          ? Option.some({ ...current, refusedRouteIds: known })
+          : Option.none(),
+      );
+    }
+    const index = results.indexOf("ready");
+    if (index === -1) return;
     yield* signal({
       _tag: "BetterRouteAvailable",
       routeId: connectionRouteId(better[index]!.target),
@@ -573,7 +606,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (ignoreOffline: boolean) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
     let deviceOffline = (yield* connectivity.status) === "offline";
@@ -581,11 +614,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const next = yield* Queue.take(signals);
       switch (next._tag) {
         case "DisconnectRequested":
-        case "RetryRequested":
           return false;
+        case "RetryRequested":
+          // Once the loop has taken this retry's flag, the running attempt is
+          // the one the retry asked for.
+          if (yield* Ref.get(resetRetryState)) {
+            return false;
+          }
+          break;
         case "NetworkChanged":
           if (target._tag !== "PrimaryConnectionTarget") {
-            if (next.network === "offline") {
+            if (next.network === "offline" && !ignoreOffline) {
               return false;
             }
           } else if (next.network === "offline") {
@@ -895,7 +934,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      waitForEstablishmentInterrupt(ignoreOffline).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,
@@ -994,13 +1033,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       } satisfies AttemptOutcome;
     }
 
+    const routes = yield* currentRoutes;
+    const activeRouteId = connectionRouteId(active.lease.prepared.target);
     const connectedLease: ConnectedLease = {
       ...active.lease,
-      activeRoute: (yield* currentRoutes).find(
-        (route) =>
-          connectionRouteId(route.target) === connectionRouteId(active.lease.prepared.target),
-      ),
+      activeRoute: routes.find((route) => connectionRouteId(route.target) === activeRouteId),
+      generation,
     };
+    const refusedRouteIds = yield* Ref.updateAndGet(refusedRoutes, (known) =>
+      mergeRefusedRoutes(
+        known,
+        active.lease.refusedRouteIds,
+        (id) =>
+          id !== activeRouteId && routes.some((route) => connectionRouteId(route.target) === id),
+      ),
+    );
     const connectedAt = yield* Clock.currentTimeMillis;
     yield* Ref.set(troubleSince, null);
     yield* Ref.set(lastConnectedAt, connectedAt);
@@ -1018,6 +1065,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       generation,
       lastFailure: null,
       retryAt: null,
+      refusedRouteIds,
     });
 
     const connectedExit = yield* Effect.raceFirst(
@@ -1111,7 +1159,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     let replacing = false;
 
     for (;;) {
-      if (yield* Ref.getAndSet(resetRetryState, false)) {
+      const retryRequested = yield* Ref.getAndSet(resetRetryState, false);
+      if (retryRequested) {
         failureCount = 0;
         latestFailure = null;
         pendingRetry = Option.none();
@@ -1128,7 +1177,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      // The platform's offline report can stay wrong after the network is back,
+      // so an explicit retry still tries instead of waiting for it to change.
+      const ignoreOffline = replacing || retryRequested;
+      if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -1144,7 +1196,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* Ref.set(troubleSince, yield* Clock.currentTimeMillis);
       }
       const outcome: AttemptOutcome = yield* Effect.scoped(
-        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
+        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, ignoreOffline),
       );
       replacing = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
@@ -1185,6 +1237,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           generation,
           lastFailure: error,
           retryAt: null,
+          refusedRouteIds: NO_REFUSED_ROUTES,
         });
         const applicationActivated = yield* waitForSignal;
         if (applicationActivated) {
@@ -1225,6 +1278,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         generation,
         lastFailure: latestFailure,
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
+        refusedRouteIds: NO_REFUSED_ROUTES,
       });
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {

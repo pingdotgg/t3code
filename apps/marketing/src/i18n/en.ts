@@ -26,6 +26,8 @@ export const en = {
     downloadForMac: "Download for macOS",
     downloadForWindows: "Download for Windows",
     downloadForLinux: "Download for Linux",
+    downloadForIos: "Download for iOS",
+    downloadForAndroid: "Download for Android",
     sourceLink: "Steal our code (legally)",
     screenshotAlt: `${APP_NAME} running Claude, Codex, Muse, and Gemini subagents in one thread`,
     harnessTitle: "Bring your own sub",

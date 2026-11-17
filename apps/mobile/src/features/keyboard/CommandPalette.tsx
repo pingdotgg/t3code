@@ -9,7 +9,7 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { isOpenListedThread } from "@t3tools/client-runtime/state/shell";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
@@ -46,6 +46,7 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
+  useDelegatedUnderParent,
   useProjects,
   useServerConfigs,
   useThreadShell,
@@ -230,6 +231,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useVisibleThreadShells();
+  const delegatedUnderParent = useDelegatedUnderParent();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -458,32 +460,42 @@ export function CommandPalette(props: {
           },
         }),
     }));
-    const threadItems: CommandPaletteItem[] = threads.filter(isOpenListedThread).map((thread) => {
-      const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
-      const environment =
-        savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-      return {
-        key: scopedThreadKey(thread.environmentId, thread.id),
-        kind: "thread",
-        title: thread.title || "Untitled thread",
-        detail: [project?.title, environment].filter(Boolean).join(" · "),
-        searchTerms: [],
-        threadSearch: threadSearchSubject(
-          thread,
-          project?.title,
-          environments.length > 1 ? environment : null,
-        ),
-        // Last among threads: picking the thread already open does nothing.
-        ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
-          ? { secondary: true }
-          : {}),
-        run: () =>
-          selectDetail({
-            name: "Thread",
-            params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
-          }),
-      };
-    });
+    const threadItems: CommandPaletteItem[] = threads
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          !isShownUnderParent(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            thread,
+            delegatedUnderParent,
+          ),
+      )
+      .map((thread) => {
+        const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
+        const environment =
+          savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
+        return {
+          key: scopedThreadKey(thread.environmentId, thread.id),
+          kind: "thread",
+          title: thread.title || "Untitled thread",
+          detail: [project?.title, environment].filter(Boolean).join(" · "),
+          searchTerms: [],
+          threadSearch: threadSearchSubject(
+            thread,
+            project?.title,
+            environments.length > 1 ? environment : null,
+          ),
+          // Last among threads: picking the thread already open does nothing.
+          ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
+            ? { secondary: true }
+            : {}),
+          run: () =>
+            selectDetail({
+              name: "Thread",
+              params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
+            }),
+        };
+      });
     // Recent means used recently: written in or opened, whichever is later.
     threadItems.sort(
       (left, right) =>
@@ -504,6 +516,7 @@ export function CommandPalette(props: {
     selectDetail,
     startTriage,
     threads,
+    delegatedUnderParent,
     triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {

@@ -51,6 +51,8 @@ import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useDelayedStatus } from "../../lib/useDelayedStatus";
+import { connectionRetryLabel } from "./floating-working-status";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -95,7 +97,10 @@ import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
-import { projectThreadContentPresentation } from "./threadContentPresentation";
+import {
+  projectThreadContentPresentation,
+  threadSyncStatusLabel,
+} from "./threadContentPresentation";
 import {
   Inspector,
   useAdaptiveWorkspaceLayout,
@@ -132,6 +137,9 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
 }
+
+const RECONNECT_ERROR_DELAY_MS = 5_000;
+const RECONNECT_STATUS_DELAY_MS = 2_000;
 
 // The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
 const InspectorHeaderShownContext = createContext(false);
@@ -291,8 +299,11 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   }
 
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
-    return withInspectorHeader(
-      <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />,
+    // ThreadRouteContent draws its own inspector header so it can show the sync status.
+    return (
+      <InspectorHeaderShownContext value={props.inspectorPresentation !== undefined}>
+        <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />
+      </InspectorHeaderShownContext>
     );
   }
 
@@ -853,7 +864,7 @@ function ThreadRouteContent(
     );
   };
   const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
-  const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
+  const { visible: worktreeSetup } = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
     preparing:
@@ -862,7 +873,7 @@ function ThreadRouteContent(
       selectedThread?.worktreePath != null ||
       (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
         selectedThreadCreation.outcome == null),
-    turnStarted: setupTurnStartedAt !== null,
+    runs: selectedThreadDetail?.runs ?? [],
     followUpSent:
       composer.selectedThreadFeed.filter(
         (entry) => entry.type === "message" && entry.message.role === "user",
@@ -947,14 +958,6 @@ function ThreadRouteContent(
       serverOwned: false,
     };
   })();
-  if (!environmentId || !threadId) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
-  if (!selectedThread) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
   // Queued creation displays its prompt before server creation; temporary not-found is expected.
   const contentPresentation =
     creationState !== null
@@ -965,6 +968,49 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
+  const connectionRetrying =
+    routeConnectionState === "connecting" || routeConnectionState === "reconnecting";
+  // Connection failures survive retries and app suspension.
+  const retryConnectionError = useDelayedStatus(
+    `${environmentId}:${connectionRetrying && routeConnectionError !== null}`,
+    connectionRetrying ? routeConnectionError : null,
+    RECONNECT_ERROR_DELAY_MS,
+  );
+  // The reconnect on every app open usually lands within the delay, so it never shows.
+  const connectionStatusLabel = useDelayedStatus(
+    `${environmentId}:retrying`,
+    connectionRetryLabel({
+      connectionError: retryConnectionError,
+      connectionState: routeConnectionState,
+    }),
+    RECONNECT_STATUS_DELAY_MS,
+  );
+  // A thread this client is creating has nothing older to sync.
+  const threadSyncLabel =
+    creationState === null
+      ? threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind)
+      : null;
+  // Transient states go in the header subtitle so the composer's status slot doesn't jump.
+  const threadStatusLabel = useDelayedStatus(
+    selectedThread === null ? "" : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    connectionStatusLabel !== null ? connectionStatusLabel : threadSyncLabel,
+  );
+  const inspectorHeader = props.inspectorPresentation ? (
+    <ThreadInspectorHeader
+      title={selectedThread?.title ?? "Thread"}
+      subtitle={threadStatusLabel ?? undefined}
+      {...props.inspectorPresentation}
+    />
+  ) : null;
+  if (!environmentId || !threadId || !selectedThread) {
+    return (
+      <>
+        {inspectorHeader}
+        <OpeningThreadLoadingScreen />
+      </>
+    );
+  }
+
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
@@ -980,7 +1026,7 @@ function ThreadRouteContent(
             props.inspectorPresentation ? null : (
               <ThreadHeader
                 title={selectedThread.title}
-                subtitle={headerSubtitle}
+                subtitle={threadStatusLabel ?? headerSubtitle}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}
@@ -1012,21 +1058,10 @@ function ThreadRouteContent(
           extensionStatuses={composer.extensionStatuses}
           providerSubagentStatus={composer.providerSubagentStatus}
           creationState={creationState}
-          setupWorkingStartedAt={
-            composer.activeWorkStartedAt !== null &&
-            worktreeSetupSnapshot !== null &&
-            composer.selectedThreadFeed.filter(
-              (entry) => entry.type === "message" && entry.message.role === "user",
-            ).length <= 1
-              ? composer.activeWorkStartedAt
-              : null
-          }
           worktreeSetup={
             worktreeSetup
               ? {
                   snapshot: worktreeSetup,
-                  turnStartedAt: setupTurnStartedAt,
-                  working: composer.activeWorkStartedAt !== null,
                   turnStarted: setupTurnStartedAt !== null,
                   onCancel: handleCancelWorktreeSetup,
                   onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
@@ -1041,7 +1076,6 @@ function ThreadRouteContent(
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
-          threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
@@ -1090,6 +1124,7 @@ function ThreadRouteContent(
 
   return (
     <>
+      {inspectorHeader}
       {!props.inspectorPresentation && inspectorContent ? (
         <Inspector
           // A route's own inspector (files) opens once per thread; going back keeps the user's choice.

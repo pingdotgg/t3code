@@ -70,7 +70,7 @@ export const ServerInstallation = Schema.Union([
   // npm kinds come from servers before the fork stopped offering npm updates.
   Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx", "linux-headless"]) }),
   Schema.Struct({ kind: Schema.Literal("npm-global"), prefix: TrimmedNonEmptyString }),
-  // A launcher symlink into a downloaded runtime, as the install script and `t3 update` leave.
+  // A launcher (script, or a legacy symlink) into a downloaded runtime, as the install script and `t3 update` leave.
   Schema.Struct({
     kind: Schema.Literal("t3-launcher"),
     launcher: InstalledPath,
@@ -173,6 +173,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Manual commands must update this install, not the host's default global prefix. */
   serverInstallation: ForwardCompatibleOptional(ServerInstallation),
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  serverUpdateStaging: Schema.optionalKey(Schema.Boolean),
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server runs scheduled tasks (`scheduledTasks.*`). */
@@ -209,6 +210,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkFence: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
+  peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */
   triage: Schema.optionalKey(Schema.Boolean),
   /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */

@@ -6,6 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 
 import { useConnectionController } from "../features/connection/useConnectionController";
+import { useRetryEnvironment } from "../features/connection/useRetryEnvironment";
 import { environmentPresentations } from "./presentation";
 import { useWorkspaceConnectionState, useWorkspaceEnvironments } from "./workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
@@ -153,8 +154,7 @@ export function useRemoteConnections() {
   const onConnectPress = (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) =>
     pairEnvironment(pairingUrl ?? connectionPairingUrl, expectedEnvironmentId);
 
-  const onReconnectEnvironment = (environmentId: EnvironmentId) =>
-    controller.retryEnvironment(environmentId);
+  const onReconnectEnvironment = useRetryEnvironment();
   const onSetEnvironmentEnabled = (environmentId: EnvironmentId, enabled: boolean) =>
     controller.setEnvironmentEnabled(environmentId, enabled);
   const onUpdateEnvironment = (

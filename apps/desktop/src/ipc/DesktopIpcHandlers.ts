@@ -1,3 +1,4 @@
+import { startFileDrag } from "./methods/fileDrag.ts";
 import * as McpGatewayIpc from "./methods/mcpGateway.ts";
 import * as Effect from "effect/Effect";
 
@@ -48,12 +49,14 @@ import {
   getWindowFullscreenState,
   openExternal,
   readMedia,
+  restartAudioService,
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
   probeRemoteEditors,
   revealWindow,
   pickFolder,
+  toLocalBackendPath,
   pickProjectFavicon,
   pickThemeFiles,
   setTheme,
@@ -116,6 +119,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
+  yield* ipc.handle(startFileDrag);
+  yield* ipc.handle(restartAudioService);
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getConnectionCatalog);
@@ -153,6 +158,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
+  yield* ipc.handle(toLocalBackendPath);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);

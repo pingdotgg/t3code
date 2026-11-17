@@ -4,6 +4,7 @@ import * as McpGatewayBroker from "./mcp/McpGatewayBroker.ts";
 import * as HeadlessGatewayHost from "./mcp/agents/HeadlessGatewayHost.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1538,31 +1539,36 @@ export const layerWsRpc = (
         const sessions = yield* Effect.forEach(
           listed.sessions,
           (session) => {
-            const threadId = AcpRegistrySessions.importedThreadId({
+            const idInput = {
               driver: instance.driverKind,
               instanceId: input.instanceId,
               sessionId: session.sessionId,
-            });
-            return threadManagement.getThreadShell(threadId).pipe(
-              Effect.map((thread) => ({
-                ...session,
-                importedThreadId: thread === null ? null : threadId,
-                ...(thread !== null &&
-                AgentSessionImporter.isNativeHistoryPending({
-                  historyOrigin: thread.historyOrigin,
-                  hasRun: thread.latestRunId !== null,
-                })
-                  ? { nativeHistoryPending: true }
-                  : {}),
-              })),
-              Effect.mapError(
-                (cause) =>
-                  new AcpRegistryOperationError({
-                    reason: "session_import_failed",
-                    message: "Could not inspect existing imported ACP sessions.",
-                    cause,
-                  }),
-              ),
+            };
+            return acpRegistrySessions.findOwner(idInput).pipe(
+              Effect.flatMap((owner) => {
+                const threadId = owner ?? AcpRegistrySessions.importedThreadId(idInput);
+                return threadManagement.getThreadShell(threadId).pipe(
+                  Effect.map((thread) => ({
+                    ...session,
+                    importedThreadId: thread === null ? null : threadId,
+                    ...(thread !== null &&
+                    AgentSessionImporter.isNativeHistoryPending({
+                      historyOrigin: thread.historyOrigin,
+                      hasRun: thread.latestRunId !== null,
+                    })
+                      ? { nativeHistoryPending: true }
+                      : {}),
+                  })),
+                  Effect.mapError(
+                    (cause) =>
+                      new AcpRegistryOperationError({
+                        reason: "session_import_failed",
+                        message: "Could not inspect existing imported ACP sessions.",
+                        cause,
+                      }),
+                  ),
+                );
+              }),
             );
           },
           { concurrency: 16 },
@@ -1586,11 +1592,14 @@ export const layerWsRpc = (
                 message: "The ACP agent does not advertise session deletion.",
               });
             }
-            const threadId = AcpRegistrySessions.importedThreadId({
+            const idInput = {
               driver: instance.driverKind,
               instanceId: input.instanceId,
               sessionId: input.sessionId,
-            });
+            };
+            const threadId =
+              (yield* acpRegistrySessions.findOwner(idInput)) ??
+              AcpRegistrySessions.importedThreadId(idInput);
             const importedThread = yield* threadManagement.getThreadShell(threadId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1767,6 +1776,7 @@ export const layerWsRpc = (
           environment,
           auth,
           cwd: config.cwd,
+          hostname: yield* HostProcess.Hostname,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -2190,6 +2200,13 @@ export const layerWsRpc = (
                         cause,
                       }),
                     ThreadLaunchBaseRefError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchBranchExistsError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
@@ -2676,6 +2693,10 @@ export const layerWsRpc = (
           }),
         [WS_METHODS.tailnetDevicesSetAppAccess]: (input) =>
           tailnetDevices.setAppAccess(input.appId, input.access),
+        [WS_METHODS.serverGetSettings]: (_input) =>
+          Effect.map(serverSettings.getSettings, (settings) =>
+            ServerSettings.redactServerSettingsForClient(settings, settingsClient),
+          ),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({
@@ -3028,6 +3049,7 @@ export const layerWsRpc = (
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
+              input.resource._tag === "environment-theme-background" ||
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.
@@ -3187,9 +3209,19 @@ export const layerWsRpc = (
         [WS_METHODS.vcsApplyPatch]: (input) =>
           gitWorkflow.applyPatch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow
+            .createRef(input)
+            .pipe(
+              Effect.tap(() =>
+                input.switchRef
+                  ? vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)
+                  : refreshGitStatus(input.cwd),
+              ),
+            ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow
+            .switchRef(input)
+            .pipe(Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd))),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
@@ -3213,7 +3245,8 @@ export const layerWsRpc = (
               ),
             ),
           ),
-        [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
+        [WS_METHODS.terminalWrite]: (input, metadata) =>
+          terminalManager.write(input, terminalViewerId(metadata)),
         [WS_METHODS.terminalResize]: (input, metadata) =>
           terminalManager.resize(input, terminalViewerId(metadata)),
         [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
@@ -3685,6 +3718,12 @@ export const layer = Layer.unwrap(
             failEnvironmentInternal("internal_error", error),
           ),
         );
+        // Desktop bootstrap sessions connect to their own backend, including same-machine WSL.
+        if (session.subject === "desktop-bootstrap") {
+          delete NodeHttpServerRequest.toIncomingMessage(request).headers[
+            "sec-websocket-extensions"
+          ];
+        }
         const transport = NodeHttpServerRequest.toIncomingMessage(request).socket;
         const liveness = yield* WsClientLiveness.make(() => ({
           pendingBytes: transport.writableLength,

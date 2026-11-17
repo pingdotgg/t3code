@@ -25,6 +25,8 @@ export const zh: Messages = {
     downloadForMac: "下载 macOS 版",
     downloadForWindows: "下载 Windows 版",
     downloadForLinux: "下载 Linux 版",
+    downloadForIos: "下载 iOS 版",
+    downloadForAndroid: "下载 Android 版",
     sourceLink: "来偷我们的代码（合法的）",
     screenshotAlt: `${APP_NAME} 在同一个线程中运行 Claude、Codex、Muse 和 Gemini 子智能体`,
     harnessTitle: "自带订阅",

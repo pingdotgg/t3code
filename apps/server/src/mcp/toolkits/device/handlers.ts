@@ -50,7 +50,7 @@ export function agentDeviceQuickStart(
           .filter(Boolean)
           .join(" ")
       : host?.kind === "eas"
-        ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+        ? "This is an Expo Simulators session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
         : device.platform === "ios"
           ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
           : "The Android snapshot helper installs itself on first use.";
@@ -90,7 +90,7 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
     () =>
       new DeviceToolUnavailableError({
         reason:
-          "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
+          "Agent device access is turned off for this environment. Ask the user to turn on the Device hub and Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
       }),
   ),
 );
@@ -276,7 +276,7 @@ const handlers = {
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      // Target the opened device: an EAS device and its agent-device daemon
+      // Target the opened device: an Expo device and its agent-device daemon
       // exist only once its session runs, and Android ids change on boot.
       const opened = {
         threadId: scope.thread.threadId,

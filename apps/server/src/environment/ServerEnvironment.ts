@@ -298,12 +298,14 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),
+      ...(serverSelfUpdate === "boot-service" ? { serverUpdateStaging: true } : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
       serverBrowser: true,
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
       mcpApprovalCodes: true,
+      peerLinkPairingCodes: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,
     },

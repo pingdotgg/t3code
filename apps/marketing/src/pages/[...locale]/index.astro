@@ -4,7 +4,8 @@ import desktopScreenshot from "../../assets/app-desktop.webp";
 import { APP_NAME } from "@t3tools/shared/branding";
 import Layout from "../../layouts/Layout.astro";
 import { RELEASES_URL } from "../../lib/releases";
-import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../../lib/site";
+import { GITHUB_REPOSITORY_URL } from "../../lib/site";
+import { MARKETING_STATS } from "../../lib/stats";
 import { softwareJsonLd } from "../../lib/seo";
 import { messagesFor } from "../../i18n";
 import { fillTemplate, localeStaticPaths, localizedHref } from "../../i18n/locales";
@@ -302,16 +303,7 @@ const screenshot = await getImage({
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../../lib/releases";
   import { startHomeMotion } from "../../lib/homeMotion";
-
-  type Platform = { os: "mac" | "win" | "linux" };
-
-  function detectPlatform(): Platform | null {
-    const ua = navigator.userAgent;
-    if (/Win/i.test(ua)) return { os: "win" };
-    if (/Mac/i.test(ua)) return { os: "mac" };
-    if (/Linux/i.test(ua)) return { os: "linux" };
-    return null;
-  }
+  import { detectPlatform, type Platform } from "../../lib/platform";
 
   // Browser architecture hints are unreliable; serve arm64 and let Intel users choose on /download.
   function pickAsset(assets: ReleaseAsset[], platform: Platform): string | null {
@@ -334,8 +326,9 @@ const screenshot = await getImage({
     const ctaLabel = document.getElementById("cta-download-label");
     const kbd = document.getElementById("pr-button-kbd");
 
-    const platform = detectPlatform();
-    if (!platform) return;
+    const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints);
+    // No store listing yet, so phones keep the generic releases link.
+    if (!platform || platform.os === "ios" || platform.os === "android") return;
     document.documentElement.dataset.platform = platform.os;
     // Localized labels are rendered onto the hero button; the CTA reuses them.
     const platformLabel = btn?.getAttribute(`data-label-${platform.os}`);
@@ -941,9 +934,15 @@ const screenshot = await getImage({
     section { padding: 56px 0; }
     .sec-cta { padding: 80px 0; }
     .container { padding-left: 20px; padding-right: 20px; }
+    /* A nowrap tag widens its column past the grid, which then clips the other column. */
+    .harness-tag { white-space: normal; }
     .open-term-body {
       padding: 16px;
       font-size: 11px;
     }
+  }
+
+  @media (max-width: 360px) {
+    .harness { padding-left: 12px; padding-right: 12px; }
   }
 </style>

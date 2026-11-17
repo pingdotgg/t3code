@@ -119,14 +119,18 @@ export function handoffBudget(input: {
   const native = measured ?? input.nativeContextEstimate;
   const current =
     Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
-  const reserve = measured === undefined ? Math.max(16_000, Math.ceil(window / 4)) : 16_000;
+  // Measured occupancy already includes tools and instructions, so only the reply needs room.
+  const preferredReserve =
+    measured === undefined ? Math.max(16_000, Math.ceil(window / 4)) : 16_000;
+  // Small windows would otherwise reserve all of themselves for work.
+  const workReserve = Math.min(preferredReserve, Math.ceil(window / 2));
   return Math.max(
     0,
     Math.min(
       input.tokenCap,
       // Cap imported history only; adapters own attachment transport limits.
       HANDOFF_BYTE_CAP,
-      window - native - current - reserve,
+      window - native - current - workReserve,
     ),
   );
 }
@@ -154,7 +158,7 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
+      text = `File change: ${item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;

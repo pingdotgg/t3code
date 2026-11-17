@@ -8,6 +8,7 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -15,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
+import { McpSchema } from "effect/ai";
 import type { Tool, Toolkit } from "effect/ai";
 
 import {
@@ -426,9 +428,17 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
     if (tool === undefined) continue;
+    const remote = remoteCheckOf(declaration);
+    if (
+      remote === undefined &&
+      Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) !==
+        McpInvocationContext.hiddenFromOutsideClients
+    )
+      return yield* Effect.die(
+        `${name} acts as its calling thread, so outside clients must not be offered it.`,
+      );
     const routing = environmentRouting(tool);
     if (routing === undefined) continue;
-    const remote = remoteCheckOf(declaration);
     const forwarded = forwardedOf(declaration) as
       | Forwarded<object, unknown, Tool.Failure<Tools[keyof Tools]>, never>
       | undefined;
