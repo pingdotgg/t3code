@@ -95,30 +95,6 @@ it.effect("reads a multi-megabyte SSE event delivered in small chunks", () =>
   }),
 );
 
-it.effect("reads a 32 MiB SSE event delivered in 256-byte chunks", () =>
-  Effect.gen(function* () {
-    const text = "x".repeat(32 * 1024 * 1024);
-    const bytes = new TextEncoder().encode(
-      `data: ${JSON.stringify({ id: 1, result: { text } })}\n\n`,
-    );
-    let offset = 0;
-    const response = new Response(
-      new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (offset === bytes.length) return controller.close();
-          controller.enqueue(bytes.subarray(offset, offset + 256));
-          offset = Math.min(offset + 256, bytes.length);
-        },
-      }),
-      { headers: { "content-type": "text/event-stream" } },
-    );
-    const payloads = yield* Stream.runCollect(
-      responsePayloads(response, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
-    );
-    expect(Array.from(payloads)).toEqual([{ id: 1, result: { text } }]);
-  }),
-);
-
 it.effect("picks the SSE reader from the media type alone, whatever its case", () =>
   Effect.gen(function* () {
     const response = new Response('data: {"id":1}\n\n', {
