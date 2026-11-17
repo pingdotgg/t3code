@@ -1,3 +1,4 @@
+import { revalidateOnMount } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopBridge, DesktopWslState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -51,38 +52,35 @@ function createDesktopWslStateAtom(getBridge: () => DesktopWslStateBridge | unde
 
 const desktopWslStateCache = createDesktopWslStateAtom(getDesktopWslStateBridge);
 
-function shouldRevalidate(
-  result: AsyncResult.AsyncResult<DesktopWslState, unknown>,
-  staleTimeMs: number,
-) {
+function isStaleSearchResult(result: AsyncResult.AsyncResult<DesktopWslState, unknown>) {
   if (result.waiting || result._tag === "Initial") return false;
-  if (staleTimeMs === 0) return true;
   const success =
     result._tag === "Success" ? result : Option.getOrUndefined(result.previousSuccess);
-  return success === undefined || Date.now() - success.timestamp >= staleTimeMs;
+  return success === undefined || Date.now() - success.timestamp >= WSL_SEARCH_STALE_TIME_MS;
 }
 
-function readDesktopWslStateOnMount(staleTimeMs: number) {
-  return Atom.transform(desktopWslStateCache, (get) => {
+export const desktopWslStateAtom = Atom.transform(
+  desktopWslStateCache,
+  (get) => {
     const current = get(desktopWslStateCache);
-    if (Option.isNone(get.self()) && shouldRevalidate(current, staleTimeMs)) {
+    if (Option.isNone(get.self()) && isStaleSearchResult(current)) {
       let active = true;
       get.addFinalizer(() => {
         active = false;
       });
       // Defer the refresh so it can't notify another reader during React render.
       queueMicrotask(() => {
-        if (active && shouldRevalidate(get.once(desktopWslStateCache), staleTimeMs)) {
+        if (active && isStaleSearchResult(get.once(desktopWslStateCache))) {
           get.refresh(desktopWslStateCache);
         }
       });
     }
     return current;
-  });
-}
+  },
+  { initialValueTarget: desktopWslStateCache },
+);
 
-export const desktopWslStateAtom = readDesktopWslStateOnMount(WSL_SEARCH_STALE_TIME_MS);
-export const desktopWslAccessStateAtom = readDesktopWslStateOnMount(0);
+export const desktopWslAccessStateAtom = desktopWslStateCache.pipe(revalidateOnMount(0));
 
 export function refreshDesktopWslState(): void {
   appAtomRegistry.refresh(desktopWslStateCache);
