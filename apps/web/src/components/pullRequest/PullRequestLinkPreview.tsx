@@ -65,9 +65,9 @@ export function PullRequestLinkPreview({
       : null,
   );
   // A link to a comment or commit shows that, read from the activity the panel shares.
-  const namesSubject =
-    parsePullRequestAnchor(originalUrl)?.kind === "timeline" ||
-    pullRequestLinkCommit(originalUrl) !== null;
+  const anchor = parsePullRequestAnchor(originalUrl);
+  const linksCommit = pullRequestLinkCommit(originalUrl) !== null;
+  const namesSubject = anchor?.kind === "timeline" || linksCommit;
   const activityQuery = useEnvironmentQuery(
     open && namesSubject
       ? pullRequestEnvironment.activity({
@@ -78,6 +78,14 @@ export function PullRequestLinkPreview({
   );
   const subject =
     activityQuery.data === null ? null : pullRequestLinkSubject(originalUrl, activityQuery.data);
+  const pendingSubject =
+    activityQuery.data !== null || activityQuery.error !== null
+      ? null
+      : linksCommit
+        ? "commit"
+        : anchor?.kind === "timeline" && !/^event-/i.test(anchor.anchor)
+          ? "comment"
+          : null;
   const summary = useSharedPullRequestSummary(
     open ? target.environmentId : null,
     open ? target.input : null,
@@ -161,7 +169,11 @@ export function PullRequestLinkPreview({
                     </Tooltip>
                   )}
                 </div>
-                {subject?.kind === "comment" ? (
+                {pendingSubject === "comment" ? (
+                  <LinkedCommentSkeleton />
+                ) : pendingSubject === "commit" ? (
+                  <LinkedCommitSkeleton />
+                ) : subject?.kind === "comment" ? (
                   <LinkedComment subject={subject} />
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
@@ -170,7 +182,7 @@ export function PullRequestLinkPreview({
                     {card.title}
                   </p>
                 )}
-                {card.author === undefined || subject !== null ? null : (
+                {card.author === undefined || subject !== null || pendingSubject !== null ? null : (
                   <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
                     <span className="min-w-0">
@@ -180,9 +192,9 @@ export function PullRequestLinkPreview({
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
                       ) : previewQuery.error === null ? (
-                        <span className="flex h-lh items-center">
+                        <SkeletonLine>
                           <Skeleton className="h-3 w-20" />
-                        </span>
+                        </SkeletonLine>
                       ) : null}
                     </span>
                   </div>
@@ -193,6 +205,61 @@ export function PullRequestLinkPreview({
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
+  );
+}
+
+function SkeletonLine({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <span className={`flex h-lh items-center ${className}`}>{children}</span>;
+}
+
+function LinkedCommentSkeleton() {
+  return (
+    <div className="mt-2 min-w-0">
+      <div className="flex min-w-0 items-center gap-1.5 text-meta">
+        <Skeleton shape="pill" className="size-4 shrink-0" />
+        <SkeletonLine className="text-label">
+          <Skeleton className="h-3 w-24" />
+        </SkeletonLine>
+        <Skeleton className="h-3 w-16" />
+      </div>
+      <div className="mt-1.5 text-meta leading-relaxed">
+        <SkeletonLine>
+          <Skeleton className="h-3 w-full" />
+        </SkeletonLine>
+        <SkeletonLine>
+          <Skeleton className="h-3 w-full" />
+        </SkeletonLine>
+        <SkeletonLine>
+          <Skeleton className="h-3 w-full" />
+        </SkeletonLine>
+        <SkeletonLine>
+          <Skeleton className="h-3 w-2/3" />
+        </SkeletonLine>
+      </div>
+    </div>
+  );
+}
+
+function LinkedCommitSkeleton() {
+  return (
+    <div className="mt-2 min-w-0">
+      <div className="text-label leading-snug">
+        <SkeletonLine>
+          <Skeleton className="h-3.5 w-full" />
+        </SkeletonLine>
+        <SkeletonLine>
+          <Skeleton className="h-3.5 w-2/3" />
+        </SkeletonLine>
+      </div>
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta">
+        <SkeletonLine>
+          <Skeleton className="h-3 w-12" />
+        </SkeletonLine>
+        <Skeleton shape="pill" className="size-4 shrink-0" />
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-3 w-12" />
+      </div>
+    </div>
   );
 }
 
