@@ -8,13 +8,13 @@ it fails a check. No step calls a model.
 
 Both workflows use the same paths for pull requests and pushes to `main` or `sync/**`:
 
-- `conn-server-ci.yml` (Rust checks and musl build): `apps/conn-server/**` and its workflow.
+- `conn-server-ci.yml` (production musl build): `apps/conn-server/**` and both workflow files.
 - `conn-server-checks.yml` (`tools/check.sh`, including monorepo comparisons):
-  `apps/conn-server/**`, `apps/server/**`, `apps/web/**`, `packages/**` and its workflow.
+  `apps/conn-server/**`, `apps/server/**`, `apps/web/**`, `packages/**` and both workflow files.
 
 `conn-server-checks.yml` builds only the comparison binaries, shares them as a one-day
 artifact, and runs four comparison groups. Rust validation runs in parallel with the build;
-all groups run the canary. Seven jobs include the final summary. PRs only restore caches;
+all groups run the canary. Six jobs include the final summary. PRs only restore caches;
 only pushes to main save Rust and pnpm caches.
 `Conn Server checks` remains the final required check and fails if any group fails or skips.
 Each check has a timeout that stops its process group; each CI job also has a time limit.
