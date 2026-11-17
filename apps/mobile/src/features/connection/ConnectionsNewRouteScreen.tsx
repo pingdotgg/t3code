@@ -12,8 +12,8 @@ import {
 } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
-import { Linking, Pressable, StyleSheet, View } from "react-native";
+import { useRef, useState } from "react";
+import { Linking, Pressable, StyleSheet, View, type TextInputInstance } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -29,6 +29,7 @@ import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
+import { usePairingFormKeyboard } from "./usePairingFormKeyboard";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
 
@@ -66,6 +67,8 @@ function PairingForm({
     useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { scrollRef, keyboardInset, onScroll, onInputFocus, onInputBlur } =
+    usePairingFormKeyboard();
   const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
   const [hostInput, setHostInput] = useState(initialPairing.host);
   const [codeInput, setCodeInput] = useState(initialPairing.code);
@@ -197,12 +200,15 @@ function PairingForm({
       ]}
     >
       <ScrollView
+        ref={scrollRef}
         nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
+        scrollToOverflowEnabled
+        onScroll={onScroll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
+        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 + keyboardInset }}
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingTop: 4,
@@ -232,6 +238,8 @@ function PairingForm({
                 placeholder="192.168.1.100:3773"
                 value={hostInput}
                 onChangeText={handleHostChange}
+                onInputFocus={onInputFocus}
+                onInputBlur={onInputBlur}
               />
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
@@ -243,6 +251,8 @@ function PairingForm({
                 onSubmitEditing={() => {
                   if (!connectDisabled) void handleSubmit();
                 }}
+                onInputFocus={onInputFocus}
+                onInputBlur={onInputBlur}
               />
             </View>
             <Text
@@ -392,10 +402,15 @@ function T3ConnectSection() {
 
 function PairingInputRow({
   label,
+  onInputFocus,
+  onInputBlur,
   ...inputProps
-}: Omit<AppTextInputProps, "accessibilityLabel" | "className"> & {
+}: Omit<AppTextInputProps, "accessibilityLabel" | "className" | "onFocus" | "onBlur" | "ref"> & {
   readonly label: string;
+  readonly onInputFocus: (input: TextInputInstance | null) => void;
+  readonly onInputBlur: (input: TextInputInstance | null) => void;
 }) {
+  const inputRef = useRef<TextInputInstance>(null);
   return (
     <View collapsable={false} className="h-13 flex-row items-center gap-3 px-4">
       <Text
@@ -407,6 +422,9 @@ function PairingInputRow({
       </Text>
       <AppTextInput
         {...inputProps}
+        ref={inputRef}
+        onFocus={() => onInputFocus(inputRef.current)}
+        onBlur={() => onInputBlur(inputRef.current)}
         accessibilityLabel={label}
         autoCapitalize="none"
         autoCorrect={false}

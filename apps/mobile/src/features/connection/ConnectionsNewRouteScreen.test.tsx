@@ -79,6 +79,15 @@ vi.mock("../layout/workspace/workspace-selection-store", () => ({
 }));
 vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
 vi.mock("./CloudEnvironmentRows", () => ({ CloudEnvironmentRows: () => null }));
+vi.mock("./usePairingFormKeyboard", () => ({
+  usePairingFormKeyboard: () => ({
+    scrollRef: { current: null },
+    keyboardInset: 0,
+    onScroll: () => {},
+    onInputFocus: () => {},
+    onInputBlur: () => {},
+  }),
+}));
 vi.mock("./environmentSections", () => ({
   splitEnvironmentSections: () => ({ connectedCloudEnvironments: [] }),
 }));
