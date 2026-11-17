@@ -516,6 +516,29 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
   );
 
+  it.each(["key", "text", "paste"])(
+    "returns to the bottom of history on %s input",
+    async (input) => {
+      const harness = createHarness();
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+      const surface = await harness.create({ beforeKey: () => true });
+      surface.write(Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\r\n"));
+      harness.flushFrame();
+      key(surface, "PageUp", "PageUp", { shiftKey: true });
+      expect(surface.isAtBottom()).toBe(false);
+
+      if (input === "key") key(surface, "Enter", "Enter");
+      else if (input === "paste") paste(surface, "ls");
+      else {
+        surface.input.value = "l";
+        surface.input.dispatchEvent(Object.assign(new Event("input"), { data: "l" }));
+      }
+
+      expect(harness.onData).toHaveBeenCalled();
+      expect(surface.isAtBottom()).toBe(true);
+    },
+  );
+
   it("keeps a selection through redraws until the selected text changes", async () => {
     const harness = createHarness();
     const surface = await harness.create();
