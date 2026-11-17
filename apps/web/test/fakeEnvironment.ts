@@ -128,10 +128,20 @@ const makeServerConfig = (providers: ReadonlyArray<unknown>): ServerConfig => ({
 });
 let baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
 // A server only leaves threads out of the shell when it serves their families.
-const serverConfig = (): ServerConfig =>
-  threads.some((thread) => thread.olderSettled)
+const serverConfig = (): ServerConfig => {
+  const config = threads.some((thread) => thread.olderSettled)
     ? { ...baseServerConfig, shellThreadFamilies: true }
     : baseServerConfig;
+  return sideChats
+    ? {
+        ...config,
+        environment: {
+          ...config.environment,
+          capabilities: { ...config.environment.capabilities, sideChats: true },
+        },
+      }
+    : config;
+};
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -418,6 +428,9 @@ let pendingDispatches: Array<{
 let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
+let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
+let sideChats = false;
+let heldSideChatForks: Array<Deferred.Deferred<void>> = [];
 
 const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>) => () => void) =>
   Stream.unwrap(
@@ -440,6 +453,30 @@ const handlers: Record<string, (input: never) => unknown> = {
       dispatched.push(command);
       if (acceptCommands && !holdCommand(command))
         return Effect.succeed({ sequence: sequence + 1 });
+      if (sideChats && command.type === "thread.visit") return Effect.succeed({ sequence });
+      // With side chats on, a side-chat fork lands in the shell like a real server's would.
+      if (sideChats && command.type === "thread.fork" && command.sideChat && shellSubscriber) {
+        const subscriber = shellSubscriber;
+        const create = Effect.suspend(() => {
+          const thread: FakeThread = {
+            ...threadWithHistory(command.targetThreadId, 0),
+            title: command.title ?? "Side chat",
+            sideChatOf: command.sourceThreadId,
+          };
+          threads = [...threads, thread];
+          sequence += 1;
+          return Queue.offer(subscriber, {
+            kind: "thread.updated",
+            location: "active",
+            sequence,
+            thread: shellOf(thread),
+          }).pipe(Effect.as({ sequence }));
+        });
+        if (!holdCommand(command)) return create;
+        const gate = Deferred.makeUnsafe<void>();
+        heldSideChatForks.push(gate);
+        return Deferred.await(gate).pipe(Effect.andThen(create));
+      }
       const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
       pendingDispatches.push({ command, reply });
       return Deferred.await(reply);
@@ -459,19 +496,27 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects,
-          threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects,
+            threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscriber = queue;
+        return () => {
+          if (shellSubscriber === queue) shellSubscriber = null;
+        };
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -566,9 +611,11 @@ export function installFakeEnvironment(
     readonly acceptCommands?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
     readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
-    /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
+    /** Commands left unanswered even when accepting, until `rejectPendingCommand`; a held side-chat fork waits for `releaseSideChatFork`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
+    /** Advertises side chats and creates the thread a side-chat fork asks for. */
+    readonly sideChats?: boolean;
   },
 ): Disposable {
   threads = fixtures;
@@ -587,6 +634,7 @@ export function installFakeEnvironment(
     })),
   ];
   holdCommand = options?.holdCommand ?? (() => false);
+  sideChats = options?.sideChats === true;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -615,6 +663,8 @@ export function installFakeEnvironment(
       holdCommand = () => false;
       pendingDispatches = [];
       pendingAssetUrls = [];
+      sideChats = false;
+      heldSideChatForks = [];
     },
   };
 }
@@ -648,6 +698,13 @@ export async function answerAssetUrls(): Promise<void> {
       Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
     );
   }
+}
+
+/** Lets the oldest side-chat fork that `holdCommand` held reach the app. */
+export async function releaseSideChatFork(): Promise<void> {
+  const gate = heldSideChatForks.shift();
+  if (!gate) throw new Error("No held side-chat fork");
+  await Effect.runPromise(Deferred.succeed(gate, undefined));
 }
 
 /** Commands the app dispatched to the environment, oldest first. */
