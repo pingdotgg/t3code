@@ -112,6 +112,7 @@ export function PullRequestCommentForm({
   return (
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
+        unstyled
         ref={textareaRef}
         completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
         // Lock while posting because success clears the draft.
@@ -136,7 +137,7 @@ export function PullRequestCommentForm({
           }
         }}
       />
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 px-1.5">
         <TextFieldSpeechControls speech={speech} disabled={locked} />
         {followUpAction === null ? null : (
           <Button
@@ -173,12 +174,7 @@ export function PullRequestCommentForm({
             )}
           </Button>
         )}
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={submitDisabled}
-          onClick={() => submitAfterDictation("comment")}
-        >
+        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
           <SendIcon className="size-3.5" />
           {submitting === "comment" ? "Posting..." : "Comment"}
         </Button>
