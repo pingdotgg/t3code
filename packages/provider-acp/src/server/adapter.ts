@@ -6247,6 +6247,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const waiting = turnAttached;
           turnAttached = yield* Deferred.make<boolean>();
           yield* Deferred.succeed(waiting, false);
+          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
+          if (runtimeMcpBridge !== undefined) yield* runtimeMcpBridge.stopCalls;
           const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
             [...current.values()],
             new Map<string, PendingRuntimeRequest>(),
