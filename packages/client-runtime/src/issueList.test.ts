@@ -1,6 +1,5 @@
 import type {
   EnvironmentId,
-  IssueCandidates,
   IssueListEntry,
   IssueListResult,
   IssueTrackerKind,
@@ -8,9 +7,6 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-
-import { createMergedIssueCandidatesAtoms } from "./state/issues.ts";
 
 import {
   continueIssuePage,
@@ -148,7 +144,7 @@ describe("issueFilterScopes", () => {
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
   });
 
-  it("keeps filter candidates from separate environments with the same Linear team key", () => {
+  it("offers the same Linear team key once per environment, since each names its own workspace", () => {
     const secondEnvironmentId = "env-2" as EnvironmentId;
     const scope = {
       projectId: api,
@@ -156,42 +152,15 @@ describe("issueFilterScopes", () => {
       host: "linear.app",
       scope: "ENG",
     };
-    const first = answer({ trackers: [tracker({})], scopes: [scope] });
-    const second = answer({
-      trackers: [tracker({})],
-      scopes: [{ ...scope, projectId: "api-2" as ProjectId }],
-    });
-    const held = holdIssuePages(
-      [
-        [environmentId, first],
-        [secondEnvironmentId, second],
-      ],
-      new Map(),
-    );
-    const candidates = (name: string) =>
-      Atom.make(
-        AsyncResult.success<IssueCandidates>({
-          labels: [{ name, color: null, description: null }],
-          assignees: [],
-          truncated: false,
-        }),
-      );
-    const byEnvironment = new Map([
-      [environmentId, candidates("workspace-one")],
-      [secondEnvironmentId, candidates("workspace-two")],
+    const otherScope = { ...scope, projectId: "api-2" as ProjectId };
+    const held = new Map([
+      [environmentId, hold(answer({ trackers: [tracker({})], scopes: [scope] }))],
+      [secondEnvironmentId, hold(answer({ trackers: [tracker({})], scopes: [otherScope] }))],
     ]);
-    const merged = createMergedIssueCandidatesAtoms(
-      (target) => byEnvironment.get(target.environmentId)!,
-      () => "Could not read candidates",
-    );
-    const registry = AtomRegistry.make();
-    try {
-      expect(
-        registry.get(merged(issueFilterScopes(held, []))).labels.map((label) => label.name),
-      ).toEqual(["workspace-one", "workspace-two"]);
-    } finally {
-      registry.dispose();
-    }
+    expect(issueFilterScopes(held, [])).toEqual([
+      { environmentId, input: scope },
+      { environmentId: secondEnvironmentId, input: otherScope },
+    ]);
   });
 
   it("skips a tracker that cannot be read", () => {
