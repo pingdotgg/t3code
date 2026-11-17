@@ -4,7 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
-import { desktopWslStateAtom, refreshDesktopWslState } from "./desktopWslState";
+import { desktopWslStateAtom } from "./desktopWslState";
 
 it("reloads WSL distributions when stale state is mounted again", async () => {
   const initial: DesktopWslState = {
@@ -56,6 +56,7 @@ it("reloads WSL distributions when stale state is mounted again", async () => {
 });
 
 it("refreshes distributions on Access entry while settings search stays subscribed", async () => {
+  const { refreshDesktopWslState } = await import("./desktopWslState");
   const initial: DesktopWslState = {
     enabled: false,
     distro: null,
