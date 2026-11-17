@@ -11,6 +11,8 @@ const TEST_EXCLUDE = [
   "**/dist/**",
   "**/dist-electron/**",
   "**/.{idea,git,cache,output,temp}/**",
+  // Vendored skills' tests run under their own toolchains (statechart: `node --test`, Java and TLC).
+  "workflow/skills/**",
 ];
 
 // Directories whose tests belong to a package's own test config. desktop also
@@ -162,8 +164,6 @@ export default defineConfig({
                   ...TEST_EXCLUDE,
                   ...TEST_CONFIG_PACKAGES.map((dir) => `${dir}/**`),
                   "native/kde-snap-shot/**",
-                  // Vendored; its tests run under `node --test` with their own dependencies.
-                  "workflow/skills/pstack/**",
                 ],
               },
             },
