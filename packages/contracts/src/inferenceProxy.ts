@@ -65,6 +65,12 @@ export const inferenceHarness = (driver: string): InferenceHarness | undefined =
 export const InferenceConsumer = Schema.Struct({ environmentId: EnvironmentId, label: Label });
 export type InferenceConsumer = typeof InferenceConsumer.Type;
 
+export const InferenceGrantInput = Schema.Struct({
+  ...InferenceConsumer.fields,
+  automatic: Schema.optionalKey(Schema.Boolean),
+});
+export type InferenceGrantInput = typeof InferenceGrantInput.Type;
+
 const Strategy = Schema.Literals(["round-robin", "fill-first"]);
 export const InferenceRouting = Schema.Struct({
   strategy: Strategy,
@@ -84,8 +90,21 @@ export const InferenceProxyStatus = Schema.Struct({
   routing: Schema.optionalKey(InferenceRouting),
   problem: Schema.NullOr(Schema.String),
   accounts: Schema.Array(
-    Schema.Struct({ name: Schema.String, provider: Schema.String, status: Schema.String }),
+    Schema.Struct({
+      name: Schema.String,
+      provider: Schema.String,
+      status: Schema.String,
+      availability: Schema.Literals([
+        "available",
+        "authenticationError",
+        "rateLimited",
+        "unavailable",
+        "disabled",
+      ]),
+      retryAfter: Schema.optionalKey(Schema.String),
+    }),
   ),
+  availableDrivers: Schema.Array(InferenceDriver),
   consumers: Schema.Array(InferenceConsumer),
   routes: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, label: Schema.String })),
 });
@@ -96,7 +115,9 @@ export function inferenceRouteIssue(host: InferenceProxyStatus | null, local: bo
   if (!host.enabled) return "Enable inference hosting on this environment first.";
   if (!host.running) return host.problem ?? "The inference host is stopped.";
   if (!local && !host.sharing) return "Enable sharing on the host first.";
-  if (!host.accounts.length) return "Add a provider account on the host first.";
+  if (!host.accounts.length && !host.availableDrivers.length)
+    return "Add a provider account on the host first.";
+  if (host.availableDrivers.length === 0) return "All hosted accounts are unavailable.";
   return null;
 }
 

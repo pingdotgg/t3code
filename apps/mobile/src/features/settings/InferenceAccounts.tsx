@@ -6,6 +6,10 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  inferenceAccountRetryAfter,
+  inferenceAccountStatus,
+} from "@t3tools/client-runtime/state/inference-proxy";
+import {
   INFERENCE_DRIVERS,
   INFERENCE_HARNESSES,
   INFERENCE_UPSTREAMS,
@@ -201,15 +205,18 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
                   onPress={() => void run({ operation: "revoke", environmentId: c.environmentId })}
                 />
               ))}
-              {host.accounts.map((account) => (
-                <ListActionRow
-                  key={account.name}
-                  label={`Remove ${account.name}`}
-                  description={account.status}
-                  disabled={disabled}
-                  onPress={() => void run({ operation: "removeAccount", name: account.name })}
-                />
-              ))}
+              {host.accounts.map((account) => {
+                const retryAfter = inferenceAccountRetryAfter(account);
+                return (
+                  <ListActionRow
+                    key={account.name}
+                    label={`Remove ${account.name}`}
+                    description={`${account.provider} · ${inferenceAccountStatus(account)}${retryAfter ? ` · Retry after ${new Date(retryAfter).toLocaleString()}` : ""}`}
+                    disabled={disabled}
+                    onPress={() => void run({ operation: "removeAccount", name: account.name })}
+                  />
+                );
+              })}
               {login ? (
                 <>
                   <ListActionRow

@@ -37,6 +37,8 @@ function InferenceRoute({
     inferenceProxy.inferenceStatus({ environmentId: host.environmentId, input: {} }),
   );
   const issue = inferenceRouteIssue(status.data, host.environmentId === consumer.environmentId);
+  const hasAccount = (driver: InferenceDriver) =>
+    status.data?.availableDrivers.includes(driver) ?? false;
   const route = useAtomCommand(inferenceProxy.routeInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -68,7 +70,7 @@ function InferenceRoute({
               key={driver}
               size="sm"
               variant="outline"
-              disabled={!canGrant || !canConnect || busy || !!issue}
+              disabled={!canGrant || !canConnect || busy || !!issue || !hasAccount(driver)}
               onClick={() => void add(driver)}
             >
               {INFERENCE_HARNESSES[driver].label}

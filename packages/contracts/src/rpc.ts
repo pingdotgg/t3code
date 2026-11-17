@@ -1,5 +1,5 @@
 import {
-  InferenceConsumer,
+  InferenceGrantInput,
   InferenceProxyStatus,
   InferenceProxyAction,
   InferenceProxyActionResult,
@@ -613,6 +613,7 @@ export const WS_METHODS = {
   inferenceManage: "inference.manage",
   inferenceGrant: "inference.grant",
   inferenceConnect: "inference.connect",
+  inferenceRegisterFallback: "inference.registerFallback",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
@@ -961,11 +962,16 @@ const WsInferenceManageRpc = Rpc.make(WS_METHODS.inferenceManage, {
   error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
 });
 const WsInferenceGrantRpc = Rpc.make(WS_METHODS.inferenceGrant, {
-  payload: InferenceConsumer,
+  payload: InferenceGrantInput,
   success: InferenceRouteGrant,
   error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
 });
 const WsInferenceConnectRpc = Rpc.make(WS_METHODS.inferenceConnect, {
+  payload: InferenceRouteInput,
+  success: Schema.Void,
+  error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
+});
+const WsInferenceRegisterFallbackRpc = Rpc.make(WS_METHODS.inferenceRegisterFallback, {
   payload: InferenceRouteInput,
   success: Schema.Void,
   error: Schema.Union([InferenceProxyError, EnvironmentAuthorizationError]),
@@ -2454,6 +2460,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsInferenceManageRpc,
   WsInferenceGrantRpc,
   WsInferenceConnectRpc,
+  WsInferenceRegisterFallbackRpc,
   WsPeerLinksListRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,

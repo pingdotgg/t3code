@@ -1,10 +1,10 @@
 import {
   EnvironmentId,
+  InferenceDriver,
   INFERENCE_HARNESSES,
   ProviderDriverKind,
   type CustomModelSetting,
   type SettingsSecretValue,
-  type InferenceDriver,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const PREFIX = "/api/inference";
+const isInferenceDriver = Schema.is(InferenceDriver);
 
 export function inferencePath(method: string, rawUrl: string): string | null {
   if (!rawUrl.startsWith(PREFIX)) return null;
@@ -32,12 +33,18 @@ export function inferencePath(method: string, rawUrl: string): string | null {
 }
 
 export function inferenceTarget(method: string, rawUrl: string) {
-  const linked = /^\/api\/inference\/linked\/([^/]+)(\/.*)$/.exec(rawUrl);
-  const path = inferencePath(method, linked ? PREFIX + linked[2] : rawUrl);
+  const linked = /^\/api\/inference\/linked\/([^/]+)\/([^/]+)(\/.*)$/.exec(rawUrl);
+  const driver = linked && isInferenceDriver(linked[1]) ? linked[1] : undefined;
+  if (rawUrl.startsWith(PREFIX + "/linked/") && !driver) return null;
+  const path = inferencePath(method, linked ? PREFIX + linked[3] : rawUrl);
   if (!path) return null;
   if (!linked) return { path, environmentId: undefined };
   try {
-    return { path, environmentId: EnvironmentId.make(decodeURIComponent(linked[1]!)) };
+    return {
+      path,
+      environmentId: EnvironmentId.make(decodeURIComponent(linked[2]!)),
+      driver,
+    };
   } catch {
     return null;
   }
@@ -57,6 +64,50 @@ export function validateRouteUrl(value: string, local: boolean): boolean {
 export interface ProxyModel {
   readonly id: string;
   readonly owned_by?: string | undefined;
+}
+
+export interface ProxyAccount {
+  readonly id?: string | undefined;
+  readonly name: string;
+  readonly provider?: string | undefined;
+  readonly status: string;
+  readonly disabled?: boolean | undefined;
+  readonly unavailable?: boolean | undefined;
+  readonly runtime_only?: boolean | undefined;
+  readonly cooldowns?:
+    | ReadonlyArray<{
+        readonly scope: string;
+        readonly model_key?: string | undefined;
+        readonly retry_at: string;
+      }>
+    | null
+    | undefined;
+}
+
+export interface AccountModelAvailability {
+  readonly accounts: ReadonlyArray<ProxyAccount>;
+  readonly excludedNames: ReadonlySet<string>;
+  readonly registeredModels: ReadonlyMap<string, readonly string[]>;
+  readonly now: number;
+}
+
+const usableAccount = (account: ProxyAccount, excludedNames: ReadonlySet<string>) =>
+  account.status === "active" &&
+  !account.disabled &&
+  !account.unavailable &&
+  !excludedNames.has(account.name);
+
+const activeCooldowns = (account: ProxyAccount, now: number) =>
+  account.cooldowns?.filter((cooldown) => Date.parse(cooldown.retry_at) > now) ?? [];
+
+export function needsAccountModelLookup(
+  accounts: ReadonlyArray<ProxyAccount>,
+  excludedNames: ReadonlySet<string>,
+  now: number,
+) {
+  return accounts.some(
+    (account) => !usableAccount(account, excludedNames) || activeCooldowns(account, now).length > 0,
+  );
 }
 
 interface Route {
@@ -193,8 +244,50 @@ const harnesses: Record<
   },
 };
 
-export function modelsForDriver(data: readonly ProxyModel[], driver: InferenceDriver) {
-  return data.filter((model) => harnesses[driver].serves(model)).map((model) => model.id);
+export function modelsForDriver(
+  data: readonly ProxyModel[],
+  driver: InferenceDriver,
+  availability?: AccountModelAvailability,
+) {
+  const models = data.filter((model) => harnesses[driver].serves(model));
+  if (
+    !availability ||
+    !needsAccountModelLookup(availability.accounts, availability.excludedNames, availability.now)
+  )
+    return models.map((model) => model.id);
+  const available = new Set<string>();
+  for (const account of availability.accounts) {
+    if (!usableAccount(account, availability.excludedNames)) continue;
+    const cooldowns = activeCooldowns(account, availability.now);
+    if (cooldowns.some((cooldown) => cooldown.scope === "credential")) continue;
+    const blocked = new Set(
+      cooldowns
+        .filter((cooldown) => cooldown.scope === "model" && cooldown.model_key)
+        .map((cooldown) => cooldown.model_key),
+    );
+    const registered = availability.registeredModels.get(account.id || account.name);
+    if (registered === undefined) {
+      const owner =
+        account.provider === "codex"
+          ? "openai"
+          : account.provider === "claude"
+            ? "anthropic"
+            : null;
+      if (
+        owner &&
+        availability.accounts.filter((other) => other.provider === account.provider).length === 1
+      ) {
+        for (const model of models) {
+          if (model.owned_by === owner && !blocked.has(model.id)) available.add(model.id);
+        }
+      }
+      continue;
+    }
+    for (const model of registered) {
+      if (!blocked.has(model)) available.add(model);
+    }
+  }
+  return models.filter((model) => available.has(model.id)).map((model) => model.id);
 }
 
 export function routeProvider(driver: InferenceDriver, label: string | null, route: Route) {

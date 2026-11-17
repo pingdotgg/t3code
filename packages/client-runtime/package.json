@@ -299,6 +299,10 @@
       "types": "./src/state/providerAccountSync.ts",
       "default": "./src/state/providerAccountSync.ts"
     },
+    "./state/inference-proxy": {
+      "types": "./src/state/inferenceProxy.ts",
+      "default": "./src/state/inferenceProxy.ts"
+    },
     "./state/provider-instance-display": {
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"

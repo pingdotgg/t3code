@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  inferenceAccountRetryAfter,
+  inferenceAccountStatus,
+} from "@t3tools/client-runtime/state/inference-proxy";
+import {
   type EnvironmentId,
   INFERENCE_HARNESSES,
   INFERENCE_UPSTREAMS,
@@ -103,23 +107,33 @@ export function InferenceProviderAccounts({
     <>
       {host.accounts
         .filter((account) => harness?.accounts?.includes(account.provider) ?? true)
-        .map((account) => (
-          <SettingsRow
-            key={account.name}
-            title={account.name}
-            description={`${account.provider} · ${account.status}`}
-            control={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => void run({ operation: "removeAccount", name: account.name })}
-              >
-                Remove
-              </Button>
-            }
-          />
-        ))}
+        .map((account) => {
+          const retryAfter = inferenceAccountRetryAfter(account);
+          return (
+            <SettingsRow
+              key={account.name}
+              title={account.name}
+              description={`${account.provider} · ${inferenceAccountStatus(account)}`}
+              status={
+                retryAfter ? (
+                  <time dateTime={retryAfter}>
+                    Retry after {new Date(retryAfter).toLocaleString()}
+                  </time>
+                ) : undefined
+              }
+              control={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void run({ operation: "removeAccount", name: account.name })}
+                >
+                  Remove
+                </Button>
+              }
+            />
+          );
+        })}
       {login ? (
         <>
           <SettingsRow

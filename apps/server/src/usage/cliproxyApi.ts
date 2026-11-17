@@ -484,6 +484,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return { id: account.id, driver: provider.driver, ...reading };
   });
 
+  const readClaudeUsage = Effect.fn("CliproxyApi.readClaudeUsage")(function* (
+    hub: CliproxyHub,
+    account: Pick<AuthFile, "id" | "auth_index">,
+  ) {
+    const provider = HUB_PROVIDERS.get("claude")!;
+    const reading = yield* readAccount(hub, { ...account, provider: "claude" }, provider);
+    return reading.usageLimits;
+  });
+
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     hub: CliproxyHub,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
@@ -562,5 +571,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  return { readAccounts, readClaudeUsage, consume };
 });

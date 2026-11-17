@@ -70,6 +70,11 @@ You can stop the turn while it reconnects. If the server exits or an external
 connection cannot be restored, send another prompt to resume the same OpenCode
 session.
 
+OpenCode handles retries while a turn is running. If its retries run out on a rate limit
+and the provider reports when to try again, choose **Resume at reset** on the failed
+thread. T3 will continue that thread at or after the reported time. A service overload
+can also return HTTP 429. OpenCode handles those retries itself.
+
 ## Shared inference accounts
 
 OpenCode can use the accounts on an [inference host](./providers-claude.md), next to

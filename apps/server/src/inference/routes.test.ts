@@ -3,6 +3,7 @@ import {
   inferencePath,
   inferenceTarget,
   modelsForDriver,
+  needsAccountModelLookup,
   routeProvider,
   validateRouteUrl,
 } from "./routes.ts";
@@ -13,9 +14,10 @@ describe("inference routes", () => {
       "/v1/messages?beta=true",
     );
     expect(inferencePath("GET", "/api/inference/v1/models")).toBe("/v1/models");
-    expect(inferenceTarget("GET", "/api/inference/linked/host/health")).toEqual({
+    expect(inferenceTarget("GET", "/api/inference/linked/codex/host/health")).toEqual({
       path: "/health",
       environmentId: "host",
+      driver: "codex",
     });
     expect(inferencePath("POST", "/api/inference/health")).toBeNull();
     expect(inferencePath("POST", "/api/inference/v1/chat/completions")).toBe(
@@ -30,14 +32,21 @@ describe("inference routes", () => {
       expect(inferencePath("POST", "/api/inference" + path)).toBeNull();
     }
     expect(inferencePath("GET", "/api/inference/v1/messages")).toBeNull();
-    expect(inferenceTarget("POST", "/api/inference/linked/host/v1/responses")).toEqual({
+    expect(inferenceTarget("POST", "/api/inference/linked/codex/host/v1/responses")).toEqual({
       path: "/v1/responses",
       environmentId: "host",
+      driver: "codex",
+    });
+    expect(inferenceTarget("POST", "/api/inference/linked/claudeAgent/host/v1/messages")).toEqual({
+      path: "/v1/messages",
+      environmentId: "host",
+      driver: "claudeAgent",
     });
     expect(
       inferenceTarget("GET", "/api/inference/linked/host/v0/management/auth-files"),
     ).toBeNull();
     expect(inferenceTarget("POST", "/api/inference/linked/%ZZ/v1/messages")).toBeNull();
+    expect(inferenceTarget("POST", "/api/inference/linked/host/v1/messages")).toBeNull();
   });
 
   it("accepts private LAN addresses and HTTPS tailnet routes and confines local keys to loopback", () => {
@@ -158,5 +167,93 @@ describe("inference routes", () => {
       "claude-pool-1",
     ]);
     expect(modelsForDriver(models, "pi")).toEqual(models.map((model) => model.id));
+  });
+
+  it("excludes an exhausted Claude account's models when only Codex remains available", () => {
+    const now = Date.parse("2026-11-17T00:00:00.000Z");
+    const models = [
+      { id: "claude-sonnet", owned_by: "anthropic" },
+      { id: "gpt-luna", owned_by: "openai" },
+    ];
+    const accounts = [
+      { id: "claude", name: "claude.json", provider: "claude", status: "active" },
+      { id: "codex", name: "codex.json", provider: "codex", status: "active" },
+    ];
+    expect(needsAccountModelLookup(accounts, new Set(), now)).toBe(false);
+    expect(needsAccountModelLookup(accounts, new Set(["claude.json"]), now)).toBe(true);
+    expect(
+      modelsForDriver(models, "opencode", {
+        accounts,
+        excludedNames: new Set(["claude.json"]),
+        registeredModels: new Map([["codex", ["gpt-luna"]]]),
+        now,
+      }),
+    ).toEqual(["gpt-luna"]);
+    expect(
+      modelsForDriver(models, "opencode", {
+        accounts,
+        excludedNames: new Set(["claude.json"]),
+        registeredModels: new Map(),
+        now,
+      }),
+    ).toEqual(["gpt-luna"]);
+    expect(
+      modelsForDriver(models, "opencode", {
+        accounts: [
+          ...accounts,
+          { id: "other-codex", name: "other-codex.json", provider: "codex", status: "error" },
+        ],
+        excludedNames: new Set(["claude.json"]),
+        registeredModels: new Map(),
+        now,
+      }),
+    ).toEqual([]);
+    expect(
+      modelsForDriver(models, "pi", {
+        accounts,
+        excludedNames: new Set(["claude.json"]),
+        registeredModels: new Map([["codex", ["gpt-luna"]]]),
+        now,
+      }),
+    ).toEqual(["gpt-luna"]);
+  });
+
+  it("keeps shared and aliased models when another account can serve them", () => {
+    const now = Date.parse("2026-11-17T00:00:00.000Z");
+    const catalog = [
+      { id: "claude-sonnet", owned_by: "anthropic" },
+      { id: "claude-alias", owned_by: "anthropic" },
+    ];
+    const accounts = [
+      {
+        id: "limited",
+        name: "limited.json",
+        status: "active",
+        cooldowns: [
+          { scope: "model", model_key: "claude-sonnet", retry_at: "2026-11-17T00:01:00Z" },
+        ],
+      },
+      { id: "healthy", name: "healthy.json", status: "active", runtime_only: true },
+    ];
+    expect(needsAccountModelLookup(accounts, new Set(), now)).toBe(true);
+    expect(
+      modelsForDriver(catalog, "opencode", {
+        accounts,
+        excludedNames: new Set(),
+        registeredModels: new Map([
+          ["limited", ["claude-sonnet"]],
+          ["healthy", ["claude-sonnet", "claude-alias"]],
+        ]),
+        now,
+      }),
+    ).toEqual(["claude-sonnet", "claude-alias"]);
+    expect(
+      modelsForDriver(catalog, "opencode", {
+        accounts: [accounts[0]!],
+        excludedNames: new Set(),
+        registeredModels: new Map([["limited", ["claude-sonnet"]]]),
+        now,
+      }),
+    ).toEqual([]);
   });
 });

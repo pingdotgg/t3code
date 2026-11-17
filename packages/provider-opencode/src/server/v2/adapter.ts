@@ -65,7 +65,10 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
-import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
+import {
+  isExplicitProviderOverload,
+  readableProviderErrorMessage,
+} from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -673,10 +676,25 @@ const isUsageLimit = (error: {
   readonly type: string;
   readonly status?: number | undefined;
   readonly message: string;
+  readonly response?: { readonly body: string } | undefined;
 }) =>
-  (error.type === "provider.quota" && error.status !== 402) ||
-  error.type === "provider.rate-limit" ||
-  claudeUsageLimit(error.message) !== undefined;
+  isExplicitProviderOverload({
+    code: error.type,
+    message: error.message,
+    responseBody: error.response?.body,
+  })
+    ? false
+    : (error.type === "provider.quota" && error.status !== 402) ||
+      error.type === "provider.rate-limit" ||
+      error.status === 429 ||
+      claudeUsageLimit(error.message) !== undefined;
+
+const retryResetAt = (created: number, retryAfterMs: number | undefined): string | null => {
+  if (retryAfterMs === undefined || !Number.isSafeInteger(retryAfterMs) || retryAfterMs <= 0)
+    return null;
+  const reset = DateTime.make(created + retryAfterMs);
+  return Option.isSome(reset) ? DateTime.formatIso(reset.value) : null;
+};
 
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
@@ -2952,13 +2970,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
+          const usageLimit = isUsageLimit(event.data.error);
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
-              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
+              class: usageLimit ? "usage_limit" : "provider_error",
+              resetAt: usageLimit
+                ? (claudeUsageLimit(message)?.resetAt ??
+                  retryResetAt(event.created, event.data.error.retryAfterMs))
+                : null,
             }),
           });
         }

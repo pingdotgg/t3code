@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -81,6 +82,50 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
+    }),
+  );
+
+  it.effect("retains a terminal retry hint that the pinned protocol schema does not include", () =>
+    Effect.gen(function* () {
+      const native = {
+        id: "evt_failed0000",
+        created: Date.parse("2026-11-17T12:00:00.000Z"),
+        type: "session.execution.failed",
+        durable: { aggregateID: "ses_test", seq: 1, version: 1 },
+        data: {
+          sessionID: "ses_test",
+          error: {
+            type: "provider.quota",
+            message: "Quota reached",
+            status: 429,
+            retryAfterMs: 90_000,
+          },
+        },
+      };
+      const transport = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(`data: ${JSON.stringify(native)}\n\n`, {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
+      );
+      const { events } = yield* opencode.connect({
+        baseUrl: "http://127.0.0.1:4096",
+        password: "test-password",
+      });
+      const first = yield* events.pipe(Effect.flatMap(Stream.runHead));
+      assert.equal(first._tag, "Some");
+      if (first._tag === "Some" && first.value.type === "session.execution.failed")
+        assert.equal(Reflect.get(first.value.data.error, "retryAfterMs"), 90_000);
     }),
   );
 });

@@ -1,4 +1,13 @@
-import { type InferenceConsumer, type InferenceDriver, WS_METHODS } from "@t3tools/contracts";
+import {
+  defaultInstanceIdForDriver,
+  INFERENCE_DRIVERS,
+  isInferenceProviderConfig,
+  ProviderDriverKind,
+  type InferenceConsumer,
+  type InferenceDriver,
+  type InferenceProxyStatus,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -9,12 +18,110 @@ import type { Atom } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { requestGuarded } from "../rpc/client.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import type { EnvironmentServerConfig } from "../connection/presentation.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentGuardedRpcQueryAtomFamily,
   createRuntimeCommand,
   withEnvironmentRpcPermissions,
 } from "./runtime.ts";
+
+export interface InferenceFleetEnvironment extends InferenceConsumer {
+  readonly connection: { readonly phase: string };
+  readonly serverConfig: EnvironmentServerConfig | null;
+}
+
+type InferenceAccount = InferenceProxyStatus["accounts"][number];
+
+const accountAvailabilityLabels = {
+  available: "Active",
+  authenticationError: "Authentication or access rejected",
+  rateLimited: "Rate limited",
+  unavailable: "Unavailable",
+  disabled: "Disabled",
+} as const;
+
+export function inferenceAccountStatus(account: InferenceAccount): string {
+  return accountAvailabilityLabels[account.availability];
+}
+
+export function inferenceAccountRetryAfter(account: InferenceAccount): string | null {
+  return account.availability === "rateLimited" ? (account.retryAfter ?? null) : null;
+}
+
+export function planInferenceFallbacks(
+  host: InferenceFleetEnvironment,
+  status: InferenceProxyStatus,
+  consumers: ReadonlyArray<InferenceFleetEnvironment>,
+): ReadonlyArray<{
+  host: InferenceConsumer;
+  consumer: InferenceConsumer;
+  driver: InferenceDriver;
+  fallback: true;
+}> {
+  if (!status.enabled || !status.running || host.connection.phase !== "connected") return [];
+  return consumers.flatMap((consumer) => {
+    const config = consumer.serverConfig;
+    if (consumer.connection.phase !== "connected" || !config) return [];
+    if (host.environmentId !== consumer.environmentId && !status.sharing) return [];
+    return INFERENCE_DRIVERS.flatMap((driver) => {
+      if (!status.availableDrivers.includes(driver)) return [];
+      const instance =
+        config.settings.providerInstances[
+          defaultInstanceIdForDriver(ProviderDriverKind.make(driver))
+        ];
+      const route = instance?.config;
+      return instance?.enabled !== false &&
+        isInferenceProviderConfig(route) &&
+        route.inferenceEnabled &&
+        route.inferenceHostId !== host.environmentId
+        ? [
+            {
+              host: { environmentId: host.environmentId, label: host.label },
+              consumer: { environmentId: consumer.environmentId, label: consumer.label },
+              driver,
+              fallback: true as const,
+            },
+          ]
+        : [];
+    });
+  });
+}
+
+export function inferenceFallbackKey(
+  host: InferenceConsumer,
+  consumer: InferenceFleetEnvironment,
+  driver: InferenceDriver,
+  status: InferenceProxyStatus,
+): string {
+  const instance =
+    consumer.serverConfig?.settings.providerInstances[
+      defaultInstanceIdForDriver(ProviderDriverKind.make(driver))
+    ];
+  const route = instance?.config;
+  return JSON.stringify([
+    host.environmentId,
+    consumer.environmentId,
+    driver,
+    isInferenceProviderConfig(route) ? route.inferenceHostId : null,
+    isInferenceProviderConfig(route) ? route.inferenceBaseUrl : null,
+    status.enabled,
+    status.sharing,
+    status.running,
+    status.availableDrivers,
+    status.accounts.map((account) => [
+      account.name,
+      account.provider,
+      account.status,
+      account.availability,
+      account.retryAfter,
+    ]),
+  ]);
+}
+
+export function inferenceFallbackRetryDelay(failures: number): number {
+  return Math.min(60_000 * 2 ** Math.min(failures - 1, 3), 300_000);
+}
 
 export function createInferenceProxyAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -41,14 +148,26 @@ export function createInferenceProxyAtoms<R, E>(
   });
   const hostPermission = createCommandPermissions(runtime, WS_METHODS.inferenceGrant);
   const consumerPermission = createCommandPermissions(runtime, WS_METHODS.inferenceConnect);
+  const fallbackPermission = createCommandPermissions(
+    runtime,
+    WS_METHODS.inferenceRegisterFallback,
+  );
   const routeInference = createRuntimeCommand(runtime, {
     label: "inference:route",
     execute: Effect.fn("InferenceProxy.route")(
       function* (
-        input: { host: InferenceConsumer; consumer: InferenceConsumer; driver: InferenceDriver },
+        input: {
+          host: InferenceConsumer;
+          consumer: InferenceConsumer;
+          driver: InferenceDriver;
+          fallback?: boolean;
+        },
         registry: AtomRegistry.AtomRegistry,
       ) {
-        yield* consumerPermission.authorize(registry, input.consumer.environmentId);
+        yield* (input.fallback ? fallbackPermission : consumerPermission).authorize(
+          registry,
+          input.consumer.environmentId,
+        );
         const connections = yield* EnvironmentRegistry;
         const { grant, prepared } = yield* connections.run(
           input.host.environmentId,
@@ -56,6 +175,7 @@ export function createInferenceProxyAtoms<R, E>(
             const grant = yield* requestGuarded(WS_METHODS.inferenceGrant, {
               environmentId: input.consumer.environmentId,
               label: input.consumer.label,
+              ...(input.fallback ? { automatic: true } : {}),
             });
             const supervisor = yield* EnvironmentSupervisor;
             return { grant, prepared: yield* SubscriptionRef.get(supervisor.prepared) };
@@ -85,19 +205,24 @@ export function createInferenceProxyAtoms<R, E>(
           );
         const connection =
           active && reachable ? { url: active.httpBaseUrl, ...(ssh ? { ssh } : {}) } : undefined;
-        registry.refresh(inferenceStatus({ environmentId: input.host.environmentId, input: {} }));
+        if (!input.fallback)
+          registry.refresh(inferenceStatus({ environmentId: input.host.environmentId, input: {} }));
         yield* connections.run(
           input.consumer.environmentId,
-          requestGuarded(WS_METHODS.inferenceConnect, {
-            grant,
-            driver: input.driver,
-            hostLabel: input.host.label,
-            ...(connection ? { connection } : {}),
-          }),
+          requestGuarded(
+            input.fallback ? WS_METHODS.inferenceRegisterFallback : WS_METHODS.inferenceConnect,
+            {
+              grant,
+              driver: input.driver,
+              hostLabel: input.host.label,
+              ...(connection ? { connection } : {}),
+            },
+          ),
         );
-        registry.refresh(
-          inferenceStatus({ environmentId: input.consumer.environmentId, input: {} }),
-        );
+        if (!input.fallback)
+          registry.refresh(
+            inferenceStatus({ environmentId: input.consumer.environmentId, input: {} }),
+          );
       },
       (effect, _input, registry) =>
         effect.pipe(
@@ -113,5 +238,6 @@ export function createInferenceProxyAtoms<R, E>(
     routeInference,
     canGrant: hostPermission.permissionAtom,
     canConnect: consumerPermission.permissionAtom,
+    canRegisterFallback: fallbackPermission.permissionAtom,
   };
 }

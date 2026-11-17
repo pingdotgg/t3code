@@ -50,8 +50,17 @@ export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2Sile
   }
 }
 
+type TerminalFailure = Extract<OpenCodeEvent, { readonly type: "session.execution.failed" }>;
+
 export type OpenCode2StreamEvent =
-  | OpenCodeEvent
+  | Exclude<OpenCodeEvent, TerminalFailure>
+  | (TerminalFailure & {
+      readonly data: TerminalFailure["data"] & {
+        readonly error: TerminalFailure["data"]["error"] & {
+          readonly retryAfterMs?: number;
+        };
+      };
+    })
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
@@ -134,6 +143,14 @@ const SILENT_STREAM_TIMEOUT = "45 seconds";
 const SUBSCRIPTION_TIMEOUT = "10 seconds";
 
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
+const decodeRetryHint = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literal("session.execution.failed"),
+      data: Schema.Struct({ error: Schema.Struct({ retryAfterMs: Schema.Finite }) }),
+    }),
+  ),
+);
 const decodeEnvelope = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -190,9 +207,26 @@ const readEvents = HttpClient.HttpClient.pipe(
       Stream.pipeThroughChannel(Sse.decode()),
       Stream.filterMapEffect((frame) => {
         const decoded = decodeEvent(frame.data);
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
-          : undecodable(frame.data);
+        if (Result.isFailure(decoded)) return undecodable(frame.data);
+        const event = decoded.success;
+        const hint =
+          event.type === "session.execution.failed" ? decodeRetryHint(frame.data) : Option.none();
+        return Effect.succeed(
+          Result.succeed<OpenCode2StreamEvent>(
+            event.type === "session.execution.failed" && Option.isSome(hint)
+              ? {
+                  ...event,
+                  data: {
+                    ...event.data,
+                    error: {
+                      ...event.data.error,
+                      retryAfterMs: hint.value.data.error.retryAfterMs,
+                    },
+                  },
+                }
+              : event,
+          ),
+        );
       }),
     ),
   ),

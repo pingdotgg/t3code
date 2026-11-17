@@ -7,10 +7,12 @@ import {
   EnvironmentId,
   ProviderInstanceId,
   ProviderDriverKind,
+  isInferenceProviderConfig,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as Fiber from "effect/Fiber";
@@ -93,6 +95,21 @@ it.effect(
         };
         let serving = false;
         let poolUnavailable = false;
+        let keepRuntimeAvailable = false;
+        let runtimeOnlyUnavailable = false;
+        let listedAccountRuntimeOnly = false;
+        let poolStatusMessage: string | undefined;
+        let poolRetryAfter: string | undefined;
+        let poolCooldowns: Array<Record<string, unknown>> | undefined;
+        let managedClaude = false;
+        let managedClaudeStatus = "active";
+        let managedClaudeDisabled = false;
+        let claudeUsageStatus = 200;
+        let claudeUsageCalls = 0;
+        let claudeUsage: Record<string, unknown> = {};
+        let blockClaudeUsage = false;
+        const claudeUsageStarted = yield* Deferred.make<void>();
+        const releaseClaudeUsage = yield* Deferred.make<void>();
         let lan = false;
         let rejectNextLaunch = false;
         let currentExit: Deferred.Deferred<void> | undefined;
@@ -161,6 +178,40 @@ it.effect(
         let activeCodexConfig: unknown;
         const remoteCatalogKeys: (string | undefined)[] = [];
         const http = HttpClient.make((request) => {
+          if (request.url.endsWith("/v0/management/api-call")) {
+            const body = request.body;
+            if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing usage request");
+            const call = JSON.parse(body.text) as Record<string, unknown>;
+            expect(call).toMatchObject({
+              auth_index: "claude-auth",
+              method: "GET",
+              url: "https://api.anthropic.com/api/oauth/usage",
+              header: { Authorization: "Bearer $TOKEN$" },
+            });
+            claudeUsageCalls++;
+            return Effect.gen(function* () {
+              if (blockClaudeUsage) {
+                yield* Deferred.succeed(claudeUsageStarted, undefined);
+                yield* Deferred.await(releaseClaudeUsage);
+              }
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  status_code: claudeUsageStatus,
+                  body: JSON.stringify(claudeUsage),
+                }),
+              );
+            });
+          }
+          if (new URL(request.url).pathname.endsWith("/v0/management/auth-files/models")) {
+            const name = new URL(request.url).searchParams.get("name");
+            const models = catalog.filter((model) =>
+              name === "claude.json"
+                ? model.owned_by === "anthropic"
+                : model.owned_by !== "anthropic",
+            );
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ models })));
+          }
           if (request.method === "POST" && request.url.includes("/v0/management/auth-files?")) {
             const body = request.body;
             if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing auth JSON");
@@ -225,10 +276,18 @@ it.effect(
             if (request.url.endsWith("/.well-known/t3/environment")) {
               expect(request.headers.authorization).toBeUndefined();
               return Effect.succeed(
-                HttpClientResponse.fromWeb(request, Response.json({ environmentId: peerId })),
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    environmentId: request.url.startsWith("https://fallback.example.ts.net/")
+                      ? EnvironmentId.make("other-host")
+                      : peerId,
+                  }),
+                ),
               );
             }
-            remoteCatalogKeys.push(request.headers.authorization);
+            if (!request.url.endsWith("/health"))
+              remoteCatalogKeys.push(request.headers.authorization);
             if (staleLinkedCatalog && request.url.startsWith("http://127.0.0.1:34567/"))
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(null, { status: 502 })),
@@ -242,26 +301,50 @@ it.effect(
             HttpClientResponse.fromWeb(
               request,
               Response.json(
-                request.url.endsWith("auth-files")
-                  ? {
-                      files: [
-                        {
-                          name: "codex:api-key:fixture",
-                          provider: "codex",
-                          status: "active",
-                          unavailable: poolUnavailable,
-                          runtime_only: true,
-                        },
-                        {
-                          name: "one.json",
-                          provider: "codex",
-                          status: "active",
-                          unavailable: poolUnavailable,
-                          refresh_token: "must stay local",
-                        },
-                      ],
-                    }
-                  : { data: catalog },
+                request.url.endsWith("/health")
+                  ? new URL(request.url).pathname === "/health"
+                    ? { status: "ok" }
+                    : {
+                        availableDrivers: poolUnavailable ? [] : ["codex", "opencode", "pi"],
+                        models: catalog.map((model) => model.id),
+                      }
+                  : request.url.endsWith("auth-files")
+                    ? {
+                        files: [
+                          ...(managedClaude
+                            ? [
+                                {
+                                  id: "claude.json",
+                                  name: "claude.json",
+                                  auth_index: "claude-auth",
+                                  provider: "claude",
+                                  status: managedClaudeStatus,
+                                  disabled: managedClaudeDisabled,
+                                },
+                              ]
+                            : []),
+                          {
+                            name: "codex:api-key:fixture",
+                            provider: "codex",
+                            status: "active",
+                            unavailable:
+                              runtimeOnlyUnavailable || (poolUnavailable && !keepRuntimeAvailable),
+                            runtime_only: true,
+                          },
+                          {
+                            name: "one.json",
+                            provider: "codex",
+                            status: "active",
+                            unavailable: poolUnavailable,
+                            runtime_only: listedAccountRuntimeOnly,
+                            status_message: poolStatusMessage,
+                            next_retry_after: poolRetryAfter,
+                            cooldowns: poolCooldowns,
+                            refresh_token: "must stay local",
+                          },
+                        ],
+                      }
+                    : { data: catalog },
               ),
             ),
           );
@@ -323,6 +406,38 @@ it.effect(
           Layer.fresh,
         );
         const settings = yield* ServerSettings.ServerSettingsService;
+        const legacyRoutes = [
+          {
+            driver: "codex" as const,
+            hostId,
+            baseUrl: "http://127.0.0.1:23456",
+            key: "legacy-local-key",
+          },
+          {
+            driver: "claudeAgent" as const,
+            hostId: EnvironmentId.make("offline-host"),
+            baseUrl: "http://192.168.1.44:12345/api/inference",
+            key: "legacy-lan-key",
+          },
+        ];
+        for (const route of legacyRoutes)
+          yield* settings.updateProviderInstance({
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make(route.driver),
+            instance: {
+              driver: ProviderDriverKind.make(route.driver),
+              enabled: false,
+              config: {
+                inferenceEnabled: true,
+                inferenceHostId: route.hostId,
+                inferenceHostLabel: "",
+                inferenceBaseUrl: route.baseUrl,
+                inferenceKey: route.key,
+                inferenceModels: [route.driver === "codex" ? "gpt-legacy" : "claude-legacy"],
+                inferenceHomePath: home,
+              },
+            },
+          });
         const cliHome = home + "/.codex";
         const claudeHome = home + "/.claude";
         const claudeAuthFile = claudeHome + "/.credentials.json";
@@ -401,6 +516,36 @@ it.effect(
           Effect.gen(function* () {
             const proxy = yield* InferenceProxy.InferenceProxy;
             expect((yield* proxy.status).enabled).toBe(false);
+            yield* proxy.bindRoutes(45678);
+            expect(remoteCatalogKeys).toEqual([]);
+            for (const route of legacyRoutes) {
+              const current = (yield* settings.getSettings).providerInstances[
+                ProviderInstanceId.make(route.driver)
+              ];
+              expect(current?.config).toMatchObject({
+                inferenceBaseUrl: `http://127.0.0.1:45678/api/inference/linked/${route.driver}/${route.hostId}`,
+                inferenceKey: route.key,
+              });
+            }
+            const migrated = yield* state.get("inference-proxy-state");
+            expect(Option.isSome(migrated)).toBe(true);
+            if (Option.isSome(migrated)) {
+              const saved = JSON.parse(new TextDecoder().decode(migrated.value)) as {
+                routePools: { driver: string; primary: { baseUrl: string; key: string } }[];
+              };
+              for (const route of legacyRoutes)
+                expect(
+                  saved.routePools.find((pool) => pool.driver === route.driver)?.primary,
+                ).toMatchObject({
+                  baseUrl: route.baseUrl,
+                  key: route.key,
+                });
+            }
+            for (const route of legacyRoutes)
+              yield* proxy.manage({
+                operation: "removeRoute",
+                instanceId: ProviderInstanceId.make(route.driver),
+              });
             const startSharing = proxy.manage({
               operation: "configure",
               enabled: true,
@@ -652,7 +797,164 @@ it.effect(
             serving = true;
             yield* startSharing;
             const { accounts } = yield* proxy.status;
-            expect(accounts).toEqual([{ name: "one.json", provider: "codex", status: "active" }]);
+            expect(accounts).toEqual([
+              { name: "one.json", provider: "codex", status: "active", availability: "available" },
+            ]);
+            listedAccountRuntimeOnly = true;
+            expect((yield* proxy.status).accounts).toEqual([]);
+            expect((yield* proxy.status).availableDrivers).toContain("codex");
+            listedAccountRuntimeOnly = false;
+            poolUnavailable = true;
+            poolStatusMessage = "HTTP 429 quota exhausted";
+            poolRetryAfter = "2026-11-17T20:00:00Z";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "rateLimited",
+              retryAfter: poolRetryAfter,
+            });
+            poolStatusMessage = "Failed to authenticate. API Error: 403 status code (no body)";
+            poolRetryAfter = undefined;
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "authenticationError",
+            });
+            poolStatusMessage = "service_overloaded (HTTP 529)";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "unavailable",
+            });
+            expect((yield* proxy.status).accounts[0]).not.toHaveProperty("retryAfter");
+            poolStatusMessage = undefined;
+            poolRetryAfter = "1960-01-01T00:00:00Z";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "unavailable",
+            });
+            expect((yield* proxy.status).accounts[0]).not.toHaveProperty("retryAfter");
+            poolUnavailable = false;
+            poolStatusMessage = undefined;
+            poolRetryAfter = undefined;
+            catalog = [
+              { id: "gpt-quota-fixture", owned_by: "openai" },
+              { id: "claude-quota-fixture", owned_by: "anthropic" },
+            ];
+            const claudeResetAt = DateTime.formatIso(
+              DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + 30 * 60_000),
+            );
+            managedClaude = true;
+            claudeUsage = {
+              five_hour: { utilization: 100, resets_at: claudeResetAt },
+              seven_day: { utilization: 84, resets_at: claudeResetAt },
+              extra_usage: {
+                is_enabled: false,
+                monthly_limit: null,
+                used_credits: null,
+                utilization: null,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "rateLimited", retryAfter: claudeResetAt });
+            expect((yield* proxy.status).availableDrivers).not.toContain("claudeAgent");
+            const hosted = yield* proxy.grant(peer);
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).not.toContain(
+              "claudeAgent",
+            );
+            expect((yield* proxy.health(hosted.key))?.models).toEqual(["gpt-quota-fixture"]);
+            expect(claudeUsageCalls).toBe(1);
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 50, resets_at: claudeResetAt },
+              seven_day: { utilization: 100, resets_at: claudeResetAt },
+              limits: [
+                {
+                  kind: "weekly_scoped",
+                  percent: 100,
+                  resets_at: claudeResetAt,
+                  scope: { model: { display_name: "Fable" } },
+                },
+              ],
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "rateLimited", retryAfter: claudeResetAt });
+            expect(claudeUsageCalls).toBe(2);
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 50, resets_at: claudeResetAt },
+              seven_day: { utilization: 70, resets_at: claudeResetAt },
+              limits: [
+                {
+                  kind: "weekly_scoped",
+                  percent: 100,
+                  resets_at: claudeResetAt,
+                  scope: { model: { display_name: "Fable" } },
+                },
+              ],
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 10,
+                used_credits: 10,
+                utilization: 100,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).toContain("claudeAgent");
+            expect((yield* proxy.health(hosted.key))?.models).toEqual([
+              "gpt-quota-fixture",
+              "claude-quota-fixture",
+            ]);
+            poolCooldowns = [
+              {
+                scope: "model",
+                model_key: "gpt-quota-fixture",
+                reason: "quota",
+                retry_at: claudeResetAt,
+                remaining_seconds: 1_800,
+              },
+            ];
+            runtimeOnlyUnavailable = true;
+            expect((yield* proxy.health(hosted.key))?.models).toEqual(["claude-quota-fixture"]);
+            poolCooldowns = undefined;
+            runtimeOnlyUnavailable = false;
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 100, resets_at: claudeResetAt },
+              seven_day: { utilization: 100, resets_at: claudeResetAt },
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 10,
+                used_credits: 1,
+                utilization: 10,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            yield* TestClock.adjust("31 seconds");
+            claudeUsageStatus = 403;
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            yield* TestClock.adjust("31 seconds");
+            managedClaudeStatus = "error";
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "unavailable" });
+            expect(claudeUsageCalls).toBe(5);
+            managedClaudeStatus = "active";
+            managedClaudeDisabled = true;
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "disabled" });
+            expect(claudeUsageCalls).toBe(5);
+            managedClaudeDisabled = false;
+            claudeUsageStatus = 200;
+            blockClaudeUsage = true;
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).toContain("claudeAgent");
+            yield* Deferred.await(claudeUsageStarted);
+            yield* Deferred.succeed(releaseClaudeUsage, undefined);
+            blockClaudeUsage = false;
+            managedClaude = false;
+            catalog = [];
             yield* proxy.manage({ operation: "setRouting", strategy: "fill-first" });
             yield* proxy.manage({ operation: "setRouting", sessionAffinity: false });
             const readConfig = fs
@@ -675,6 +977,9 @@ it.effect(
             ]);
             poolUnavailable = true;
             expect((yield* proxy.health(issued.key))?.availableDrivers).toEqual([]);
+            keepRuntimeAvailable = true;
+            expect((yield* proxy.health(issued.key))?.availableDrivers).toContain("codex");
+            keepRuntimeAvailable = false;
             poolUnavailable = false;
             expect((yield* proxy.health(issued.key))?.availableDrivers).toContain("codex");
             const connect = { grant: local, driver: "codex" as const, hostLabel: "Host" };
@@ -690,6 +995,11 @@ it.effect(
               { id: "codex-pool-work", owned_by: "openai" },
               { id: "claude-pool-sonnet", owned_by: "anthropic" },
             ];
+            poolUnavailable = true;
+            expect((yield* proxy.connect(connect).pipe(Effect.flip)).message).toContain(
+              "no available accounts",
+            );
+            poolUnavailable = false;
             expect(
               (yield* proxy
                 .connect({ ...connect, grant: { ...local, key: "expired-local-key" } })
@@ -768,7 +1078,7 @@ it.effect(
               instance: native,
             });
             yield* proxy.connect(connect);
-            const configured = (yield* settings.getSettings).providerInstances[
+            let configured = (yield* settings.getSettings).providerInstances[
               ProviderInstanceId.make("codex")
             ];
             expect(configured).toMatchObject({
@@ -783,17 +1093,36 @@ it.effect(
                 ],
                 inferenceHostLabel: "",
                 inferenceEnabled: true,
+                inferenceBaseUrl: "http://127.0.0.1:12345/api/inference/linked/codex/host",
               },
             });
             expect((yield* proxy.status).routes).toEqual([{ instanceId: "codex", label: "Codex" }]);
             expect(activeCodexConfig).toMatchObject({
               setupMode: "inference",
               homePath: expect.stringContaining("/providers/inference/codex"),
+              inferenceBaseUrl: "http://127.0.0.1:12345/api/inference/linked/codex/host",
+            });
+            if (!isInferenceProviderConfig(configured?.config))
+              throw new Error("Expected a local inference route");
+            expect(yield* proxy.health(local.key, hostId, "codex")).toMatchObject({
+              availableDrivers: ["codex"],
+              models: expect.arrayContaining(["codex-auto-review"]),
+            });
+            expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
             });
             yield* proxy.bindRoutes(45678);
-            expect(
-              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
-            ).toEqual(configured);
+            configured = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ];
+            expect(configured?.config).toMatchObject({
+              inferenceBaseUrl: "http://127.0.0.1:45678/api/inference/linked/codex/host",
+            });
+            if (!isInferenceProviderConfig(configured?.config))
+              throw new Error("Expected a rebound inference route");
+            expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
+            });
             yield* settings.updateProviderInstance({
               operation: "upsert",
               instanceId: ProviderInstanceId.make("codex"),
@@ -839,7 +1168,38 @@ it.effect(
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
-            ).toMatchObject({ inferenceBaseUrl: expect.stringContaining("192.168.1.12") });
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect((yield* proxy.authorize(issued.key, hostId, "codex"))?.baseUrl).toContain(
+              "192.168.1.12",
+            );
+            const directConfig = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ]?.config;
+            if (!isInferenceProviderConfig(directConfig))
+              throw new Error("Expected a direct inference route");
+            expect(yield* proxy.routeHealth(directConfig, issued.key, "codex")).toMatchObject({
+              availableDrivers: expect.arrayContaining(["codex"]),
+            });
+            tailnetCatalogDown = false;
+            connectionDown = true;
+            tailnetCatalogDown = true;
+            yield* proxy.connect({
+              ...connect,
+              grant: issued,
+              connection: { url: "https://pool.example.ts.net" },
+            });
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect((yield* proxy.authorize(issued.key, hostId, "codex"))?.baseUrl).toContain(
+              "192.168.1.12",
+            );
+            connectionDown = false;
             tailnetCatalogDown = false;
             const linkedGrant = { ...issued, baseUrl: "t3-environment:host", alternates: [] };
             expect(
@@ -851,10 +1211,10 @@ it.effect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
             ).toMatchObject({
-              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/host"),
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
             });
             expect(activeCodexConfig).toMatchObject({
-              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/host"),
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
             });
             yield* proxy.bindRoutes(45678);
             expect(
@@ -862,10 +1222,11 @@ it.effect(
                 ?.config,
             ).toMatchObject({
               inferenceBaseUrl: expect.stringContaining(
-                "127.0.0.1:45678/api/inference/linked/host",
+                "127.0.0.1:45678/api/inference/linked/codex/host",
               ),
             });
             expect(yield* proxy.authorize("wrong-key", hostId)).toBeNull();
+            expect(yield* proxy.authorize(issued.key, hostId, "claudeAgent")).toBeNull();
             expect(yield* proxy.authorize(issued.key, hostId)).toEqual({
               baseUrl: "http://127.0.0.1:23456/api/inference",
               key: issued.key,
@@ -911,13 +1272,169 @@ it.effect(
                 .connect({
                   ...connect,
                   grant: issued,
-                  connection: { url: "http://127.0.0.1:23456" },
+                  connection: {
+                    url: "http://127.0.0.1:23456",
+                    ssh: {
+                      alias: "host",
+                      hostname: "host.local",
+                      username: "user",
+                      port: 22,
+                    },
+                  },
                 })
                 .pipe(Effect.flip)).message,
             ).toBe("SSH connection unavailable");
             connectionDown = false;
             const routes = (yield* proxy.status).routes;
             expect(routes).toHaveLength(1);
+            peerId = EnvironmentId.make("other-host");
+            connectionDown = true;
+            const primaryCatalog = catalog;
+            catalog = [
+              { id: "codex-auto-review", owned_by: "openai" },
+              { id: "fallback-only", owned_by: "openai" },
+            ];
+            yield* proxy.registerFallback({
+              ...connect,
+              grant: {
+                ...issued,
+                hostId: peerId,
+                baseUrl: "https://fallback.example.ts.net/api/inference",
+                alternates: [],
+              },
+            });
+            catalog = primaryCatalog;
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([peerId]);
+            connectionDown = false;
+            yield* TestClock.adjust("15 seconds");
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceHostId: hostId,
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
+            peerId = hostId;
+            yield* proxy.connect({ ...connect, grant: issued });
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceBaseUrl: expect.stringContaining("/api/inference/linked/codex/host"),
+              inferenceModels: expect.arrayContaining(["codex-auto-review", "fallback-only"]),
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 403,
+            });
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "1200000",
+              retryAfter: "60",
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            const date = DateTime.toDateUtc(
+              DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + 30 * 60_000),
+            ).toUTCString();
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: " ",
+              retryAfter: date,
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "-100",
+              retryAfter: "1200",
+            });
+            yield* TestClock.adjust("11 minutes");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 200,
+            });
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 429,
+              retryAfterMs: "-100",
+              retryAfter: "-1",
+            });
+            yield* TestClock.adjust("29 seconds");
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
+                (candidate) => candidate.hostId,
+              ),
+            ).toEqual([EnvironmentId.make("other-host")]);
+            yield* TestClock.adjust("1 second");
+            expect(
+              yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(2);
             peerId = EnvironmentId.make("other-host");
             yield* proxy.connect({
               ...connect,
@@ -989,7 +1506,12 @@ it.effect(
             yield* proxy.manage({ operation: "revoke", environmentId: peer.environmentId });
             expect(yield* proxy.authorize(grant.key)).toBeNull();
             expect(yield* proxy.health(grant.key)).toBeNull();
-            expect((yield* proxy.grant(peer)).key).not.toBe(grant.key);
+            expect(
+              yield* proxy.grant({ ...peer, automatic: true }).pipe(Effect.result),
+            ).toMatchObject({ _tag: "Failure" });
+            const restored = yield* proxy.grant(peer);
+            expect(restored.key).not.toBe(grant.key);
+            expect((yield* proxy.grant({ ...peer, automatic: true })).key).toBe(restored.key);
             expectRecovery = true;
             yield* Deferred.succeed(currentExit!, undefined);
             yield* TestClock.adjust("1 second");
