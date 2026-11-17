@@ -241,10 +241,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
-  );
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -275,10 +271,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(withSenderThread(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const linkedEnvironments = yield* linksEnabled;
+    const settings = yield* serverSettings.getMcpToolSettings.pipe(Effect.orDie);
+    const linkedEnvironments = settings.linkedEnvironmentsEnabled;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
-    return { ...limited, linkedEnvironments, origin };
+    return {
+      ...limited,
+      linkedEnvironments,
+      nativeToolEnabled: settings.nativeToolEnabled,
+      origin,
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1131,6 +1133,29 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+const withToolAvailability = Effect.fn("McpHttpServer.withToolAvailability")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const filteredServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpHttpServer.addAvailableTool")((options) => {
+      const enabledWhen = Context.getOrUndefined(options.annotations, McpSchema.EnabledWhen);
+      return server.addTool({
+        ...options,
+        annotations: Context.add(
+          options.annotations,
+          McpSchema.EnabledWhen,
+          (client) =>
+            McpInvocationContext.isToolEnabled(options.tool.name) &&
+            (enabledWhen === undefined || enabledWhen(client)),
+        ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, filteredServer));
+});
+
 /** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
 const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
@@ -1212,9 +1237,11 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
-      withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withToolAvailability(
+      withToolAnalytics(
+        withToolSpans(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(
@@ -1231,7 +1258,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolSpans(register))).pipe(
+  Layer.effectDiscard(withToolAvailability(withToolAnalytics(withToolSpans(register)))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

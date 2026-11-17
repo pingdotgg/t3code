@@ -25,6 +25,18 @@ For an app that is not listed, choose **Something else…**, add a remote MCP
 server with OAuth in that app, and paste the URL. Apps that require their own
 client ID cannot connect.
 
+## Manage T3 tools
+
+Open **Settings → T3 tools**, select the environment, and search for a tool to
+turn it off or back on. For example, disable `t3_thread_send` to prevent agents
+from using that tool to send messages to threads. These settings apply to every
+provider and outside MCP client connected to that environment.
+
+Disabling a tool blocks new calls immediately, including calls from existing
+sessions. Reconnect an agent session to refresh its cached tool list. Calls
+already running are not cancelled. Other tools that can send messages, such as
+`t3_thread_send_attachments`, have their own switches.
+
 ## Get the MCP URL
 
 In **Settings → Environments**, open a saved environment's menu and choose

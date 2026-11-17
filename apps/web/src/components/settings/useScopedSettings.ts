@@ -22,6 +22,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
+import { resolveSettingsScope } from "./settingsScope";
 import {
   createScopedSettingsWriter,
   pendingScopedWritesAtom,
@@ -131,14 +132,18 @@ function useRunScopedPlan() {
   };
 }
 
-export function useUpdateScopedSettings() {
-  const { scope, environments, deviceOnly } = useSettingsScope();
+export function useUpdateScopedSettings(options?: { readonly scope?: "environment" }) {
+  const { scope, environments, environment, deviceOnly } = useSettingsScope();
+  const writeScope =
+    options?.scope === "environment" && scope.kind !== "unavailable" && environment !== null
+      ? resolveSettingsScope({ machine: environment.environmentId }, [], environments)
+      : scope;
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
     run(
       environments,
-      (current) => planScopedSettingsPatch(scope, current, patch, { deviceOnly }),
+      (current) => planScopedSettingsPatch(writeScope, current, patch, { deviceOnly }),
       options?.onFailed,
     );
 }

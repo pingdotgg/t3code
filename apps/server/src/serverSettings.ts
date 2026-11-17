@@ -251,6 +251,11 @@ function ensureProviderInstanceMutationAllowed(
   return Effect.void;
 }
 
+const selectMcpToolSettings = (settings: ServerSettings) => ({
+  linkedEnvironmentsEnabled: settings.linkedEnvironmentsEnabled,
+  nativeToolEnabled: settings.nativeToolEnabled,
+});
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -262,6 +267,12 @@ export class ServerSettingsService extends Context.Service<
     readonly managedPolicy?: ManagedPolicySummary | undefined;
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Tool access must not depend on resolving unrelated provider secrets. */
+    readonly getMcpToolSettings: Effect.Effect<
+      Pick<ServerSettings, "linkedEnvironmentsEnabled" | "nativeToolEnabled">,
+      ServerSettingsError
+    >;
 
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -325,6 +336,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
+    getMcpToolSettings: getSettings.pipe(Effect.map(selectMcpToolSettings)),
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -943,6 +955,18 @@ const make = Effect.gen(function* () {
     Effect.andThen(Cache.get(settingsCache, cacheKey)),
   );
 
+  const getMcpToolSettings = Effect.gen(function* () {
+    const { settings, parseFailure } = yield* Cache.get(settingsCache, cacheKey);
+    if (Option.isSome(parseFailure)) {
+      return yield* new ServerSettingsError({
+        settingsPath,
+        operation: "read-file",
+        cause: parseFailure.value,
+      });
+    }
+    return selectMcpToolSettings(toEffective(settings));
+  });
+
   const materializeSettingsSecrets = Effect.fn("serverSettings.materializeSettingsSecrets")(
     function* (settings: ServerSettings): Effect.fn.Return<ServerSettings, ServerSettingsError> {
       const storedSecrets = new Map<string, string>();
@@ -1375,6 +1399,7 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
+    getMcpToolSettings,
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
