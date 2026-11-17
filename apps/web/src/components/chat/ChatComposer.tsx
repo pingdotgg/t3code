@@ -1728,6 +1728,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       expectedText?: string;
       expandedCursorAfterReplace?: number;
       focusEditorAfterReplace?: boolean;
+      fromPaste?: boolean;
       citationComment?: {
         start: number;
         sourceAnchor: AssistantCitationSourceAnchor;
@@ -1785,9 +1786,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onTypingGuardDraftChange();
     }
     setComposerCursor(nextCursor);
-    setComposerTrigger(
-      isLiteralPendingAnswer ? null : detectComposerTrigger(next.text, nextExpandedCursor),
-    );
+    // Same rule as onPromptChange: a trigger a paste brought in starts dismissed.
+    const candidate = isLiteralPendingAnswer
+      ? null
+      : detectComposerTrigger(next.text, nextExpandedCursor);
+    const continuesOpenTrigger =
+      candidate !== null &&
+      composerTrigger?.kind === candidate.kind &&
+      composerTrigger.rangeStart === candidate.rangeStart;
+    if (options?.fromPaste && candidate && !continuesOpenTrigger) dismissComposerTrigger(candidate);
+    else setComposerTrigger(candidate);
     if (options?.focusEditorAfterReplace !== false) {
       window.requestAnimationFrame(() => {
         if (promptRef.current !== next.text) return;
@@ -2610,14 +2618,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursor,
       rangeEnd,
       needsLeadingSpace ? ` ${text}` : text,
-      options?.citationCommentAnchor
+      options?.citationCommentAnchor || options?.clipboardData
         ? {
-            citationComment: {
-              start: cursor + (needsLeadingSpace ? 1 : 0),
-              sourceAnchor: options.citationCommentAnchor,
-              insertedSpaces: { before: needsLeadingSpace, after: rangeEnd === cursor },
-            },
-            focusEditorAfterReplace: false,
+            ...(options.citationCommentAnchor
+              ? {
+                  citationComment: {
+                    start: cursor + (needsLeadingSpace ? 1 : 0),
+                    sourceAnchor: options.citationCommentAnchor,
+                    insertedSpaces: { before: needsLeadingSpace, after: rangeEnd === cursor },
+                  },
+                  focusEditorAfterReplace: false,
+                }
+              : {}),
+            ...(options.clipboardData ? { fromPaste: true } : {}),
           }
         : undefined,
     );

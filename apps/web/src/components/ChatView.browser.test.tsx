@@ -717,4 +717,19 @@ it("pasted text ending in a slash word does not open the command menu", async ()
   paste("mo");
   await vi.waitFor(() => expect(editor.element().textContent).toContain("/mo /mo"));
   await expect.element(modelItem).toBeVisible();
+
+  // A paste while the composer is blurred arrives through insertTextAtEnd.
+  (editor.element() as HTMLElement).blur();
+  await vi.waitFor(() => expect(document.activeElement).not.toBe(editor.element()));
+  const unfocusedClipboard = new DataTransfer();
+  unfocusedClipboard.setData("text/plain", " note /mo");
+  document.body.dispatchEvent(
+    new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: unfocusedClipboard,
+    }),
+  );
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("note /mo"));
+  expect(modelItem.query()).toBeNull();
 });
