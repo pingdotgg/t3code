@@ -6235,6 +6235,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const heldProposedPlansByToolUseId = new Map<string, string>();
         // /clear moves a live process to a new native session; persist that one so a reopen resumes it.
         const clearedNativeSessions = new Map<string, string>();
+        // Only fresh timeouts rotate the canonical live key; /clear retains its prior behavior.
+        const retriedFreshNativeSessions = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -6275,10 +6277,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (event.type === "provider_thread.updated") {
             const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
             const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
-            // A fresh retry moves its attachment/title state to the new ID, while
-            // an in-process /clear can still hold the old ID's metadata.
             const metadataNativeThreadId =
-              pdfBudgets.has(nativeThreadId) ? nativeThreadId : (nativeSessionId ?? nativeThreadId);
+              retriedFreshNativeSessions.get(nativeThreadId) ?? nativeThreadId;
             event = {
               ...event,
               providerThread: withAdapterNativeMetadata(event.providerThread, metadataNativeThreadId),
@@ -6495,9 +6495,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (nativeThreadId === undefined || nativeThreadId === null) {
               return;
             }
-            const enriched = withAdapterNativeMetadata(providerThread, nativeThreadId);
+            // The first turn can still carry the allocated ID after a fresh retry.
+            const rememberedNativeThreadId =
+              retriedFreshNativeSessions.get(nativeThreadId) ?? nativeThreadId;
+            const enriched = withAdapterNativeMetadata(providerThread, rememberedNativeThreadId);
             yield* Ref.update(lastProviderThreadByNativeThread, (current) =>
-              new Map(current).set(nativeThreadId, enriched),
+              new Map(current).set(rememberedNativeThreadId, enriched),
             );
           });
 
@@ -12959,6 +12962,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Existing provider-thread records still use the allocated ID; map their
             // emitted update to the ID actually running in Claude.
             clearedNativeSessions.set(oldNativeThreadId, openedNativeThreadId);
+            retriedFreshNativeSessions.set(oldNativeThreadId, openedNativeThreadId);
             nativeThreadId = openedNativeThreadId;
           }
           // Mark only successful opens; retries must not resume sessions that failed to create.
