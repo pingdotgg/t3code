@@ -54,7 +54,6 @@ const GROK_NPM_PACKAGE = "@xai-official/grok";
 // npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
 // Mise and Homebrew casks upgrade through their manager; `grok update` would install a second
 // copy, so a cask its brew cannot vouch for stays manual, as does a Nix store install.
-const GROK_SCRIPT_BINARY_PATTERN = /^grok-\d[\w.+-]*(?:\.exe)?$/i;
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("resolveGrokMaintenance")(function* (context) {
     if (!context) {
@@ -93,14 +92,23 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       );
     }
     const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const name = path.basename(context.realCommandPath).toLowerCase();
     const installDir = path.dirname(context.realCommandPath);
-    // `grok update` installs under `$GROK_HOME`, so a script install (`<home>/bin/grok-<version>`
-    // or `<home>/downloads/grok-<version>-<target>`) keeps `<home>` even if the instance sets another.
-    const scriptHome =
-      GROK_SCRIPT_BINARY_PATTERN.test(path.basename(context.realCommandPath)) &&
-      ["bin", "downloads"].includes(path.basename(installDir))
-        ? { GROK_HOME: path.dirname(installDir) }
-        : {};
+    const installDirName = path.basename(installDir).toLowerCase();
+    const home = path.dirname(installDir);
+    // `grok update` installs under `$GROK_HOME`, so a script install keeps its own home even if the
+    // instance sets another: `<home>/bin/grok` links into `<home>/downloads`, or on Windows is a copy
+    // beside it. Only an install script creates `downloads`, so a bare `bin/grok` elsewhere is not one.
+    const isScriptInstall =
+      (installDirName === "downloads" && name.startsWith("grok-")) ||
+      (installDirName === "bin" &&
+        (/^grok-\d/.test(name) ||
+          ((name === "grok" || name === "grok.exe") &&
+            (yield* fileSystem
+              .exists(path.join(home, "downloads"))
+              .pipe(Effect.orElseSucceed(() => false))))));
+    const scriptHome = isScriptInstall ? { GROK_HOME: home } : {};
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,

@@ -174,9 +174,17 @@ it.layer(layerTest)("GrokDriver", (it) => {
 
   // `grok update` installs into `$GROK_HOME/bin`, so an instance GROK_HOME that does not own
   // binaryPath would update a different copy and leave the verified binary outdated.
-  for (const target of ["grok-1.0.77", "../downloads/grok-1.0.88-linux-x86_64"]) {
+  // `target` is where `bin/grok` links; null is a copied binary, as the Windows installer leaves.
+  const scriptInstallCases = [
+    { target: "grok-1.0.77", downloads: false, owner: ".grok" },
+    { target: "../downloads/grok-linux-x86_64", downloads: true, owner: ".grok" },
+    { target: "../downloads/grok-1.0.88-linux-x86_64", downloads: true, owner: ".grok" },
+    { target: null, downloads: true, owner: ".grok" },
+    { target: null, downloads: false, owner: ".grok-hub" },
+  ] as const;
+  for (const { target, downloads, owner } of scriptInstallCases) {
     it.effect.skipIf(windowsHost)(
-      `runs grok update with the GROK_HOME that owns a script-installed binaryPath (${target})`,
+      `runs grok update with GROK_HOME=${owner} for bin/grok -> ${target ?? "copy"}${downloads ? " beside downloads" : ""}`,
       () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -186,12 +194,14 @@ it.layer(layerTest)("GrokDriver", (it) => {
           );
           const scriptHome = path.join(home, ".grok");
           const binaryPath = path.join(scriptHome, "bin", "grok");
-          const targetPath = path.resolve(path.dirname(binaryPath), target);
+          const targetPath = path.resolve(path.dirname(binaryPath), target ?? "grok");
           yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
-          yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
+          if (downloads) {
+            yield* fs.makeDirectory(path.join(scriptHome, "downloads"), { recursive: true });
+          }
           yield* fs.writeFileString(targetPath, "#!/bin/sh\n");
           yield* fs.chmod(targetPath, 0o755);
-          yield* fs.symlink(target, binaryPath);
+          if (target) yield* fs.symlink(target, binaryPath);
 
           const instance = yield* GrokDriver.create({
             instanceId: ProviderInstanceId.make("grok-separate-home"),
@@ -208,7 +218,7 @@ it.layer(layerTest)("GrokDriver", (it) => {
             expect.objectContaining({
               executable: binaryPath,
               args: ["update"],
-              env: expect.objectContaining({ GROK_HOME: scriptHome }),
+              env: expect.objectContaining({ GROK_HOME: path.join(home, owner) }),
             }),
           );
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
