@@ -1,0 +1,1020 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>T3 Widget Prototypes</title>
+    <style>
+      :root {
+        --cbg: linear-gradient(180deg, #0c1738 0%, #070c1d 100%);
+        --line: #1a2a5e;
+        --txt: #d6def5;
+        --mut: #7c8ab3;
+        --blue: #6f8dff;
+        --blue2: #b4c3ff;
+        --clay: #e08a63;
+        --white: #e8ecf7;
+        --green: #5fd39a;
+        --amber: #f0a447;
+        --red: #ff6b6b;
+        --violet: #9b8cff;
+      }
+      body {
+        margin: 0;
+        color: var(--txt);
+        font-family: var(--font-sans, Inter, system-ui, sans-serif);
+      }
+      .route {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--mut);
+        margin: 20px 2px 10px;
+        font-weight: 600;
+      }
+      .route:first-child {
+        margin-top: 4px;
+      }
+      .route span {
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 400;
+        margin-left: 8px;
+        opacity: 0.85;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .card {
+        background: var(--cbg);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px 14px;
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(140, 165, 255, 0.08);
+        min-width: 0;
+      }
+      .hd {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13.5px;
+      }
+      .hd svg {
+        width: 15px;
+        height: 15px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.8;
+        flex: none;
+      }
+      .meta {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--mut);
+        white-space: nowrap;
+      }
+      .meta.warn {
+        color: var(--amber);
+      }
+      .big {
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 10px 0 8px;
+        line-height: 1;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .big small {
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--mut);
+        letter-spacing: 0;
+      }
+      .big .r {
+        margin-left: auto;
+        font-size: 12.5px;
+        font-weight: 400;
+        color: var(--txt);
+      }
+      canvas {
+        display: block;
+        width: 100%;
+      }
+      .axis {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--mut);
+        letter-spacing: 0.08em;
+        margin-top: 6px;
+      }
+      .wide {
+        grid-column: 1/-1;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 8px minmax(0, 1fr) 56px 38px;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 0;
+        border-top: 1px solid rgba(40, 60, 130, 0.35);
+        font-size: 12.5px;
+      }
+      .row:first-of-type {
+        border-top: 0;
+      }
+      .rows {
+        margin-top: 8px;
+      }
+      .px {
+        width: 6px;
+        height: 6px;
+        border-radius: 1px;
+      }
+      .t {
+        min-width: 0;
+      }
+      .t b {
+        display: block;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .t i {
+        font-style: normal;
+        color: var(--mut);
+        font-size: 11px;
+      }
+      .num {
+        text-align: right;
+        color: var(--mut);
+        font-variant-numeric: tabular-nums;
+        font-size: 11.5px;
+      }
+      .pulse {
+        animation: pulse 1.2s steps(2) infinite;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.25;
+        }
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        font-size: 11.5px;
+        color: var(--txt);
+        margin-top: 10px;
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .legend span::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 1px;
+        background: var(--c);
+      }
+      .legend em {
+        font-style: normal;
+        color: var(--mut);
+      }
+      .checks {
+        display: flex;
+        gap: 2px;
+        justify-content: flex-end;
+      }
+      .checks i {
+        width: 5px;
+        height: 9px;
+        border-radius: 1px;
+        background: var(--c);
+      }
+      .mrow {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr) 44px;
+        gap: 10px;
+        align-items: center;
+        font-size: 12px;
+        padding: 4px 0;
+      }
+      .mrow .num {
+        font-size: 11.5px;
+      }
+      .nx {
+        display: grid;
+        grid-template-columns: 62px minmax(0, 1fr) auto;
+        gap: 8px;
+        font-size: 12px;
+        padding: 4px 0;
+        align-items: center;
+      }
+      .nx .num {
+        text-align: left;
+      }
+      .tag {
+        font-size: 10.5px;
+        color: var(--mut);
+        border: 1px solid #22356f;
+        border-radius: 5px;
+        padding: 1px 5px;
+      }
+      /* Route B */
+      .crt {
+        background: radial-gradient(120% 90% at 50% 0%, #0f1e4d 0%, #060a18 70%);
+        border-color: #24387a;
+      }
+      .crt::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
+        mix-blend-mode: multiply;
+      }
+      .crt .hd {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--blue2);
+      }
+      .crt .meta {
+        font-family: var(--font-mono, ui-monospace, monospace);
+        letter-spacing: 0.06em;
+      }
+      .stats {
+        display: flex;
+        gap: 18px;
+        margin-top: 10px;
+        font-size: 11.5px;
+        color: var(--mut);
+      }
+      .stats b {
+        display: block;
+        color: var(--txt);
+        font-size: 15px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      @media (max-width: 560px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="route">
+      A · Matched set <span>same card, type and dither density as your four</span>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>Running now<span
+            class="meta"
+            ><span class="pulse" style="color: var(--amber)">■</span> 1 needs you</span
+          >
+        </div>
+        <div class="rows" id="agents"></div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <ellipse cx="12" cy="5" rx="9" ry="3" />
+            <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" />
+            <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" /></svg
+          >Cache<span class="meta">last 7 days</span>
+        </div>
+        <div class="big">
+          87%<small>of input from cache</small><span class="r">saved $1.9k</span>
+        </div>
+        <canvas id="mix" style="height: 26px"></canvas>
+        <div class="legend">
+          <span style="--c: var(--blue2)">Cache read <em>15.1B</em></span>
+          <span style="--c: var(--blue)">Cache write <em>1.2B</em></span>
+          <span style="--c: var(--clay)">Input <em>1.0B</em></span>
+          <span style="--c: var(--white)">Output <em>0.4B</em></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" /></svg
+          >When you work<span class="meta">peak Tue 10 PM</span>
+        </div>
+        <div
+          style="
+            display: grid;
+            grid-template-columns: 26px minmax(0, 1fr);
+            gap: 6px;
+            margin-top: 12px;
+          "
+        >
+          <div
+            style="
+              display: grid;
+              grid-template-rows: repeat(7, 1fr);
+              font-size: 10px;
+              color: var(--mut);
+            "
+          >
+            <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span
+            ><span></span>
+          </div>
+          <canvas id="punch" style="height: 98px"></canvas>
+        </div>
+        <div class="axis" style="margin-left: 32px">
+          <span>12A</span><span>6A</span><span>12P</span><span>6P</span><span>12A</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg
+          >Spend<span class="meta warn">Over budget Nov 26</span>
+        </div>
+        <div class="big">$4.8k<small>of $7.5k</small><span class="r">pace $8.4k</span></div>
+        <canvas id="spend" style="height: 92px"></canvas>
+        <div class="axis">
+          <span>NOV 1</span><span>NOV 10</span><span>NOW</span><span>NOV 30</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <circle cx="6" cy="6" r="2.5" />
+            <circle cx="6" cy="18" r="2.5" />
+            <circle cx="18" cy="18" r="2.5" />
+            <path d="M6 8.5v7M18 15.5V9a3 3 0 0 0-3-3h-4" /></svg
+          >Pull requests<span class="meta">4 open · 1 to review</span>
+        </div>
+        <div class="rows" id="prs"></div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="12" rx="2" />
+            <path d="M8 20h8M12 16v4" /></svg
+          >Machines<span class="meta">2 of 3 online</span>
+        </div>
+        <div class="rows" id="machines"></div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <path d="M3 3v18h18" />
+            <path d="M7 15h4M7 11h9M7 7h12" /></svg
+          >Models<span class="meta">this month · tokens</span>
+        </div>
+        <div id="models" style="margin-top: 10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="hd">
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" /></svg
+          >Up next<span class="meta">3 scheduled · 2 PR waits</span>
+        </div>
+        <canvas id="next" style="height: 34px; margin-top: 12px"></canvas>
+        <div class="axis">
+          <span>NOW</span><span>+6H</span><span>+12H</span><span>+18H</span><span>+24H</span>
+        </div>
+        <div id="nextlist" style="margin-top: 8px"></div>
+      </div>
+    </div>
+
+    <div class="route">B · Pushed style <span>pixel numerals, scanlines, live motion</span></div>
+    <div class="grid">
+      <div class="card crt">
+        <div class="hd">Throughput<span class="meta">TOK / MIN</span></div>
+        <canvas id="seg" style="height: 44px; margin-top: 12px"></canvas>
+        <canvas id="fall" style="height: 96px; margin-top: 10px"></canvas>
+        <div class="axis">
+          <span style="color: var(--blue)">CODEX ×3</span
+          ><span style="color: var(--clay)">CLAUDE ×2</span>
+        </div>
+      </div>
+      <div class="card crt">
+        <div class="hd">Context<span class="meta">THIS THREAD · 400K CAP</span></div>
+        <canvas id="gauge" style="height: 118px; margin-top: 8px"></canvas>
+        <div class="stats">
+          <div><b>271k</b>used</div>
+          <div><b>~38</b>turns left</div>
+          <div><b>2</b>compactions</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="route">
+      C · One combined widget <span>replace separate cards with a single day timeline</span>
+    </div>
+    <div class="grid">
+      <div class="card wide">
+        <div class="hd">
+          <svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6" /></svg>Today<span class="meta"
+            >Tue Nov 17</span
+          >
+        </div>
+        <div class="stats" style="margin-top: 12px">
+          <div><b>612M</b>tokens</div>
+          <div><b>$214</b>spent</div>
+          <div><b>9</b>threads</div>
+          <div><b>3</b>PRs merged</div>
+          <div><b>5h 40m</b>agent time</div>
+        </div>
+        <div
+          style="
+            display: grid;
+            grid-template-columns: 62px minmax(0, 1fr);
+            gap: 8px;
+            margin-top: 14px;
+          "
+        >
+          <div
+            style="
+              display: grid;
+              grid-template-rows: repeat(3, 22px) 16px;
+              gap: 5px;
+              font-size: 11px;
+              color: var(--mut);
+              align-items: center;
+            "
+          >
+            <span>Codex</span><span>Claude</span><span>Other</span><span>Events</span>
+          </div>
+          <canvas id="today" style="height: 97px"></canvas>
+        </div>
+        <div class="axis" style="margin-left: 70px">
+          <span>12A</span><span>6A</span><span>12P</span><span>NOW</span><span>12A</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const B = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+      ].map((r) => r.map((v) => (v + 0.5) / 16));
+      const C = {
+        blue: "#6f8dff",
+        blue2: "#b4c3ff",
+        clay: "#e08a63",
+        white: "#e8ecf7",
+        green: "#5fd39a",
+        amber: "#f0a447",
+        red: "#ff6b6b",
+        violet: "#9b8cff",
+        ghost: "#16224a",
+        grid: "#1c2a5a",
+      };
+      function rng(s) {
+        return () => {
+          s |= 0;
+          s = (s + 0x6d2b79f5) | 0;
+          let t = Math.imul(s ^ (s >>> 15), 1 | s);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function cv(id) {
+        const c = typeof id === "string" ? document.getElementById(id) : id,
+          d = devicePixelRatio || 1,
+          w = c.clientWidth,
+          h = c.clientHeight;
+        c.width = w * d;
+        c.height = h * d;
+        const x = c.getContext("2d");
+        x.setTransform(d, 0, 0, d, 0, 0);
+        x.clearRect(0, 0, w, h);
+        return [x, w, h];
+      }
+      function samp(v, t) {
+        const p = t * (v.length - 1),
+          i = Math.floor(p),
+          f = p - i;
+        return v[i] * (1 - f) + v[Math.min(i + 1, v.length - 1)] * f;
+      }
+      function walk(n, seed, base = 0.5, vol = 0.12, lo = 0.05, hi = 0.95) {
+        const r = rng(seed);
+        let v = base;
+        return Array.from(
+          { length: n },
+          () => (v = Math.min(hi, Math.max(lo, v + (r() - 0.5) * vol * 2))),
+        );
+      }
+      // dithered area: solid crest, density fades with depth
+      function area(
+        x,
+        w,
+        h,
+        vals,
+        { color, crest, cell = 3, fade = 0.85, x0 = 0, x1 = w, y0 = 0 },
+      ) {
+        const cols = Math.floor((x1 - x0) / cell),
+          rows = Math.ceil((h - y0) / cell);
+        for (let i = 0; i < cols; i++) {
+          const v = samp(vals, i / Math.max(1, cols - 1)),
+            yt = (h - y0) * (1 - v),
+            r0 = Math.floor(yt / cell);
+          for (let j = r0; j < rows; j++) {
+            const d = j - r0 < 2 ? 1 : 1 - ((j * cell - yt) / (h - y0 - yt + 1e-3)) * fade;
+            if (d > B[j & 3][(i + ((x0 / cell) | 0)) & 3]) {
+              x.fillStyle = j === r0 && crest ? crest : color;
+              x.fillRect(x0 + i * cell, y0 + j * cell, cell - 1, cell - 1);
+            }
+          }
+        }
+      }
+      function field(x, X, Y, W, H, dens, color, cell = 3, ghost) {
+        for (let j = 0; j * cell < H; j++)
+          for (let i = 0; i * cell < W; i++) {
+            const d = typeof dens === "function" ? dens(i, j) : dens;
+            if (d > B[j & 3][i & 3]) {
+              x.fillStyle = color;
+              x.fillRect(X + i * cell, Y + j * cell, cell - 1, cell - 1);
+            } else if (ghost) {
+              x.fillStyle = ghost;
+              x.fillRect(X + i * cell, Y + j * cell, cell - 1, cell - 1);
+            }
+          }
+      }
+      function dotted(x, x0, y0, x1, y1, color, step = 4, s = 2) {
+        const n = Math.hypot(x1 - x0, y1 - y0) / step;
+        x.fillStyle = color;
+        for (let k = 0; k <= n; k++) {
+          const t = k / n;
+          x.fillRect(Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t), s, s);
+        }
+      }
+      function spark(c, vals, color) {
+        const [x, w, h] = cv(c);
+        area(x, w, h, vals, { color, crest: color, cell: 2, fade: 0.9 });
+      }
+      const H = (s) => {
+        const d = document.createElement("div");
+        d.innerHTML = s.trim();
+        return d.firstChild;
+      };
+
+      // ---------- A1 running now
+      const agents = [
+        {
+          c: C.blue,
+          t: "Refactor usage scanner cache",
+          p: "t3code · 6.2 Sol High",
+          e: "14m",
+          s: 11,
+        },
+        { c: C.clay, t: "Widget prototypes", p: "scratch · Opus 5.5", e: "3m", s: 12 },
+        {
+          c: C.amber,
+          t: "Waiting: approve yay -Syu",
+          p: "dotfiles · Sonnet 5.5",
+          e: "idle",
+          s: 13,
+          wait: 1,
+        },
+        { c: C.blue, t: "Bitbucket PR API tests", p: "t3code · 6.2 Sol", e: "41m", s: 14 },
+      ];
+      const ag = document.getElementById("agents");
+      const agSeries = [];
+      agents.forEach((a) => {
+        const r = H(
+          `<div class="row"><i class="px ${a.wait ? "pulse" : ""}" style="background:${a.c}"></i><div class="t"><b>${a.t}</b><i>${a.p}</i></div><canvas style="height:18px"></canvas><span class="num">${a.e}</span></div>`,
+        );
+        ag.appendChild(r);
+        agSeries.push({
+          c: r.querySelector("canvas"),
+          v: walk(28, a.s, a.wait ? 0.1 : 0.5, a.wait ? 0.01 : 0.18, 0.04),
+          col: a.c,
+          wait: a.wait,
+          seed: rng(a.s + 99),
+        });
+      });
+      function tickAgents() {
+        agSeries.forEach((a) => {
+          if (!a.wait) {
+            const l = a.v[a.v.length - 1];
+            a.v.push(Math.min(0.95, Math.max(0.05, l + (a.seed() - 0.5) * 0.36)));
+            a.v.shift();
+          }
+          spark(a.c, a.v, a.col);
+        });
+      }
+
+      // ---------- A2 cache mix
+      function drawMix() {
+        const [x, w, h] = cv("mix");
+        const seg = [
+            [15.1, C.blue2],
+            [1.2, C.blue],
+            [1.0, C.clay],
+            [0.4, C.white],
+          ],
+          tot = seg.reduce((s, a) => s + a[0], 0);
+        let X = 0;
+        seg.forEach(([v, col], k) => {
+          const W = Math.max(9, Math.round((w * v) / tot / 3) * 3);
+          field(
+            x,
+            X,
+            0,
+            Math.min(W, w - X) - 3,
+            h,
+            (i, j) => (k === 0 ? 1 - (i / (W / 3)) * 0.55 : 0.95),
+            col,
+          );
+          X += W;
+        });
+      }
+
+      // ---------- A3 punchcard
+      function drawPunch() {
+        const [x, w, h] = cv("punch");
+        const r = rng(7),
+          cw = w / 24,
+          ch = h / 7,
+          sub = 3;
+        for (let d = 0; d < 7; d++)
+          for (let hr = 0; hr < 24; hr++) {
+            const evening =
+              Math.exp(-((hr - 22) ** 2) / 10) +
+              Math.exp(-((hr - 10) ** 2) / 14) * 0.8 +
+              (hr < 3 ? 0.6 : 0);
+            let v = Math.min(1, Math.pow(evening * (d > 4 ? 0.45 : 1) * (0.55 + r() * 0.5), 1.7));
+            if (d === 1 && hr === 22) v = 1;
+            const cols = Math.floor((cw - 3) / sub),
+              rows = Math.floor((ch - 3) / sub);
+            for (let j = 0; j < rows; j++)
+              for (let i = 0; i < cols; i++) {
+                x.fillStyle = v > B[j & 3][i & 3] ? (v > 0.8 ? C.blue2 : C.blue) : "#111b3d";
+                x.fillRect(hr * cw + i * sub, d * ch + j * sub, sub - 1, sub - 1);
+              }
+          }
+      }
+
+      // ---------- A4 spend
+      function drawSpend() {
+        const [x, w, h] = cv("spend");
+        const r = rng(4),
+          days = 30,
+          today = 17;
+        let cum = 0;
+        const v = [];
+        for (let d = 0; d <= today; d++) {
+          cum += (r() * 0.9 + 0.55) * (d % 7 > 4 ? 0.5 : 1);
+          v.push(cum);
+        }
+        const max = 9.6,
+          scale = 4.8 / cum;
+        const vals = v.map((c) => (c * scale) / max);
+        const xt = (w * today) / days;
+        area(x, w, h, vals, { color: C.blue, crest: C.blue2, x1: xt });
+        const yNow = h * (1 - vals[vals.length - 1]),
+          yEnd = h * (1 - 8.4 / max),
+          yBud = h * (1 - 7.5 / max);
+        dotted(x, xt, yNow, w - 2, yEnd, C.blue2, 5, 2);
+        dotted(x, 0, yBud, w, yBud, C.amber, 6, 2);
+        const xb = xt + (w - xt) * ((7.5 - 4.8) / (8.4 - 4.8));
+        x.fillStyle = "rgba(240,164,71,.16)";
+        x.fillRect(xb, 0, w - xb, h);
+        x.fillStyle = C.amber;
+        x.font = "10px system-ui";
+        x.fillText("BUDGET $7.5K", 4, yBud - 5);
+        dotted(x, xt, 0, xt, h, "#8fa2e6", 3, 1);
+      }
+
+      // ---------- A5 PRs
+      const prs = [
+        { n: "#4821", t: "Usage widgets on home screen", st: "review", k: "gggggga" },
+        { n: "#4817", t: "Bitbucket PR pagination", st: "", k: "ggrgggg" },
+        { n: "#4809", t: "Theme: stable widget selectors", st: "", k: "ggggggg" },
+        { n: "#4795", t: "Compact at 400k tokens", st: "draft", k: "gaa----" },
+      ];
+      const pc = { g: C.green, r: C.red, a: C.amber, "-": C.ghost };
+      prs.forEach((p) =>
+        document
+          .getElementById("prs")
+          .appendChild(
+            H(
+              `<div class="row" style="grid-template-columns:minmax(0,1fr) auto 44px"><div class="t"><b>${p.t}</b><i>${p.n}${p.st ? ' · <span style="color:' + (p.st === "review" ? C.amber : "var(--mut)") + '">' + (p.st === "review" ? "needs your review" : p.st) + "</span>" : ""}</i></div><div class="checks">${[...p.k].map((k) => `<i style="--c:${pc[k]}" class="${k === "a" ? "pulse" : ""}"></i>`).join("")}</div><span class="num">${p.k.includes("r") ? '<span style="color:' + C.red + '">1 fail</span>' : p.k.includes("a") ? "running" : "ready"}</span></div>`,
+            ),
+          ),
+      );
+
+      // ---------- A6 machines
+      const ms = [
+        { n: "blackbox", d: "this machine · 3 agents", c: C.green, s: 21, l: "64%" },
+        { n: "vps", d: "linked · 1 agent", c: C.green, s: 22, l: "18%" },
+        { n: "macbook", d: "asleep since 2:14 PM", c: "#3b4a78", s: 23, l: "—" },
+      ];
+      const mEl = document.getElementById("machines");
+      const mSp = [];
+      ms.forEach((m) => {
+        const r = H(
+          `<div class="row"><i class="px" style="background:${m.c}"></i><div class="t"><b>${m.n}</b><i>${m.d}</i></div><canvas style="height:18px"></canvas><span class="num">${m.l === "—" ? "off" : m.l}</span></div>`,
+        );
+        mEl.appendChild(r);
+        mSp.push([
+          r.querySelector("canvas"),
+          m.l === "—" ? Array(20).fill(0.05) : walk(28, m.s, parseInt(m.l) / 100, 0.12),
+          m.l === "—" ? "#2a3766" : C.blue,
+        ]);
+      });
+      function drawMachines() {
+        mSp.forEach(([c, v, col]) => spark(c, v, col));
+      }
+
+      // ---------- A7 models
+      const mods = [
+        ["6.2 Sol", 3.4, C.white],
+        ["Opus 5.5", 3.1, C.clay],
+        ["Sonnet 5.5", 1.9, C.clay],
+        ["6.2 Sol Mini", 1.2, C.white],
+        ["Fable 5.2", 0.9, C.clay],
+        ["Antigravity", 0.08, C.violet],
+      ];
+      const mdEl = document.getElementById("models");
+      const mBars = [];
+      mods.forEach(([n, v, col]) => {
+        const r = H(
+          `<div class="mrow"><span>${n}</span><canvas style="height:12px"></canvas><span class="num">${v >= 1 ? v.toFixed(1) + "B" : Math.round(v * 1000) + "M"}</span></div>`,
+        );
+        mdEl.appendChild(r);
+        mBars.push([r.querySelector("canvas"), v / 3.4, col]);
+      });
+      function drawModels() {
+        mBars.forEach(([c, f, col]) => {
+          const [x, w, h] = cv(c);
+          const W = Math.max(3, w * f);
+          field(x, 0, 0, w, h, (i) => (i * 3 < W ? 1 - ((i * 3) / W) * 0.5 : 0), col, 3, C.ghost);
+        });
+      }
+
+      // ---------- A8 up next
+      const nexts = [
+        { at: 1.2, l: "2:30 PM", t: "Nightly usage rollup", k: "task", c: C.blue },
+        { at: 3.5, l: "4:45 PM", t: "#4817 checks", k: "PR wait", c: C.amber },
+        { at: 9, l: "10:15 PM", t: "Dependency audit", k: "task", c: C.blue },
+        { at: 14, l: "3:15 AM", t: "#4795 checks", k: "PR wait", c: C.amber },
+        { at: 19.5, l: "8:45 AM", t: "Morning digest", k: "task", c: C.blue },
+      ];
+      nexts
+        .slice(0, 3)
+        .forEach((n) =>
+          document
+            .getElementById("nextlist")
+            .appendChild(
+              H(
+                `<div class="nx"><span class="num">${n.l}</span><span>${n.t}</span><span class="tag" style="color:${n.c}">${n.k}</span></div>`,
+              ),
+            ),
+        );
+      function drawNext() {
+        const [x, w, h] = cv("next");
+        for (let i = 0; i < w; i += 3) {
+          const hr = (i / w) * 24;
+          field(x, i, h / 2 - 4, 3, 9, 0.18 + 0.12 * Math.sin((hr / 24) * Math.PI * 2 + 1), C.grid);
+        }
+        for (let k = 0; k <= 24; k++) {
+          x.fillStyle = k % 6 ? "#22336b" : "#3a4f94";
+          x.fillRect(Math.min(w - 2, (k / 24) * w), h / 2 - (k % 6 ? 2 : 6), 2, k % 6 ? 4 : 12);
+        }
+        nexts.forEach((n) => {
+          const X = (n.at / 24) * w;
+          x.fillStyle = n.c;
+          x.fillRect(X - 4, h / 2 - 4, 8, 8);
+          x.fillStyle = "#02050f";
+          x.fillRect(X - 2, h / 2 - 2, 4, 4);
+          x.fillStyle = n.c;
+          x.fillRect(X - 1, h / 2 - 1, 2, 2);
+          field(x, X - 1, 0, 3, h / 2 - 6, (i, j) => j / ((h / 2 - 6) / 3), n.c);
+        });
+        dotted(x, 1, 0, 1, h, C.white, 3, 2);
+      }
+
+      // ---------- B1 pixel numerals + waterfall
+      const F = {
+        0: "01110100011001110101110011000101110",
+        1: "00100011000010000100001000010001110",
+        2: "01110100010000100010001000100011111",
+        3: "11110000010000101110000010000111110",
+        4: "00010001100101010010111110001000010",
+        5: "11111100001111000001000011000101110",
+        6: "00110010001000011110100011000101110",
+        7: "11111000010001000100010000100001000",
+        8: "01110100011000101110100011000101110",
+        9: "01110100011000101111000010001001100",
+        k: "10000100001001010100110001010010010",
+        ".": "00000000000000000000000000110001100",
+        ",": "00000000000000000000001100010001000",
+        " ": "0".repeat(35),
+      };
+      function seg(c, str, col) {
+        const [x, w, h] = cv(c);
+        const s = Math.floor(h / 7) - 1,
+          p = s + 1;
+        x.shadowColor = col;
+        x.shadowBlur = 8;
+        let X = 0;
+        for (const ch of str) {
+          const g = F[ch] || F[" "];
+          for (let j = 0; j < 7; j++)
+            for (let i = 0; i < 5; i++) {
+              x.fillStyle = g[j * 5 + i] === "1" ? col : "rgba(111,141,255,.07)";
+              x.fillRect(X + i * p, j * p, s, s);
+            }
+          X += 6 * p;
+        }
+        x.shadowBlur = 0;
+      }
+      const fall = { rows: [], r: rng(31) };
+      function stepFall() {
+        const n = 64,
+          row = [];
+        for (let i = 0; i < n; i++) {
+          const lane = i < 38 ? Math.floor(i / 12.67) : 3 + Math.floor((i - 38) / 13);
+          const ph = Date.now() / 900 + lane * 1.7;
+          row.push(
+            Math.max(
+              0,
+              Math.min(1, 0.55 + 0.35 * Math.sin(ph + i * 0.05) + (fall.r() - 0.5) * 0.5),
+            ),
+          );
+        }
+        fall.rows.unshift(row);
+        fall.rows.length = Math.min(fall.rows.length, 40);
+      }
+      function drawFall() {
+        const [x, w, h] = cv("fall");
+        const n = 64,
+          cw = w / n,
+          cell = 3,
+          rows = Math.floor(h / cell);
+        for (let j = 0; j < rows; j++) {
+          const row = fall.rows[j];
+          if (!row) continue;
+          const age = 1 - j / rows;
+          for (let i = 0; i < n; i++) {
+            const d = row[i] * age;
+            const X = Math.floor(i * cw);
+            if (d > B[j & 3][i & 3]) {
+              x.fillStyle = i < 38 ? (d > 0.7 ? C.blue2 : C.blue) : d > 0.7 ? "#ffc2a6" : C.clay;
+              x.fillRect(X, j * cell, Math.max(1, Math.floor(cw) - 1), cell - 1);
+            }
+          }
+        }
+        x.fillStyle = "#02050f";
+        x.fillRect(Math.floor(38 * cw) - 1, 0, 2, h);
+      }
+      let tpm = 142380;
+      // ---------- B2 gauge
+      function drawGauge() {
+        const [x, w, h] = cv("gauge");
+        const cx = w / 2,
+          cy = h - 4,
+          R2 = Math.min(w / 2 - 4, h - 8),
+          R1 = R2 * 0.62,
+          cell = 4,
+          used = 271 / 400;
+        x.shadowBlur = 0;
+        for (let y = 0; y < cy; y += cell)
+          for (let X = cx - R2; X < cx + R2; X += cell) {
+            const dx = X + cell / 2 - cx,
+              dy = cy - (y + cell / 2),
+              r = Math.hypot(dx, dy);
+            if (r < R1 || r > R2) continue;
+            const f = 1 - Math.atan2(dy, dx) / Math.PI;
+            const i = Math.floor(X / cell) & 3,
+              j = Math.floor(y / cell) & 3;
+            let col = "#141f47";
+            if (f < used) {
+              const d = 1 - ((r - R1) / (R2 - R1)) * 0.55;
+              if (d > B[j][i]) col = f > 0.6 ? C.amber : f > 0.45 ? C.blue2 : C.blue;
+            } else if (f > 0.97) {
+              col = "rgba(255,107,107,.55)";
+            }
+            x.fillStyle = col;
+            x.fillRect(X, y, cell - 1, cell - 1);
+          }
+        const a = Math.PI * (1 - used);
+        dotted(
+          x,
+          cx + Math.cos(a) * (R1 - 6),
+          cy - Math.sin(a) * (R1 - 6),
+          cx + Math.cos(a) * (R2 + 2),
+          cy - Math.sin(a) * (R2 + 2),
+          C.white,
+          2,
+          2,
+        );
+        x.font = "600 22px system-ui";
+        x.fillStyle = C.white;
+        x.textAlign = "center";
+        x.fillText("68%", cx, cy - 10);
+      }
+
+      // ---------- C today
+      function drawToday() {
+        const [x, w, h] = cv("today");
+        const lane = 22,
+          gap = 5,
+          now = 0.6,
+          r = rng(55);
+        const prof = [
+          (k) =>
+            Math.max(0, Math.sin((k - 0.38) * 7)) * (k > 0.36 && k < now ? 1 : 0) +
+            (k < 0.08 ? 0.7 : 0),
+          (k) =>
+            (k > 0.42 && k < now ? 0.4 + 0.5 * Math.abs(Math.sin(k * 23)) : 0) +
+            (k < 0.05 ? 0.5 : 0),
+          (k) => (k > 0.5 && k < 0.53 ? 0.7 : 0),
+        ];
+        const cols = Math.floor(w / 3);
+        [C.white, C.clay, C.violet].forEach((col, l) => {
+          const Y = l * (lane + gap);
+          field(
+            x,
+            0,
+            Y,
+            w,
+            lane,
+            (i, j) => {
+              const k = i / cols;
+              const v = prof[l](k);
+              return k > now ? 0 : Math.min(1, v * (0.75 + r() * 0.4) * (1 - (j / 9) * 0.35));
+            },
+            col,
+            3,
+            "#0f1838",
+          );
+        });
+        const Y = 3 * (lane + gap) + 4;
+        dotted(x, 0, Y + 4, w * now, Y + 4, "#2b3d7d", 3, 1);
+        [
+          [0.41, C.green, "merge"],
+          [0.47, C.blue, "task"],
+          [0.52, C.green, "merge"],
+          [0.55, C.red, "fail"],
+          [0.58, C.green, "merge"],
+        ].forEach(([k, col]) => {
+          x.fillStyle = col;
+          x.fillRect(k * w - 3, Y, 7, 7);
+        });
+        dotted(x, w * now, 0, w * now, h, C.white, 3, 2);
+      }
+
+      function drawAll() {
+        tickAgents();
+        drawMix();
+        drawPunch();
+        drawSpend();
+        drawMachines();
+        drawModels();
+        drawNext();
+        seg("seg", "142,380", C.blue2);
+        for (let i = 0; i < 40; i++) stepFall();
+        drawFall();
+        drawGauge();
+        drawToday();
+      }
+      drawAll();
+      addEventListener("resize", drawAll);
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!reduce) {
+        setInterval(() => {
+          tickAgents();
+          stepFall();
+          drawFall();
+          tpm += Math.round((Math.random() - 0.45) * 900);
+          seg("seg", tpm.toLocaleString("en-US"), C.blue2);
+        }, 140 * 4);
+      }
+    </script>
+  </body>
+</html>

@@ -19,7 +19,9 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / NAME
 PATCHED_ASAR = CACHE / "app.asar"
 BRANCH = "main"
 TAG_GLOB = "v*-nightly.*"
-WEB_ONLY = ("apps/web/", "fork/")
+WEB_ONLY = ("apps/web/", "fork/", "themes/", ".gitmodules")
+THEMES = REPO / "themes"
+USER_THEMES = Path.home() / ".t3" / "userdata" / "themes"
 
 PACKAGE = "t3code-nightly-bin"
 APP_ASAR = Path("/opt") / PACKAGE / "resources" / "app.asar"
@@ -84,8 +86,30 @@ def base_tag() -> str:
     return git("describe", "--tags", "--abbrev=0", "--match", TAG_GLOB, BRANCH)
 
 
+def update_themes() -> None:
+    """Move each theme submodule to its repo's latest main and commit the bump."""
+    if not (REPO / ".gitmodules").exists():
+        return
+    run("git", "submodule", "update", "--init", "--remote", "--quiet", "themes")
+    if git("status", "--porcelain", "themes"):
+        run("git", "add", "themes")
+        heads = git("submodule", "status", "themes").replace("+", "").split("\n")
+        names = ", ".join(f"{line.split()[1].removeprefix('themes/')} {line.split()[0][:7]}" for line in heads)
+        run("git", "commit", "--quiet", "-m", f"chore(fork): themes at latest ({names})")
+
+
+def install_themes() -> None:
+    """Copy every theme's built dist/ into T3 Code's themes folder."""
+    built = sorted(p for p in THEMES.glob("*/dist/*") if p.suffix in (".json", ".webp"))
+    USER_THEMES.mkdir(parents=True, exist_ok=True)
+    for path in built:
+        shutil.copy(path, USER_THEMES / path.name)
+    if built:
+        print(f"installed {', '.join(p.stem for p in built if p.suffix == '.json')} to {USER_THEMES}")
+
+
 def sync(tag: str) -> None:
-    """Rebase the fork's commits onto `tag` and push them."""
+    """Pull in the latest themes, rebase the fork's commits onto `tag`, and push."""
     if Path(git("rev-parse", "--git-path", "rebase-merge")).exists() or Path(
         git("rev-parse", "--git-path", "rebase-apply")
     ).exists():
@@ -94,6 +118,7 @@ def sync(tag: str) -> None:
         raise SystemExit(f"{NAME}: {REPO} is not on {BRANCH}; switch back to sync")
     if git("status", "--porcelain", "--untracked-files=no"):
         raise SystemExit(f"{NAME}: {REPO} has uncommitted changes; commit or stash them first")
+    update_themes()
     base = base_tag()
     if base != tag:
         count = len(git("rev-list", f"{base}..{BRANCH}").splitlines())
@@ -232,6 +257,7 @@ def build() -> None:
     commit = git("rev-parse", "--short", BRANCH)
     write_asar(APP_ASAR, client, {"version": version, "commit": commit}, PATCHED_ASAR)
     print(f"wrote {PATCHED_ASAR} ({version}, fork {commit})")
+    install_themes()
 
 
 def install_patched() -> None:
@@ -289,6 +315,9 @@ def status() -> None:
     print(f"fork {BRANCH:<10}: {len(git('rev-list', f'{base}..{BRANCH}').splitlines())} commit(s) on {base}")
     print(f"applied        : {f'fork {marker['commit']} on {marker['version']}' if marker else 'no'}")
     print(f"pacman hook    : {'installed' if HOOK_PATH.exists() else f'missing, run {NAME} setup'}")
+    for line in git("submodule", "status", "themes").splitlines() if (REPO / ".gitmodules").exists() else []:
+        sha, path = line.split()[:2]
+        print(f"theme          : {path.removeprefix('themes/')} at {sha.lstrip('+-')[:7]}")
 
 
 def main() -> None:

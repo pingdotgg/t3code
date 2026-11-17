@@ -1,0 +1,4 @@
+[submodule "themes/brave-kitty"]
+	path = themes/brave-kitty
+	url = https://github.com/JoshuaHayesWasHere/t3-themes.git
+	branch = main
