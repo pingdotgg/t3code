@@ -37,7 +37,7 @@ const UNBOUND = "";
 
 /**
  * Standalone issue trackers for one environment: connect each with a credential, and bind the
- * environment's projects to one of the tracker's scopes so their issues list beside the git
+ * environment's projects to the tracker's scopes so their issues list beside the git
  * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
  */
 export function IssueTrackerSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -247,13 +247,20 @@ function ProjectBindings({
   const [pending, setPending] = useState<ProjectId | null>(null);
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
-  const change = async (projectId: ProjectId, scope: string) => {
+  const change = async (projectId: ProjectId, scopes: string[]) => {
     setPending(projectId);
     await bind({
       environmentId,
       input: {
         projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+        binding:
+          scopes.length === 0
+            ? null
+            : {
+                tracker: tracker.tracker,
+                scope: scopes[0]!,
+                additionalScopes: scopes.slice(1),
+              },
       },
     });
     setPending(null);
@@ -263,22 +270,26 @@ function ProjectBindings({
     <>
       <SettingsRow
         title="Projects"
-        description={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}
+        description={`Pick one or more ${tracker.displayName} ${tracker.scopeNoun}s for each project. The first selected is the default for agents creating issues.`}
       />
       {projects.map((project) => {
         const bound = bindings[project.id];
         // A project bound to another tracker keeps that binding; this picker shows it unbound.
-        const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+        const value =
+          bound?.tracker === tracker.tracker
+            ? [bound.scope, ...(bound.additionalScopes ?? [])]
+            : [];
         return (
           <SettingsRow
             key={project.id}
             title={project.title}
             control={
               <Select
+                multiple
                 value={value}
                 disabled={pending === project.id}
                 onValueChange={(next) => {
-                  if (next !== null) void change(project.id, next);
+                  if (next !== null) void change(project.id, next.includes(UNBOUND) ? [] : next);
                 }}
               >
                 <SelectTrigger
@@ -287,9 +298,13 @@ function ProjectBindings({
                   size="sm"
                 >
                   <SelectValue>
-                    {value === UNBOUND
+                    {value.length === 0
                       ? "Not bound"
-                      : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)}
+                      : value
+                          .map(
+                            (key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key,
+                          )
+                          .join(", ")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>

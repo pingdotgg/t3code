@@ -38,7 +38,7 @@ export class IssueTrackerConnections extends Context.Service<
     readonly connect: (
       input: IssueTrackerConnectInput,
     ) => Effect.Effect<IssueTrackerConnection, IssueTrackerConnectionError>;
-    /** Binds a project to one of a tracker's scopes, or unbinds it with a null binding. */
+    /** Binds a project's default and additional scopes, or unbinds it with a null binding. */
     readonly bindProject: (
       input: IssueTrackerBindProjectInput,
     ) => Effect.Effect<void, IssueTrackerConnectionError>;

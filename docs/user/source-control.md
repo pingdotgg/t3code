@@ -366,8 +366,12 @@ itself where it can search. Press **Load more** at the end of a group to read fu
 The **Views** menu saves and restores a search, filter, and sort setup, as it does for pull
 requests.
 
-To list a Linear team's issues beside a project's, connect Linear with an API key under
-Settings → Source control & issues, then choose the team for that project there.
+To list Linear issues beside a project's, connect Linear with an API key under
+Settings → Source control & issues, then select one or more teams for that project.
+The first selected team is the default when an agent calls `create_issue`. Agents can pass
+a team key as `scope` to choose another bound team. Issue keys such as `OPS-12` select their
+bound team automatically. Deselect a team to stop listing it; deselect every team to unbind
+the project.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

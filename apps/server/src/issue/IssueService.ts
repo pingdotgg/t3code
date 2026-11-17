@@ -160,6 +160,8 @@ export class IssueService extends Context.Service<
     /** The tracker and container a project's own issues live in. */
     readonly projectScope: (
       projectId: ProjectId,
+      scope?: string,
+      key?: string,
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
@@ -184,17 +186,21 @@ const make = Effect.gen(function* () {
   // Read per resolution so a binding saved in Settings applies without a restart.
   const resolveStandaloneBinding = (
     project: OrchestrationProjectShell,
-  ): Effect.Effect<ProjectTrackerBinding | null, IssueOperationError> =>
+  ): Effect.Effect<ReadonlyArray<ProjectTrackerBinding>, IssueOperationError> =>
     bindings.list.pipe(
       Effect.map((bound) => {
         const binding = bound.get(project.id);
         const api = binding === undefined ? null : registry.get(binding.tracker);
-        if (binding === undefined || api === null || !isStandaloneIssueTracker(api)) return null;
-        return {
+        if (binding === undefined || api === null || !isStandaloneIssueTracker(api)) return [];
+        const scopes = new Map<string, string>();
+        for (const scope of [binding.scope, ...(binding.additionalScopes ?? [])]) {
+          if (!scopes.has(scope.toLowerCase())) scopes.set(scope.toLowerCase(), scope);
+        }
+        return [...scopes.values()].map((scope) => ({
           tracker: binding.tracker,
           host: api.standalone.host,
-          scope: binding.scope,
-        };
+          scope,
+        }));
       }),
       // A failed read is not an unbound project: that would list the git host's issues alone.
       Effect.mapError(
@@ -224,7 +230,11 @@ const make = Effect.gen(function* () {
           resolveGitHostBinding({ ...project, repositoryIdentity }),
         ),
       ),
-    ]).pipe(Effect.map((resolved) => resolved.filter((binding) => binding !== null)));
+    ]).pipe(
+      Effect.map(([standalone, gitHost]) =>
+        gitHost === null ? standalone : [...standalone, gitHost],
+      ),
+    );
 
   const listProjects = (filter: {
     readonly projectId?: IssueListInput["projectId"];
@@ -298,7 +308,12 @@ const make = Effect.gen(function* () {
           return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
         }
         const scope = ref.scope.trim();
-        const writable = scope.toLowerCase() === own.scope.toLowerCase();
+        const writable = supported.some(
+          (candidate) =>
+            candidate.tracker === own.tracker &&
+            candidate.host === own.host &&
+            candidate.scope.toLowerCase() === scope.toLowerCase(),
+        );
         return Effect.succeed({ ...own, scope, writable });
       }),
     );
@@ -340,7 +355,11 @@ const make = Effect.gen(function* () {
     }
 
     // Every project counts, including worktrees of a scope read once below.
+    const countedProjects = new Set<string>();
     for (const project of supported) {
+      const key = `${project.host} ${project.project.id}`;
+      if (countedProjects.has(key)) continue;
+      countedProjects.add(key);
       const existing = trackers.get(project.host);
       trackers.set(
         project.host,
@@ -627,11 +646,25 @@ const make = Effect.gen(function* () {
 
   const projectScope: IssueService["Service"]["projectScope"] = Effect.fn(
     "IssueService.projectScope",
-  )(function* (projectId) {
+  )(function* (projectId, scope, key) {
     const { supported } = yield* listProjects({ projectId });
-    const [own] = supported;
-    if (own === undefined) {
+    if (supported.length === 0) {
       return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    const keyScope = key?.match(/^(.+)-\d+$/)?.[1]?.toLowerCase();
+    const own =
+      scope === undefined
+        ? (supported.find((candidate) => candidate.scope.toLowerCase() === keyScope) ??
+          supported[0])
+        : supported.find(
+            (candidate) => candidate.scope.toLowerCase() === scope.trim().toLowerCase(),
+          );
+    if (own === undefined) {
+      return yield* new IssueOperationError({
+        operation: "projectScope",
+        detail:
+          "This project is not bound to that issue scope. Use list_issues to find its bound scopes.",
+      });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });

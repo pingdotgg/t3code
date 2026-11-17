@@ -16,11 +16,13 @@ const BindingRow = Schema.Struct({
   projectId: ProjectId,
   tracker: IssueTrackerKind,
   scope: Schema.String,
+  additionalScopes: Schema.fromJsonString(Schema.Array(Schema.String)),
 });
+const encodeAdditionalScopes = Schema.encodeEffect(BindingRow.fields.additionalScopes);
 
 /**
- * Which standalone issue tracker scope each project reads beside its git host's own issues. A
- * project is bound to one scope at most, and only while it has a row.
+ * Which standalone issue tracker scopes each project reads beside its git host's own issues. A
+ * project has one default scope and may read additional scopes of the same tracker.
  */
 export class IssueTrackerBindingsRepository extends Context.Service<
   IssueTrackerBindingsRepository,
@@ -58,7 +60,8 @@ const make = Effect.gen(function* () {
     Result: BindingRow,
     execute: () =>
       sql`
-        SELECT project_id AS "projectId", tracker AS "tracker", scope AS "scope"
+        SELECT project_id AS "projectId", tracker AS "tracker", scope AS "scope",
+          additional_scopes AS "additionalScopes"
         FROM issue_tracker_bindings
       `,
   });
@@ -68,25 +71,41 @@ const make = Effect.gen(function* () {
       Effect.map(
         (rows) =>
           new Map(
-            rows.map((row) => [row.projectId, { tracker: row.tracker, scope: row.scope }] as const),
+            rows.map(
+              (row) =>
+                [
+                  row.projectId,
+                  {
+                    tracker: row.tracker,
+                    scope: row.scope,
+                    ...(row.additionalScopes.length === 0
+                      ? {}
+                      : { additionalScopes: row.additionalScopes }),
+                  },
+                ] as const,
+            ),
           ),
       ),
       Effect.mapError(toSqlOrDecodeError("listIssueTrackerBindings", "IssueTrackerBinding")),
     ),
     set: Effect.fn("IssueTrackerBindingsRepository.set")(
       function* (input) {
-        yield* input.binding === null
-          ? sql`DELETE FROM issue_tracker_bindings WHERE project_id = ${input.projectId}`
-          : sql`
-              INSERT INTO issue_tracker_bindings (project_id, tracker, scope, updated_at)
-              VALUES (${input.projectId}, ${input.binding.tracker}, ${input.binding.scope}, ${input.updatedAt})
+        if (input.binding === null) {
+          yield* sql`DELETE FROM issue_tracker_bindings WHERE project_id = ${input.projectId}`;
+          return;
+        }
+        const additionalScopes = yield* encodeAdditionalScopes(
+          input.binding.additionalScopes ?? [],
+        );
+        yield* sql`
+              INSERT INTO issue_tracker_bindings (project_id, tracker, scope, additional_scopes, updated_at)
+              VALUES (${input.projectId}, ${input.binding.tracker}, ${input.binding.scope}, ${additionalScopes}, ${input.updatedAt})
               ON CONFLICT (project_id)
-              DO UPDATE SET tracker = excluded.tracker, scope = excluded.scope, updated_at = excluded.updated_at
+              DO UPDATE SET tracker = excluded.tracker, scope = excluded.scope,
+                additional_scopes = excluded.additional_scopes, updated_at = excluded.updated_at
             `;
       },
-      Effect.mapError(
-        (cause) => new PersistenceSqlError({ operation: "setIssueTrackerBinding", cause }),
-      ),
+      Effect.mapError(toSqlOrDecodeError("setIssueTrackerBinding", "IssueTrackerBinding")),
     ),
     removeTracker: Effect.fn("IssueTrackerBindingsRepository.removeTracker")(
       function* (tracker) {
