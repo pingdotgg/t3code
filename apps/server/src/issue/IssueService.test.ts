@@ -101,6 +101,7 @@ function issue(key: string, updatedAt = "2026-07-02T00:00:00Z"): TrackerIssueDet
     body: "",
     viewer: "julius",
     viewerPermissions: { setState: true, comment: true, edit: true, labels: true, assignees: true },
+    states: [],
     comments: [],
     commentsCursor: null,
     events: [],
@@ -122,11 +123,6 @@ function fakeTracker(overrides: Partial<IssueTrackerApi> = {}): IssueTrackerApi 
       linkedPullRequests: true,
       events: true,
       search: true,
-      states: [
-        { category: "open", name: "open" },
-        { category: "closed", name: "closed" },
-      ],
-      closeReasons: ["completed"],
     },
     getViewer: () => Effect.succeed("julius"),
     listIssues: () => Effect.succeed({ items: [], nextCursor: null }),
@@ -323,13 +319,8 @@ describe("IssueService", () => {
       });
       const ref = { projectId: "web" as ProjectId, tracker: GITHUB, scope: "acme/web", key: "1" };
 
-      yield* service.setState({ ...ref, state: "closed", closeReason: "completed" });
-      const unknownState = yield* Effect.flip(service.setState({ ...ref, state: "In Review" }));
-      expect(unknownState._tag).toBe("IssueOperationError");
-      const unknownReason = yield* Effect.flip(
-        service.setState({ ...ref, state: "closed", closeReason: "not-planned" }),
-      );
-      expect(unknownReason._tag).toBe("IssueOperationError");
+      // The state is the tracker's own name, passed through: the tracker is what proves it.
+      yield* service.setState({ ...ref, state: "In Review" });
       const reaction = yield* Effect.flip(
         service.react({ ...ref, content: "heart", reacted: true }),
       );

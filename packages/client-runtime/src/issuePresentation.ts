@@ -1,17 +1,9 @@
-import type { IssueDetail, IssueEvent, IssueState } from "@t3tools/contracts";
+import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
 
 /** "completed" → "Completed"; a reason the tracker spells with a dash reads as words. */
-export function issueCloseReasonLabel(reason: string): string {
+function issueCloseReasonLabel(reason: string): string {
   const words = reason.replace(/[-_]+/g, " ").trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-/** The tracker's own state name is the label, so a workflow tracker's "In Review" reads as itself. */
-export function issueStateLabel(state: IssueState): string {
-  if (state.category === "open") return state.name === "open" ? "Open" : state.name;
-  if (state.closeReason === "not-planned") return "Closed as not planned";
-  if (state.name !== "closed") return state.name;
-  return state.closeReason === "completed" ? "Closed as completed" : "Closed";
 }
 
 export function issueEventSentence(event: IssueEvent): string {
@@ -51,13 +43,6 @@ export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
       : null;
   const may = (capability: boolean, permission: boolean) =>
     blocked === null && capability && permission;
-  // A tracker with a workflow of its own offers the two categories by name ("open", "closed")
-  // while its issues carry workflow names ("Todo"), so the category alone says it is already there.
-  const others = detail.capabilities.states.filter(
-    (state) =>
-      state.category !== detail.state.category ||
-      (state.name !== detail.state.name && state.name !== state.category),
-  );
   return {
     blocked,
     comment: may(detail.capabilities.comment, detail.viewerPermissions.comment),
@@ -66,8 +51,8 @@ export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
     assignees: may(detail.capabilities.assignees, detail.viewerPermissions.assignees),
     react: blocked === null && detail.capabilities.reactions,
     /** The states the issue can move to; empty when the viewer may not move it. */
-    states: may(detail.capabilities.states.length > 0, detail.viewerPermissions.setState)
-      ? others
+    states: may(true, detail.viewerPermissions.setState)
+      ? detail.states.filter((state) => state.name !== detail.state.name)
       : [],
   };
 }

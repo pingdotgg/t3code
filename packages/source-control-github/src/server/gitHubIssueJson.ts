@@ -59,24 +59,33 @@ function toLabels(raw: ReadonlyArray<Label | null> | null | undefined): Readonly
   });
 }
 
+const OPEN: IssueState = { category: "open", name: "Open" };
+const COMPLETED: IssueState = {
+  category: "closed",
+  name: "Completed",
+  closeReason: "completed",
+};
+const NOT_PLANNED: IssueState = {
+  category: "closed",
+  name: "Not planned",
+  closeReason: "not-planned",
+};
+
+const DUPLICATE: IssueState = { category: "closed", name: "Duplicate", closeReason: "duplicate" };
+
+/** What an issue can be moved to: open, or closed for one of the reasons GitHub records. */
+export const ISSUE_STATES: ReadonlyArray<IssueState> = [OPEN, COMPLETED, NOT_PLANNED, DUPLICATE];
+
 /** GitHub uses uppercase close reasons; an open issue has `""` or `REOPENED`. */
 function toIssueState(
   state: string | null | undefined,
   stateReason: string | null | undefined,
 ): IssueState {
-  if (state?.trim().toUpperCase() !== "CLOSED") return { category: "open", name: "open" };
+  if (state?.trim().toUpperCase() !== "CLOSED") return OPEN;
   const reason = stateReason?.trim().toUpperCase();
-  return {
-    category: "closed",
-    name: "closed",
-    ...(reason === "COMPLETED"
-      ? { closeReason: "completed" }
-      : reason === "NOT_PLANNED"
-        ? { closeReason: "not-planned" }
-        : reason === "DUPLICATE"
-          ? { closeReason: "duplicate" }
-          : {}),
-  };
+  if (reason === "COMPLETED") return COMPLETED;
+  if (reason === "NOT_PLANNED") return NOT_PLANNED;
+  return reason === "DUPLICATE" ? DUPLICATE : { category: "closed", name: "Closed" };
 }
 
 function toSummary(raw: Omit<Issues.NodesIssue, "__typename">): TrackerIssueSummary {
@@ -226,6 +235,7 @@ interface GitHubIssueDetail extends TrackerIssueSummary {
   readonly body: string;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;
+  readonly states: ReadonlyArray<IssueState>;
   readonly reactions: ReturnType<typeof toReactions>;
   readonly comments: ReadonlyArray<IssueComment>;
   readonly commentsCursor: string | null;
@@ -272,6 +282,7 @@ export function toIssueDetail({
       viewerPermission: repository?.viewerPermission,
       issue,
     }),
+    states: ISSUE_STATES,
     reactions: toReactions(issue.reactionGroups, viewer),
     comments: toComments(issue.comments, viewer),
     commentsCursor: previousCursorOf(issue.comments?.pageInfo),

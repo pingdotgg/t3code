@@ -171,6 +171,7 @@ export const ReadIssueResult = Schema.Struct({
   /** False for an issue outside every project's own scope: it can be read, not changed. */
   writable: Schema.Boolean,
   capabilities: IssueCapabilities,
+  states: Schema.Array(IssueState),
   author: Schema.NullOr(Schema.String),
   assignees: Schema.Array(Schema.String),
   labels: Schema.Array(Schema.String),
@@ -315,18 +316,12 @@ const CommentOnIssueTool = Tool.make("comment_on_issue", {
   .annotate(Tool.OpenWorld, true);
 
 const SetIssueStateTool = Tool.make("set_issue_state", {
-  description:
-    "Move an issue to a state its tracker offers. read_issue lists them under capabilities.states.",
+  description: "Move an issue to one of its states. read_issue lists them under states.",
   parameters: Schema.Struct({
     ...IssueTargetInput.fields,
     state: TrimmedNonEmptyString.annotate({
-      description: "A state name from capabilities.states.",
+      description: "A state name from read_issue's states.",
     }),
-    closeReason: Schema.optional(
-      TrimmedNonEmptyString.annotate({
-        description: "From capabilities.closeReasons, for a closing state.",
-      }),
-    ),
   }),
   success: IssueWriteResult,
   failure: IssueToolError,

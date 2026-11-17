@@ -306,14 +306,18 @@ describe("GitHubIssueTracker", () => {
         yield* Effect.flip(api.update({ ...target, title: "Dropped", labels: ["bug", "p1"] })),
       ).toMatchObject({ operation: "update", reason: "failed" });
       yield* api.update({ ...target, title: "Dropped", labels: ["bug"], assignees: [] });
-      yield* api.setState({ ...target, state: "closed", closeReason: "not-planned" });
+      expect(yield* Effect.flip(api.setState({ ...target, state: "closed" }))).toMatchObject({
+        operation: "setState",
+        reason: "failed",
+      });
+      yield* api.setState({ ...target, state: "Not planned" });
       // GitHub ignores a new reason on a closed issue, so it is refused instead of sent.
       expect(
-        yield* api
-          .setState({ ...target, state: "closed", closeReason: "completed" })
-          .pipe(Effect.result),
+        yield* api.setState({ ...target, state: "Completed" }).pipe(Effect.result),
       ).toMatchObject({ _tag: "Failure", failure: { operation: "setState", reason: "failed" } });
-      yield* api.setState({ ...target, state: "open" });
+      yield* api.setState({ ...target, state: "Open" });
+      yield* api.setState({ ...target, state: "Duplicate" });
+      yield* api.setState({ ...target, state: "Open" });
       yield* api.setReaction({ ...target, content: "thumbs-up", reacted: true });
       yield* api.setReaction({ ...target, content: "thumbs-up", reacted: false });
 
@@ -322,7 +326,7 @@ describe("GitHubIssueTracker", () => {
         yield* api.update({ ...pullRequest, title: "Do not edit" }).pipe(Effect.result),
       ).toMatchObject({ _tag: "Failure", failure: { operation: "update", reason: "not-found" } });
       expect(
-        yield* api.setState({ ...pullRequest, state: "closed" }).pipe(Effect.result),
+        yield* api.setState({ ...pullRequest, state: "Completed" }).pipe(Effect.result),
       ).toMatchObject({
         _tag: "Failure",
         failure: { operation: "setState", reason: "not-found" },
@@ -367,6 +371,12 @@ describe("GitHubIssueTracker", () => {
           "PATCH",
           "https://api.github.com/repos/acme/web/issues/42",
           { state: "closed", state_reason: "not_planned" },
+        ],
+        ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
+        [
+          "PATCH",
+          "https://api.github.com/repos/acme/web/issues/42",
+          { state: "closed", state_reason: "duplicate" },
         ],
         ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
         "AddReaction",
@@ -547,7 +557,13 @@ Redact secrets before uploading.`);
         displayKey: "#42",
         title: "Composer loses focus",
         body: "Typing in the composer drops focus after a paste.",
-        state: { category: "closed", name: "closed", closeReason: "duplicate" },
+        state: { category: "closed", name: "Duplicate", closeReason: "duplicate" },
+        states: [
+          { category: "open", name: "Open" },
+          { category: "closed", name: "Completed", closeReason: "completed" },
+          { category: "closed", name: "Not planned", closeReason: "not-planned" },
+          { category: "closed", name: "Duplicate", closeReason: "duplicate" },
+        ],
         author: {
           login: "octocat",
           name: "Octo Cat",

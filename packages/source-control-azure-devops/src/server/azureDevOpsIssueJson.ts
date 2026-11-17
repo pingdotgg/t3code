@@ -34,17 +34,28 @@ const STOCK_CLOSED_STATES: ClosedStates = new Set([
 
 const FINISHED_CATEGORIES: ReadonlySet<string> = new Set(["Resolved", "Completed", "Removed"]);
 
+/** The stock Basic, Agile and Scrum states, for a work item whose type reports none. */
+const STOCK_STATES: ReadonlyArray<IssueState> = [
+  { category: "open", name: "New" },
+  { category: "open", name: "To Do" },
+  { category: "open", name: "Active" },
+  { category: "open", name: "Doing" },
+  { category: "closed", name: "Resolved" },
+  { category: "closed", name: "Done" },
+  { category: "closed", name: "Closed" },
+  { category: "closed", name: "Removed" },
+];
+
+type WorkItemTypes = ReadonlyArray<{
+  readonly name: string;
+  readonly states?: ReadonlyArray<{ readonly name: string; readonly category: string }> | undefined;
+}>;
+
 /**
  * A project's finished states, from its work item types' state categories. Custom processes
  * name their own columns, so the category, not the name, says whether one is finished.
  */
-export function closedStateNames(
-  types: ReadonlyArray<{
-    readonly states?:
-      | ReadonlyArray<{ readonly name: string; readonly category: string }>
-      | undefined;
-  }>,
-): ClosedStates {
+export function closedStateNames(types: WorkItemTypes): ClosedStates {
   const names = types.flatMap((type) =>
     (type.states ?? []).flatMap((state) =>
       FINISHED_CATEGORIES.has(state.category) ? [state.name.toLowerCase()] : [],
@@ -72,6 +83,7 @@ const Fields = Schema.Struct({
   "System.Description": Schema.optional(Schema.NullOr(Schema.String)),
   "System.Tags": Schema.optional(Schema.NullOr(Schema.String)),
   "System.TeamProject": Schema.optional(Schema.NullOr(Schema.String)),
+  "System.WorkItemType": Schema.optional(Schema.NullOr(Schema.String)),
   "System.CreatedBy": Schema.optional(IdentityValue),
   "System.AssignedTo": Schema.optional(IdentityValue),
 });
@@ -151,6 +163,7 @@ function toLabels(tags: string | null | undefined): ReadonlyArray<IssueLabel> {
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
   readonly project: string | null;
+  readonly workItemType: string | null;
   readonly relations: ReadonlyArray<typeof Relation.Type>;
 }
 
@@ -181,8 +194,29 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     commentCount: Math.max(0, fields["System.CommentCount"] ?? 0),
     body: fields["System.Description"] ?? "",
     project,
+    workItemType: trimmed(fields["System.WorkItemType"]),
     relations: raw.relations ?? [],
   };
+}
+
+/**
+ * The states a work item can be in: its own type's, in the order Azure lists them, which differ
+ * per type and per process. The item's current state is always among them, even when the type
+ * could not be read and the stock list stands in.
+ */
+export function workItemStates(
+  types: WorkItemTypes,
+  item: Pick<AzureDevOpsWorkItem, "workItemType" | "state">,
+): ReadonlyArray<IssueState> {
+  const type = types.find((entry) => entry.name.toLowerCase() === item.workItemType?.toLowerCase());
+  const own = (type?.states ?? []).flatMap((state): ReadonlyArray<IssueState> => {
+    const name = trimmed(state.name);
+    return name === null
+      ? []
+      : [{ category: FINISHED_CATEGORIES.has(state.category) ? "closed" : "open", name }];
+  });
+  const states = own.length === 0 ? STOCK_STATES : own;
+  return states.some((state) => state.name === item.state.name) ? states : [...states, item.state];
 }
 
 /** The `{ count, value }` page `wit/workitems` answers; a row this cannot place is skipped. */

@@ -174,7 +174,11 @@ describe("ForgejoIssueTracker", () => {
       expect(issue).toMatchObject({
         key: "42",
         displayKey: "#42",
-        state: { category: "open", name: "open" },
+        state: { category: "open", name: "Open" },
+        states: [
+          { category: "open", name: "Open" },
+          { category: "closed", name: "Closed" },
+        ],
         author: { login: "octocat", name: "Octo Cat", avatarUrl: null },
         createdAt: "2026-06-30T22:00:00.000Z",
         labels: [{ name: "bug", color: "d73a4a" }],
@@ -277,6 +281,26 @@ describe("ForgejoIssueTracker", () => {
       );
       expect(error.reason).toBe("failed");
       expect(calls.map(([method]) => method)).toEqual(["GET", "GET"]);
+    }),
+  );
+
+  it.effect("moves an issue to a state by its name and refuses any other name", () =>
+    Effect.gen(function* () {
+      const writes: unknown[] = [];
+      const api = yield* tracker((input) => {
+        writes.push([input.method, input.path, input.body]);
+        return { stdout: "{}" };
+      });
+      const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web", key: "42" };
+      yield* api.setState!({ ...target, state: "Closed" });
+      yield* api.setState!({ ...target, state: "Open" });
+      // The category is not a state name: nothing is sent for it.
+      const error = yield* Effect.flip(api.setState!({ ...target, state: "closed" }));
+      expect(error).toMatchObject({ operation: "setState", reason: "failed" });
+      expect(writes).toEqual([
+        ["PATCH", "repos/acme/web/issues/42", { state: "closed" }],
+        ["PATCH", "repos/acme/web/issues/42", { state: "open" }],
+      ]);
     }),
   );
 
