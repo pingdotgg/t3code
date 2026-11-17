@@ -14,6 +14,10 @@ describe("presentationLabel", () => {
     expect(presentationLabel("state.open")).toBe("打开");
   });
 
+  it("does not add the namespace twice to an already-namespaced key", () => {
+    expect(presentationLabel("pullRequest:checksState.passing")).toBe("All checks have passed");
+  });
+
   it("passes already-resolved strings through without the namespace prefix", async () => {
     await i18n.changeLanguage("zh-Hans");
     expect(presentationLabel("与 main 存在冲突")).toBe("与 main 存在冲突");
