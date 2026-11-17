@@ -111,6 +111,11 @@ export function unreadableThreadLink(
   return `[${sanitizeComposerContextLabel(reference.label, "thread")}](${link})`;
 }
 
+// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses.
+export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">): string {
+  return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+}
+
 /** Pasted thread links count as context too, so they become chips like a copied chip does. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
@@ -164,7 +169,7 @@ export function importPastedComposerText(
   ) => ReadonlyMap<string, string | null>,
   heldContextIds: Pick<ReadonlySet<string>, "has"> = new Set(),
 ): string {
-  const pastedText = clipboardData.getData("text/plain");
+  const pastedText = readPastedPlainText(clipboardData);
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
