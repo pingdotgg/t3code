@@ -44,6 +44,8 @@ export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Quote: "'",
   Semicolon: ";",
   Slash: "/",
+  // Electron on Wayland reports Ctrl+Space with key "Unidentified".
+  Space: " ",
 };
 
 // macOS US layout Option+letter glyphs (Option+P types "π"). Dead keys (E, I, N, U) are absent.
