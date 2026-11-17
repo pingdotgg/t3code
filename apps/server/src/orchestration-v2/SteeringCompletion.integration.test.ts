@@ -2507,8 +2507,14 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
           providerThreadId: turn.providerThreadId,
           providerTurnId: turn.id,
           runOrdinal: first.runOrdinal,
+          failureItemOrdinal: 100,
           status: "failed",
-          failure: null,
+          failure: {
+            class: "provider_error",
+            message: "Provider process exited",
+            code: null,
+            retryable: null,
+          },
           threadDisposition: "reusable",
         });
         yield* Fiber.join(runEnded);
