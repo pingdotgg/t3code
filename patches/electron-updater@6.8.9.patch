@@ -1,8 +1,8 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb5432edb5 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..107ad84e11134deb49712b87f54cde706ebd7d48 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
-@@ -3,7 +3,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
+@@ -3,7 +3,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
  exports.ElectronHttpExecutor = exports.NET_SESSION_NAME = void 0;
  exports.getNetSession = getNetSession;
  const builder_util_runtime_1 = require("builder-util-runtime");
@@ -14,6 +14,10 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
 +function isDownloadStall(error) {
 +    return error != null && (error.message === "Request timed out" || error.message === "net::ERR_TIMED_OUT");
 +}
++// doDownload turns any status >= 400 into this error before a response handler sees it.
++function isRangeNotSatisfiable(error) {
++    return error != null && /", status 416: /.test(error.message);
++}
 +function createDigest(options) {
 +    const sha512 = options.sha512;
 +    if (sha512 != null) {
@@ -21,10 +25,13 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
 +    }
 +    return options.sha2 == null ? null : new builder_util_runtime_1.DigestTransform(options.sha2, "sha256", "hex");
 +}
++function verifyFile(destination, digest) {
++    return stream_1.promises.pipeline((0, fs_1.createReadStream)(destination), digest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }));
++}
  function getNetSession() {
      return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
          cache: false,
-@@ -16,26 +30,104 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -16,26 +37,108 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          this.cachedSession = null;
      }
      async download(url, destination, options) {
@@ -35,6 +42,12 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
 +                return await this.downloadFrom(url, destination, options, offset);
 +            }
 +            catch (e) {
++                // A 416 means the file already reaches the end of the release, so its digest decides.
++                const digest = offset > 0 && isRangeNotSatisfiable(e) ? createDigest(options) : null;
++                if (digest != null) {
++                    await verifyFile(destination, digest);
++                    return destination;
++                }
 +                if (attempt >= DOWNLOAD_STALL_RETRIES || !isDownloadStall(e)) {
 +                    throw e;
 +                }
@@ -102,19 +115,19 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
 +                        const progress = new builder_util_runtime_1.ProgressCallbackTransform((resumed ? offset : 0) + parseInt(contentLength, 10), options.cancellationToken, options.onProgress);
 +                        progress.transferred = resumed ? offset : 0;
 +                        streams.push(progress);
-+                    }
+                     }
+-                    else {
+-                        reject(error);
 +                    const digest = resumed ? null : createDigest(options);
 +                    if (digest != null) {
 +                        streams.push(digest);
                      }
--                    else {
--                        reject(error);
 +                    fileOut = (0, fs_1.createWriteStream)(destination, { flags: resumed ? "a" : "w" });
 +                    upstream = response;
 +                    for (const stream of streams) {
 +                        stream.on("error", callback);
 +                        upstream = upstream.pipe(stream);
-                     }
++                    }
 +                    fileOut.on("error", callback);
 +                    upstream.pipe(fileOut);
 +                    fileOut.on("finish", () => {
@@ -127,9 +140,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
 +                                callback(null);
 +                                return;
 +                            }
-+                            stream_1.promises
-+                                .pipeline((0, fs_1.createReadStream)(destination), fileDigest, new stream_1.Writable({ write: (chunk, encoding, next) => next() }))
-+                                .then(() => callback(null), callback);
++                            verifyFile(destination, fileDigest).then(() => callback(null), callback);
 +                        });
 +                    });
                  },
@@ -137,7 +148,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..be9823826c29855e73326984962df7cb
              }, 0);
          });
      }
-@@ -61,6 +153,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -61,6 +164,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }

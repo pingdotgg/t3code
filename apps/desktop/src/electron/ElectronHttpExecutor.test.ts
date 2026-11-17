@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
@@ -11,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 type DownloadOptions = Parameters<ElectronHttpExecutor["download"]>[2];
 type FakeRequest = NodeEvents.EventEmitter & { abort: () => void };
 
+// electron-updater is CommonJS, so a spy goes on the module object its require() returns.
+const fsModule = NodeModule.createRequire(import.meta.url)("node:fs") as typeof NodeFS;
 const RELEASE = "hello world";
+// Larger than a file stream's buffer, so its "drain" marks a write of it as committed to disk.
+const PREFIX = "a".repeat(1 << 20);
+const LARGE_RELEASE = `${PREFIX}world`;
 
 function startRequest() {
   const request = Object.assign(new NodeEvents.EventEmitter(), { abort: vi.fn() });
@@ -25,10 +31,11 @@ function startRequest() {
 }
 
 // The temp update file already holds `onDisk`, as if an earlier attempt had written it.
-function startDownload(onDisk: string) {
+function startDownload(onDisk: string, release = RELEASE) {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "electron-http-executor-"));
   const destination = NodePath.join(dir, "update.AppImage");
   NodeFS.writeFileSync(destination, onDisk);
+  const createWriteStream = vi.spyOn(fsModule, "createWriteStream");
   const created = new NodeEvents.EventEmitter();
   let requestCount = 0;
   const executor = new ElectronHttpExecutor();
@@ -52,7 +59,7 @@ function startDownload(onDisk: string) {
   const first = NodeEvents.EventEmitter.once(created, "request");
   const result = executor.download(new URL("https://example.com/update.AppImage"), destination, {
     cancellationToken,
-    sha512: NodeCrypto.createHash("sha512").update(RELEASE).digest("base64"),
+    sha512: NodeCrypto.createHash("sha512").update(release).digest("base64"),
   });
   // A download that settles instead of sending another request fails the wait with its error.
   const settled = result.then(() => {
@@ -66,15 +73,44 @@ function startDownload(onDisk: string) {
     ]);
     return request as { request: FakeRequest; headers: Record<string, string> };
   };
+  // The first request answers 200 and writes `body` to the file, then stalls before the end.
+  const stallAfterWriting = async (body: string) => {
+    const [{ request }] = await first;
+    const response = startResponse(request, 200, { "content-length": String(release.length) });
+    const fileOut = createWriteStream.mock.results[0]!.value as NodeFS.WriteStream;
+    const committed = NodeEvents.EventEmitter.once(fileOut, "drain");
+    response.write(body);
+    await committed;
+    const closed = NodeEvents.EventEmitter.once(fileOut, "close");
+    const retry = nextRequest();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await closed;
+    await vi.advanceTimersByTimeAsync(2_000);
+    return retry;
+  };
   return {
     destination,
     first,
     nextRequest,
+    stallAfterWriting,
     result,
     requestCount: () => requestCount,
     read: () => NodeFS.readFileSync(destination, "utf8"),
-    [Symbol.dispose]: () => NodeFS.rmSync(dir, { recursive: true, force: true }),
+    [Symbol.dispose]: () => {
+      createWriteStream.mockRestore();
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    },
   };
+}
+
+function startResponse(request: FakeRequest, statusCode: number, headers: Record<string, string>) {
+  const response = Object.assign(new NodeStream.PassThrough(), {
+    statusCode,
+    statusMessage: "",
+    headers,
+  });
+  request.emit("response", response);
+  return response;
 }
 
 function respond(
@@ -83,13 +119,9 @@ function respond(
   headers: Record<string, string>,
   body: string,
 ) {
-  const response = Object.assign(new NodeStream.PassThrough(), {
-    statusCode,
-    statusMessage: "",
-    headers: { "content-length": String(body.length), ...headers },
-  });
-  request.emit("response", response);
-  response.end(body);
+  startResponse(request, statusCode, { "content-length": String(body.length), ...headers }).end(
+    body,
+  );
 }
 
 describe("ElectronHttpExecutor idle timeout", () => {
@@ -136,16 +168,36 @@ describe("ElectronHttpExecutor idle timeout", () => {
   });
 
   it("resumes a stalled download from the bytes already written", async () => {
-    using download = startDownload("hello ");
-    const retry = download.nextRequest();
+    using download = startDownload("", LARGE_RELEASE);
 
-    await vi.advanceTimersByTimeAsync(60_000 + 2_000);
-    const { request, headers } = await retry;
-    expect(headers.Range).toBe("bytes=6-");
-    respond(request, 206, { "content-range": "bytes 6-10/11" }, "world");
+    const { request, headers } = await download.stallAfterWriting(PREFIX);
+    expect(headers.Range).toBe(`bytes=${PREFIX.length}-`);
+    const range = `bytes ${PREFIX.length}-${LARGE_RELEASE.length - 1}/${LARGE_RELEASE.length}`;
+    respond(request, 206, { "content-range": range }, "world");
 
     await expect(download.result).resolves.toBe(download.destination);
-    expect(download.read()).toBe(RELEASE);
+    expect(download.read()).toBe(LARGE_RELEASE);
+  });
+
+  it("accepts a file that already holds every byte when the retry is past the end", async () => {
+    using download = startDownload("", LARGE_RELEASE);
+
+    const { request, headers } = await download.stallAfterWriting(LARGE_RELEASE);
+    expect(headers.Range).toBe(`bytes=${LARGE_RELEASE.length}-`);
+    respond(request, 416, { "content-range": `bytes */${LARGE_RELEASE.length}` }, "");
+
+    await expect(download.result).resolves.toBe(download.destination);
+    expect(download.read()).toBe(LARGE_RELEASE);
+  });
+
+  it("fails a file past the end of the release whose bytes do not match it", async () => {
+    using download = startDownload("", LARGE_RELEASE);
+
+    const { request } = await download.stallAfterWriting(`b${LARGE_RELEASE.slice(1)}`);
+    respond(request, 416, { "content-range": `bytes */${LARGE_RELEASE.length}` }, "");
+
+    await expect(download.result).rejects.toMatchObject({ code: "ERR_CHECKSUM_MISMATCH" });
+    expect(download.requestCount()).toBe(2);
   });
 
   it("starts over when the server ignores the range", async () => {

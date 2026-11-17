@@ -241,8 +241,22 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     { name: "body stalls", first: "body stalls", honorsRange: true },
     { name: "body stalls on a host that ignores Range", first: "body stalls", honorsRange: false },
     { name: "response headers stall", first: "headers stall", honorsRange: true },
-  ] as const)("resumes a release archive download when its $name", ({ first, honorsRange }) =>
+    {
+      name: "whole body arrives and then stalls",
+      first: "body stalls",
+      honorsRange: true,
+      held: "whole",
+    },
+    {
+      name: "whole but wrong body arrives and then fails",
+      first: "body fails",
+      honorsRange: true,
+      held: "wrong",
+    },
+  ] as const)("resumes a release archive download when its $name", (row) =>
     Effect.gen(function* () {
+      const { first, honorsRange } = row;
+      const held = "held" in row ? row.held : "prefix";
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
@@ -251,6 +265,12 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const progress: PinnedRuntimeProgress[] = [];
       const archiveRequested = yield* Deferred.make<void>();
       const total = archiveBytes.length;
+      const heldBytes =
+        held === "prefix"
+          ? archiveBytes.slice(0, 4)
+          : held === "whole"
+            ? archiveBytes
+            : archiveBytes.map((byte) => byte ^ 1);
       const install = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
@@ -269,12 +289,17 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
-                start > 0
-                  ? new Response(archiveBytes.slice(start), {
-                      status: 206,
-                      headers: { "content-range": `bytes ${start}-${total - 1}/${total}` },
+                start >= total
+                  ? new Response("", {
+                      status: 416,
+                      headers: { "content-range": `bytes */${total}` },
                     })
-                  : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+                  : start > 0
+                    ? new Response(archiveBytes.slice(start), {
+                        status: 206,
+                        headers: { "content-range": `bytes ${start}-${total - 1}/${total}` },
+                      })
+                    : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
               ),
             );
           }
@@ -285,7 +310,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
           );
           const failingBody = Stream.concat(
-            Stream.make(archiveBytes.slice(0, 4)),
+            Stream.make(heldBytes),
             first === "body stalls"
               ? Stream.never
               : Stream.fail(
@@ -308,9 +333,21 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       yield* Deferred.await(archiveRequested);
       // The one-minute stall bound, then the first two-second retry backoff.
       yield* TestClock.adjust(Duration.seconds(first === "body fails" ? 3 : 63));
-      const paths = yield* Fiber.join(install);
-      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
-      assert.deepEqual(ranges, [undefined, first === "headers stall" ? undefined : "bytes=4-"]);
+      const result = yield* Fiber.join(install).pipe(Effect.result);
+      assert.deepEqual(ranges, [
+        undefined,
+        first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,
+      ]);
+      if (held === "wrong") {
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert.instanceOf(result.failure, PinnedRuntimeInstallError);
+        assert.equal(result.failure.step, "verifying the t3 release archive checksum");
+        return;
+      }
+      assert.equal(result._tag, "Success");
+      if (result._tag !== "Success") return;
+      assert.equal(yield* fs.readFileString(result.success.sentinelPath), `${version}\n`);
       assert.deepEqual(
         progress.findLast((event) => event.stage === "download"),
         {

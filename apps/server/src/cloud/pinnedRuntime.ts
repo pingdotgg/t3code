@@ -136,6 +136,16 @@ const isTransientDownloadFailure = (
 
 const CONTENT_RANGE = /^bytes (\d+)-\d+\/(\d+|\*)$/;
 
+const concatChunks = (chunks: ReadonlyArray<Uint8Array>, length: number): Uint8Array => {
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
@@ -156,10 +166,16 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         : HttpClientRequest.get(url),
     ),
   ).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    // A resume answered 416 asked past the end, so the held bytes are the whole file;
+    // the archive checksum still rejects a wrong one.
+    Effect.filterOrElse(
+      (response) => received > 0 && response.status === 416,
+      HttpClientResponse.filterStatusOk,
+    ),
     Effect.timeout(PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT),
     Effect.flatMap(
       Effect.fn(function* (response) {
+        if (response.status === 416) return concatChunks(chunks, received);
         const contentRange =
           response.status === 206
             ? CONTENT_RANGE.exec(response.headers["content-range"] ?? "")
@@ -200,13 +216,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         if (total === undefined && received > 0) {
           onProgress?.({ stage: "download", received, total: received });
         }
-        const bytes = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        return bytes;
+        return concatChunks(chunks, received);
       }),
     ),
     Effect.retry({ ...DOWNLOAD_RETRY, while: isTransientDownloadFailure }),
