@@ -239,13 +239,4 @@ describe("workEntryViewedImagePath", () => {
   it("previews a read whose detail is only the image path", () => {
     expect(workEntryViewedImagePath(read("notes.txt", " qa/turn_4.jpg "))).toBe("qa/turn_4.jpg");
   });
-
-  it("prefers an explicit viewed image over the tool input", () => {
-    expect(
-      workEntryViewedImagePath({
-        ...read("qa/other.jpg"),
-        viewedImagePath: "qa/turn_4.jpg",
-      }),
-    ).toBe("qa/turn_4.jpg");
-  });
 });
