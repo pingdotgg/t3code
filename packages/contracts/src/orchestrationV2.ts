@@ -935,6 +935,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
+  executedModel: Schema.optional(Schema.String),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   // The run whose unfinished task was cancelled, committed with its Stop.
@@ -1059,6 +1060,8 @@ const PendingBackgroundTaskFields = {
   parentTaskId: Schema.optional(TrimmedNonEmptyString),
   /** Native id of the turn item that started this work, when it is not `taskId`. */
   nativeItemId: Schema.optional(TrimmedNonEmptyString),
+  /** The run that was executing when the work first appeared, stamped by the projection. */
+  runId: Schema.optional(RunId),
   /**
    * The agent declared it resumes when this work ends, so the thread holds like it does for a
    * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
@@ -3174,6 +3177,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
+    // Undo of a settle restores the Active anchor it cleared instead of moving the thread to the top.
+    restoreUnsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.snooze"),
@@ -3690,6 +3695,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     taskId: NodeId,
     status: Schema.Literals(["completed", "failed", "cancelled", "interrupted"]),
     result: Schema.String,
+    executedModel: Schema.optional(Schema.String),
     /**
      * `ran-out`: the run there ended by itself; `stopped`: a stop from here reached it. Either
      * sets `remoteChild.stoppedThere` on a task this report completes. On a task already
