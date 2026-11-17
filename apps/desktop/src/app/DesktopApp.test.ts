@@ -219,7 +219,9 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           }),
           Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
           Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
-          Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
+          Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {
+            closeAllTunnels: Effect.void,
+          }),
           Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
           Layer.mock(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {}),
           Layer.mock(DesktopWebLinks.DesktopWebLinks, {}),

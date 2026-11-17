@@ -166,7 +166,7 @@ describe("DesktopLifecycle", () => {
     },
   );
 
-  it.effect("destroys windows before waiting for backend shutdown", () =>
+  it.effect("drains the server on quit after the Debian package installs", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       const shutdownRequested = yield* Deferred.make<void>();
@@ -215,6 +215,9 @@ describe("DesktopLifecycle", () => {
           yield* lifecycle.register;
 
           const event = { preventDefault: () => undefined } as Electron.Event;
+          const state = yield* DesktopState.DesktopState;
+          yield* Ref.set(state.isDebPackage, true);
+          appListeners.get("before-quit-for-update")?.();
           appListeners.get("before-quit")?.(event);
 
           yield* Deferred.await(shutdownRequested);

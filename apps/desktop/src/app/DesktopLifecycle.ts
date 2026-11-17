@@ -262,7 +262,10 @@ export const make = DesktopLifecycle.of({
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
       );
     });
+    const state = yield* DesktopState.DesktopState;
     yield* electronApp.onBeforeQuitForUpdate(() => {
+      // DebUpdater has finished installing before it emits this event. Normal quit can now drain the server.
+      if (Effect.runSyncWith(context)(Ref.get(state.isDebPackage))) return;
       // Electron's updater owns the remaining quit/install/relaunch sequence.
       // Cancelling the following app "before-quit" event breaks that sequence,
       // most visibly on macOS where the native updater performs the relaunch.
