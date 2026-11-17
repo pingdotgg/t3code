@@ -53,7 +53,7 @@ impl Proxy {
         })
     }
     pub(crate) fn warnings(&self) -> Vec<serde_json::Value> {
-        let template = crate::install::spec()
+        let template = crate::spec::spec()
             .map(|s| s.html.fake_ip_template.clone())
             .unwrap_or_default();
         self.fake_hosts

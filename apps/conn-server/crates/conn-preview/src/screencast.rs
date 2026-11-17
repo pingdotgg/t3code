@@ -115,7 +115,7 @@ pub(crate) struct Screencast {
 impl Screencast {
     pub(crate) fn start(browser: Browser, session: String) -> Result<Self, Error> {
         let mut incoming = browser.frames(&session)?;
-        let pace = std::time::Duration::from_millis(crate::install::spec()?.screencast_ack_pace_ms);
+        let pace = std::time::Duration::from_millis(crate::spec::spec()?.screencast_ack_pace_ms);
         let (frames, _) = broadcast::channel(1);
         let output = frames.clone();
         let pump = tokio::spawn(async move {

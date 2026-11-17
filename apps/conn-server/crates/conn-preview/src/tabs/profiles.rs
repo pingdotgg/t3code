@@ -1,6 +1,6 @@
 //! Client catalogs survive restarts; connected clients contribute a bounded union.
 use super::{Preview, State, lock};
-use crate::{Error, install::spec};
+use crate::{Error, spec::spec};
 use serde_json::{Value, json};
 
 impl Preview {

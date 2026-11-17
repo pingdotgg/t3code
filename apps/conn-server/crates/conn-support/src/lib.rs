@@ -1,5 +1,5 @@
-//! Small helpers that several Conn Server crates share. Std only (plus `sha2`, `uuid` and `getrandom`), no async, no
-//! state except `login_env`'s three values. See `README.md`.
+//! Shared helpers, with optional rustls configuration for HTTPS callers.
+//! Only login values and the optional TLS config hold shared state.
 
 pub mod base64;
 pub mod fs;
@@ -14,6 +14,8 @@ pub mod spawn_guard;
 pub mod test_util;
 pub mod text;
 pub mod time;
+#[cfg(feature = "tls")]
+pub mod tls;
 pub mod url;
 
 /// A random version 4 UUID from the OS random source, lowercase and hyphenated, as

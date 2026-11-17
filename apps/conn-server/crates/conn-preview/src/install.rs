@@ -1,6 +1,6 @@
 //! T3's pinned Chrome release: lazy, streamed, verified, atomically installed.
 use crate::Error;
-use serde::Deserialize;
+use crate::spec::{Archive, Spec, spec};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -11,66 +11,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Mutex, watch};
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct Spec {
-    pub scripts: Scripts,
-    #[serde(rename = "viewportLimits")]
-    pub viewport_limits: serde_json::Value,
-    #[serde(rename = "editingCommands")]
-    pub editing_commands: std::collections::HashMap<String, serde_json::Value>,
-    #[serde(rename = "errorTemplates")]
-    pub error_templates: std::collections::HashMap<String, String>,
-    #[serde(rename = "nonWebSchemes")]
-    pub non_web_schemes: Vec<String>,
-    pub keys: std::collections::HashMap<String, serde_json::Value>,
-    pub version: String,
-    #[serde(rename = "stagingStaleAfterMs")]
-    pub staging_stale_after_ms: u64,
-    #[serde(rename = "screencastAckPaceMs")]
-    pub screencast_ack_pace_ms: u64,
-    pub profiles: Vec<serde_json::Value>,
-    pub presets: Vec<serde_json::Value>,
-    pub platforms: std::collections::HashMap<String, String>,
-    pub archives: std::collections::HashMap<String, Archive>,
-    #[serde(rename = "tabArgs")]
-    pub tab_args: Vec<String>,
-    #[serde(rename = "persistentArgs")]
-    pub persistent_args: Vec<String>,
-    pub html: HtmlSpec,
-    #[serde(rename = "rootError")]
-    pub root_error: String,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct Scripts {
-    pub snapshot: String,
-    pub sensitive: String,
-    pub dotted: String,
-    pub mask: String,
-    pub recorders: std::collections::HashMap<String, String>,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct HtmlSpec {
-    #[serde(rename = "fakeIpTemplate")]
-    pub fake_ip_template: String,
-    #[serde(rename = "defaultWidth")]
-    pub default_width: u64,
-    pub fragments: std::collections::HashMap<String, String>,
-    pub settle: String,
-    pub measure: String,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct Archive {
-    bytes: u64,
-    sha256: String,
-}
-
-pub(crate) fn spec() -> Result<&'static Spec, Error> {
-    static SPEC: std::sync::OnceLock<Result<Spec, Error>> = std::sync::OnceLock::new();
-    SPEC.get_or_init(|| serde_json::from_str(include_str!("spec.json")).map_err(super::err))
-        .as_ref()
-        .map_err(Clone::clone)
-}
 
 fn chrome_platform(os: &str, arch: &str) -> Result<&'static str, Error> {
     spec()?.platforms.get(&format!("{os}-{arch}")).map(String::as_str).ok_or_else(|| Error(format!(
@@ -376,13 +316,10 @@ async fn download(
     let tcp = tokio::net::TcpStream::connect(("storage.googleapis.com", 443))
         .await
         .map_err(|_| failed())?;
-    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let config = conn_support::tls::client_config().map_err(super::err)?;
     let name =
         rustls::pki_types::ServerName::try_from("storage.googleapis.com").map_err(super::err)?;
-    let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+    let tls = tokio_rustls::TlsConnector::from(config)
         .connect(name, tcp)
         .await
         .map_err(|_| failed())?;
@@ -454,28 +391,23 @@ fn extract(zip_path: &Path, output: &Path, platform: &str) -> Result<(), Error> 
     let prefix = format!("chrome-headless-shell-{platform}/");
     let mut executable = false;
     let mut total = 0u64;
+    let unsafe_entry = || failure("The archive contains an unexpected or unsafe entry.");
     if zip.len() > 256 {
-        return Err(failure(
-            "The archive contains an unexpected or unsafe entry.",
-        ));
+        return Err(unsafe_entry());
     }
     for i in 0..zip.len() {
         let entry = zip.by_index(i).map_err(super::err)?;
         let relative = entry
             .enclosed_name()
             .and_then(|p| p.strip_prefix(&prefix).ok().map(Path::to_path_buf))
-            .ok_or_else(|| failure("The archive contains an unexpected or unsafe entry."))?;
+            .ok_or_else(unsafe_entry)?;
         let mode = entry.unix_mode().unwrap_or_default();
         if !matches!(mode & 0o170000, 0 | 0o100000 | 0o040000) || entry.encrypted() {
-            return Err(failure(
-                "The archive contains an unexpected or unsafe entry.",
-            ));
+            return Err(unsafe_entry());
         }
         total = total.saturating_add(entry.size());
         if total > 512 * 1024 * 1024 {
-            return Err(failure(
-                "The archive contains an unexpected or unsafe entry.",
-            ));
+            return Err(unsafe_entry());
         }
         let path = output.join(&relative);
         if entry.is_dir() {
@@ -663,17 +595,9 @@ mod tests {
     }
     #[tokio::test]
     async fn finds_only_the_pinned_install_without_download_or_host_discovery() {
-        use std::os::unix::fs::PermissionsExt;
         let root =
             std::env::temp_dir().join(format!("conn-preview-install-{}", conn_support::uuid_v4()));
-        let path = root
-            .join("tools/chrome-headless-shell")
-            .join(chrome_platform(std::env::consts::OS, std::env::consts::ARCH).unwrap())
-            .join(&spec().unwrap().version)
-            .join("chrome-headless-shell");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "fixture browser").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = installed_fixture(&root);
         assert_eq!(
             Installer::new(root.clone()).executable().await.unwrap(),
             path

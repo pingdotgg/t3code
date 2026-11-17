@@ -7,6 +7,7 @@ mod page;
 mod proxy;
 mod recording;
 mod screencast;
+mod spec;
 pub mod tabs;
 
 use command_fds::{CommandFdExt, FdMapping};
@@ -171,7 +172,7 @@ impl Browser {
             if stderr.contains("Running as root without --no-sandbox")
                 || (stderr.contains("No usable sandbox") && rustix::process::getuid().is_root())
             {
-                return Err(Error(install::spec()?.root_error.clone()));
+                return Err(Error(spec::spec()?.root_error.clone()));
             }
             if stderr.contains("No usable sandbox") {
                 return Err(Error("This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run `t3 browser setup` on the host once to allow it, then try again.".into()));
@@ -378,21 +379,9 @@ async fn run(
     }
 }
 
-pub(crate) fn percent(text: &str) -> String {
-    let mut out = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.!~*\'()".contains(&byte) {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 /// Uses the contract's generated error text without echoing a selector's contents.
 pub fn tool_error(kind: &str, operation: &str, length: usize) -> String {
-    install::spec()
+    spec::spec()
         .ok()
         .and_then(|s| s.error_templates.get(kind).cloned())
         .unwrap_or_else(|| "Preview automation failed.".into())

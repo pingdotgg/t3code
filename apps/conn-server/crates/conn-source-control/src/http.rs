@@ -9,8 +9,6 @@
 use std::{
     io,
     net::{IpAddr, SocketAddr},
-    sync::Arc,
-    sync::OnceLock,
     time::Duration,
 };
 
@@ -216,26 +214,6 @@ fn parse_url(url: &str) -> Result<Target<'_>, HttpError> {
     })
 }
 
-/// Built once: the roots and the provider are the same for every request.
-fn tls_config() -> Result<Arc<rustls::ClientConfig>, String> {
-    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            let roots = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            };
-            let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let mut config = rustls::ClientConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()
-                .map_err(|e| e.to_string())?
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            config.alpn_protocols = vec![b"http/1.1".to_vec()];
-            Ok(Arc::new(config))
-        })
-        .clone()
-}
-
 /// Sends one request and reads its answer, bounded by `max_response_bytes` and `timeout`.
 pub async fn send(request: HttpRequest) -> Result<HttpResponse, HttpError> {
     let target = parse_url(&request.url)?;
@@ -349,10 +327,11 @@ async fn exchange(target: &Target<'_>, request: &HttpRequest) -> Result<HttpResp
     if target.tls {
         let name = rustls::pki_types::ServerName::try_from(target.host.to_owned())
             .map_err(|_| HttpError::InvalidUrl)?;
-        let stream = tokio_rustls::TlsConnector::from(tls_config().map_err(connect)?)
-            .connect(name, tcp)
-            .await
-            .map_err(|e| connect(e.to_string()))?;
+        let stream =
+            tokio_rustls::TlsConnector::from(conn_support::tls::client_config().map_err(connect)?)
+                .connect(name, tcp)
+                .await
+                .map_err(|e| connect(e.to_string()))?;
         round_trip(
             TokioIo::new(stream),
             built,

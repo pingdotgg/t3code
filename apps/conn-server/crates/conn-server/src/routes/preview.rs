@@ -25,16 +25,7 @@ async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let principal = if let Some(ticket) = query.get("wsTicket") {
-        state.auth.authenticate_ticket(ticket, "media")
-    } else {
-        headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split_once(' '))
-            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-            .and_then(|(_, token)| state.auth.authenticate_bearer(token.trim()))
-    };
+    let principal = crate::http::authenticate_upgrade(&state, &query, &headers, "media");
     let Some(principal) = principal else {
         return (
             StatusCode::UNAUTHORIZED,

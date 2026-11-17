@@ -270,7 +270,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
- "webpki-roots",
  "zip",
 ]
 
@@ -396,7 +395,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
- "webpki-roots",
 ]
 
 [[package]]
@@ -404,8 +402,10 @@ name = "conn-support"
 version = "0.1.1"
 dependencies = [
  "getrandom 0.3.4",
+ "rustls",
  "sha2",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]

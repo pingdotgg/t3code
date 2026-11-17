@@ -318,7 +318,7 @@ impl Viewer {
                     .unwrap_or_default();
                 let mut params = json!({"type":if action=="up"{"keyUp"}else if message.get("text").and_then(Value::as_str).is_some_and(|s|!s.is_empty()){"keyDown"}else{"rawKeyDown"},"key":message.get("key"),"code":message.get("code"),"text":message.get("text").and_then(Value::as_str).unwrap_or_default(),"windowsVirtualKeyCode":number("keyCode",0.),"modifiers":modifiers});
                 if action != "up"
-                    && let Some(command) = crate::install::spec()?.editing_commands.get(&format!(
+                    && let Some(command) = crate::spec::spec()?.editing_commands.get(&format!(
                         "{modifiers}:{}",
                         message
                             .get("key")

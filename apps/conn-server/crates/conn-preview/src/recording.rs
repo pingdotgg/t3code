@@ -1,5 +1,5 @@
 //! A bounded MediaRecorder in a separate renderer, using T3's pinned encoder script.
-use crate::{Browser, Error, install::spec};
+use crate::{Browser, Error, spec::spec};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, oneshot};

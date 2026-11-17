@@ -14,15 +14,5 @@ T3's explicit `T3CODE_SERVER_BROWSER_SANDBOX=0` override is also supported.
 Orbit sets `CONN_SERVER_BROWSER_PATH` to an absolute bundled shell path, keeping adjacent files; missing or mismatched binaries fail without downloading.
 The release ships generated `chrome.json` beside the binary; leaving the variable unset keeps lazy development installs.
 
-One server permits 32 tabs, eight per agent, four browser hosts, eight viewers per
-tab, two simultaneous recordings and two HTML captures. Tabs without a viewer
-expire after 30 minutes; empty hosts stop after five minutes, checked every minute.
-Recordings stop accepting frames after five minutes or 50 MiB. CDP limits each
-message to 36 MiB and queues 16 commands; each host retains 64 diagnostic events
-of at most 64 KiB. Each capture queues three frames of at most 8 MiB, with one
-shared capture and decoder per viewed tab. The native target budget is 40 per
-host, including recorder and startup pages. Profile catalogs allow 64 connected
-reporters and 256 merged profiles.
-
 The generated browser-side DOM code comes from pinned Playwright (Apache-2.0).
 Its license and notice are in `LICENSE.playwright` and `NOTICE.playwright`.

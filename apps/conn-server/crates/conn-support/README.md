@@ -13,5 +13,7 @@ Small helpers that more than one crate needs. Each exists once, here.
   (T3's `fixPath` and `refreshPathFromLoginShell`), kept beside the environment because
   `std::env::set_var` is unsafe once threads exist. Every spawn site adds `login_env::vars()`.
 
-Rules: std only (plus `sha2` for the hash, and `uuid` with `getrandom` for ids), no async, no state, no I/O except `fs`. The one exception is `login_env`: three values behind a lock, and the login shell it runs. A helper
-moves here when a second crate needs it; a crate-specific one stays in its crate.
+The optional `tls` feature shares the existing rustls HTTP configuration between HTTPS callers.
+Without it, dependencies are std, `sha2`, `uuid` and `getrandom`. There is no async work.
+I/O stays in `fs` and `login_env`; shared state is limited to login values and the TLS config.
+A helper moves here when a second crate needs it; a crate-specific one stays in its crate.

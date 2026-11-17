@@ -1,9 +1,5 @@
 //! Short-lived HTML captures using T3's page interception and theme fragment.
-use crate::{
-    Browser, Error, Launch,
-    install::{Installer, spec},
-    proxy::Proxy,
-};
+use crate::{Browser, Error, Launch, install::Installer, proxy::Proxy, spec::spec};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
@@ -12,7 +8,7 @@ use std::{
 };
 use tokio::sync::{Semaphore, watch};
 
-/// At most two captures, as in T3. No browser stays alive after a capture.
+/// Capture concurrency follows T3. No browser stays alive after a capture.
 #[derive(Clone, Debug)]
 pub struct HtmlPreview {
     installer: Arc<Installer>,
@@ -20,15 +16,16 @@ pub struct HtmlPreview {
 }
 impl HtmlPreview {
     pub fn new(base: PathBuf) -> Self {
-        Self {
-            installer: Arc::new(Installer::new(base)),
-            slots: Arc::new(Semaphore::new(2)),
-        }
+        Self::with_installer(Arc::new(Installer::new(base)))
     }
     pub fn with_installer(installer: Arc<Installer>) -> Self {
         Self {
             installer,
-            slots: Arc::new(Semaphore::new(2)),
+            slots: Arc::new(Semaphore::new(
+                spec()
+                    .map(|s| s.html.max_concurrent_browsers)
+                    .unwrap_or_default(),
+            )),
         }
     }
     pub fn reserve(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
@@ -121,27 +118,17 @@ async fn capture(
         .get(appearance)
         .ok_or_else(|| Error("Unknown HTML appearance.".into()))?;
     let proxy = Proxy::start().await?;
-    let mut args = vec![
-        "--headless=new".into(),
-        "--remote-debugging-pipe".into(),
-        "--no-first-run".into(),
-        "--no-default-browser-check".into(),
-        "--disable-gpu".into(),
-        "--hide-scrollbars".into(),
-        "--mute-audio".into(),
-        "--block-new-web-contents".into(),
-        format!("--proxy-server=socks5://127.0.0.1:{}", proxy.port),
-        "--proxy-bypass-list=<-loopback>".into(),
-        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp".into(),
-    ];
-    if no_sandbox {
-        args.push("--no-sandbox".into());
+    let args = if no_sandbox {
+        &spec()?.html.unsandboxed_args
+    } else {
+        &spec()?.html.args
     }
-    args.push(format!(
-        "--user-data-dir={}",
-        directory.join("profile").display()
-    ));
-    args.push("about:blank".into());
+    .iter()
+    .map(|arg| {
+        arg.replace("__PROXY_PORT__", &proxy.port.to_string())
+            .replace("__PROFILE__", &directory.join("profile").to_string_lossy())
+    })
+    .collect();
     let browser = Browser::launch_with_timeout(
         Launch {
             executable,

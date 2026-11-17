@@ -96,6 +96,7 @@ const sourcePaths = [
   "apps/server/src/preview/Manager.ts",
   "apps/server/src/preview/PreviewBrowserHost.ts",
   "apps/server/src/htmlRender/headlessChrome.ts",
+  "apps/server/src/htmlRender/HtmlRender.ts",
   "apps/server/src/htmlRender/publicProxy.ts",
   "packages/shared/src/previewPage.ts",
   "packages/shared/src/previewSessionControl.ts",
@@ -155,7 +156,21 @@ const previewContractSource = read("packages/contracts/src/preview.ts");
 const legacyPresetIds = Function(
   `return ${/const LEGACY_PREVIEW_VIEWPORT_PRESET_IDS = (\[[\s\S]*?\]) as const/.exec(previewContractSource)?.[1]}`,
 )();
+const constant = (source, name) => {
+  const expression = new RegExp(`const ${name} = ([^;]+);`).exec(source)?.[1];
+  if (!expression) throw Error(`Missing browser constant ${name}`);
+  return Function(`return ${expression}`)();
+};
+const htmlArgsSource = /input\.executable,\s*(\[[\s\S]*?\]),\s*\{/.exec(headless)?.[1];
+if (!htmlArgsSource) throw Error("HTML Chrome launch arguments changed");
+const htmlArgs = (noSandbox) => Function("input", "proxy", `return ${htmlArgsSource}`)(
+  { noSandbox, profileDirectory: "__PROFILE__" }, { port: "__PROXY_PORT__" },
+);
+const renderSource = read("apps/server/src/htmlRender/HtmlRender.ts");
 const spec = {
+  agentTabLimit: constant(serverSource, "AGENT_TAB_LIMIT"),
+  serverTabLimit: constant(serverSource, "SERVER_TAB_LIMIT"),
+  agentTabIdleMs: constant(serverSource, "AGENT_TAB_IDLE_MS"),
   viewportLimits: {
     minimum: previewContract.PREVIEW_VIEWPORT_MIN_DIMENSION,
     maximum: previewContract.PREVIEW_VIEWPORT_MAX_DIMENSION,
@@ -182,10 +197,13 @@ const spec = {
   archives,
   platforms,
   stagingStaleAfterMs: Function(`return ${/const STAGING_STALE_AFTER_MS = ([^;]+);/.exec(browser)?.[1]}`)(),
-  screencastAckPaceMs: Number(/const SCREENCAST_ACK_PACE_MS = (\d+);/.exec(serverSource)?.[1]),
+  screencastAckPaceMs: constant(serverSource, "SCREENCAST_ACK_PACE_MS"),
   tabArgs,
   persistentArgs,
   html: {
+    maxConcurrentBrowsers: constant(renderSource, "MAX_CONCURRENT_BROWSERS"),
+    args: htmlArgs(false),
+    unsandboxedArgs: htmlArgs(true),
     fakeIpTemplate: Function(
       "host",
       "address",

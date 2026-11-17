@@ -1,5 +1,5 @@
 //! Browser-side work uses Playwright's pinned injected DOM engine, with Rust owning the transport.
-use crate::{Browser, Error, install::spec};
+use crate::{Browser, Error, spec::spec};
 use serde_json::{Value, json};
 
 pub(crate) async fn utility(browser: &Browser, session: &str, body: &str) -> Result<Value, Error> {
@@ -88,7 +88,7 @@ pub(crate) fn redact(value: &mut Value, secrets: &[String]) {
     let mut variants = Vec::new();
     for secret in secrets.iter().filter(|s| !s.is_empty()) {
         variants.push(secret.clone());
-        variants.push(crate::percent(secret));
+        variants.push(conn_support::ids::encode_component(secret));
         if let Ok(escaped) = serde_json::to_string(secret)
             && let Some(inner) = escaped.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
         {
@@ -256,7 +256,7 @@ pub(crate) async fn action(
         return utility(browser,session,&format!("const input={input_json};{LOCATOR_JS}if(!element||element.tagName!=='SELECT')throw Error('__conn_not_editable');const values=input.values.map(v=>{{const option=[...element.options].find(o=>o.value===v)??[...element.options].find(o=>o.label.trim()===v.trim());return {{value:option?.value??v}};}});const selected=injected.selectOptions(element,values);return {{selected}};")).await;
     }
     if action == "upload" {
-        let paths = upload_paths(input)?;
+        let paths = input.get("paths");
         let node=utility(browser,session,&format!("const input={input_json};{LOCATOR_JS}if(!element||element.tagName!=='INPUT'||element.type!=='file')throw Error('__conn_not_editable');element.setAttribute('data-conn-upload', 'active');return true;")).await?;
         if node != true {
             return Err(Error("The upload target is not available.".into()));

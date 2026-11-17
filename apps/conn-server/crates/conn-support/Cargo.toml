@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [features]
 test-util = []
+tls = ["dep:rustls", "dep:webpki-roots"]
 
 [dependencies]
 # HMAC-SHA256 needs the hash; already in the tree (workspace dependency).
@@ -16,6 +17,9 @@ sha2.workspace = true
 uuid.workspace = true
 # The random bytes for v4 ids, from the OS random source.
 getrandom.workspace = true
+
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = { version = "1", optional = true }
 
 [lints]
 workspace = true

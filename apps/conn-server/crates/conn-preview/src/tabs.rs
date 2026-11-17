@@ -1,8 +1,5 @@
 //! Server-owned browser tabs: lazy hosts, bounded sessions and idle cleanup.
-use crate::{
-    Browser, Error, Launch,
-    install::{Installer, spec},
-};
+use crate::{Browser, Error, Launch, install::Installer, spec::spec};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
@@ -17,9 +14,6 @@ mod viewer;
 pub use crate::screencast::Frame as ViewerFrame;
 pub use viewer::{Output as ViewerOutput, Viewer};
 
-const AGENT_TABS: usize = 8;
-const SERVER_TABS: usize = 32;
-const TAB_IDLE: Duration = Duration::from_secs(30 * 60);
 const HOST_IDLE: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug)]
@@ -212,12 +206,17 @@ impl Preview {
         }
     }
     async fn sweep(&self) {
+        let _open = self.0.open.lock().await;
+        let Ok(spec) = spec() else { return };
         let stale = {
             let state = lock(&self.0.state);
             state
                 .tabs
                 .iter()
-                .filter(|t| t.viewers.is_empty() && t.used.elapsed() >= TAB_IDLE)
+                .filter(|t| {
+                    t.viewers.is_empty()
+                        && t.used.elapsed() >= Duration::from_millis(spec.agent_tab_idle_ms)
+                })
                 .map(|t| (t.thread.clone(), t.id.clone()))
                 .collect::<Vec<_>>()
         };
@@ -509,7 +508,7 @@ impl Preview {
                         && input.get("selector").is_none()
                     {
                         let node=chooser.ok_or_else(||Error("No file chooser is open. Click an upload control first, or pass a locator.".into()))?;
-                        let paths = crate::page::upload_paths(&input)?;
+                        let paths = input.get("paths");
                         browser
                             .send(
                                 "DOM.setFileInputFiles",
@@ -776,13 +775,13 @@ impl Preview {
         }
         {
             let state = lock(&self.0.state);
-            if state.tabs.len() >= SERVER_TABS
+            if state.tabs.len() >= spec()?.server_tab_limit
                 || state
                     .tabs
                     .iter()
                     .filter(|t| t.thread == thread && t.owner.as_deref() == Some(agent))
                     .count()
-                    >= AGENT_TABS
+                    >= spec()?.agent_tab_limit
             {
                 return Err(Error("Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.".into()));
             }
@@ -948,12 +947,10 @@ impl Preview {
     }
     async fn host(&self, key: &str) -> Result<Browser, Error> {
         {
-            let state = lock(&self.0.state);
-            if let Some(host) = state
-                .hosts
-                .iter()
-                .find(|h| h.key == key && !h.browser.is_closed())
-            {
+            let mut state = lock(&self.0.state);
+            state.hosts.retain(|host| !host.browser.is_closed());
+            if let Some(host) = state.hosts.iter_mut().find(|h| h.key == key) {
+                host.empty_since = Instant::now();
                 return Ok(host.browser.clone());
             }
             if state.hosts.len() >= 4 {
@@ -1754,12 +1751,13 @@ fn profile_directory(id: &str) -> String {
     if id == "." || id == ".." {
         id.replace('.', "%2E")
     } else {
-        crate::percent(id)
+        conn_support::ids::encode_component(id)
     }
 }
 
 impl Preview {
     async fn adopt_popup(&self, host: &str, info: Value) {
+        let Ok(spec) = spec() else { return };
         let Some(target) = info.get("targetId").and_then(Value::as_str) else {
             return;
         };
@@ -1776,7 +1774,7 @@ impl Preview {
             let Some(parent) = state.tabs.iter().find(|t| t.target == opener) else {
                 return;
             };
-            let capacity = state.tabs.len() + state.pending_popups.len() < SERVER_TABS
+            let capacity = state.tabs.len() + state.pending_popups.len() < spec.server_tab_limit
                 && state
                     .tabs
                     .iter()
@@ -1787,7 +1785,7 @@ impl Preview {
                         .iter()
                         .filter(|p| p.1 == parent.thread && p.2 == parent.owner)
                         .count()
-                    < AGENT_TABS;
+                    < spec.agent_tab_limit;
             let setup = (
                 parent.thread.clone(),
                 parent.owner.clone(),
@@ -2088,7 +2086,8 @@ mod tests {
         {
             let mut state = lock(&preview.0.state);
             for tab in &mut state.tabs {
-                tab.used = Instant::now() - TAB_IDLE;
+                tab.used =
+                    Instant::now() - Duration::from_millis(spec().unwrap().agent_tab_idle_ms);
             }
             for host in &mut state.hosts {
                 host.empty_since = Instant::now() - HOST_IDLE;
@@ -2101,8 +2100,61 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
+    async fn reusing_an_idle_host_renews_its_retirement_deadline() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-reuse-{}", conn_support::uuid_v4()));
+        let preview = Preview::with_fixture(
+            root.clone(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+        );
+        let gate = preview.0.open.lock().await;
+        let browser = preview.host("__shared").await.unwrap();
+        lock(&preview.0.state)
+            .hosts
+            .first_mut()
+            .unwrap()
+            .empty_since = Instant::now() - HOST_IDLE;
+        preview.host("__shared").await.unwrap();
+        assert!(
+            lock(&preview.0.state)
+                .hosts
+                .first()
+                .unwrap()
+                .empty_since
+                .elapsed()
+                < HOST_IDLE
+        );
+        drop(gate);
+        preview.sweep().await;
+        assert!(!browser.is_closed());
+        browser
+            .send("Fixture.counts", json!({}), None)
+            .await
+            .unwrap();
+        preview.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn closed_hosts_do_not_consume_the_browser_budget() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-closed-{}", conn_support::uuid_v4()));
+        let preview = Preview::with_fixture(
+            root.clone(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+        );
+        let gate = preview.0.open.lock().await;
+        for key in ["__shared", "one", "two", "three"] {
+            preview.host(key).await.unwrap().close().await;
+        }
+        preview.host("replacement").await.unwrap();
+        assert_eq!(lock(&preview.0.state).hosts.len(), 1);
+        drop(gate);
+        preview.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
     async fn shutdown_and_profile_clear_wait_for_the_open_gate() {
-        for clear in [false, true] {
+        for operation in ["shutdown", "clear", "sweep"] {
             let root =
                 std::env::temp_dir().join(format!("conn-preview-gate-{}", conn_support::uuid_v4()));
             let preview = Preview::with_fixture(
@@ -2115,10 +2167,10 @@ mod tests {
                 .unwrap();
             let gate = preview.0.open.lock().await;
             let mut pending = std::pin::pin!(async {
-                if clear {
-                    preview.clear_profile("default").await.unwrap();
-                } else {
-                    preview.shutdown().await;
+                match operation {
+                    "clear" => preview.clear_profile("default").await.unwrap(),
+                    "sweep" => preview.sweep().await,
+                    _ => preview.shutdown().await,
                 }
             });
             std::future::poll_fn(|cx| {
