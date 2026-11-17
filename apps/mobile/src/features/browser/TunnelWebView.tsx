@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { requireNativeModule, requireNativeView } from "expo";
-import type { Ref } from "react";
+import { useRef, type Ref } from "react";
 import { StyleSheet, View, type NativeSyntheticEvent, type ViewProps } from "react-native";
 
 import { readPreviewTunnelUrl } from "../../state/previewTunnel";
@@ -34,6 +34,7 @@ const NativeTunnelWebView = requireNativeView<
     readonly onLoadError: (
       event: NativeSyntheticEvent<{ code: number; description: string; url: string }>,
     ) => void;
+    readonly onPageScroll: (event: NativeSyntheticEvent<{ y: number }>) => void;
   }
 >("T3PreviewTunnel");
 
@@ -44,6 +45,7 @@ export function TunnelWebView({
   ref,
   onNavigationChange,
   onLoadError,
+  onScrollDirection,
   ...props
 }: ViewProps & {
   readonly environmentId: EnvironmentId;
@@ -59,7 +61,10 @@ export function TunnelWebView({
     readonly unsupported: boolean;
     readonly description: string;
   }) => void;
+  /** Reported every few dozen points the page scrolls; "up" also at the top. */
+  readonly onScrollDirection?: (direction: "up" | "down") => void;
 }) {
+  const scrollY = useRef(0);
   // Styling goes on a plain View: a native view from `requireNativeView` ignores className.
   return (
     <View {...props}>
@@ -74,6 +79,11 @@ export function TunnelWebView({
           );
         }}
         onNavigationChange={({ nativeEvent }) => onNavigationChange(nativeEvent)}
+        onPageScroll={({ nativeEvent }) => {
+          const down = nativeEvent.y > 0 && nativeEvent.y > scrollY.current;
+          scrollY.current = nativeEvent.y;
+          onScrollDirection?.(down ? "down" : "up");
+        }}
         onLoadError={({ nativeEvent }) =>
           onLoadError({
             url: nativeEvent.url,

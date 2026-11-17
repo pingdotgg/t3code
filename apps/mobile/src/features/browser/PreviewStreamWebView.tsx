@@ -54,6 +54,8 @@ type NativeStreamBridge = {
   readonly onRefused: (delayMs: number) => void;
   readonly onGone?: () => void;
   readonly onViewport?: (viewport: { readonly width: number; readonly height: number }) => void;
+  /** The direction a drag scrolls the page, every few dozen pixels of it. */
+  readonly onScrollDirection?: (direction: "up" | "down") => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. */
@@ -219,6 +221,7 @@ function PreviewStreamDocumentView({
   onUnauthorized,
   onGone,
   onViewport,
+  onScrollDirection,
   onControl,
   onPictureInPicture,
   onStreamingChange,
@@ -390,6 +393,9 @@ function PreviewStreamDocumentView({
                 return;
               case "viewport":
                 onViewport?.(message);
+                return;
+              case "scroll":
+                onScrollDirection?.(message.direction);
                 return;
               case "clipboard":
                 void Clipboard.setStringAsync(message.text).catch(() => undefined);

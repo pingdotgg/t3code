@@ -18,6 +18,7 @@ import androidx.webkit.WebViewFeature
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import kotlin.math.abs
 
 /**
  * A webview whose loopback is another environment's: `localhost` requests go to a SOCKS listener
@@ -35,6 +36,7 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
   private val onAccessRequest by EventDispatcher()
   private val onNavigationChange by EventDispatcher()
   private val onLoadError by EventDispatcher()
+  private val onPageScroll by EventDispatcher()
   private val main = Handler(Looper.getMainLooper())
   private var webView: WebView? = null
   private var listener: SocksListener? = null
@@ -42,6 +44,7 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
   private var pendingUrl: String? = null
   private var loading = false
   private var environmentId: String? = null
+  private var reportedScrollY = 0f
 
   fun setEnvironment(environmentId: String) {
     if (environmentId == this.environmentId) return
@@ -76,6 +79,7 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
     webView.webChromeClient = object : WebChromeClient() {
       override fun onReceivedTitle(view: WebView, title: String?) = report(null)
     }
+    webView.setOnScrollChangeListener { _, _, scrollY, _, _ -> reportScroll(scrollY) }
     addView(webView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     this.webView = webView
     pendingUrl?.let { loadUrl(it) }
@@ -83,6 +87,15 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
 
   private fun fail(description: String, url: String = "") {
     onLoadError(mapOf("code" to -1, "description" to description, "url" to url))
+  }
+
+  /** Reports the page's scroll position in steps, enough for the bar to follow its direction. */
+  private fun reportScroll(scrollY: Int) {
+    val y = scrollY / resources.displayMetrics.density
+    val moved = abs(y - reportedScrollY) >= SCROLL_STEP_DP
+    if (!moved && !(y == 0f && reportedScrollY != 0f)) return
+    reportedScrollY = y
+    onPageScroll(mapOf("y" to y))
   }
 
   private fun report(nowLoading: Boolean?) {
@@ -170,4 +183,8 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
   fun goBack() = main.post { webView?.goBack() }
   fun goForward() = main.post { webView?.goForward() }
   fun reload() = main.post { webView?.reload() }
+
+  private companion object {
+    const val SCROLL_STEP_DP = 24f
+  }
 }

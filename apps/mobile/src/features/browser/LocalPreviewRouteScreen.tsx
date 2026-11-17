@@ -11,7 +11,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useBarOverlap } from "../../components/ui/useBarInset";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { BrowserBar } from "./BrowserBar";
+import { BrowserBar, useBarFollowsScroll } from "./BrowserBar";
 import { TunnelWebView, type TunnelNavigation, type TunnelWebViewRef } from "./TunnelWebView";
 
 type LocalPreviewRouteScreenProps = StaticScreenProps<{
@@ -50,6 +50,7 @@ export function LocalPreviewScreen(props: {
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
   const [unsupported, setUnsupported] = useState<string | null>(null);
+  const bar = useBarFollowsScroll();
   // After a failed load the webview reports no URL, so the address stays on the one asked for.
   const current = (!failed && page?.url) || requested;
 
@@ -108,6 +109,8 @@ export function LocalPreviewScreen(props: {
           onBack={back}
           onReload={retry}
           onSubmit={open}
+          compact={bar.compact && !failed}
+          onExpand={bar.expand}
         />
       )}
       <View className="flex-1">
@@ -121,6 +124,7 @@ export function LocalPreviewScreen(props: {
             if (next.loading) setFailed(false);
             setPage(next);
           }}
+          onScrollDirection={onMaximize ? undefined : bar.follow}
           onLoadError={(failure) => {
             if (failure.unsupported) return setUnsupported(failure.description);
             // A link to another port fails with that port's address, not the one typed earlier.

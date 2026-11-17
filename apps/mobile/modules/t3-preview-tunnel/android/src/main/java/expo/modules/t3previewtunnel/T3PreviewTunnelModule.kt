@@ -16,7 +16,7 @@ class T3PreviewTunnelModule : Module() {
     }
 
     View(T3TunnelWebView::class) {
-      Events("onAccessRequest", "onNavigationChange", "onLoadError")
+      Events("onAccessRequest", "onNavigationChange", "onLoadError", "onPageScroll")
 
       OnViewDestroys { view: T3TunnelWebView -> view.destroyWebView() }
 

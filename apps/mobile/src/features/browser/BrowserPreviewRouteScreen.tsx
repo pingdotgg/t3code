@@ -17,7 +17,7 @@ import { useAppForeground } from "../../lib/appState";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { usePreparedConnection } from "../../state/session";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { BrowserBar } from "./BrowserBar";
+import { BrowserBar, useBarFollowsScroll } from "./BrowserBar";
 import { BrowserTabMenu } from "./BrowserTabMenu";
 import { browserTabTitle, browserTabUrl, latestBrowserTab } from "./browserTabs";
 import {
@@ -85,6 +85,7 @@ function BrowserPreviewScreen({
   const [streaming, setStreaming] = useState(false);
   const [canControl, setCanControl] = useState(false);
   const streamRef = useRef<PreviewStreamRef>(null);
+  const bar = useBarFollowsScroll();
   const { tabs, loaded } = useThreadServerBrowserTabs({ environmentId, threadId, enabled: true });
   const tab = tabs.find((entry) => entry.tabId === selectedTabId) ?? latestBrowserTab(tabs);
   const pdfUri =
@@ -136,6 +137,8 @@ function BrowserPreviewScreen({
             Dialog.alert("Could not open this address", "Enter an http or https URL.");
           else command({ type: "navigate", url });
         }}
+        compact={bar.compact}
+        onExpand={bar.expand}
         trailing={
           <>
             {showPictureInPicture ? (
@@ -191,6 +194,7 @@ function BrowserPreviewScreen({
             background={themeVariables["--color-sheet-solid"]}
             onPictureInPicture={onPictureInPicture}
             onStreamingChange={setStreaming}
+            onScrollDirection={bar.follow}
             onControl={(control) => setCanControl(control?.controller === "you")}
           />
         ) : (
