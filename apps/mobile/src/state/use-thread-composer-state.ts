@@ -621,6 +621,8 @@ export function useThreadComposerState(input: {
       return null;
     }
 
+    // Until a side chat start settles, its draft may be only partly back in the composer.
+    if (startingSideChatRef.current) return null;
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
@@ -681,7 +683,7 @@ export function useThreadComposerState(input: {
         Dialog.alert("Ask a side question", "Type the question after /side, then send it.");
       } else if (modelUnavailable) {
         alertModelUnavailable();
-      } else if (!startingSideChatRef.current) {
+      } else {
         startingSideChatRef.current = true;
         // Cleared at send, like a queued message, so nothing in it can vanish mid-start. The
         // holds keep the local files until the side chat has them or the draft has them back.
@@ -738,7 +740,6 @@ export function useThreadComposerState(input: {
             );
           }
         }
-        // Held through the restore, so a send cannot read the text without its attachments.
         startingSideChatRef.current = false;
         for (const release of fileHolds) release();
       }
