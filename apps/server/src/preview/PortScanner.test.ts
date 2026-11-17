@@ -899,6 +899,11 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                   }),
                 );
               }
+              if (!input.args.includes("-E")) {
+                return Effect.succeed(
+                  processOutput("  4242 node server.js\n  5000 postgres -D /data\n"),
+                );
+              }
               environmentReads += 1;
               return Effect.succeed(
                 processOutput(
@@ -975,6 +980,7 @@ effectIt.effect("stops only a job's own process group", () =>
       { pid: 200, ppid: serverPid, pgid: 200 }, // agent CLI
       { pid: 210, ppid: 200, pgid: 200 }, // a server it spawned without a group of its own
       { pid: 300, ppid: 200, pgid: 300 }, // agent tool shell
+      { pid: 301, ppid: 300, pgid: 300 }, // the server it pipes from
       { pid: 400, ppid: 300, pgid: 400 }, // `npm run dev &`
       { pid: 401, ppid: 400, pgid: 400 },
       { pid: 500, ppid: serverPid, pgid: 500 }, // terminal shell
@@ -986,17 +992,59 @@ effectIt.effect("stops only a job's own process group", () =>
     for (const pid of [20, 210, 500, 999]) {
       expect(PortScanner.stoppableProcessGroup(table, pid, serverPid)).toBeNull();
     }
+    const commandsInGroup = (
+      variables: ReadonlyMap<number, ReadonlyMap<string, string>>,
+      group: number,
+    ) =>
+      PortScanner.agentCommandsInGroup(
+        variables,
+        table.get(group)!,
+        rows.filter((row) => row.pgid === group).map((row) => row.pid),
+      );
     // The tool shell is the command; its `npm run dev &` job only inherited the name.
     const variables = new Map([
       [200, new Map<string, string>()],
       [300, new Map([["COMMAND", "a"]])],
+      [301, new Map([["COMMAND", "a"]])],
       [400, new Map([["COMMAND", "a"]])],
     ]);
-    expect([...PortScanner.agentCommandsInGroup(variables, table.get(300)!)]).toEqual([
-      ["COMMAND", "a"],
-    ]);
-    expect(PortScanner.agentCommandsInGroup(variables, table.get(400)!).size).toBe(0);
-    expect(PortScanner.agentCommandsInGroup(variables, table.get(600)!).size).toBe(0);
+    expect([...commandsInGroup(variables, 300)]).toEqual([["COMMAND", "a"]]);
+    expect(commandsInGroup(variables, 400).size).toBe(0);
+    expect(commandsInGroup(variables, 600).size).toBe(0);
+    // macOS hides a system shell's environment: its name comes from the server it started, and a
+    // job under it cannot be told apart from the command.
+    const hiddenShell = new Map(variables);
+    hiddenShell.delete(300);
+    expect([...commandsInGroup(hiddenShell, 300)]).toEqual([["COMMAND", "a"]]);
+    expect(commandsInGroup(hiddenShell, 400).size).toBe(0);
+  }),
+);
+
+effectIt.effect("reads a macOS process's environment, never its arguments", () =>
+  Effect.sync(() => {
+    const withoutEnvironment = [
+      "  300 /bin/zsh -c COMMAND=spelled node server.js | cat",
+      "  301 /opt/homebrew/bin/node server.js COMMAND=argument",
+      "  302 /opt/homebrew/bin/node other.js",
+      "  303 /opt/homebrew/bin/node reused.js",
+      "  304 /opt/homebrew/bin/node server.js",
+    ].join("\n");
+    const withEnvironment = [
+      "  300 /bin/zsh -c COMMAND=spelled node server.js | cat",
+      "  301 /opt/homebrew/bin/node server.js COMMAND=argument HOME=/u COMMAND=a",
+      "  302 /opt/homebrew/bin/node other.js HOME=/u",
+      "  303 /opt/homebrew/bin/node replaced.js COMMAND=b",
+      "  304 /opt/homebrew/bin/node server.json COMMAND=c",
+    ].join("\n");
+    expect(
+      PortScanner.parsePsEnvironments(withEnvironment, withoutEnvironment, ["COMMAND"]),
+    ).toEqual(
+      new Map([
+        [300, null],
+        [301, new Map([["COMMAND", "a"]])],
+        [302, new Map()],
+      ]),
+    );
   }),
 );
 
@@ -1013,9 +1061,27 @@ server.listen(0, "127.0.0.1", () => {
 const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
 
 /**
- * A real HTML server with an agent's environment, started the way an agent's tool shell starts a
- * job: under a detached shell with job control, in a group of its own. Release kills only the pids
- * it started.
+ * An agent CLI: it starts a command as a group leader named in the command's environment, the way
+ * Codex runs `zsh -lc`, and exits once the command has.
+ */
+const AGENT_CLI_SCRIPT = `
+const command = require("node:child_process").spawn(
+  "/bin/sh",
+  ["-c", '"$0" -e "$1" | cat', process.execPath, process.argv[1]],
+  {
+    detached: true,
+    env: { ...process.env, [process.argv[2]]: "command-live" },
+    stdio: ["ignore", "pipe", "ignore"],
+  },
+);
+command.stdout.pipe(process.stdout);
+command.once("exit", () => process.exit());
+`;
+
+/**
+ * A real HTML server with an agent's environment, run by an agent CLI's command whose shell stays
+ * to pipe its output, so on macOS, which hides `/bin/sh`'s environment, the shell leading the
+ * group is unreadable. Release kills only the pids it started.
  */
 const agentServer = () =>
   Effect.acquireRelease(
@@ -1026,16 +1092,10 @@ const agentServer = () =>
       readonly exited: Promise<void>;
     }>((resume) => {
       const env = { ...process.env, [PortScanner.AGENT_THREAD_ENV]: "thread-live" };
-      // dash ignores `set -m` without a terminal; bash, like agent tool shells, honors it.
       const child = NodeChildProcess.spawn(
-        "bash",
-        [
-          "-c",
-          `set -m; ${AGENT_COMMAND_ENV}=command-live "$0" -e "$1" & wait`,
-          process.execPath,
-          AGENT_SERVER_SCRIPT,
-        ],
-        { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
+        process.execPath,
+        ["-e", AGENT_CLI_SCRIPT, AGENT_SERVER_SCRIPT, AGENT_COMMAND_ENV],
+        { env, stdio: ["ignore", "pipe", "ignore"] },
       );
       const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       child.once("error", (error) => resume(Effect.die(error)));
@@ -1095,7 +1155,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       yield* scanner.stopServer({ pid: job.pid, port: job.port });
       expect(stops).toEqual([["command-live", true]]);
-      // The shell waits on its job, so it exits once the job has.
+      // The CLI exits once its command has.
       yield* Effect.promise(() => job.exited);
       expect(isRunning(job.pid)).toBe(false);
     }).pipe(
