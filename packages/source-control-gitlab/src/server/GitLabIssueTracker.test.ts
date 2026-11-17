@@ -240,6 +240,42 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
+  it.effect("bounds issue timeline notes to ten pages while comments can keep paging", () =>
+    Effect.gen(function* () {
+      const notePages: number[] = [];
+      const api = yield* tracker((args) => {
+        const path = args[1]!;
+        if (path.includes("/notes?")) {
+          const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+          notePages.push(page);
+          return encode(
+            page <= 11
+              ? Array.from({ length: 100 }, (_, index) => ({
+                  id: (page - 1) * 100 + index + 1,
+                  body: index === 99 ? "closed" : "Discussion",
+                  system: index === 99,
+                  author: { username: "theo" },
+                  created_at: "2026-07-03T00:00:00Z",
+                }))
+              : [],
+          );
+        }
+        return answer(path);
+      });
+      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      const issue = yield* api.getIssue(target);
+      expect(notePages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(issue.events).toContainEqual(
+        expect.objectContaining({ id: "note-1000", kind: "closed" }),
+      );
+      expect(issue.events).not.toContainEqual(expect.objectContaining({ id: "note-1100" }));
+      expect(issue.commentsCursor).toBe("2");
+      const later = yield* api.getComments({ ...target, cursor: "11" });
+      expect(later.comments[0]?.id).toBe("1001");
+      expect(later.nextCursor).toBe("12");
+    }),
+  );
+
   it.effect("pages a listing by GitLab's page number and stops on a short page", () =>
     Effect.gen(function* () {
       const paths: string[] = [];
