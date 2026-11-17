@@ -409,10 +409,9 @@ pub(crate) fn console_message(method: &str, params: &Value) -> Option<Value> {
     Some(json!({"level":level,"text":clipped}))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_capture_timeout_waits_for_chrome_to_die_before_returning() {
         use std::os::unix::fs::PermissionsExt;
