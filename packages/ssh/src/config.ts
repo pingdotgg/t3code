@@ -90,14 +90,16 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+const utf8 = new TextEncoder();
+
 // OpenSSH's glob matches UTF-8 bytes, so `?` consumes one byte of a filename.
 function globBytes(value: string): string {
-  return Array.from(new TextEncoder().encode(value), (byte) => String.fromCharCode(byte)).join("");
+  return Array.from(utf8.encode(value), (byte) => String.fromCharCode(byte)).join("");
 }
 
 function globToRegExp(pattern: string): RegExp {
   return new RegExp(
-    `^${escapeRegex(pattern).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
+    `^${escapeRegex(pattern).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, "[^]")}$`,
     "u",
   );
 }
