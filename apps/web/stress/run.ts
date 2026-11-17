@@ -263,6 +263,7 @@ async function main() {
     const seconds = (key: string) => Math.round(((after[key] ?? 0) - (before[key] ?? 0)) * 1000);
     const summary = {
       runId,
+      pullRequest: options.pr ?? null,
       config: {
         threads: THREADS,
         turnsPerThread: TURNS_PER_THREAD,
@@ -305,8 +306,9 @@ async function main() {
       },
     };
     NodeFS.writeFileSync(NodePath.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
-    NodeFS.writeFileSync(NodePath.join(outDir, "report.md"), report(summary));
-    console.log(report(summary));
+    const markdown = report(summary);
+    NodeFS.writeFileSync(NodePath.join(outDir, "report.md"), markdown);
+    console.log(markdown);
     log(`artifacts in ${outDir}`);
   } finally {
     server.stop();
