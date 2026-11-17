@@ -454,7 +454,13 @@ function* rtf(source: string): Generator<string, void> {
             "object",
             "fldinst",
             "header",
+            "headerf",
+            "headerl",
+            "headerr",
             "footer",
+            "footerf",
+            "footerl",
+            "footerr",
           ].includes(control)
         )
           state.skip = true;

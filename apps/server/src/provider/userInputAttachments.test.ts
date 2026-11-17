@@ -278,6 +278,15 @@ describe("question answer paths", () => {
 
   it.effect.each([
     [
+      "page-specific headers and footers",
+      String.raw`{\rtf1\ansi\facingp\sectd\titlepg
+{\headerf First-page header}{\headerl Left-page header}{\headerr Right-page header}
+{\footerf First-page footer}{\footerl Left-page footer}{\footerr Right-page footer}
+\pard Approved delivery date: 24 November.\par
+}`,
+      "Approved delivery date: 24 November.",
+    ],
+    [
       "text symbols",
       String.raw`{\rtf1\ansi Pages 1\endash 5\emdash\lquote left\rquote\ldblquote right\rdblquote\bullet\b End\b0\unknown{\*\secret\bullet hidden}}`,
       "Pages 1–5—‘left’“right”•End",
@@ -310,7 +319,7 @@ describe("question answer paths", () => {
     ["large fallback", String.raw`{\rtf1\ansi\uc20\u945????????????????????Z}`, "αZ"],
     ["no fallback", String.raw`{\rtf1\ansi\uc0\u945Z}`, "αZ"],
     ["scoped count", String.raw`{\rtf1\ansi{\uc2\u945??}\u946?Z}`, "αβZ"],
-  ] as const)("extracts RTF symbols and Unicode fallbacks: %s", ([name, source, expected]) =>
+  ] as const)("extracts RTF text: %s", ([name, source, expected]) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const path = NodePath.join(config.attachmentsDir, `${name}.rtf`);
