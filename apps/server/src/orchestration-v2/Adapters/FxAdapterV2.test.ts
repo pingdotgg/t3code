@@ -155,6 +155,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly frames: ReadonlyArray<Frame>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly modeOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /** Loads this fx session instead of creating one. */
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
@@ -199,7 +200,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   const selectionOn = (model: string) => ({
     instanceId,
     model,
-    options: [{ id: "effort", value: "xhigh" }],
+    options: [{ id: "effort", value: "xhigh" }, ...(input.modeOptions ?? [])],
   });
   const modelSelection = selectionOn(input.model ?? "default");
   const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -287,7 +288,11 @@ describe("FxAdapterV2", () => {
           runtimeMode,
           frames: [
             ...initialize,
-            outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+            outbound("session/new", {
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: { fx: { profileMcpServers: true } },
+            }),
             answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes })),
             ...setConfig(
               "mode",
@@ -297,7 +302,28 @@ describe("FxAdapterV2", () => {
           ],
         }),
       { discard: true },
-    ).pipe(Effect.provide(testLayer), Effect.scoped),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps supervised sessions in the mode set by their runtime policy", () =>
+    openFxSession({
+      scenario: "supervised-mode-policy",
+      runtimeMode: "approval-required",
+      modeOptions: [
+        { id: "_t3/session-mode", value: "auto" },
+        { id: "mode", value: "auto" },
+      ],
+      frames: [
+        ...initialize,
+        outbound("session/new", {
+          cwd: "<workspace>",
+          mcpServers: "<any>",
+          _meta: { fx: { profileMcpServers: true } },
+        }),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // A permission mode change restarts fx and loads the same session, which
@@ -349,7 +375,12 @@ describe("FxAdapterV2", () => {
       loadSessionId: SESSION_ID,
       frames: [
         ...initialize,
-        outbound("session/load"),
+        outbound("session/load", {
+          sessionId: SESSION_ID,
+          cwd: "<workspace>",
+          mcpServers: "<any>",
+          _meta: { fx: { profileMcpServers: true } },
+        }),
         answer("session/load", fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES })),
         // Config id `model`, never fx's `provider`, and never T3's "default".
         ...setConfig(
@@ -360,7 +391,7 @@ describe("FxAdapterV2", () => {
         // Written on load even though fx reports ask.
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // `fx status` names the gateway default, but this loaded session runs on
@@ -385,7 +416,7 @@ describe("FxAdapterV2", () => {
           fxConfig({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
         ),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // fx 0.0.13's gateway takes any model id (src/acp/server.zig
@@ -418,6 +449,6 @@ describe("FxAdapterV2", () => {
         outbound("session/prompt"),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });
