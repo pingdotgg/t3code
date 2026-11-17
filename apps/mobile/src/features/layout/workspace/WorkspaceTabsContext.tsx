@@ -34,6 +34,8 @@ export const WorkspaceTabsContext = createContext<{
   readonly settingsOpen: boolean;
   readonly getScrollOffset: (tab: WorkspaceSearchTab) => number;
   readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
+  /** Leaves search and returns the list to where it was when search began. */
+  readonly cancelSearch: (tab: WorkspaceSearchTab) => void;
 } | null>(null);
 
 export function useWorkspaceTabs() {
@@ -60,8 +62,8 @@ function resolveWorkspaceTabsSelection(
 
 // One model per provider. Handlers on frozen screens keep stale closures, so
 // they read the current selection from the registry at call time.
-function createWorkspaceTabsModel() {
-  const stored = Atom.make(initialWorkspaceTabsState());
+function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
+  const stored = Atom.make(initialWorkspaceTabsState(selectedTab));
   const scrollOffsets: Record<WorkspaceSearchTab, number> = {
     threads: 0,
     pullRequests: 0,
@@ -83,11 +85,12 @@ function createWorkspaceTabsModel() {
 export function WorkspaceTabsProvider(props: {
   readonly children: ReactNode;
   readonly settingsOpen?: boolean;
+  readonly initialTab?: WorkspaceTab;
   /** The root stack's routes up to the focused one. */
   readonly routes?: readonly { readonly name: string; readonly key: string }[];
 }) {
   const registry = use(RegistryContext);
-  const [model] = useState(createWorkspaceTabsModel);
+  const [model] = useState(() => createWorkspaceTabsModel(props.initialTab));
   const stored = useAtomValue(model.resolved);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const detailKey = props.routes?.[1]?.key;
@@ -109,10 +112,11 @@ export function WorkspaceTabsProvider(props: {
       workspaceTabsReducer(registry.get(model.resolved), { type: "select", tab: detailTab }),
     );
   }, [detailKey, detailTab, model, registry]);
+  const dispatch = (action: WorkspaceTabsAction) =>
+    registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action));
   const context = {
     state,
-    dispatch: (action: WorkspaceTabsAction) =>
-      registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
+    dispatch,
     // Until the effect above persists this render's tab, the registry still holds `stored`.
     isTabActive: (tab: WorkspaceTab) => {
       const live = registry.get(model.resolved);
@@ -122,6 +126,10 @@ export function WorkspaceTabsProvider(props: {
     settingsOpen: props.settingsOpen ?? false,
     getScrollOffset: model.getScrollOffset,
     recordScrollOffset: model.recordScrollOffset,
+    cancelSearch: (tab: WorkspaceSearchTab) => {
+      model.recordScrollOffset(tab, registry.get(model.resolved).tabs[tab].searchEntryOffset);
+      dispatch({ type: "cancel", tab });
+    },
   };
   return <WorkspaceTabsContext value={context}>{props.children}</WorkspaceTabsContext>;
 }
