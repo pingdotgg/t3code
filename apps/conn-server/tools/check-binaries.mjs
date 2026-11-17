@@ -50,9 +50,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (!["all", "release", "debug"].includes(selectedProfile)) {
       throw new Error(`Unknown build profile: ${selectedProfile}`);
     }
+    const selectedPackage = process.argv[5] ?? "all";
+    const selected = examples.filter(([profile, pkg]) =>
+      (selectedProfile === "all" || selectedProfile === profile)
+      && (selectedPackage === "all" || selectedPackage === pkg),
+    );
+    if (!selected.length) throw new Error(`No comparison binaries for ${selectedProfile}/${selectedPackage}`);
     const out = resolve(process.argv[3]);
     mkdirSync(join(out, "release/examples"), { recursive: true });
-    const selected = examples.filter(([profile]) => selectedProfile === "all" || selectedProfile === profile);
     const release = selected.filter(([profile]) => profile === "release");
     if (release.length) {
       console.time("release");
@@ -72,7 +77,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         copyFileSync(source, profile === "release" ? join(out, "release/examples", name) : join(out, pkg, name));
       }
     }
-    if (selectedProfile !== "debug") {
+    if (release.length) {
       copyFileSync(join(repoRoot, "target/release/conn-server"), join(out, "release/conn-server"));
     }
   } else {

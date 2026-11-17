@@ -145,7 +145,7 @@ decode_check() {
 }
 run rust 300 "decode check" decode_check
 if [ "$group" = build ]; then
-  run build 1200 "comparison binaries" node tools/check-binaries.mjs --build "$repo/target/check-binaries" "${CONN_CHECK_BUILD_PROFILE:-all}"
+  run build 1200 "comparison binaries" node tools/check-binaries.mjs --build "$repo/target/check-binaries" "${CONN_CHECK_BUILD_PROFILE:-all}" "${CONN_CHECK_BUILD_PACKAGE:-all}"
 fi
 
 # Advisories, licences, bans and sources (deny.toml). Advisories need network access for the

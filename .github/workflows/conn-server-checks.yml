@@ -40,15 +40,21 @@ env:
 
 jobs:
   build:
-    name: Conn Server prerequisites (${{ matrix.profile }})
+    name: Conn Server prerequisites (${{ matrix.profile }}/${{ matrix.package }})
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        profile: [release, debug]
+        include:
+          - { profile: release, package: all }
+          - { profile: debug, package: conn-provider-codex }
+          - { profile: debug, package: conn-provider-claude }
+          - { profile: debug, package: conn-provider-acp }
+          - { profile: debug, package: conn-engine }
     env:
       CONN_CHECK_BUILD_PROFILE: ${{ matrix.profile }}
+      CONN_CHECK_BUILD_PACKAGE: ${{ matrix.package }}
       # Comparisons need release semantics, not size optimization of every fixture binary.
       # conn-server-ci.yml still builds the production musl profile without these overrides.
       CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
@@ -104,21 +110,21 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             apps/conn-server/target
-          key: conn-server-build-v4-${{ matrix.profile }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
-          restore-keys: conn-server-build-v4-${{ matrix.profile }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-server-build-v4-${{ matrix.profile }}-${{ matrix.package }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-server/Cargo.lock') }}
+          restore-keys: conn-server-build-v4-${{ matrix.profile }}-${{ matrix.package }}-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Build comparison binaries
         working-directory: apps/conn-server
         run: tools/check.sh --group build
 
       - name: Pack comparison binaries
-        run: tar -C apps/conn-server/target/check-binaries -czf /tmp/conn-check-binaries-${{ matrix.profile }}.tar.gz .
+        run: tar -C apps/conn-server/target/check-binaries -czf /tmp/conn-check-binaries-${{ matrix.profile }}-${{ matrix.package }}.tar.gz .
 
       - name: Upload comparison binaries
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: conn-check-binaries-${{ matrix.profile }}
-          path: /tmp/conn-check-binaries-${{ matrix.profile }}.tar.gz
+          name: conn-check-binaries-${{ matrix.profile }}-${{ matrix.package }}
+          path: /tmp/conn-check-binaries-${{ matrix.profile }}-${{ matrix.package }}.tar.gz
           retention-days: 1
 
       - name: Save Cargo on main
