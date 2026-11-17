@@ -839,6 +839,80 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
         );
       }),
   );
+
+  // Deleting the working directory makes process.cwd() throw, so this also runs in a child.
+  const resolveWithoutCwd = `
+import { createRequire } from "node:module";
+import * as NodeFS from "node:fs";
+const [shellPath, command, PATH, removed, gitShim, xcodeGit] = process.argv.slice(1);
+const requireFromShell = createRequire(shellPath);
+const Effect = await import(requireFromShell.resolve("effect/Effect"));
+const { layer } = await import(requireFromShell.resolve("@effect/platform-node/NodeServices"));
+const HostProcess = await import(shellPath.replace(/shell\\.ts$/, "HostProcess.ts"));
+const Shell = await import(shellPath);
+const defaultResolver = Shell.SpawnExecutableResolution.defaultValue();
+const resolveExecutable = (...args) => {
+  const found = defaultResolver(...args);
+  return found === gitShim ? "/usr/bin/git" : found;
+};
+process.chdir(removed);
+NodeFS.rmdirSync(removed);
+const cache = new Map();
+const result = await Effect.runPromise(Effect.gen(function* () {
+  const effect = yield* Shell.resolveCommandPath(command, { env: { PATH } }).pipe(
+    Effect.provideService(HostProcess.Platform, process.platform),
+  );
+  const git = yield* Shell.resolveSpawnCommand("git", ["status"], { env: { PATH } }).pipe(
+    Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(Shell.SpawnExecutableResolution, resolveExecutable),
+    Effect.provideService(Shell.XcodeGitLocation, () => xcodeGit),
+  );
+  return { effect, git: git.command };
+}).pipe(
+  Effect.provideService(Shell.CommandResolutionCache, cache),
+  Shell.withPathDirectoryListings,
+  Effect.provide(layer),
+));
+console.log(JSON.stringify({ ...result, cached: cache.size }));
+`;
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "searches absolute PATH entries and caches nothing when the working directory is gone",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const listed = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gone-cwd-listed-" });
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gone-cwd-parent-" });
+        const removed = path.join(parent, "removed");
+        yield* fs.makeDirectory(removed);
+        const command = "t3-gone-cwd-cli";
+        const inListed = path.join(listed, command);
+        const gitShim = path.join(listed, "git");
+        const xcodeGit = path.join(listed, "xcode-git");
+        yield* fs.writeFileString(inListed, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(gitShim, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(xcodeGit, "#!/bin/sh\n", { mode: 0o755 });
+
+        const stdout = NodeChildProcess.execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            resolveWithoutCwd,
+            path.join(import.meta.dirname, "shell.ts"),
+            command,
+            `:${listed}`,
+            removed,
+            gitShim,
+            xcodeGit,
+          ],
+          { cwd: parent, encoding: "utf8", env: {} },
+        );
+
+        expect(JSON.parse(stdout)).toEqual({ effect: inListed, git: xcodeGit, cached: 0 });
+      }),
+  );
 });
 
 describe("runsGitWithoutConsole", () => {

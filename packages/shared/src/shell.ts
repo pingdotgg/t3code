@@ -687,13 +687,19 @@ function pathEntriesForPlatform(pathValue: string, platform: NodeJS.Platform): s
 }
 
 // Relative POSIX PATH entries resolve against the working directory, so caches keyed by them include it.
-function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | undefined {
+// null: a relative entry is present but the working directory cannot be read, so nothing is cached.
+function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | null | undefined {
   if (platform === "win32") return undefined;
-  return pathEntriesForPlatform(pathValue, platform).some(
-    (entry) => !NodePath.posix.isAbsolute(entry),
-  )
-    ? process.cwd()
-    : undefined;
+  if (
+    pathEntriesForPlatform(pathValue, platform).every((entry) => NodePath.posix.isAbsolute(entry))
+  ) {
+    return undefined;
+  }
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
 }
 
 // Called within the traced command resolvers.
@@ -711,8 +717,10 @@ const findOnPath = Effect.fnUntraced(function* (
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
-    const directory = cwd === undefined ? pathEntry : path.resolve(cwd, pathEntry);
-    let listing = listings && (yield* Cache.get(listings, directory));
+    const directory = cwd === undefined || cwd === null ? pathEntry : path.resolve(cwd, pathEntry);
+    // Without a readable cwd a relative entry has no stable directory, so it skips the listing cache.
+    const uncached = cwd === null && !NodePath.posix.isAbsolute(pathEntry);
+    let listing = listings && !uncached ? yield* Cache.get(listings, directory) : undefined;
     if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
       yield* Cache.invalidate(listings, directory);
       listing = yield* Cache.get(listings, directory);
@@ -769,7 +777,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = cwd === null ? undefined : cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     return cached.resolvedPath;
   }
@@ -781,7 +789,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     windowsPathExtensions,
     () => true,
   );
-  cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
+  if (cwd !== null) cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
   return resolvedPath;
 });
 
@@ -932,7 +940,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = cwd === null ? undefined : cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
   if (
     cached !== undefined &&
@@ -948,7 +956,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
       ? located
       : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  if (cwd !== null) cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
   return realGit ?? "git";
 });
 
