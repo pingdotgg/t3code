@@ -69,6 +69,17 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 const ownsStartingRun = (effectType: EffectOutbox.OrchestrationEffectV2["request"]["type"]) =>
   effectType === "provider-turn.start" || effectType === "provider-turn.restart";
 
+const isRemoteSettlementPending = Schema.is(SettlementCascade.RemoteSettlementPending);
+
+// The relay requeues it when a path may open; quick retries only repeat the miss.
+const waitsOnOtherEnvironment = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) =>
+        isOrchestrationEffectExecutionError(error) && isRemoteSettlementPending(error.cause),
+    ),
+  );
+
 const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
   Cause.findErrorOption(cause).pipe(
     Option.exists(
@@ -1015,7 +1026,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts &&
+            : (effect.attemptCount >= maxAttempts || waitsOnOtherEnvironment(exit.cause)) &&
                 (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause))
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })

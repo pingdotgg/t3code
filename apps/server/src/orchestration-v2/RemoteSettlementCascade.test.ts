@@ -252,11 +252,11 @@ const queue = (action: "settle" | "unsettle") =>
   );
 
 /**
- * The real worker over an executor that runs only remote settlement, failing after one try,
- * through the relay layer the server runs, with its own retries.
+ * The real worker over an executor that runs only remote settlement, through the relay layer
+ * the server runs, with its own retries.
  */
 const layerWorker = (state: World, options?: Parameters<typeof makeLayer>[1]) =>
-  EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
+  EffectWorker.layer.pipe(
     Layer.provideMerge(
       Layer.effect(
         EffectWorker.OrchestrationEffectExecutorV2,
@@ -430,6 +430,24 @@ it.effect("a settle waiting on an unreachable machine runs a minute after it ans
     yield* worker.drain();
     expect(targets(state.calls, "link")).toEqual(settledChildren);
   }).pipe(Effect.provide(layerWorker(state, { link: "full-access" })));
+});
+
+it.effect("a machine that stays away is asked less often the longer it is away", () => {
+  const state = world();
+  state.reachable = false;
+  return Effect.gen(function* () {
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* queue("settle");
+    yield* worker.drain();
+    const asked: Array<number> = [];
+    for (let minute = 1; minute <= 60; minute++) {
+      const before = state.calls.length;
+      yield* TestClock.adjust("1 minute");
+      yield* worker.drain();
+      if (state.calls.length > before) asked.push(minute);
+    }
+    expect(asked).toEqual([1, 2, 4, 8, 17, 33, 49]);
+  }).pipe(Effect.provide(layerWorker(state)));
 });
 
 it.effect("a full-access member no app relays is still waiting, not done", () => {
