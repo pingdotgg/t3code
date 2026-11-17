@@ -1,6 +1,30 @@
 {
-  "7eed14b9c7fd7661": "Del sistema",
+  "2f38f2e60ed18790": "{count, plural, =1 {View browser} other {View {count} browser tabs}}",
+  "50abaf3c0482c1fb": "Watch and control browser tabs open in this thread",
+  "59b52a45b0080dd6": {
+    "t": "Plural",
+    "i": 1,
+    "d": {
+      "b": {
+        "one": "One tab open",
+        "other": {
+          "t": "C2",
+          "i": 2,
+          "c": [
+            {
+              "i": 3,
+              "k": "_gt_value_3",
+              "v": "v"
+            },
+            " tabs open"
+          ]
+        }
+      },
+      "t": "p"
+    }
+  },
   "2c1c93a646bbea6e": "Idioma",
+  "7eed14b9c7fd7661": "Del sistema",
   "0a75e464d833bca8": "Ajustes",
   "858561b97fdd72f2": "Buscar ajustes",
   "79e4d73c1bc8cf45": "Comprobando",

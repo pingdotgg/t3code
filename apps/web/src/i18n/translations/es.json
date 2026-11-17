@@ -1,4 +1,18 @@
 {
+  "86f71ac04d41f95e": [
+    "Press a shortcut. Use ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "Backspace"
+    },
+    " to clear. Shortcuts are environment-wide. Projects using the same action share its shortcut."
+  ],
+  "bac6083dfa20b3f6": "{count, plural, one {{count} draft} other {{count} drafts}}",
+  "070e8d2523890f69": "{count, plural, one {{count} thread} other {{count} threads}}",
+  "992fa6e20cf2d8dc": "{shortcut} to undo",
+  "33b29a0f59128a96": "Undo",
+  "0bed322f6071f4da": "An error occurred.",
   "0a75e464d833bca8": "Ajustes",
   "6aa1c88c4fa5be28": "Diagnóstico",
   "fb29e435b1219373": "Licencias de código abierto",
@@ -63,12 +77,27 @@
   "f41ea186c275b56e": "Acerca de",
   "af4b7734da1d5ce7": "Voz",
   "2a546119bf3879ee": "Archivo",
+  "7cf24feddad00a5e": "Preferences",
   "2632f324dc2d9c48": "Agentes",
   "58058320796d28f6": "Código",
   "1a07e4d043f5df4e": "Conexiones",
+  "bda5af471ef547e0": "More",
   "e5144f91364fd9b7": "Formato de hora",
   "7e4d81ca21a72019": "Confirmación al desfijar",
   "1d5052cbe70d0b28": "Confirmación al archivar",
   "d5dd27a4eb853248": "Confirmación al eliminar",
-  "86b43caa9ff41ea2": "Atajo para salir"
+  "86b43caa9ff41ea2": "Atajo para salir",
+  "20283eb1dd6119f9": "{count, plural, one {{count} attachment} other {{count} attachments}}",
+  "ffedb03b620f97a9": "Unsent draft",
+  "3f0d3c192663b1fe": "Discard draft",
+  "90a349d827d1dcf5": "Discard draft",
+  "bf9b64067962d8fa": "What's changed",
+  "f2558154d4c241ee": [
+    "Changes in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 
 import {
@@ -114,7 +115,13 @@ export function SidebarUpdateReleaseNotes({
                 )
               ) : (
                 <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                  {index === 0 ? (
+                    <T>What's changed</T>
+                  ) : (
+                    <T>
+                      Changes in <Var>{releaseNote.version}</Var>
+                    </T>
+                  )}
                 </h3>
               )}
               {releaseNote.intro ? (

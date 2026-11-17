@@ -19,6 +19,7 @@ import {
   PlayIcon,
   WrenchIcon,
 } from "lucide-react";
+import { T } from "gt-react";
 import React, { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -475,8 +476,10 @@ function ProjectScriptEditorForm({
                 onKeyDown={captureKeybinding}
               />
               <p className="text-xs text-muted-foreground">
-                Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
-                environment-wide. Projects using the same action share its shortcut.
+                <T>
+                  Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
+                  environment-wide. Projects using the same action share its shortcut.
+                </T>
               </p>
             </div>
             <div className="space-y-1.5">

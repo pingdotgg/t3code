@@ -583,6 +583,23 @@ export default defineConfig({
           ],
         },
       },
+      // Off until the translation pass lands; `vp run i18n:untranslated` counts what is left.
+      ...(process.env.T3_LINT_UNTRANSLATED_COPY === "1"
+        ? [
+            {
+              files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+              excludeFiles: [
+                "**/*.{test,spec,bench}.{ts,tsx}",
+                "**/{test,testkit,testing,fixtures}/**",
+                "**/*.test-fixtures.ts",
+                "apps/mobile/src/test-fixtures.ts",
+                "apps/mobile/src/features/development/**",
+                "packages/client-runtime/src/rpc/**",
+              ],
+              rules: { "t3code/no-untranslated-copy": "warn" as const },
+            },
+          ]
+        : []),
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],

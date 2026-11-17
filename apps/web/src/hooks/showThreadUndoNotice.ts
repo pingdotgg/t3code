@@ -3,9 +3,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { m, type MessageResolver } from "../i18n/messages";
 import { shortcutLabelForCommand } from "../keybindings";
 import { announce, cancelAnnouncement } from "../lib/announce";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -37,17 +39,22 @@ const UNDONE_ACTION = {
 } satisfies Record<UndoOptions["action"], string>;
 
 function countLabel(action: UndoOptions["action"], count: number) {
-  const noun = action === "Discarded" ? "draft" : "thread";
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return action === "Discarded"
+    ? m(msg("{count, plural, one {{count} draft} other {{count} drafts}}", { count }))
+    : m(msg("{count, plural, one {{count} thread} other {{count} threads}}", { count }));
 }
 
 function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "count">): string {
   return `${notice.action} ${countLabel(notice.action, notice.count)}`;
 }
 
-export function threadUndoLabel(keybindings: Parameters<typeof shortcutLabelForCommand>[0]) {
+/** Components pass `useMessages()` so the label follows a language switch. */
+export function threadUndoLabel(
+  keybindings: Parameters<typeof shortcutLabelForCommand>[0],
+  resolve: MessageResolver = m,
+) {
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  return shortcut ? `${shortcut} to undo` : "Undo";
+  return shortcut ? resolve(msg("{shortcut} to undo", { shortcut })) : resolve(msg("Undo"));
 }
 
 let announcedSummary: string | null = null;
@@ -107,7 +114,7 @@ function refreshNotice() {
               stackedThreadToast({
                 type: "error",
                 title: failureTitle,
-                description: error instanceof Error ? error.message : "An error occurred.",
+                description: error instanceof Error ? error.message : m(msg("An error occurred.")),
               }),
             );
           };
