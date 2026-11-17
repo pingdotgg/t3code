@@ -6,6 +6,8 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  BROWSER_LOGIN_TIMEOUT_MS,
+  BrowserLoginError,
   DeviceId,
   DeviceOperationError,
   EnvironmentId,
@@ -15,6 +17,7 @@ import {
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
+  SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -643,6 +646,68 @@ it.effect("checks each preview_act action against that action's own input", () =
 
       yield* callTool("preview_act", { action: "type", selector: "#name", text: "Ada" });
       expect(inputs.at(-2)).toEqual({ selector: "#name", text: "Ada" });
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("returns a failed login fill as its fixed reason, never the host's text", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const secret = "SENTINEL-login-secret";
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const requests: Array<{ operation: string; input: unknown; timeoutMs: number }> = [];
+      const events = yield* broker.connect({
+        clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID,
+        environmentId: invocation.environmentId,
+        supportedOperations: ["fillLogin"],
+      });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        requests.push(event.request);
+        return broker.respond({
+          clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID,
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: false,
+          error: { _tag: "BrowserLoginError", message: secret, detail: { reason: "fillFailed" } },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const traced = recordSpans();
+
+      const result = yield* callTool("preview_act", {
+        action: "fillLogin",
+        itemId: "acme1",
+        field: "password",
+        locator: "aria-ref=e3",
+      }).pipe(Effect.withTracer(traced.tracer));
+
+      expect(
+        requests.map(({ operation, input, timeoutMs }) => ({ operation, input, timeoutMs })),
+      ).toEqual([
+        {
+          operation: "fillLogin",
+          input: { itemId: "acme1", field: "password", locator: "aria-ref=e3" },
+          timeoutMs: BROWSER_LOGIN_TIMEOUT_MS,
+        },
+      ]);
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: new BrowserLoginError({ reason: "fillFailed" }).message },
+      ]);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      for (const span of traced.spans) {
+        expect(JSON.stringify(Object.fromEntries(span.attributes))).not.toContain(secret);
+      }
+
+      const missingLocator = yield* callTool("preview_act", {
+        action: "fillLogin",
+        itemId: "acme1",
+        field: "password",
+      });
+      expect(missingLocator.isError).toBe(true);
+      expect(requests).toHaveLength(1);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

@@ -17,6 +17,8 @@ import {
   ServerSettingsPatch,
   UsageLimitSourceId,
   type SimlockDeviceHostConfig,
+  AuthProvidersManageScope,
+  requiredScopesForServerSettingsPatch,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -340,6 +342,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }
       assert.deepStrictEqual((yield* service.getSettings).secretProviders, {});
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "saves browser logins only for a saved provider that lists logins, and clears them",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const write = (patch: unknown) =>
+          decodeServerSettingsPatch(patch).pipe(Effect.flatMap(service.updateSettings));
+        const missing = yield* Effect.flip(
+          write({ browserLogins: { provider: "personal", vault: "Agents" } }),
+        );
+        assert.deepInclude(missing, { operation: "write-browser-logins" });
+        const saved = yield* write({
+          secretProviders: {
+            personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          },
+          browserLogins: { provider: "personal", vault: "Agents" },
+        });
+        assert.deepStrictEqual(saved.browserLogins, { provider: "personal", vault: "Agents" });
+        const cleared = yield* write({ browserLogins: null });
+        assert.strictEqual(cleared.browserLogins, undefined);
+        assert.deepStrictEqual(requiredScopesForServerSettingsPatch({ browserLogins: null }), [
+          AuthProvidersManageScope,
+        ]);
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("saves through a symlinked settings file without replacing the link", () =>
@@ -1898,6 +1926,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         },
       }).pipe(Effect.flatMap(service.updateSettings));
       yield* service.updateSettings({
+        browserLogins: { provider: SecretProviderId.make("personal"), vault: "Agents" },
         providerInstances: {
           [instanceId]: {
             driver: ProviderDriverKind.make("antigravity"),
@@ -1960,6 +1989,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
+      assert.strictEqual(removed.browserLogins, undefined);
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 

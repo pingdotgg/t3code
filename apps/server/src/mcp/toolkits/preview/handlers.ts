@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import {
+  BROWSER_LOGIN_TIMEOUT_MS,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
   PreviewAutomationRecordingTransferError,
@@ -21,6 +22,7 @@ import {
   type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationStatus,
   type PreviewTabId,
+  type BrowserLoginsList,
 } from "@t3tools/contracts";
 
 import {
@@ -242,10 +244,17 @@ const handlers = {
         invokeTargeted<object>(
           action,
           decoded,
-          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+          action === "fillLogin"
+            ? BROWSER_LOGIN_TIMEOUT_MS
+            : "timeoutMs" in decoded
+              ? decoded.timeoutMs
+              : undefined,
         ),
       ),
     ),
+  ),
+  preview_logins: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<BrowserLoginsList>("listLogins", input ?? {}, BROWSER_LOGIN_TIMEOUT_MS),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(

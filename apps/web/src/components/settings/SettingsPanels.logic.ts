@@ -223,7 +223,7 @@ export function buildProviderInstanceUpdatePatch(input: {
   readonly textGenerationModelSelection?:
     | ServerSettings["textGenerationModelSelection"]
     | undefined;
-}): Partial<UnifiedSettings> {
+}): Partial<Pick<UnifiedSettings, "providerInstances" | "textGenerationModelSelection">> {
   return {
     providerInstances: {
       ...input.settings.providerInstances,

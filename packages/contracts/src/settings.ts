@@ -24,6 +24,7 @@ import {
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
+import { BrowserLoginsSettings } from "./browserLogins.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { containsSecretReference, SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
@@ -1588,6 +1589,8 @@ export const ServerSettings = Schema.Struct({
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Absent or invalid turns browser login fills off. */
+  browserLogins: ForwardCompatibleOptional(BrowserLoginsSettings),
 
   usageHistoryRetentionDays: UsageHistoryRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(92)),
@@ -1743,6 +1746,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "remove-stale-secret",
   "write-secret",
   "write-secret-provider",
+  "write-browser-logins",
   "write-file",
   "prepare-directory",
   "write-managed-setting",
@@ -1980,6 +1984,8 @@ export const ServerSettingsPatch = Schema.Struct({
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
   ),
+  // Replaced whole; null turns browser login fills off.
+  browserLogins: Schema.optionalKey(Schema.NullOr(BrowserLoginsSettings)),
 
   usageHistoryRetentionDays: Schema.optionalKey(UsageHistoryRetentionDays),
 
@@ -2013,7 +2019,9 @@ export function requiredScopesForServerSettingsPatch(
       key === "providerInstances" ||
       key === "usageLimitSources" ||
       key === "textGenerators" ||
-      key === "secretProviders"
+      key === "secretProviders" ||
+      // Choosing the vault every agent can fill logins from is provider authority.
+      key === "browserLogins"
     ) {
       changesProviders = true;
     } else {

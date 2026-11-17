@@ -317,6 +317,17 @@ import {
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
+  BrowserLoginError,
+  BrowserLoginsCheckInput,
+  BrowserLoginsCheckResult,
+  BrowserLoginsFillForTabInput,
+  BrowserLoginsFillResult,
+  BrowserLoginsList,
+  BrowserLoginsListForTabInput,
+  BrowserLoginsListVaultsInput,
+  BrowserLoginsListVaultsResult,
+} from "./browserLogins.ts";
+import {
   DeviceActionInput,
   DeviceCloseInput,
   DeviceConfigureInput,
@@ -517,6 +528,10 @@ export const WS_METHODS = {
   previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
   previewStopLocalServer: "preview.stopLocalServer",
+  browserLoginsListForTab: "browserLogins.listForTab",
+  browserLoginsFillForTab: "browserLogins.fillForTab",
+  browserLoginsListVaults: "browserLogins.listVaults",
+  browserLoginsCheck: "browserLogins.check",
 
   deviceConfigure: "device.configure",
   deviceList: "device.list",
@@ -1869,6 +1884,30 @@ const WsPreviewStopLocalServerRpc = Rpc.make(WS_METHODS.previewStopLocalServer, 
   error: Schema.Union([PreviewStopLocalServerError, EnvironmentAuthorizationError]),
 });
 
+const WsBrowserLoginsListForTabRpc = Rpc.make(WS_METHODS.browserLoginsListForTab, {
+  payload: BrowserLoginsListForTabInput,
+  success: BrowserLoginsList,
+  error: Schema.Union([BrowserLoginError, EnvironmentAuthorizationError]),
+});
+
+const WsBrowserLoginsFillForTabRpc = Rpc.make(WS_METHODS.browserLoginsFillForTab, {
+  payload: BrowserLoginsFillForTabInput,
+  success: BrowserLoginsFillResult,
+  error: Schema.Union([BrowserLoginError, EnvironmentAuthorizationError]),
+});
+
+const WsBrowserLoginsListVaultsRpc = Rpc.make(WS_METHODS.browserLoginsListVaults, {
+  payload: BrowserLoginsListVaultsInput,
+  success: BrowserLoginsListVaultsResult,
+  error: Schema.Union([BrowserLoginError, EnvironmentAuthorizationError]),
+});
+
+const WsBrowserLoginsCheckRpc = Rpc.make(WS_METHODS.browserLoginsCheck, {
+  payload: BrowserLoginsCheckInput,
+  success: BrowserLoginsCheckResult,
+  error: Schema.Union([BrowserLoginError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(WS_METHODS.subscribeDiscoveredLocalServers, {
   payload: Schema.Struct({
     configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
@@ -2441,6 +2480,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewReportStatusRpc,
   WsSubscribePreviewEventsRpc,
   WsPreviewStopLocalServerRpc,
+  WsBrowserLoginsListForTabRpc,
+  WsBrowserLoginsFillForTabRpc,
+  WsBrowserLoginsListVaultsRpc,
+  WsBrowserLoginsCheckRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
   WsDeviceListRpc,

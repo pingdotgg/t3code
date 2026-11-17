@@ -240,6 +240,7 @@ export const make = Effect.gen(function* () {
       databaseStorage: true,
       otlpEndpointCheck: true,
       secretSourceCheck: true,
+      browserLogins: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,

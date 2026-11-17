@@ -15,6 +15,11 @@ import {
   type PreviewReportProfilesInput,
   type PreviewReportStatusInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
+  BrowserLoginError,
+  type BrowserLoginsFillForTabInput,
+  type BrowserLoginsFillResult,
+  type BrowserLoginsList,
+  type BrowserLoginsListForTabInput,
   PreviewViewportSetting as PreviewViewportSettingSchema,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type PreviewAutomationActionEvent,
@@ -23,6 +28,7 @@ import {
   type PreviewAutomationConsoleEntry,
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
+  type PreviewAutomationFillLoginInput,
   type PreviewAutomationHoverInput,
   type PreviewAutomationLoadError,
   type PreviewAutomationNavigateInput,
@@ -63,6 +69,7 @@ import * as FileSystem from "effect/FileSystem";
 import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -83,6 +90,7 @@ import type {
 } from "playwright-core";
 
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
+import * as BrowserLogins from "../browserLogins/BrowserLogins.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -295,6 +303,15 @@ export class ServerBrowser extends Context.Service<
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
 
+    /** The logins for a tab's page, for the person driving it. */
+    readonly listLogins: (
+      input: BrowserLoginsListForTabInput,
+    ) => Effect.Effect<BrowserLoginsList, BrowserLoginError>;
+    /** Fills a login into a tab's page for the person driving it, through the agent's fill path. */
+    readonly fillLogins: (
+      input: BrowserLoginsFillForTabInput,
+    ) => Effect.Effect<BrowserLoginsFillResult, BrowserLoginError>;
+
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
 >()("t3/preview/ServerBrowser") {}
@@ -420,6 +437,7 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
   "status",
   "snapshot",
   "waitFor",
+  "listLogins",
 ]);
 
 const AGENT_TAB_LIMIT = 8;
@@ -574,6 +592,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+  const browserLogins = yield* BrowserLogins.BrowserLogins;
   const agentTurns = yield* (yield* PreviewAgentActivity.PreviewAgentActivity).changes;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -2096,9 +2115,14 @@ const make = Effect.gen(function* () {
         ...profileStatus(),
       };
     }
-    const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
+    const url = ServerBrowserPage.withoutFilledLogins(
+      tab.page,
+      ServerBrowserPage.withoutDataPayload(tab.page.url()),
+    );
     const loadError = loadErrorOf(tab);
-    const statusUrl = loadError?.url ?? (url === "about:blank" ? null : url);
+    const statusUrl =
+      (loadError && ServerBrowserPage.withoutFilledLogins(tab.page, loadError.url)) ??
+      (url === "about:blank" ? null : url);
     const [viewport, title] = await Promise.all([
       // A late measurement still lands in desktopViewport for the next status.
       tab.desktop
@@ -2109,7 +2133,9 @@ const make = Effect.gen(function* () {
         : withinStatusDeadline(
             tab.page.title().catch(() => ""),
             () => "",
-          ).then((title) => title || null),
+          ).then((title) =>
+            title ? ServerBrowserPage.withoutFilledLogins(tab.page, title) : null,
+          ),
     ]);
     return {
       available: true,
@@ -2892,6 +2918,17 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "scroll", () =>
           ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
         );
+      case "listLogins":
+        return runPromise(browserLogins.list({ tabUrl: tab.page.url() }));
+      case "fillLogin": {
+        const { itemId, field, locator } = input as PreviewAutomationFillLoginInput;
+        await recordAction(tab, "fillLogin", () =>
+          ServerBrowserPage.fillLogin(tab.page, locator, field, (origin) =>
+            runPromise(browserLogins.secretFor({ itemId, field, origin })).then(Redacted.value),
+          ),
+        );
+        return undefined;
+      }
       case "evaluate":
         return ServerBrowserPage.evaluate(
           tab.cdp,
@@ -3503,9 +3540,52 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  const isBrowserLoginError = Schema.is(BrowserLoginError);
+  const humanTab = (threadId: string, tabId: string) =>
+    findTab(threadId, tabId).pipe(
+      Effect.mapError((error) =>
+        isTabNotFound(error)
+          ? new BrowserLoginError({ reason: "tabNotFound" })
+          : new BrowserLoginError({ reason: "fillFailed" }),
+      ),
+    );
+
+  const listLogins: ServerBrowser["Service"]["listLogins"] = Effect.fn("ServerBrowser.listLogins")(
+    function* ({ threadId, tabId }) {
+      const tab = yield* humanTab(threadId, tabId);
+      return yield* browserLogins.list({ tabUrl: tab.page.url() });
+    },
+  );
+
+  const fillLogins: ServerBrowser["Service"]["fillLogins"] = Effect.fn("ServerBrowser.fillLogins")(
+    function* ({ threadId, tabId, itemId, fill }) {
+      const tab = yield* humanTab(threadId, tabId);
+      const fields = fill === "otp" ? (["otp"] as const) : (["username", "password"] as const);
+      return yield* Effect.tryPromise({
+        // Queued behind the tab's running work, like any other change to its page.
+        try: () =>
+          tab.control.system(() => {
+            // Like typing, a person fills only a tab no agent is driving.
+            if (tab.control.agentId !== null && tab.control.controller === null)
+              throw new BrowserLoginError({ reason: "agentControl" });
+            return recordAction(tab, "fillLogin", () =>
+              ServerBrowserPage.fillLoginFields(tab.page, fields, (field, origin) =>
+                runPromise(browserLogins.secretFor({ itemId, field, origin })).then(Redacted.value),
+              ),
+            );
+          }),
+        // Anything else could quote the page or the value, so it becomes a fixed reason.
+        catch: (cause) =>
+          isBrowserLoginError(cause) ? cause : new BrowserLoginError({ reason: "fillFailed" }),
+      });
+    },
+  );
+
   return ServerBrowser.of({
     attachViewer,
     clearProfile,
+    listLogins,
+    fillLogins,
     profileReporter,
     openDownload,
     answerFileChooser,

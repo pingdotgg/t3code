@@ -76,6 +76,7 @@ import { showPreviewPopup } from "./showPreviewPopup";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu, type PreviewMoreMenuActions } from "./PreviewMoreMenu";
+import { PreviewLoginsButton, usePreviewLoginsAvailable } from "./PreviewLoginsButton";
 import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
@@ -237,6 +238,7 @@ export function PreviewView({
     );
   }, [serverToolbarShown]);
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
+  const [agentControlledTabId, setAgentControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
   const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
   // A desktop page that mounted before its tab went headless leaves its stale state here.
@@ -389,6 +391,20 @@ export function PreviewView({
     !isServerTab &&
     !showEmptyState &&
     !isUnreachable;
+  const loginsUrl = isUnreachable || showEmptyState ? "" : url;
+  const loginsAvailable =
+    usePreviewLoginsAvailable(threadRef.environmentId, loginsUrl) &&
+    serverOwnsRendering &&
+    tabId !== null;
+  const [loginsOpenTabId, setLoginsOpenTabId] = useState<string | null>(null);
+  const handleLogins = () => {
+    if (!loginsAvailable) {
+      toastManager.add({ type: "info", title: gt("No logins can fill this page") });
+      return;
+    }
+    setLoginsOpenTabId(tabId);
+  };
+
   const handleFind = () => {
     if (!canFindInPage) {
       toastManager.add({ type: "info", title: gt("Find on page isn't available for this page") });
@@ -519,6 +535,7 @@ export function PreviewView({
         resetZoom: handleResetZoom,
         clearCookies: () => void adjustServerTab({ clear: "cookies" }),
         clearCache: () => void adjustServerTab({ clear: "cache" }),
+        ...(loginsAvailable ? { logins: handleLogins } : {}),
         ...(nativeServerTab && previewBridge
           ? {
               openDevTools: desktopCall(previewBridge.openDevTools),
@@ -955,6 +972,9 @@ export function PreviewView({
         case "find":
           handleFind();
           return;
+        case "logins":
+          handleLogins();
+          return;
         case "toggle-panel":
           return;
       }
@@ -972,6 +992,7 @@ export function PreviewView({
       if (action === "preview.zoomOut") onPreviewAction("zoom-out");
       if (action === "preview.resetZoom") onPreviewAction("reset-zoom");
       if (action === "preview.find") onPreviewAction("find");
+      if (action === "preview.logins") onPreviewAction("logins");
     });
     return () => {
       unsubscribeAction();
@@ -1036,33 +1057,49 @@ export function PreviewView({
           ) : null
         }
         trailingActions={
-          moreMenuActions ? (
-            <PreviewMoreMenu
-              enabled={
-                runtimeTabId !== null &&
-                (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
-              }
-              actions={moreMenuActions}
-              {...(moveTarget
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
-                : {})}
-              profileName={activeProfileName}
-              findShortcutLabel={shortcutLabelForCommand(keybindings, "preview.find", {
-                context: { previewFocus: true },
-              })}
-              zoomFactor={
-                serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
-              }
-              colorScheme={
-                serverOwnsRendering
-                  ? (snapshot?.colorScheme ?? "system")
-                  : (desktopOverlay?.colorScheme ?? "system")
-              }
-              deviceToolbarVisible={viewport._tag !== "fill"}
-              onToggleDeviceToolbar={handleToggleDeviceToolbar}
-              nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
-            />
-          ) : null
+          <>
+            {loginsAvailable && tabId ? (
+              <PreviewLoginsButton
+                environmentId={threadRef.environmentId}
+                threadId={threadRef.threadId}
+                tabId={tabId}
+                url={loginsUrl}
+                agentControls={agentControlledTabId === runtimeTabId}
+                open={loginsOpenTabId === tabId}
+                onOpenChange={(open) => setLoginsOpenTabId(open ? tabId : null)}
+              />
+            ) : null}
+            {moreMenuActions ? (
+              <PreviewMoreMenu
+                enabled={
+                  runtimeTabId !== null &&
+                  (serverOwnsRendering || (desktopOverlay?.hasWebContents ?? false))
+                }
+                actions={moreMenuActions}
+                {...(moveTarget
+                  ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                  : {})}
+                profileName={activeProfileName}
+                findShortcutLabel={shortcutLabelForCommand(keybindings, "preview.find", {
+                  context: { previewFocus: true },
+                })}
+                loginsShortcutLabel={shortcutLabelForCommand(keybindings, "preview.logins", {
+                  context: { previewFocus: true },
+                })}
+                zoomFactor={
+                  serverOwnsRendering ? serverZoomFactor : (desktopOverlay?.zoomFactor ?? 1)
+                }
+                colorScheme={
+                  serverOwnsRendering
+                    ? (snapshot?.colorScheme ?? "system")
+                    : (desktopOverlay?.colorScheme ?? "system")
+                }
+                deviceToolbarVisible={viewport._tag !== "fill"}
+                onToggleDeviceToolbar={handleToggleDeviceToolbar}
+                nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+              />
+            ) : null}
+          </>
         }
       />
 
@@ -1106,9 +1143,10 @@ export function PreviewView({
                 }
                 visible={visible}
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
-                onControl={(control) =>
-                  setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
-                }
+                onControl={(control) => {
+                  setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null);
+                  setAgentControlledTabId(control?.controller === "agent" ? runtimeTabId : null);
+                }}
                 onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "panel")}
                 // Stays connected under the empty state so a URL picked there reaches the page.
                 className="absolute inset-0 h-full w-full"

@@ -19,6 +19,12 @@ import { WS_METHODS } from "./rpc.ts";
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  // Listing names a vault's logins and filling types a secret into a page: browser operators only.
+  [WS_METHODS.browserLoginsListForTab]: AuthPreviewOperateScope,
+  [WS_METHODS.browserLoginsFillForTab]: AuthPreviewOperateScope,
+  // Choosing the vault agents fill from is provider authority, as saving `browserLogins` is.
+  [WS_METHODS.browserLoginsListVaults]: AuthProvidersManageScope,
+  [WS_METHODS.browserLoginsCheck]: AuthProvidersManageScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,

@@ -35,6 +35,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
+import * as BrowserLogins from "../browserLogins/BrowserLogins.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
@@ -538,6 +539,7 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  Layer.mock(BrowserLogins.BrowserLogins)({}),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -621,6 +623,24 @@ beforeEach(() => {
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
+
+it.effect("a person's login fill waits for them to take control from the agent", () =>
+  Effect.gen(function* () {
+    const { browser, tabId } = yield* ready;
+    const fill = {
+      threadId: scope.thread.threadId,
+      tabId,
+      itemId: "item1",
+      fill: "login" as const,
+    };
+    const refused = yield* browser.fillLogins(fill).pipe(Effect.flip);
+    expect(refused.reason).toBe("agentControl");
+    const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+    yield* viewer.input({ type: "takeControl" });
+    const afterTakeover = yield* browser.fillLogins(fill).pipe(Effect.flip);
+    expect(afterTakeover.reason).not.toBe("agentControl");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
 
 it.effect("tells the desktop once per thread when its agent turns start and end", () =>
   Effect.gen(function* () {

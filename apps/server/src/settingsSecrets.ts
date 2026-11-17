@@ -276,7 +276,9 @@ export function withoutRemovedSecretProviderReferences(
   );
   if (removed.size === 0) return next;
   const isRemoved = (value: unknown) => isSecretReference(value) && removed.has(value.provider);
-  const fields = mapSettingsSecretValues(next, (value) => (isRemoved(value) ? "" : value));
+  const { browserLogins, ...rest } = next;
+  const kept = browserLogins !== undefined && removed.has(browserLogins.provider) ? rest : next;
+  const fields = mapSettingsSecretValues(kept, (value) => (isRemoved(value) ? "" : value));
   return {
     ...fields,
     providerInstances: Object.fromEntries(

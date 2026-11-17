@@ -404,6 +404,7 @@ export function applyServerSettingsPatch(
     usageLimitSources: usageLimitSourcesPatch,
     textGenerators: textGeneratorsPatch,
     secretProviders: secretProvidersPatch,
+    browserLogins: browserLoginsPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
@@ -501,7 +502,15 @@ export function applyServerSettingsPatch(
       },
     };
   }
-  const next = deepMerge(current, patchForMerge);
+  const merged = deepMerge(current, patchForMerge);
+  // Replaced whole, never merged: a vault from one provider must not stay with another.
+  const { browserLogins: _browserLogins, ...withoutBrowserLogins } = merged;
+  const next =
+    browserLoginsPatch === undefined
+      ? merged
+      : browserLoginsPatch === null
+        ? withoutBrowserLogins
+        : { ...merged, browserLogins: browserLoginsPatch };
   const nextWithReplacementsBase = {
     ...next,
     favorites,

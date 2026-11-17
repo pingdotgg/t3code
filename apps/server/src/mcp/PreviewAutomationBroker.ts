@@ -1,4 +1,6 @@
 import {
+  BrowserLoginError,
+  BrowserLoginErrorReason,
   PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationControlInterruptedError,
@@ -169,6 +171,7 @@ const hostAssignmentKey = (scope: McpInvocationContext.McpThreadInvocationScope)
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 const decodeControlReason = Schema.decodeUnknownOption(PreviewAutomationControlReason);
+const decodeBrowserLoginReason = Schema.decodeUnknownOption(BrowserLoginErrorReason);
 
 const readResultTabId = (result: unknown): PreviewTabId | null | undefined => {
   if (typeof result !== "object" || result === null || !("tabId" in result)) return undefined;
@@ -345,6 +348,12 @@ const classifyResponseError = (
         ...remoteDiagnostics,
         ...(maximumBytes === undefined ? {} : { maximumBytes }),
       });
+    }
+    case "BrowserLoginError": {
+      const reason = decodeBrowserLoginReason(readRemoteReason(error.detail));
+      return Option.isSome(reason)
+        ? new BrowserLoginError({ reason: reason.value })
+        : new PreviewAutomationExecutionError({ ...context, ...remoteDiagnostics });
     }
     case "PreviewAutomationUnavailableError":
       return new PreviewAutomationRemoteUnavailableError({

@@ -266,6 +266,16 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_logins: tool(
+    ["List", "Listing", "Listed", "saved logins for the preview page"],
+    "browser",
+    "browser",
+  ),
+  preview_fillLogin: tool(
+    ["Fill", "Filling", "Filled", "a saved login in the preview browser"],
+    "browser",
+    "browser",
+  ),
   preview_resize: tool(
     ["Resize", "Resizing", "Resized", "the preview browser"],
     "browser",
