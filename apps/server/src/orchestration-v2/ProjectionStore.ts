@@ -9106,14 +9106,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 THEN json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
                 ELSE 0 END
             )
-            -- Only a thread with a pull request link reads its payload.
-            OR (
-              ${indexedField("$.pullRequests[0]", "json_type")} IS NOT NULL
-              AND EXISTS (
+            -- Only a thread with a pull request link reads its payload. CASE, not AND: SQLite
+            -- 3.50 evaluates both AND operands here.
+            OR CASE WHEN ${indexedField("$.pullRequests[0]", "json_type")} IS NOT NULL
+              THEN EXISTS (
                 SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
                 WHERE json_type(link.value, '$.watch') IS NOT NULL
               )
-            )
+              ELSE 0 END
           ) AS may_be_live,
           -- One list for the whole read, found through the child_thread_id index. A lookup per
           -- thread would parse the payload of every subagent row.
