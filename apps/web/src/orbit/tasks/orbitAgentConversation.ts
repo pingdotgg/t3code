@@ -3,11 +3,7 @@ import {
   createOrbitGatewayClient,
   type OrbitConversationRef,
 } from "@t3tools/client-runtime/orbit-gateway";
-import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
@@ -15,7 +11,6 @@ import { environmentCatalog } from "~/connection/catalog";
 import { pullRequestLinkPanelTarget } from "~/lib/openPullRequestLink";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { orchestrationEnvironment } from "~/state/orchestration";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "~/threadRoutes";
 import { desktopOrbitGatewayTransport } from "../desktopOrbitGateway";
 import { connectOrbitEnvironment } from "../environmentProvider";
@@ -84,21 +79,6 @@ export function useOrbitTaskNavigation(threadKey: string) {
         source,
         isCurrent,
         prepare: prepareEnvironment,
-        exists: async (target) => {
-          const result = await executeAtomQuery(
-            appAtomRegistry,
-            orchestrationEnvironment.threadLinkMetadata({
-              environmentId: target.environmentId,
-              input: { threadIds: [target.threadId] },
-            }),
-            { refresh: true, reportFailure: false, signal: AbortSignal.timeout(15_000) },
-          );
-          if (result._tag !== "Success")
-            throw new Error(
-              "The conversation's environment is unavailable. Reconnect it in Connections, then try again.",
-            );
-          return result.value[target.threadId] !== undefined;
-        },
         handoff: (from, to) => {
           tasksPanelActions().handoff(scopedThreadKey(from), scopedThreadKey(to));
           copyTasksPanelWidth(scopedThreadKey(from), scopedThreadKey(to), window.localStorage);

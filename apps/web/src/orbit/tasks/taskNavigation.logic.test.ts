@@ -32,7 +32,6 @@ function setup() {
     source: origin,
     isCurrent: () => true,
     prepare: async () => {},
-    exists: async () => true,
     handoff: (from, to) => {
       tasksPanelActions().handoff(scopedThreadKey(from), scopedThreadKey(to));
       useRightPanelStore.getState().open(to, "tasks");
@@ -70,7 +69,7 @@ describe("Orbit task navigation", () => {
     }
   });
 
-  it("does not navigate or hand off when the environment or authoritative thread lookup fails", async () => {
+  it("does not navigate or hand off when the environment cannot be prepared", async () => {
     const { ports, navigated } = setup();
     for (const message of ["Workspace asleep", "Environment unavailable", "Pairing refused"]) {
       await expect(
@@ -82,35 +81,32 @@ describe("Orbit task navigation", () => {
         }),
       ).rejects.toThrow(message);
     }
-    await expect(
-      openOrbitAgentConversation(remote, { ...ports, exists: async () => false }),
-    ).rejects.toThrow("no longer available");
     expect(navigated).toEqual([]);
     expect(useTasksPanelStore.getState().byThreadKey[scopedThreadKey(remote)]).toBeUndefined();
   });
 
-  it("does not finish an old click after the user leaves during its lookup", async () => {
+  it("does not finish an old click after the user leaves during pairing", async () => {
     const { ports, navigated } = setup();
-    let release!: (value: boolean) => void;
-    const lookedUp = new Promise<boolean>((resolve) => {
+    let release!: () => void;
+    const paired = new Promise<void>((resolve) => {
       release = resolve;
     });
     let entered!: () => void;
-    const lookupStarted = new Promise<void>((resolve) => {
+    const pairingStarted = new Promise<void>((resolve) => {
       entered = resolve;
     });
     let current = true;
     const opened = openOrbitAgentConversation(remote, {
       ...ports,
       isCurrent: () => current,
-      exists: () => {
+      prepare: () => {
         entered();
-        return lookedUp;
+        return paired;
       },
     });
-    await lookupStarted;
+    await pairingStarted;
     current = false;
-    release(true);
+    release();
     await opened;
     expect(navigated).toEqual([]);
     expect(useTasksPanelStore.getState().byThreadKey[scopedThreadKey(remote)]).toBeUndefined();

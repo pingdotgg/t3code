@@ -9,7 +9,6 @@ export interface OrbitAgentNavigationPorts {
   readonly source: ScopedThreadRef;
   readonly isCurrent: () => boolean;
   readonly prepare: (target: OrbitConversationRef) => Promise<void>;
-  readonly exists: (target: OrbitConversationRef) => Promise<boolean>;
   readonly handoff: (source: ScopedThreadRef, target: ScopedThreadRef) => void;
   readonly navigate: (target: ScopedThreadRef) => Promise<void>;
 }
@@ -20,8 +19,6 @@ export async function openOrbitAgentConversation(
   ports: OrbitAgentNavigationPorts,
 ): Promise<void> {
   await ports.prepare(ref);
-  if (!ports.isCurrent()) return;
-  if (!(await ports.exists(ref))) throw new Error("This conversation is no longer available.");
   if (!ports.isCurrent()) return;
   const target: ScopedThreadRef = { environmentId: ref.environmentId, threadId: ref.threadId };
   if (scopedThreadKey(target) !== scopedThreadKey(ports.source))

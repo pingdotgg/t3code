@@ -54,7 +54,13 @@ import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
-import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import {
+  v2Now,
+  v2Project,
+  v2Projection,
+  v2ThreadId,
+  v2ThreadShell,
+} from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -1317,33 +1323,51 @@ describe("environment query lifecycle", () => {
     }),
   );
 
-  it.effect.each([true, false])("loads thread link metadata with server support %s", (supported) =>
-    Effect.gen(function* () {
-      const projectId = ProjectId.make("project");
-      const tag = supported
-        ? ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata
-        : ORCHESTRATION_V2_WS_METHODS.getThreadTitles;
-      const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
-        rpcSession: {
-          initialConfig: Effect.succeed({ threadLinkMetadata: supported }),
-          client: {
-            [tag]: () =>
-              Effect.succeed(supported ? { fork: { title: "Fork", projectId } } : { fork: "Fork" }),
-          },
-        } as unknown as RpcSession.RpcSession,
-      });
-      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
-        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
-      >;
-      const atom = createOrchestrationEnvironmentAtoms(runtime).threadLinkMetadata({
-        environmentId: QUERY_ENVIRONMENT.environmentId,
-        input: { threadIds: [ThreadId.make("fork")] },
-      });
-      const registry = yield* mountEnvironmentQuery(atom);
-      expect(yield* readEnvironmentQuery(registry, atom)).toEqual({
-        fork: { title: "Fork", projectId: supported ? projectId : null },
-      });
-    }),
+  it.effect.each([true, false, undefined])(
+    "loads thread link metadata with server support %s",
+    (supported) =>
+      Effect.gen(function* () {
+        const projectId = ProjectId.make("project");
+        const requested: string[] = [];
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadLinkMetadata: supported }),
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: () =>
+                Effect.sync(() => {
+                  requested.push("metadata");
+                  return { fork: { title: "Fork", projectId } };
+                }),
+              [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: () =>
+                Effect.die("Unknown request tag: orchestration.getThreadTitles"),
+              [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: ({
+                threadId,
+              }: {
+                threadId: ThreadId;
+              }) =>
+                Effect.sync(() => {
+                  requested.push(threadId);
+                  return {
+                    ...v2Projection,
+                    thread: { ...v2Projection.thread, id: threadId, title: "Fork", projectId },
+                  };
+                }),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime).threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({
+          fork: { title: "Fork", projectId },
+        });
+        expect(requested).toEqual([supported ? "metadata" : "fork"]);
+      }),
   );
 
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>

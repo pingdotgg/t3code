@@ -111,13 +111,25 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         if (config.threadLinkMetadata === true) {
           return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata, input);
         }
-        const titles = yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadTitles, input);
-        return Object.fromEntries(
-          Object.entries(titles).map(([id, title]) => [
-            id,
-            { title, projectId: null } satisfies OrchestrationV2ThreadLinkMetadata,
-          ]),
+        // Stock servers expose the projection read, but neither fork metadata RPC.
+        const entries = yield* Effect.forEach(input.threadIds, (threadId) =>
+          request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId }).pipe(
+            Effect.map(({ thread }) =>
+              thread.deletedAt === null
+                ? [
+                    [
+                      threadId,
+                      {
+                        title: thread.title,
+                        projectId: thread.projectId,
+                      } satisfies OrchestrationV2ThreadLinkMetadata,
+                    ] as const,
+                  ]
+                : [],
+            ),
+          ),
         );
+        return Object.fromEntries(entries.flat());
       }),
     }),
     threadTranscript: createEnvironmentCommand(runtime, {
