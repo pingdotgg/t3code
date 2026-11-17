@@ -322,7 +322,7 @@ describe("GitLabIssueTracker", () => {
       });
       const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
       // The issue's own assignee comes back by login; a newly picked one by id.
-      yield* api.update!({ ...target, assignees: ["theo", "7"] });
+      yield* api.update!({ ...target, assignees: ["theo", "gid://gitlab/User/7"] });
       expect(calls).toEqual(["users?username=theo", "projects/acme%2Fweb/issues/42"]);
       expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
       const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));

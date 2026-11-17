@@ -361,6 +361,12 @@ export function decodeProjectLabelsJson(
  * id and by nothing else, so a member it named no id for is dropped rather than offered under a
  * handle the write would discard.
  */
+/**
+ * A candidate's write id is GitLab's global user id: a username cannot contain `:` or `/`, so an
+ * assignee list mixing kept usernames with picked ids stays unambiguous.
+ */
+const gitLabUserGid = (id: number) => `gid://gitlab/User/${id}`;
+
 export function decodeProjectMembersJson(
   raw: string,
 ): Result.Result<ReadonlyArray<IssueAssigneeCandidate>, DecodeFailure> {
@@ -369,7 +375,7 @@ export function decodeProjectMembersJson(
       const user = decodeUserEntry(entry);
       if (Exit.isFailure(user) || user.value.id === undefined) return [];
       const actor = toActor(user.value);
-      return actor === null ? [] : [{ ...actor, id: String(user.value.id) }];
+      return actor === null ? [] : [{ ...actor, id: gitLabUserGid(user.value.id) }];
     }),
   );
 }

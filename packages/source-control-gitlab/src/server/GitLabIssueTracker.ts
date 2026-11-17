@@ -265,7 +265,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
     };
 
     /**
-     * GitLab writes assignees by numeric id, which is what the candidates carry as `id`. An issue
+     * GitLab writes assignees by numeric id, which the candidates carry as a global id. An issue
      * names the people it already has by username, so a kept assignee is looked up.
      */
     const assigneeIds = (
@@ -273,9 +273,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       operation: string,
       assignees: ReadonlyArray<string>,
     ): Effect.Effect<ReadonlyArray<number>, IssueTrackerError> =>
-      Effect.forEach(assignees, (assignee) =>
-        /^[1-9]\d*$/.test(assignee)
-          ? Effect.succeed(Number(assignee))
+      Effect.forEach(assignees, (assignee) => {
+        const picked = /^gid:\/\/gitlab\/User\/([1-9]\d*)$/.exec(assignee);
+        return picked !== null
+          ? Effect.succeed(Number(picked[1]))
           : read({
               cwd: input.cwd,
               host: input.host,
@@ -288,8 +289,8 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   ? Effect.fail(refused(operation, `GitLab has no user named ${assignee}.`))
                   : Effect.succeed(id),
               ),
-            ),
-      );
+            );
+      });
 
     const paged = (path: string, page: number) =>
       `${path}?${query([
