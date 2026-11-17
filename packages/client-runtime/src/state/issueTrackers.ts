@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import {
   createAtomCommandScheduler,
@@ -64,16 +66,30 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
 export function issueTrackerSummary(
   tracker: IssueTrackerConnection,
   bindings: IssueTrackerConnectionList["bindings"],
+  resolve: MFunctionType = mFallback,
 ): string {
   if (!tracker.connected)
-    return `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`;
-  if (tracker.account === null) return tracker.detail ?? "The saved credential was rejected.";
+    return resolve(
+      msg("Not connected. Add a {credential} to list its issues.", {
+        credential: tracker.credential.label.toLowerCase(),
+      }),
+    );
+  if (tracker.account === null)
+    return tracker.detail ?? resolve(msg("The saved credential was rejected."));
   const linked = Object.values(bindings).filter(
     (binding) => binding.tracker === tracker.tracker,
   ).length;
-  const projects =
-    linked === 0
-      ? `no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`
-      : `${linked} ${linked === 1 ? "project" : "projects"} linked`;
-  return `Connected as ${tracker.account} · ${projects}`;
+  return linked === 0
+    ? resolve(
+        msg(
+          "Connected as {account} · no projects linked yet. Pick a {scope} for a project to list its issues.",
+          { account: tracker.account, scope: tracker.scopeNoun },
+        ),
+      )
+    : resolve(
+        msg(
+          "{count, plural, one {Connected as {account} · {count} project linked} other {Connected as {account} · {count} projects linked}}",
+          { account: tracker.account, count: linked },
+        ),
+      );
 }

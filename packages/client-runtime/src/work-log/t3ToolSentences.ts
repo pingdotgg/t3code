@@ -106,6 +106,70 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "List\nListing\nListed\nissues",
+    {
+      detail: msg(
+        "{status, select, inProgress {Listing issues} completed {Listed issues} failed {Failed to list issues} declined {Declined to list issues} stopped {Stopped listing issues} other {Listing issues}}",
+      ),
+    },
+  ],
+  [
+    "Read\nReading\nRead\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Reading an issue} completed {Read an issue} failed {Failed to read an issue} declined {Declined to read an issue} stopped {Stopped reading an issue} other {Reading an issue}}",
+      ),
+    },
+  ],
+  [
+    "File\nFiling\nFiled\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Filing an issue} completed {Filed an issue} failed {Failed to file an issue} declined {Declined to file an issue} stopped {Stopped filing an issue} other {Filing an issue}}",
+      ),
+    },
+  ],
+  [
+    "Comment on\nCommenting on\nCommented on\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Commenting on an issue} completed {Commented on an issue} failed {Failed to comment on an issue} declined {Declined to comment on an issue} stopped {Stopped commenting on an issue} other {Commenting on an issue}}",
+      ),
+    },
+  ],
+  [
+    "Change\nChanging\nChanged\nan issue's state",
+    {
+      detail: msg(
+        "{status, select, inProgress {Changing an issue's state} completed {Changed an issue's state} failed {Failed to change an issue's state} declined {Declined to change an issue's state} stopped {Stopped changing an issue's state} other {Changing an issue's state}}",
+      ),
+    },
+  ],
+  [
+    "Link\nLinking\nLinked\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Linking an issue} completed {Linked an issue} failed {Failed to link an issue} declined {Declined to link an issue} stopped {Stopped linking an issue} other {Linking an issue}}",
+      ),
+    },
+  ],
+  [
+    "Unlink\nUnlinking\nUnlinked\nan issue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Unlinking an issue} completed {Unlinked an issue} failed {Failed to unlink an issue} declined {Declined to unlink an issue} stopped {Stopped unlinking an issue} other {Unlinking an issue}}",
+      ),
+    },
+  ],
+  [
+    "Check\nChecking\nChecked\nlinked issues",
+    {
+      detail: msg(
+        "{status, select, inProgress {Checking linked issues} completed {Checked linked issues} failed {Failed to check linked issues} declined {Declined to check linked issues} stopped {Stopped checking linked issues} other {Checking linked issues}}",
+      ),
+    },
+  ],
+  [
     "Get\nGetting\nGot\norchestration capabilities",
     {
       detail: msg(
