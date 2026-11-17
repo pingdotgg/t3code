@@ -9,6 +9,7 @@ import {
   IssueOperationError,
   IssueTrackerKind,
   IssueUnavailableError,
+  SourceControlProviderKind,
   type IssueCandidates,
   type IssueCommentInput,
   type IssueCommentsPage,
@@ -327,12 +328,16 @@ const make = Effect.gen(function* () {
     );
 
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
-    const { supported, unimplemented } = yield* listProjects(input);
+    // Trackers name every host so a client narrowed to one can switch to another; only the
+    // narrowed host's scopes are read.
+    const { supported, unimplemented } = yield* listProjects({ projectId: input.projectId });
+    const host = input.host?.trim().toLowerCase();
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;
     // Worktrees of one repository are separate projects, and every repository of an Azure
     // DevOps project shares its work items; read each scope once.
     const scopes = new Map<string, SupportedProject>();
     for (const project of supported) {
+      if (host !== undefined && project.host !== host) continue;
       const key = listCursorKey(project.host, project.scope);
       if (!scopes.has(key)) scopes.set(key, project);
     }
@@ -669,10 +674,30 @@ const make = Effect.gen(function* () {
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });
 
+  /** A host whose hostname does not name it, such as GitHub Enterprise Server, is vouched for by a project on it. */
+  const parseOnProjectHost = (value: string) => {
+    const url = parseUrl(value);
+    if (url === null) return Effect.succeed(null);
+    return listProjects({ host: url.hostname, authority: url.host.toLowerCase() }).pipe(
+      Effect.map(({ supported }) => {
+        for (const project of supported) {
+          const parsed = sourceControlDefinitions.parseIssueUrl(
+            value,
+            SourceControlProviderKind.make(project.tracker),
+          );
+          if (parsed !== null) return parsed;
+        }
+        return null;
+      }),
+    );
+  };
+
   const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
     function* (url, preferredProjectId) {
-      const gitHost = sourceControlDefinitions.parseIssueUrl(url);
-      const standalone = gitHost === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
+      const recognized = sourceControlDefinitions.parseIssueUrl(url);
+      const standalone =
+        recognized === null ? findStandaloneIssueUrl(registry.standalone, url) : null;
+      const gitHost = recognized ?? (standalone === null ? yield* parseOnProjectHost(url) : null);
       const parsed =
         gitHost === null
           ? standalone

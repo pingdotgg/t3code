@@ -275,6 +275,15 @@ describe("IssueService", () => {
         host: "gitea.test",
       });
 
+      // A GitHub Enterprise Server's hostname need not say "github"; its project vouches for it.
+      const enterprise = yield* makeService({
+        projects: [project({ id: "ghes", repository: "acme/web", host: "code.acme.test" })],
+        trackers: [fakeTracker()],
+      });
+      expect(
+        yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
+      ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
+
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
       expect(elsewhere).toMatchObject({
@@ -422,6 +431,14 @@ describe("IssueService", () => {
           configured: false,
           capabilities: null,
         }),
+      ]);
+
+      // Narrowing to one host still names every tracker, so the client can switch between them.
+      const narrowed = yield* service.list({ state: "open", host: "github.com" });
+      expect(narrowed.entries.every((entry) => entry.host === "github.com")).toBe(true);
+      expect(narrowed.trackers.map((tracker) => tracker.host)).toEqual([
+        "github.com",
+        "gitlab.com",
       ]);
 
       // A continuation only reads the scopes it names.
