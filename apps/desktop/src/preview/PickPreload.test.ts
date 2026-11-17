@@ -105,3 +105,26 @@ it("keeps the annotation when Escape dismisses an IME candidate in the comment",
   expect(shadowRoot.host.isConnected).toBe(true);
   expect(comment.value).toBe("draft");
 });
+
+it("captures clicks inside a same-origin frame and releases them when annotation ends", () => {
+  const frame = document.body.appendChild(document.createElement("iframe"));
+  const frameDocument = frame.contentDocument;
+  const frameWindow = frameDocument?.defaultView;
+  if (!frameDocument || !frameWindow) throw new Error("same-origin frame did not load");
+  const button = frameDocument.body.appendChild(frameDocument.createElement("button"));
+  const click = () => {
+    const event = new frameWindow.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
+    button.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  startAnnotation();
+  expect(click(), "a click in the frame should go to the annotation, not the page").toBe(true);
+
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+  expect(click(), "the frame should be usable again after annotation ends").toBe(false);
+  frame.remove();
+});

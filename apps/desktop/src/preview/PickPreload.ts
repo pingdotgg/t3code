@@ -396,8 +396,9 @@ function intersectRects(
   left: PreviewAnnotationRect,
   right: PreviewAnnotationRect,
 ): PreviewAnnotationRect {
-  const x = Math.max(left.x, right.x);
-  const y = Math.max(left.y, right.y);
+  // Clamped into `right`, so a fully clipped rect stays on the clip's edge instead of beyond it.
+  const x = Math.min(Math.max(left.x, right.x), right.x + right.width);
+  const y = Math.min(Math.max(left.y, right.y), right.y + right.height);
   return {
     x,
     y,
@@ -1036,8 +1037,9 @@ function startAnnotation(
   let editorPosition: { left: number; top: number } | null = null;
   let editorDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null;
   let editorLayoutFrame: number | null = null;
-  // Same-origin frame documents the session listens in, with the cursor style it added to each.
-  const frames = new Map<Document, HTMLStyleElement>();
+  // Same-origin frame documents the session listens in. The window is kept because a document
+  // that navigated away reports a null defaultView while its reused window keeps our listeners.
+  const frames = new Map<Document, { view: Window; style: HTMLStyleElement }>();
 
   const resizeComment = (): void => {
     const maxHeight = 96;
@@ -1759,9 +1761,9 @@ function startAnnotation(
     finished = true;
     rootResizeObserver.disconnect();
     restoreStyles();
-    unlisten(document);
-    for (const [frame, style] of frames) {
-      unlisten(frame);
+    unlisten(document, window);
+    for (const [frame, { view, style }] of frames) {
+      unlisten(frame, view);
       frame.documentElement?.removeAttribute("data-t3code-annotation-tool");
       style.remove();
     }
@@ -1914,11 +1916,9 @@ function startAnnotation(
     submitAnnotation(submission);
   };
 
-  function listen(root: Document): void {
+  function listen(root: Document, view: Window): void {
     // A frame load stops at its document instead of reaching the window.
     root.addEventListener("load", onLoad, { capture: true, passive: true });
-    const view = root.defaultView;
-    if (!view) return;
     view.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
     view.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
     view.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
@@ -1932,10 +1932,8 @@ function startAnnotation(
     view.addEventListener("focus", onWindowFocus);
   }
 
-  function unlisten(root: Document): void {
+  function unlisten(root: Document, view: Window): void {
     root.removeEventListener("load", onLoad, true);
-    const view = root.defaultView;
-    if (!view) return;
     view.removeEventListener("pointermove", onPointerMove, true);
     view.removeEventListener("pointerdown", onPointerDown, true);
     view.removeEventListener("pointerup", onPointerUp, true);
@@ -1952,21 +1950,22 @@ function startAnnotation(
   // The preload runs only in the top frame, so input over a same-origin frame needs listeners there.
   function attachFrames(): void {
     const current = frameDocuments(document);
-    for (const [frame, style] of frames) {
+    for (const [frame, { view, style }] of frames) {
       if (current.includes(frame)) continue;
-      unlisten(frame);
+      unlisten(frame, view);
       style.remove();
       frames.delete(frame);
     }
     for (const frame of current) {
-      if (frames.has(frame) || !frame.defaultView || !frame.documentElement) continue;
+      const view = frame.defaultView;
+      if (frames.has(frame) || !view || !frame.documentElement) continue;
       const style = frame.createElement("style");
       style.setAttribute(OVERLAY_ATTRIBUTE, "");
       style.textContent = CROSSHAIR_CURSOR_CSS;
       frame.documentElement.appendChild(style);
       frame.documentElement.setAttribute("data-t3code-annotation-tool", tool);
-      listen(frame);
-      frames.set(frame, style);
+      listen(frame, view);
+      frames.set(frame, { view, style });
     }
     repaint();
   }
@@ -1975,7 +1974,7 @@ function startAnnotation(
     if (isFrameElement(event.target)) attachFrames();
   }
 
-  listen(document);
+  listen(document, window);
   attachFrames();
   // Bubble phase, so the overlay's own handlers still see these events.
   for (const type of PAGE_ISOLATED_EVENTS)
