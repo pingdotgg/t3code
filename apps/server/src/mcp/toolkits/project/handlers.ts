@@ -94,12 +94,12 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     });
 });
 
-/** Branches from the checkout's current branch, as the composer does; a checkout without one stays shared. */
+/** Branches from the checkout's current branch, as the composer does; a checkout with no commit or a detached HEAD stays shared. */
 const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(function* (
   workspaceRoot: string,
 ): Effect.fn.Return<
   OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined,
-  never,
+  OrchestratorMcpFailure,
   GitVcsDriver.GitVcsDriver
 > {
   const git = yield* GitVcsDriver.GitVcsDriver;
@@ -107,13 +107,26 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
-  const branch = hasCommit
-    ? yield* git.statusDetailsLocal(workspaceRoot).pipe(
-        Effect.map((status) => (status.isRepo ? status.branch : null)),
-        Effect.orElseSucceed(() => null),
-      )
-    : null;
-  return branch === null ? undefined : { type: "worktree" as const, baseRef: branch };
+  if (!hasCommit) return undefined;
+  // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
+  const head = yield* git
+    .execute({
+      operation: "mcp.defaultWorktreeStrategy",
+      cwd: workspaceRoot,
+      args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  if (head?.exitCode === 1) return undefined;
+  const branch = head?.exitCode === 0 ? head.stdout.trim() : "";
+  if (branch.length === 0)
+    return yield* new OrchestratorMcpFailure({
+      code: "orchestration_error",
+      message:
+        "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
+    });
+  return { type: "worktree" as const, baseRef: branch };
 });
 
 /** A fixed-length id, so a long key fits in the scratch folder name derived from it. */
