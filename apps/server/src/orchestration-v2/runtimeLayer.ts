@@ -56,6 +56,7 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadHistoryTrim from "./ThreadHistoryTrim.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -439,6 +440,7 @@ export const layerProduction = Layer.mergeAll(
   layerAgentSessionScannerProvided,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
+  ThreadHistoryTrim.layer.pipe(Layer.provide(Layer.merge(layerEventSink, IdAllocator.layer))),
   RemoteParentSettlement.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerEventSink, layerOrchestratorProvided)),
   ),

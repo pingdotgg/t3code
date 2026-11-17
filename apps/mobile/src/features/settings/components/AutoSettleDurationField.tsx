@@ -2,6 +2,7 @@ import {
   MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   MAX_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_THREAD_HISTORY_TRIM_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
 } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
@@ -27,6 +28,12 @@ const UNITS = {
     max: MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
     noun: "day",
     label: "Days settled before a thread is archived",
+  },
+  trimDay: {
+    min: 1,
+    max: MAX_THREAD_HISTORY_TRIM_AFTER_DAYS,
+    noun: "day",
+    label: "Days unused before a thread is trimmed",
   },
 } as const;
 

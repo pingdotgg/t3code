@@ -5,6 +5,7 @@ export type AutoSettleSettings = Pick<
   | "sidebarAutoSettleAfterDays"
   | "autoSettleFinishedChildrenAfterHours"
   | "autoArchiveSettledAfterDays"
+  | "threadHistoryTrimAfterDays"
 >;
 
 interface AutoSettleSyncTarget {
@@ -21,12 +22,17 @@ export function planAutoSettleSettingsSync(
     readonly settings: AutoSettleSettings;
   },
   targets: readonly AutoSettleSyncTarget[],
-  // Child auto-settle and auto-archive are environment-wide and unknown to older servers, so
-  // callers include them only outside project scope and when every target supports them.
+  // Child auto-settle, auto-archive and trimming are environment-wide and unknown to older servers,
+  // so callers include them only outside project scope and when every target supports them.
   {
     includeFinishedChildren = false,
     includeAutoArchive = false,
-  }: { readonly includeFinishedChildren?: boolean; readonly includeAutoArchive?: boolean } = {},
+    includeHistoryTrim = false,
+  }: {
+    readonly includeFinishedChildren?: boolean;
+    readonly includeAutoArchive?: boolean;
+    readonly includeHistoryTrim?: boolean;
+  } = {},
 ) {
   const patch: Partial<AutoSettleSettings> = {
     sidebarAutoSettleAfterDays: reference.settings.sidebarAutoSettleAfterDays,
@@ -39,6 +45,9 @@ export function planAutoSettleSettingsSync(
     ...(includeAutoArchive
       ? { autoArchiveSettledAfterDays: reference.settings.autoArchiveSettledAfterDays }
       : {}),
+    ...(includeHistoryTrim
+      ? { threadHistoryTrimAfterDays: reference.settings.threadHistoryTrimAfterDays }
+      : {}),
   };
   const mismatches = targets.filter(
     (target) =>
@@ -50,7 +59,9 @@ export function planAutoSettleSettingsSync(
           target.settings.autoSettleFinishedChildrenAfterHours !==
             patch.autoSettleFinishedChildrenAfterHours) ||
         (includeAutoArchive &&
-          target.settings.autoArchiveSettledAfterDays !== patch.autoArchiveSettledAfterDays)),
+          target.settings.autoArchiveSettledAfterDays !== patch.autoArchiveSettledAfterDays) ||
+        (includeHistoryTrim &&
+          target.settings.threadHistoryTrimAfterDays !== patch.threadHistoryTrimAfterDays)),
   );
   return { patch, mismatches };
 }

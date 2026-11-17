@@ -156,6 +156,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettleFinishedChildren: Schema.optionalKey(Schema.Boolean),
   /** Server archives threads settled for `autoArchiveSettledAfterDays`. */
   threadAutoArchive: Schema.optionalKey(Schema.Boolean),
+  /** Server trims threads idle for `threadHistoryTrimAfterDays`. */
+  threadHistoryTrim: Schema.optionalKey(Schema.Boolean),
   threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),

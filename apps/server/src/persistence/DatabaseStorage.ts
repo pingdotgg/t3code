@@ -187,7 +187,15 @@ const make = Effect.gen(function* () {
     publishStatus.pipe(
       Effect.andThen(Effect.sleep("1 minute")),
       Effect.andThen(
-        reclaim.pipe(Effect.andThen(publishStatus), Effect.repeat(Schedule.spaced("1 minute"))),
+        reclaim.pipe(
+          Effect.andThen(publishStatus),
+          Effect.andThen(readPages),
+          // A pass that leaves pages behind has a backlog, as a history trim does; drain it in minutes.
+          Effect.map((pages) => pages.incrementalVacuum && pages.reclaimableBytes > 0),
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((backlog) => Effect.sleep(backlog ? "5 seconds" : "1 minute")),
+          Effect.forever,
+        ),
       ),
     ),
   );

@@ -77,7 +77,8 @@ export interface SettingsSearchItem {
 type AutoSettlementCapability =
   | "threadAutoSettlement"
   | "threadAutoSettleFinishedChildren"
-  | "threadAutoArchive";
+  | "threadAutoArchive"
+  | "threadHistoryTrim";
 
 export interface SettingsSearchAvailability {
   readonly localEnvironmentDisabled?: boolean;
@@ -88,6 +89,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly hasThreadAutoSettleFinishedChildren?: boolean;
   readonly hasThreadAutoArchive?: boolean;
+  readonly hasThreadHistoryTrim?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
@@ -244,6 +246,25 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: ["storage cleanup run now results report removed kept failed"],
+  },
+  {
+    id: "trim-old-threads",
+    title: "Trim old threads",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    requiresCapability: "threadHistoryTrim",
+    searchTerms: [
+      "storage disk database space history tool output reasoning idle unused days trim now",
+    ],
+  },
+  {
+    id: "days-before-thread-trim",
+    title: "Days unused before trimming",
+    to: "/settings/maintenance",
+    targetId: "trim-old-threads",
+    scope: "environment-defaults",
+    requiresCapability: "threadHistoryTrim",
+    searchTerms: ["trim history idle timeout"],
   },
   {
     id: "storage-worktrees",
@@ -1545,6 +1566,8 @@ export function filterAvailableSettingsSearchItems(
         availability.hasThreadAutoSettleFinishedChildren === true) &&
       (item.requiresCapability !== "threadAutoArchive" ||
         availability.hasThreadAutoArchive === true) &&
+      (item.requiresCapability !== "threadHistoryTrim" ||
+        availability.hasThreadHistoryTrim === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),

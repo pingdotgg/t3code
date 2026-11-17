@@ -399,6 +399,8 @@ import {
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
+  ThreadHistoryTrimReport,
+  ThreadHistoryTrimStatus,
   DatabaseReclaimError,
   DatabaseStorageStatus,
   ServerSettings,
@@ -598,6 +600,9 @@ export const WS_METHODS = {
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
+  serverGetThreadHistoryTrim: "server.getThreadHistoryTrim",
+  serverPreviewThreadHistoryTrim: "server.previewThreadHistoryTrim",
+  serverTrimThreadHistory: "server.trimThreadHistory",
   serverGetAgentGateway: "server.getAgentGateway",
   serverUpdateAgentGateway: "server.updateAgentGateway",
   serverRevealAgentGatewayToken: "server.revealAgentGatewayToken",
@@ -961,6 +966,25 @@ const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStora
 const WsServerReclaimDatabaseSpaceRpc = Rpc.make(WS_METHODS.serverReclaimDatabaseSpace, {
   payload: Schema.Struct({}),
   error: Schema.Union([DatabaseReclaimError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetThreadHistoryTrimRpc = Rpc.make(WS_METHODS.serverGetThreadHistoryTrim, {
+  payload: Schema.Struct({}),
+  success: ThreadHistoryTrimStatus,
+  stream: true,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerPreviewThreadHistoryTrimRpc = Rpc.make(WS_METHODS.serverPreviewThreadHistoryTrim, {
+  payload: Schema.Struct({}),
+  success: ThreadHistoryTrimReport,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerTrimThreadHistoryRpc = Rpc.make(WS_METHODS.serverTrimThreadHistory, {
+  payload: Schema.Struct({}),
+  success: ThreadHistoryTrimReport,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerGetAgentGatewayRpc = Rpc.make(WS_METHODS.serverGetAgentGateway, {
@@ -2520,6 +2544,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
+  WsServerGetThreadHistoryTrimRpc,
+  WsServerPreviewThreadHistoryTrimRpc,
+  WsServerTrimThreadHistoryRpc,
   WsServerGetAgentGatewayRpc,
   WsServerUpdateAgentGatewayRpc,
   WsServerRevealAgentGatewayTokenRpc,

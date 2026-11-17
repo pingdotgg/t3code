@@ -17,6 +17,7 @@ import {
   DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_AUTO_SETTLE_FINISHED_CHILDREN_AFTER_HOURS,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_THREAD_HISTORY_TRIM_AFTER_DAYS,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -114,6 +115,12 @@ export function AutoSettleSettingsRows(props: {
       (target) =>
         target.environment.serverConfig.environment.capabilities.threadAutoArchive === true,
     );
+  const supportsHistoryTrim =
+    !projectSelected &&
+    displayTargets.every(
+      (target) =>
+        target.environment.serverConfig.environment.capabilities.threadHistoryTrim === true,
+    );
   const { patch: autoSettlePatch, mismatches } = planAutoSettleSettingsSync(
     {
       environmentId: reference.environment.environmentId,
@@ -129,6 +136,7 @@ export function AutoSettleSettingsRows(props: {
     {
       includeFinishedChildren: supportsFinishedChildAutoSettlement,
       includeAutoArchive: supportsAutoArchive,
+      includeHistoryTrim: supportsHistoryTrim,
     },
   );
 
@@ -138,6 +146,7 @@ export function AutoSettleSettingsRows(props: {
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
   const childAfterHours = referenceSettings.autoSettleFinishedChildrenAfterHours;
   const archiveAfterDays = referenceSettings.autoArchiveSettledAfterDays;
+  const trimAfterDays = referenceSettings.threadHistoryTrimAfterDays;
 
   return (
     <View className="gap-6">
@@ -237,6 +246,34 @@ export function AutoSettleSettingsRows(props: {
                 value={archiveAfterDays}
                 disabled={disabledFor("autoArchiveSettledAfterDays")}
                 onValueChange={(value) => writeToAll({ autoArchiveSettledAfterDays: value })}
+              />
+            </View>
+          ) : null}
+        </SettingsSection>
+      ) : null}
+      {supportsHistoryTrim ? (
+        <SettingsSection title="Thread history">
+          <SettingsSwitchRow
+            icon="archivebox"
+            label="Trim old threads"
+            subtitle="After this many days without use, a thread's tool output and reasoning are removed to save space. Messages, plans and file changes stay, and you can still search and continue the thread. Running, pinned and snoozed threads and threads with an open pull request are skipped."
+            value={trimAfterDays > 0}
+            disabled={disabledFor("threadHistoryTrimAfterDays")}
+            onValueChange={(value) =>
+              writeToAll({
+                threadHistoryTrimAfterDays: value ? DEFAULT_THREAD_HISTORY_TRIM_AFTER_DAYS : 0,
+              })
+            }
+          />
+          {trimAfterDays > 0 ? (
+            <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+              <View className="w-[22px] android:w-6" />
+              <Text className="flex-1 text-foreground text-lg android:text-base">Unused days</Text>
+              <AutoSettleDurationField
+                unit="trimDay"
+                value={trimAfterDays}
+                disabled={disabledFor("threadHistoryTrimAfterDays")}
+                onValueChange={(value) => writeToAll({ threadHistoryTrimAfterDays: value })}
               />
             </View>
           ) : null}

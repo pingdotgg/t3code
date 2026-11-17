@@ -86,6 +86,7 @@ describe("auto-settle settings sync", () => {
       key: "autoSettleFinishedChildrenAfterHours",
     },
     { option: "includeAutoArchive", key: "autoArchiveSettledAfterDays" },
+    { option: "includeHistoryTrim", key: "threadHistoryTrimAfterDays" },
   ] as const)("syncs $key only when the caller includes it", ({ option, key }) => {
     const target = {
       environmentId: EnvironmentId.make("remote"),
