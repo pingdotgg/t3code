@@ -15,14 +15,6 @@ export type FloatingWorkingStatus =
       readonly onPress: () => void;
     }
   | {
-      readonly kind: "background";
-      readonly label: string;
-      readonly accessibilityLabel: string;
-      readonly waiting: boolean;
-      readonly onPress: () => void;
-      readonly action: FloatingStatusAction;
-    }
-  | {
       readonly kind: "stop";
       readonly label: string;
       readonly unresponsive: boolean;

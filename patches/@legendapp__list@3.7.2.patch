@@ -102,3 +102,109 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
      const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
+diff --git a/react.js b/react.js
+index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce727d5336 100644
+--- a/react.js
++++ b/react.js
+@@ -5635,6 +5635,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+ }
+ 
+ // src/core/measureContainersInLayoutEffect.ts
++// T3 patch: measure rows by their layout box, as ResizeObserver does. getBoundingClientRect
++// includes ancestor transforms, so rows that mount while a dialog scales in measure short and
++// stay packed too tightly until they re-render.
++function measureContainerLayoutSize(element) {
++  const rect = element.getBoundingClientRect();
++  if (Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1) {
++    return { height: rect.height, width: rect.width };
++  }
++  const style = getComputedStyle(element);
++  const height = Number.parseFloat(style.height);
++  const width = Number.parseFloat(style.width);
++  return Number.isFinite(height) && Number.isFinite(width) ? { height, width } : { height: rect.height, width: rect.width };
++}
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+   var _a3, _b, _c;
+   const dataChangeEpoch = ctx.state.dataChangeEpoch;
+@@ -5646,13 +5659,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
+       const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
+-      const rect = element.getBoundingClientRect();
+-      setContainerLayoutBaseline(element, rect);
++      const size = measureContainerLayoutSize(element);
++      setContainerLayoutBaseline(element, size);
+       measurements.push({
+         containerId,
+         generation,
+         itemKey,
+-        size: { height: rect.height, width: rect.width }
++        size
+       });
+     }
+   }
+@@ -6296,9 +6309,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       var _a4;
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
+-        if (rect) {
+-          layout = { height: rect.height, width: rect.width };
++        if (element) {
++          layout = measureContainerLayoutSize(element);
+         }
+         applyLayout();
+       }
+diff --git a/react.mjs b/react.mjs
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb57b1df590 100644
+--- a/react.mjs
++++ b/react.mjs
+@@ -5614,6 +5614,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+ }
+ 
+ // src/core/measureContainersInLayoutEffect.ts
++// T3 patch: measure rows by their layout box, as ResizeObserver does. getBoundingClientRect
++// includes ancestor transforms, so rows that mount while a dialog scales in measure short and
++// stay packed too tightly until they re-render.
++function measureContainerLayoutSize(element) {
++  const rect = element.getBoundingClientRect();
++  if (Math.abs(rect.width - element.offsetWidth) < 1 && Math.abs(rect.height - element.offsetHeight) < 1) {
++    return { height: rect.height, width: rect.width };
++  }
++  const style = getComputedStyle(element);
++  const height = Number.parseFloat(style.height);
++  const width = Number.parseFloat(style.width);
++  return Number.isFinite(height) && Number.isFinite(width) ? { height, width } : { height: rect.height, width: rect.width };
++}
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+   var _a3, _b, _c;
+   const dataChangeEpoch = ctx.state.dataChangeEpoch;
+@@ -5625,13 +5638,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
+       const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
+-      const rect = element.getBoundingClientRect();
+-      setContainerLayoutBaseline(element, rect);
++      const size = measureContainerLayoutSize(element);
++      setContainerLayoutBaseline(element, size);
+       measurements.push({
+         containerId,
+         generation,
+         itemKey,
+-        size: { height: rect.height, width: rect.width }
++        size
+       });
+     }
+   }
+@@ -6275,9 +6288,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       var _a4;
+       if (state.itemKey === currentItemKey) {
+         const element = ref.current;
+-        const rect = (_a4 = element == null ? void 0 : element.getBoundingClientRect) == null ? void 0 : _a4.call(element);
+-        if (rect) {
+-          layout = { height: rect.height, width: rect.width };
++        if (element) {
++          layout = measureContainerLayoutSize(element);
+         }
+         applyLayout();
+       }
