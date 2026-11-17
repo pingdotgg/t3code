@@ -279,25 +279,66 @@ describe("desktop tab runner", () => {
     const path = NodePath.join(directory, "fixture.txt");
     try {
       await NodeFSP.writeFile(path, "Desktop upload fixture");
-      await page.setContent('<input id="file" type="file">');
+      await page.setContent(
+        `<input id="file" type="file" accept="text/plain,.txt" hidden>
+        <button onclick="document.querySelector('#file').click()">Choose file</button>`,
+      );
       expect(
         (await runner.respond(request("upload", { locator: "#file", paths: [path] }))).ok,
       ).toBe(true);
       expect(
         await page.locator("#file").evaluate((e: HTMLInputElement) => e.files?.[0]?.name),
       ).toBe("fixture.txt");
-      await runner.respond(request("click", { locator: "#file" }));
+      await runner.respond(request("click", { locator: "button" }));
       expect(await runner.respond(request("status"))).toMatchObject({
         ok: true,
-        result: { fileChooser: { multiple: false } },
+        result: { fileChooser: { multiple: false, accept: "text/plain,.txt" } },
+      });
+      expect((await runner.respond(request("upload", { paths: [path] }))).ok).toBe(true);
+      expect(
+        await page.locator("#file").evaluate((e: HTMLInputElement) => e.files?.[0]?.name),
+      ).toBe("fixture.txt");
+      await page.locator("#file").evaluate((e: HTMLInputElement) => {
+        e.multiple = true;
+      });
+      await runner.respond(request("click", { locator: "button" }));
+      expect(await runner.respond(request("status"))).toMatchObject({
+        ok: true,
+        result: { fileChooser: { multiple: true, accept: "text/plain,.txt" } },
       });
       expect((await runner.respond(request("upload", { paths: [] }))).ok).toBe(true);
+      expect(await runner.respond(request("status"))).toMatchObject({
+        ok: true,
+        result: { fileChooser: null },
+      });
       expect(await page.locator("#file").evaluate((e: HTMLInputElement) => e.files?.length)).toBe(
         0,
       );
+      await page.locator("button").click();
+      expect(await runner.respond(request("status"))).toMatchObject({
+        ok: true,
+        result: { fileChooser: null },
+      });
     } finally {
       await NodeFSP.rm(directory, { recursive: true });
     }
+  });
+
+  it("does not intercept file pickers outside agent actions, including after a failed action", async () => {
+    await page.setContent('<input id="file" type="file">');
+    await page.locator("#file").click();
+    expect(await runner.respond(request("status"))).toMatchObject({
+      ok: true,
+      result: { fileChooser: null },
+    });
+    expect((await runner.respond(request("click", { locator: "#missing", timeoutMs: 1 }))).ok).toBe(
+      false,
+    );
+    await page.locator("#file").click();
+    expect(await runner.respond(request("status"))).toMatchObject({
+      ok: true,
+      result: { fileChooser: null },
+    });
   });
 
   it("resizes CSS layout and emulates page appearance", async () => {

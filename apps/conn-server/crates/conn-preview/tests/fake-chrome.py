@@ -38,6 +38,8 @@ while True:
     if method == 'Page.startScreencast': casts += 1
     if method == 'Page.screencastFrameAck': acks += 1
     if method == 'Fixture.frame': events = [('Page.screencastFrame', {'sessionId':1,'data':'Zml4dHVyZQ=='})]
+    if method == 'Fixture.fileChooser': events = [('Page.fileChooserOpened', {'backendNodeId':42,'mode':params['mode']})]
+    if method == 'DOM.describeNode': result = {'node':{'attributes':['type','file','accept','image/png,image/jpeg']}}
     if method == 'Browser.setDownloadBehavior': downloads.append(params)
     if method == 'Fixture.counts': result = {'closed':closed_targets,'casts':casts,'acks':acks,'downloads':downloads}
     if method == 'Target.createBrowserContext':

@@ -150,9 +150,6 @@ export class DesktopTabRunner {
     this.page.on("dialog", (dialog) => {
       this.dialog = dialog;
     });
-    this.page.on("filechooser", (chooser) => {
-      this.fileChooser = chooser;
-    });
     this.lastViewport = await this.viewport();
     this.report();
   }
@@ -389,7 +386,10 @@ export class DesktopTabRunner {
             }
           : null,
         fileChooser: this.fileChooser
-          ? { multiple: this.fileChooser.isMultiple(), accept: "" }
+          ? {
+              multiple: this.fileChooser.isMultiple(),
+              accept: (await this.fileChooser.element().getAttribute("accept")) ?? "",
+            }
           : null,
         control: {
           owner: this.acting ? "agent" : "unclaimed",
@@ -470,6 +470,18 @@ export class DesktopTabRunner {
       await this.redactText(null);
       this.acting = true;
       this.report();
+      const onFileChooser = (chooser: FileChooser) => {
+        this.fileChooser = chooser;
+      };
+      const pendingChoosers: Promise<FileChooser>[] = [];
+      const onCdpEvent = (method: string) => {
+        if (method !== "Page.fileChooserOpened") return;
+        const pending = page.waitForEvent("filechooser", { timeout: request.timeoutMs });
+        pendingChoosers.push(pending);
+        void pending.catch(() => {});
+      };
+      this.listeners.add(onCdpEvent);
+      page.on("filechooser", onFileChooser);
       try {
         switch (request.operation) {
           case "navigate": {
@@ -590,8 +602,15 @@ export class DesktopTabRunner {
         }
         return {};
       } finally {
-        this.acting = false;
-        this.report();
+        try {
+          // Playwright resolves the input element after the CDP event and click have returned.
+          await Promise.all(pendingChoosers);
+        } finally {
+          this.listeners.delete(onCdpEvent);
+          page.off("filechooser", onFileChooser);
+          this.acting = false;
+          this.report();
+        }
       }
     });
   }

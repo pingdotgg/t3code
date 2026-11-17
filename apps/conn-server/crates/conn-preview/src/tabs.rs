@@ -49,10 +49,16 @@ struct Tab {
     snapshot: Value,
     used: Instant,
     action: Arc<AsyncMutex<()>>,
-    chooser: Option<u64>,
+    chooser: Option<FileChooser>,
     recording: Option<crate::recording::Recording>,
     loaded: watch::Sender<String>,
     browser: Browser,
+}
+#[derive(Debug)]
+struct FileChooser {
+    node: u64,
+    multiple: bool,
+    accept: String,
 }
 #[derive(Debug)]
 struct State {
@@ -324,7 +330,7 @@ impl Preview {
                 tab.session.clone(),
                 tab.loaded.subscribe(),
                 tab.action.clone(),
-                tab.chooser,
+                tab.chooser.as_ref().map(|chooser| chooser.node),
             )
         };
         let _action = if matches!(operation, "dialog" | "close") {
@@ -700,7 +706,7 @@ impl Preview {
             }
             return status;
         };
-        let mut status = json!({"available":true,"visible":!tab.viewers.is_empty(),"tabId":tab.id,"url":tab.url,"title":if tab.dialog.is_null(){tab.title.clone()}else{None},"loading":tab.loading,"control":{"owner":if tab.controller.is_some(){"human"}else if tab.owner.is_some(){"agent"}else{"unclaimed"},"ownedByCaller":tab.owner.as_deref()==Some(agent),"generation":tab.generation},"dialog":tab.dialog,"fileChooser":tab.chooser.map(|_|json!({"multiple":true,"accept":""})),"viewportSetting":tab.snapshot.get("viewport"),"viewport":tab.viewport,"downloads":[],"profiles":profile.0});
+        let mut status = json!({"available":true,"visible":!tab.viewers.is_empty(),"tabId":tab.id,"url":tab.url,"title":if tab.dialog.is_null(){tab.title.clone()}else{None},"loading":tab.loading,"control":{"owner":if tab.controller.is_some(){"human"}else if tab.owner.is_some(){"agent"}else{"unclaimed"},"ownedByCaller":tab.owner.as_deref()==Some(agent),"generation":tab.generation},"dialog":tab.dialog,"fileChooser":tab.chooser.as_ref().map(|chooser|json!({"multiple":chooser.multiple,"accept":chooser.accept})),"viewportSetting":tab.snapshot.get("viewport"),"viewport":tab.viewport,"downloads":[],"profiles":profile.0});
         if let Some(default) = profile.1 {
             status["defaultProfileId"] = json!(default);
         }
@@ -1024,9 +1030,10 @@ impl Preview {
                     .get("sessionId")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                let chooser = read_file_chooser(&inner, &host_key, &event).await;
                 let title_target = {
                     let mut state = lock(&inner.state);
-                    handle_event(&inner, &mut state, &host_key, event);
+                    handle_event(&inner, &mut state, &host_key, event, chooser);
                     if title_read {
                         state
                             .tabs
@@ -1275,7 +1282,56 @@ fn publish(inner: &Inner, state: &mut State, kind: &str, snapshot: &Value) {
     }
     let _ = inner.events.send(event);
 }
-fn handle_event(inner: &Inner, state: &mut State, host: &str, event: Value) {
+async fn read_file_chooser(inner: &Inner, host: &str, event: &Value) -> Option<FileChooser> {
+    if event.get("method").and_then(Value::as_str) != Some("Page.fileChooserOpened") {
+        return None;
+    }
+    let node = event.pointer("/params/backendNodeId")?.as_u64()?;
+    let session = event.get("sessionId")?.as_str()?;
+    let browser = lock(&inner.state)
+        .tabs
+        .iter()
+        .find(|tab| tab.host == host && tab.session == session)?
+        .browser
+        .clone();
+    let description = browser
+        .send(
+            "DOM.describeNode",
+            json!({"backendNodeId":node}),
+            Some(session),
+        )
+        .await
+        .ok();
+    let accept = description
+        .as_ref()
+        .and_then(|value| value.pointer("/node/attributes"))
+        .and_then(Value::as_array)
+        .and_then(|attributes| {
+            attributes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find(|[name, _]| name.as_str() == Some("accept"))
+                .and_then(|[_, value]| value.as_str())
+        })
+        .unwrap_or_default()
+        .chars()
+        .take(1024)
+        .collect();
+    Some(FileChooser {
+        node,
+        multiple: event.pointer("/params/mode").and_then(Value::as_str) == Some("selectMultiple"),
+        accept,
+    })
+}
+
+fn handle_event(
+    inner: &Inner,
+    state: &mut State,
+    host: &str,
+    event: Value,
+    chooser: Option<FileChooser>,
+) {
     let Some(tab) = state.tabs.iter_mut().find(|t| {
         t.host == host && event.get("sessionId").and_then(Value::as_str) == Some(&t.session)
     }) else {
@@ -1375,7 +1431,7 @@ fn handle_event(inner: &Inner, state: &mut State, host: &str, event: Value) {
             }
         }
         "Page.fileChooserOpened" => {
-            tab.chooser = params.get("backendNodeId").and_then(Value::as_u64);
+            tab.chooser = chooser;
         }
         "Page.javascriptDialogOpening" => {
             tab.dialog = json!({"type":params.get("type"),"message":params.get("message"),"defaultValue":params.get("defaultPrompt").and_then(Value::as_str).unwrap_or_default()});
@@ -2029,6 +2085,44 @@ async fn initialize_page(browser: &Browser, session: &str) -> Result<(), Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn file_chooser_status_reports_input_metadata_and_clears_after_cancel() {
+        let root =
+            std::env::temp_dir().join(format!("conn-preview-chooser-{}", conn_support::uuid_v4()));
+        let preview = Preview::with_fixture(
+            root.clone(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fake-chrome.py"),
+        );
+        preview.invoke("t", "a", "open", json!({})).await.unwrap();
+        let (browser, session, mut control) = {
+            let state = lock(&preview.0.state);
+            let tab = state.tabs.first().unwrap();
+            (
+                tab.browser.clone(),
+                tab.session.clone(),
+                tab.control.subscribe(),
+            )
+        };
+        for (mode, multiple) in [("selectSingle", false), ("selectMultiple", true)] {
+            control.borrow_and_update();
+            browser
+                .send("Fixture.fileChooser", json!({"mode":mode}), Some(&session))
+                .await
+                .unwrap();
+            control.changed().await.unwrap();
+            assert_eq!(
+                preview.status("t", "a", None)["fileChooser"],
+                json!({"multiple":multiple,"accept":"image/png,image/jpeg"})
+            );
+            preview
+                .invoke("t", "a", "upload", json!({"paths":[]}))
+                .await
+                .unwrap();
+            assert!(preview.status("t", "a", None)["fileChooser"].is_null());
+        }
+        preview.shutdown().await;
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
     #[tokio::test]
     async fn unserved_downloads_cannot_accumulate_in_default_or_private_contexts() {
         let root =
