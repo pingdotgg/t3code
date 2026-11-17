@@ -847,6 +847,49 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("keeps renewing a direct socket after a failed renewal past token expiry", () =>
+    Effect.gen(function* () {
+      let markLoopRenewal = () => {};
+      const loopRenewed = new Promise<void>((resolve) => (markLoopRenewal = resolve));
+      const connection = { connectionId: "direct-1", httpBaseUrl: ENDPOINT.httpBaseUrl };
+      const harness = yield* makeHarness({
+        responses: [
+          () => Promise.reject(new TypeError("network down")),
+          () => {
+            markLoopRenewal();
+            return accessToken("renewed-direct-token");
+          },
+        ],
+        credentials: [
+          [
+            "direct-1",
+            new DpopConnectionCredential({ accessToken: "direct-token", expiresAtEpochMs: 1_000 }),
+          ],
+        ],
+      });
+
+      const renewed = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .renewDpopBeforeExpiry({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            expiresAtEpochMs: 1_000,
+            directConnection: connection,
+          })
+          .pipe(Effect.forkScoped);
+        // The first try, at 5 s, is already past the token's expiry and fails.
+        yield* TestClock.adjust(5_000);
+        // The host keeps a direct socket for its session's window, so the loop tries again.
+        yield* TestClock.adjust(60_000);
+        yield* Effect.promise(() => loopRenewed);
+        // Waits behind the loop's renewal and reads what it stored, with no request of its own.
+        return yield* remote.authorizeDirectDpopHttp(connection);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(renewed.accessToken).toBe("renewed-direct-token");
+    }),
+  );
+
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({

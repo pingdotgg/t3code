@@ -780,16 +780,18 @@ export const make = Effect.gen(function* () {
     }),
     // Untraced: a span here would stay open for the socket's lifetime. Each renewal has its own.
     renewDpopBeforeExpiry: Effect.fnUntraced(function* (input) {
+      const direct = input.directConnection;
       let expiresAtEpochMs = input.expiresAtEpochMs;
       let now = yield* Clock.currentTimeMillis;
-      // Past expiry the server has closed the socket.
-      while (now < expiresAtEpochMs) {
+      // Past expiry the server has closed a T3 Connect socket. A direct socket stays open for
+      // its session's whole renewal window, so it keeps retrying until a blocked credential.
+      while (direct !== undefined || now < expiresAtEpochMs) {
         // getDpopToken reuses a cached token until it is within the skew of expiry.
         // The floor spaces out retries and keeps a wall-clock jump from spinning.
+        const floor = now < expiresAtEpochMs ? 5_000 : DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS;
         yield* Effect.sleep(
-          Math.max(5_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
+          Math.max(floor, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
         );
-        const direct = input.directConnection;
         const renewed = yield* (
           direct === undefined
             ? getDpopToken({ expectedEnvironmentId: input.expectedEnvironmentId }).pipe(
