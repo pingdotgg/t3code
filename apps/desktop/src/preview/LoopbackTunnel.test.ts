@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 
@@ -74,7 +75,10 @@ const unusedPort = Effect.promise(
 );
 
 /** Routes a stand-in session through the tunnel and returns its SOCKS listener port. */
-const routeThroughTunnel = (tunnelUrl: string | null, host?: Layer.Layer<never>) =>
+const routeThroughTunnel = (
+  tunnelUrl: string | null,
+  host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
+) =>
   Effect.gen(function* () {
     const accessRequests = yield* Queue.unbounded<string>();
     const window = {
@@ -119,6 +123,32 @@ const routeThroughTunnel = (tunnelUrl: string | null, host?: Layer.Layer<never>)
     return Number(/socks5:\/\/127\.0\.0\.1:(\d+)/.exec(proxyRules)![1]);
   });
 
+/**
+ * The real TCP tables with 127.0.0.1 in one column rewritten to 127.0.0.2. The rows keep their
+ * ports and owner, so only an address mismatch can refuse them.
+ */
+const tcpTablesWithMovedAddress = (column: 1 | 2) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const moveAddress = (line: string) => {
+        const columns = line.trim().split(/\s+/);
+        const address = columns[column];
+        if (address === undefined || !/0100007F:/i.test(address)) return line;
+        columns[column] = address.replace(/0100007F:/i, "0200007F:");
+        return columns.join(" ");
+      };
+      return FileSystem.FileSystem.of({
+        ...fileSystem,
+        readFileString: (path, encoding) =>
+          fileSystem
+            .readFileString(path, encoding)
+            .pipe(Effect.map((table) => table.split("\n").map(moveAddress).join("\n"))),
+      });
+    }),
+  ).pipe(Layer.provide(NodeFileSystem.layer));
+
 /** Greets the SOCKS listener and sends a CONNECT for `host:port`; resolves with the reply. */
 const socksConnect = (proxyPort: number, host: string, port: number) =>
   Effect.acquireRelease(
@@ -159,32 +189,30 @@ const socksConnect = (proxyPort: number, host: string, port: number) =>
     ({ socket }) => Effect.sync(() => socket.destroy()),
   );
 
-it.effect("carries a loopback CONNECT over the tunnel WebSocket, not to local listeners", () =>
-  Effect.gen(function* () {
-    const decoy = yield* listenDecoy;
-    const endpoint = yield* listenEndpoint;
-    const proxyPort = yield* routeThroughTunnel(
-      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel?wsTicket=t`,
-    );
-    const { socket, reply } = yield* socksConnect(
-      proxyPort,
-      "localhost",
-      addressPort(decoy.server),
-    );
-    expect(reply[1]).toBe(0);
-    const echoed = yield* Effect.promise(
-      () =>
-        new Promise<number[]>((resolve) => {
-          socket.once("data", (chunk) => resolve([...chunk]));
-          socket.write(Uint8Array.of(1, 2, 3));
-        }),
-    );
-    expect(echoed).toEqual([0xee, 1, 2, 3]);
-    expect(endpoint.requests).toEqual([
-      `/api/preview/tunnel?wsTicket=t&port=${addressPort(decoy.server)}`,
-    ]);
-    expect(decoy.connections()).toBe(0);
-  }),
+it.effect.each(["localhost", "localhost."])(
+  "carries a loopback CONNECT for %s over the tunnel WebSocket, not to local listeners",
+  (host) =>
+    Effect.gen(function* () {
+      const decoy = yield* listenDecoy;
+      const endpoint = yield* listenEndpoint;
+      const proxyPort = yield* routeThroughTunnel(
+        `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel?wsTicket=t`,
+      );
+      const { socket, reply } = yield* socksConnect(proxyPort, host, addressPort(decoy.server));
+      expect(reply[1]).toBe(0);
+      const echoed = yield* Effect.promise(
+        () =>
+          new Promise<number[]>((resolve) => {
+            socket.once("data", (chunk) => resolve([...chunk]));
+            socket.write(Uint8Array.of(1, 2, 3));
+          }),
+      );
+      expect(echoed).toEqual([0xee, 1, 2, 3]);
+      expect(endpoint.requests).toEqual([
+        `/api/preview/tunnel?wsTicket=t&port=${addressPort(decoy.server)}`,
+      ]);
+      expect(decoy.connections()).toBe(0);
+    }),
 );
 
 it.effect.each([
@@ -192,6 +220,8 @@ it.effect.each([
   { case: "no tunnel URL", host: "127.0.0.1", tunnel: "none" },
   { case: "an unreachable tunnel endpoint", host: "localhost", tunnel: "unreachable" },
   { case: "another OS user's client", host: "localhost", tunnel: "other-user" },
+  { case: "a TCP row whose client address differs", host: "localhost", tunnel: "moved-client" },
+  { case: "a TCP row whose listener address differs", host: "localhost", tunnel: "moved-listener" },
 ] as const)("fails the SOCKS request for $case without dialling locally", ({ host, tunnel }) =>
   Effect.gen(function* () {
     const decoy = yield* listenDecoy;
@@ -206,7 +236,12 @@ it.effect.each([
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.UserId, (process.getuid?.() ?? 0) + 1),
           )
-        : undefined,
+        : tunnel === "moved-client" || tunnel === "moved-listener"
+          ? Layer.mergeAll(
+              Layer.succeed(HostProcess.Platform, "linux"),
+              tcpTablesWithMovedAddress(tunnel === "moved-client" ? 1 : 2),
+            )
+          : undefined,
     );
     const { reply } = yield* socksConnect(proxyPort, host, addressPort(decoy.server));
     expect(reply[1]).not.toBe(0);
