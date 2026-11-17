@@ -42,6 +42,7 @@ jobs:
           Write-Host 'Windows packaged payload limit set to 100.'
 
       - name: Build Windows x64 installer
+        shell: bash
         run: vp run dist:desktop:win:x64
         env:
           T3CODE_DESKTOP_KEEP_STAGE: 'true'
