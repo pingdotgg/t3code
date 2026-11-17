@@ -111,6 +111,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import {
+  buildProjectIconSourceByKey,
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKeys,
   getSidebarProjectSettingsKey,
@@ -826,6 +827,7 @@ function useSidebarLookups() {
       ),
     ),
   );
+  const projectIconByKey = buildProjectIconSourceByKey(projects, projectGroups);
   const projectGroupByScopeKey = new Map(
     projectGroups.map((project) => [project.projectKey, project] as const),
   );
@@ -843,6 +845,7 @@ function useSidebarLookups() {
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
+    projectIconByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
     projectScopeItems,
@@ -910,6 +913,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
+    projectIconByKey,
     projectDisplayNameByKey,
     projectGroupByScopeKey,
     projectScopeItems: lookupProjectScopeItems,
@@ -3234,6 +3238,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           project={
                             projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                           }
+                          projectIcon={
+                            projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                            null
+                          }
                           projectDisplayName={
                             projectDisplayNameByKey.get(
                               `${thread.environmentId}:${thread.projectId}`,
@@ -3445,6 +3453,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
                               null
                             }
+                            projectIcon={
+                              projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
+                              null
+                            }
                             projectDisplayName={
                               projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
@@ -3479,7 +3491,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
-                          projectByKey={projectByKey}
+                          projectIconByKey={projectIconByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}

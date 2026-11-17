@@ -8,6 +8,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
   derivePhysicalProjectKey,
+  resolveProjectIconSource,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -492,5 +493,44 @@ describe("sortProjectsByGroupOrder", () => {
       ],
     );
     expect(sorted.map((entry) => entry.id)).toEqual(["pinned", "recent", "archived", "unlisted"]);
+  });
+});
+
+describe("resolveProjectIconSource", () => {
+  const rocket = { kind: "lucide" as const, name: "rocket", color: "blue" as const };
+  const group = (...projects: EnvironmentProject[]) =>
+    buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+  it("shows the group's icon for a checkout without one of its own", () => {
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
+    const plain = makeProject("b", "/work/b", { projectIcon: null, faviconPath: null });
+    const { representative } = group(iconed, plain);
+    expect(representative).toBe(iconed);
+    expect(resolveProjectIconSource(plain, representative)).toBe(iconed);
+  });
+
+  it("shows the group's icon over a favicon detected in every checkout", () => {
+    const favicon = "public/favicon.ico";
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket, faviconPath: favicon });
+    const detected = makeProject("b", "/work/b", { faviconPath: favicon });
+    expect(resolveProjectIconSource(detected, group(iconed, detected).representative)).toBe(iconed);
+  });
+
+  it.each([
+    ["picked icon", { projectIcon: { ...rocket, name: "turtle" } }],
+    ["picked image", { faviconPath: "brand.svg", projectIcon: null }],
+  ] as const)("keeps a checkout's own %s", (_label, overrides) => {
+    const iconed = makeProject("a", "/work/a", {
+      projectIcon: rocket,
+      faviconPath: "public/favicon.ico",
+    });
+    const own = makeProject("b", "/work/b", overrides);
+    expect(resolveProjectIconSource(own, group(iconed, own).representative)).toBe(own);
+  });
+
+  it("keeps the checkout when the group has no custom icon", () => {
+    const first = makeProject("a", "/work/a");
+    const second = makeProject("b", "/work/b");
+    expect(resolveProjectIconSource(second, group(first, second).representative)).toBe(second);
   });
 });

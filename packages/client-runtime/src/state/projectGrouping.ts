@@ -247,6 +247,22 @@ export function deriveProjectGroupLabel(input: {
   return input.representative.title;
 }
 
+/**
+ * The project whose icon stands for `project`: its own picked icon, else its group's.
+ * The server merges a detected favicon into `faviconPath`, and checkouts of one repo detect
+ * the same path, so only a `faviconPath` that differs from the group's counts as picked.
+ */
+export function resolveProjectIconSource<
+  TProject extends Pick<EnvironmentProject, "projectIcon" | "faviconPath">,
+>(project: TProject, representative: TProject | null | undefined): TProject {
+  return representative &&
+    project.projectIcon == null &&
+    representative.projectIcon != null &&
+    (project.faviconPath == null || project.faviconPath === representative.faviconPath)
+    ? representative
+    : project;
+}
+
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
   readonly physicalProjectKey: string;
   readonly project: TProject;

@@ -117,6 +117,7 @@ it("keeps focus in the search box when a click picks a search result", async () 
           isSettled={false}
           thread={makeThreadFixture({ title: "Invoice export" })}
           project={null}
+          projectIcon={null}
           projectDisplayName={null}
           environmentLabel={null}
           environmentMachine="server"
