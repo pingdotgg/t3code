@@ -118,6 +118,8 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/men
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
+import { createModelSelection } from "@t3tools/shared/model";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -1563,6 +1565,13 @@ function ScheduledTaskEditorForm({
     shownModel,
   );
 
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
+  // Options belong to the model they were chosen for; a different model starts from its defaults.
+  const activeOptions =
+    draft.baseModelSelection?.instanceId === activeInstanceId &&
+    draft.baseModelSelection.model === activeModel
+      ? draft.baseModelSelection.options
+      : undefined;
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -1923,7 +1932,7 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <Field label={gt("Model")}>
-            <div>
+            <div className="flex flex-wrap items-center gap-1.5">
               <ProviderModelPicker
                 environmentId={environmentId}
                 // The saved selection only seeds new threads; bound runs ignore it.
@@ -1939,6 +1948,30 @@ function ScheduledTaskEditorForm({
                   setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
                 }
               />
+              {activeEntry && activeModel && draft.threadId === "" ? (
+                <TraitsPicker
+                  provider={activeEntry.driverKind}
+                  instanceId={activeInstanceId}
+                  models={activeEntry.models}
+                  model={activeModel}
+                  modelOptions={activeOptions ?? []}
+                  allowPromptInjectedEffort={false}
+                  planModeEnabled={false}
+                  disabled={saving || !connected}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelKey: `${activeInstanceId}:${activeModel}`,
+                      baseModelSelection: createModelSelection(
+                        activeInstanceId,
+                        activeModel,
+                        options,
+                      ),
+                    }))
+                  }
+                />
+              ) : null}
             </div>
           </Field>
 
