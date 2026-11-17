@@ -16,6 +16,7 @@ import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } 
 import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
 import {
   EnrichedMarkdownText,
+  type AccessibilityLabels,
   type MarkdownCodeBlock,
   type MarkdownImageBlock,
   type MarkdownLinkOccurrence,
@@ -180,6 +181,7 @@ function codeBlockElement(
   markdownStyle: MarkdownStyle,
   mathRenderingEnabled: boolean,
   scheme: HighlightScheme,
+  accessibilityLabels: AccessibilityLabels,
 ): ReactElement | undefined {
   const renderer = codeFenceRenderer(block.language, mathRenderingEnabled);
   if (renderer.kind === "mermaid") {
@@ -199,6 +201,7 @@ function codeBlockElement(
         selectable
         selectionColor={textStyle.selectionColor}
         selectionHandleColor={textStyle.selectionHandleColor}
+        accessibilityLabels={accessibilityLabels}
       />
     ) : undefined;
   }
@@ -222,6 +225,27 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const gt = useGT();
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
+  // The library fills in {n}, {content} and {speech} itself when VoiceOver or TalkBack speaks.
+  const accessibilityLabels = useMemo<AccessibilityLabels>(
+    () => ({
+      list: {
+        bulletPoint: gt("Bullet point"),
+        nestedBulletPoint: gt("Nested bullet point"),
+        orderedItem: gt("List item {n}", { n: "{n}" }),
+        nestedOrderedItem: gt("Nested list item {n}", { n: "{n}" }),
+      },
+      blockquote: { quote: gt("Blockquote"), nestedQuote: gt("Nested blockquote") },
+      table: { row: gt("Row {n}: {content}", { n: "{n}", content: "{content}" }) },
+      math: { equation: gt("Math: {speech}", { speech: "{speech}" }) },
+      codeBlock: { wrap: gt("Wrap lines"), unwrap: gt("Disable line wrap") },
+      rotor: {
+        headings: gt("Headings", { $context: "screen reader rotor category" }),
+        links: gt("Links", { $context: "screen reader rotor category" }),
+        images: gt("Images", { $context: "screen reader rotor category" }),
+      },
+    }),
+    [gt],
+  );
   const { markdown, fileHrefs } = useMemo(() => {
     if (!fileEmbedLabel) {
       return {
@@ -377,6 +401,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         baseMarkdownStyle,
         mathRenderingEnabled,
         themeAppearance,
+        accessibilityLabels,
       ),
   };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
@@ -441,6 +466,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           onLinkLongPress={onLinkLongPress}
           linkContextMenuItems={linkContextMenuItems}
           linkPillContent={linkPillContent}
+          accessibilityLabels={accessibilityLabels}
         />
       </View>
     );
