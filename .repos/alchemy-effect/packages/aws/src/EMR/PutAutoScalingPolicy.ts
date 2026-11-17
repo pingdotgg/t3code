@@ -1,0 +1,37 @@
+import type * as SVC from "@distilled.cloud/aws/emr";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Cluster } from "./Cluster.ts";
+
+/**
+ * Runtime binding for `elasticmapreduce:PutAutoScalingPolicy` — attaches a CloudWatch-driven automatic scaling policy to an instance group of the bound cluster.
+ * ### Scaling the Cluster
+ * **Example:** Scale a Task Group on YARN Memory
+ * ```typescript
+ * const putAutoScaling = yield* AWS.EMR.PutAutoScalingPolicy(cluster);
+ *
+ * yield* putAutoScaling({
+ *   InstanceGroupId: taskGroupId,
+ *   AutoScalingPolicy: {
+ *     Constraints: { MinCapacity: 0, MaxCapacity: 8 },
+ *     Rules: [], // CloudWatch alarm-driven rules
+ *   },
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface PutAutoScalingPolicy extends Binding.Service<
+  PutAutoScalingPolicy,
+  "AWS.EMR.PutAutoScalingPolicy",
+  <C extends Cluster>(
+    cluster: C,
+  ) => Effect.Effect<
+    (
+      request: Omit<SVC.PutAutoScalingPolicyInput, "ClusterId">,
+    ) => Effect.Effect<SVC.PutAutoScalingPolicyOutput, SVC.PutAutoScalingPolicyError>
+  >
+> {}
+export const PutAutoScalingPolicy = Binding.Service<PutAutoScalingPolicy>(
+  "AWS.EMR.PutAutoScalingPolicy",
+);

@@ -1,3 +1,5 @@
+import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
@@ -15,10 +17,8 @@
 import cloudflareVitePlugin, {
   type CloudflareVitePluginOptions,
 } from "@alchemy.run/cloudflare-runtime/vite";
-import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import * as Effect from "effect/Effect";
-import * as NodePath from "node:path";
-import { fileURLToPath } from "node:url";
+import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import { WAKU_SERVER_ENTRY_PATH, type WakuTarget } from "./Waku.ts";
 
 export type { CloudflareVitePluginOptions } from "@alchemy.run/cloudflare-runtime/vite";
@@ -44,10 +44,7 @@ export interface WakuPluginOptionsInputs {
  */
 const withNodejsAls = (flags: Array<string> | undefined): Array<string> => {
   const hasAls = flags?.some(
-    (flag) =>
-      flag === "nodejs_als" ||
-      flag === "nodejs_compat" ||
-      flag === "nodejs_compat_v2",
+    (flag) => flag === "nodejs_als" || flag === "nodejs_compat" || flag === "nodejs_compat_v2",
   );
   return hasAls ? [...flags!] : [...(flags ?? []), "nodejs_als"];
 };
@@ -115,15 +112,11 @@ export const makeWakuCloudflareTarget = (
     adapter: () =>
       Effect.try({
         try: () =>
-          fileURLToPath(
-            import.meta
-              .resolve("@alchemy.run/frontend-frameworks/waku/adapter"),
-          ),
+          fileURLToPath(import.meta.resolve("@alchemy.run/frontend-frameworks/waku/adapter")),
         catch: (cause) =>
           new DeployTargetError({
             platform: "cloudflare",
-            message:
-              "Failed to resolve the @alchemy.run/frontend-frameworks/waku adapter module",
+            message: "Failed to resolve the @alchemy.run/frontend-frameworks/waku adapter module",
             cause,
           }),
       }),

@@ -4,6 +4,7 @@ import {
   CheckpointScopeId,
   MessageId,
   ContextHandoffId,
+  ProviderSessionId,
   ProviderThreadId,
   NodeId,
   EventId,
@@ -13,6 +14,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
@@ -28,6 +30,7 @@ import {
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
+  projectStoredEventForWire,
 } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
@@ -172,10 +175,21 @@ describe("orchestration V2 wire projection", () => {
       summary: '"'.repeat(159) + "…",
       truncated: true,
     });
+
+    const boundary = projectTurnItemForWire({
+      ...base,
+      input: { text: "a".repeat(149) + "😀" + "b".repeat(17_000) },
+    });
+    expect(boundary.type === "dynamic_tool" ? boundary.input : null).toEqual({
+      summary: '{"text":"' + "a".repeat(149) + "…",
+      truncated: true,
+    });
   });
 
   it("truncates detail at a UTF-8 boundary without changing the source", () => {
-    const progress = "a".repeat(32_767) + "😀" + "x".repeat(100_000);
+    const marker = "\n… output truncated for transport";
+    const prefixBytes = 32_768 - Buffer.byteLength(marker);
+    const progress = "a".repeat(prefixBytes - 1) + "😀" + "x".repeat(100_000);
     const item = {
       ...base,
       type: "subagent" as const,
@@ -184,13 +198,17 @@ describe("orchestration V2 wire projection", () => {
       driver: ProviderDriverKind.make("codex"),
       providerInstanceId: ProviderInstanceId.make("codex"),
       childThreadId: null,
-      prompt: "Inspect code",
+      prompt: "漢".repeat(12_000),
       result: null,
       progress,
     };
     const projected = projectTurnItemForWire(item);
+    expect(projectTurnItemForWire(projected)).toEqual(projected);
+    expect(
+      Buffer.byteLength(projected.type === "subagent" ? projected.prompt : ""),
+    ).toBeLessThanOrEqual(32_768);
     expect(projected.type === "subagent" ? projected.progress : null).toBe(
-      "a".repeat(32_767) + "\n… output truncated for transport",
+      "a".repeat(prefixBytes - 1) + marker,
     );
     expect(item.progress).toBe(progress);
   });
@@ -210,6 +228,45 @@ describe("orchestration V2 wire projection", () => {
       output: { content: [{ type: "image", mimeType: "image/png" }] },
     });
     expect(item.output.content[0]?.source.data).toBe(data);
+
+    const t3McpApp = {
+      attachmentId: "app-html",
+      server: "repro",
+      tool: "chart",
+      resourceUri: "ui://repro/chart",
+    };
+    const text = { type: "text", text: "Rendered chart" };
+    const appItem = {
+      ...item,
+      toolName: "repro.chart",
+      output: {
+        t3McpApp,
+        result: { content: [text, { type: "image", mimeType: "image/png", data }] },
+      },
+    };
+    expect(projectTurnItemForDetail(appItem)).toMatchObject({
+      output: { t3McpApp, result: { content: [text, { type: "image", mimeType: "image/png" }] } },
+    });
+    const largeOutput = projectTurnItemForDetail(appItem);
+    expect(
+      JSON.stringify(largeOutput.type === "dynamic_tool" ? largeOutput.output : null),
+    ).not.toContain(data);
+
+    const smallApp = {
+      t3McpApp,
+      result: { content: [text, { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }] },
+    };
+    expect(projectTurnItemForDetail({ ...appItem, output: smallApp })).toMatchObject({
+      output: smallApp,
+    });
+
+    const forged = projectTurnItemForDetail({
+      ...appItem,
+      output: { t3McpApp: { ...t3McpApp, resourceUri: data }, result: { content: [text] } },
+    });
+    expect(
+      JSON.stringify(forged.type === "dynamic_tool" ? forged.output : null).length,
+    ).toBeLessThan(270_000);
   });
 
   it("keeps image markers when the rest of a tool output is too large to send", () => {
@@ -259,6 +316,21 @@ describe("orchestration V2 wire projection", () => {
       outputIndicatesFailure: true,
       exitCode: 2,
     });
+  });
+
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output: %s", (output) => {
+    const projected = projectTurnItemForWire({
+      ...base,
+      type: "command_execution" as const,
+      input: "rg -n error logs fixtures",
+      output,
+      exitCode: 0,
+    });
+    expect(projected).not.toHaveProperty("outputIndicatesFailure");
+    expect(projected).toMatchObject({ exitCode: 0, outputOmitted: true });
   });
 
   it("omits inline file bodies but preserves file identity and change counts", () => {
@@ -316,6 +388,38 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(projected)).not.toContain("PRIVATE_BODY");
     expect(event.payload.output).toBe(output);
     expect(projectDomainEventForWire(projected)).toEqual(projected);
+  });
+
+  it("shares one wire projection per stored event", () => {
+    const tool: OrchestrationV2StoredEvent = {
+      sequence: 1,
+      commandId: null,
+      event: {
+        id: EventId.make("shared-tool-event"),
+        type: "turn-item.updated",
+        threadId: base.threadId,
+        occurredAt: base.updatedAt,
+        payload: { ...base, output: { content: [{ type: "text", text: "PRIVATE_BODY" }] } },
+      },
+    };
+    const projected = projectStoredEventForWire(tool);
+    expect(projected).toEqual({ ...tool, event: projectDomainEventForWire(tool.event) });
+    expect(projectStoredEventForWire(tool)).toBe(projected);
+    const detached: OrchestrationV2StoredEvent = {
+      sequence: 2,
+      commandId: null,
+      event: {
+        id: EventId.make("detached-event"),
+        type: "provider-session.detached",
+        threadId: base.threadId,
+        occurredAt: base.updatedAt,
+        payload: {
+          providerSessionId: ProviderSessionId.make("session"),
+          detachedAt: base.updatedAt,
+        },
+      },
+    };
+    expect(projectStoredEventForWire(detached)).toBe(detached);
   });
 });
 

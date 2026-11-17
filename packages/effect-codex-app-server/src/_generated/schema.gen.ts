@@ -1532,12 +1532,15 @@ export const ClientRequest__InternalChatMessageMetadataPassthrough = Schema.Stru
   identifier: "ClientRequest__InternalChatMessageMetadataPassthrough",
 });
 
-export type ClientRequest__MessagePhase = "commentary" | "final_answer";
+export type ClientRequest__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const ClientRequest__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -2219,12 +2222,15 @@ export const ServerNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "ServerNotification__MemoryCitationEntry" });
 
-export type ServerNotification__MessagePhase = "commentary" | "final_answer";
+export type ServerNotification__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const ServerNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -2776,33 +2782,10 @@ export const ServerNotification__HookOutputEntryKind = Schema.Literals([
   "error",
 ]).annotate({ identifier: "ServerNotification__HookOutputEntryKind" });
 
-export type ServerNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const ServerNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "ServerNotification__HookEventName" });
+export type ServerNotification__HookEventName = string;
+export const ServerNotification__HookEventName = Schema.String.annotate({
+  identifier: "ServerNotification__HookEventName",
+});
 
 export type ServerNotification__HookExecutionMode = "sync" | "async";
 export const ServerNotification__HookExecutionMode = Schema.Literals(["sync", "async"]).annotate({
@@ -5647,33 +5630,10 @@ export const V2HookCompletedNotification__HookOutputEntryKind = Schema.Literals(
   "error",
 ]).annotate({ identifier: "V2HookCompletedNotification__HookOutputEntryKind" });
 
-export type V2HookCompletedNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HookCompletedNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HookCompletedNotification__HookEventName" });
+export type V2HookCompletedNotification__HookEventName = string;
+export const V2HookCompletedNotification__HookEventName = Schema.String.annotate({
+  identifier: "V2HookCompletedNotification__HookEventName",
+});
 
 export type V2HookCompletedNotification__HookExecutionMode = "sync" | "async";
 export const V2HookCompletedNotification__HookExecutionMode = Schema.Literals([
@@ -5754,33 +5714,10 @@ export const V2HooksListResponse__HookErrorInfo = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2HooksListResponse__HookErrorInfo" });
 
-export type V2HooksListResponse__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HooksListResponse__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HooksListResponse__HookEventName" });
+export type V2HooksListResponse__HookEventName = string;
+export const V2HooksListResponse__HookEventName = Schema.String.annotate({
+  identifier: "V2HooksListResponse__HookEventName",
+});
 
 export type V2HooksListResponse__HookSource =
   | "system"
@@ -5837,33 +5774,10 @@ export const V2HookStartedNotification__HookOutputEntryKind = Schema.Literals([
   "error",
 ]).annotate({ identifier: "V2HookStartedNotification__HookOutputEntryKind" });
 
-export type V2HookStartedNotification__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2HookStartedNotification__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2HookStartedNotification__HookEventName" });
+export type V2HookStartedNotification__HookEventName = string;
+export const V2HookStartedNotification__HookEventName = Schema.String.annotate({
+  identifier: "V2HookStartedNotification__HookEventName",
+});
 
 export type V2HookStartedNotification__HookExecutionMode = "sync" | "async";
 export const V2HookStartedNotification__HookExecutionMode = Schema.Literals([
@@ -5991,12 +5905,18 @@ export const V2ItemCompletedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ItemCompletedNotification__MemoryCitationEntry" });
 
-export type V2ItemCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ItemCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ItemCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -6538,12 +6458,18 @@ export const V2ItemStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ItemStartedNotification__MemoryCitationEntry" });
 
-export type V2ItemStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ItemStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ItemStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -7512,33 +7438,10 @@ export const V2PluginReadResponse__AppSummary = Schema.Struct({
   identifier: "V2PluginReadResponse__AppSummary",
 });
 
-export type V2PluginReadResponse__HookEventName =
-  | "preToolUse"
-  | "permissionRequest"
-  | "postToolUse"
-  | "preCompact"
-  | "postCompact"
-  | "sessionStart"
-  | "sessionEnd"
-  | "userPromptSubmit"
-  | "subagentStart"
-  | "subagentStop"
-  | "stop"
-  | "interrupt";
-export const V2PluginReadResponse__HookEventName = Schema.Literals([
-  "preToolUse",
-  "permissionRequest",
-  "postToolUse",
-  "preCompact",
-  "postCompact",
-  "sessionStart",
-  "sessionEnd",
-  "userPromptSubmit",
-  "subagentStart",
-  "subagentStop",
-  "stop",
-  "interrupt",
-]).annotate({ identifier: "V2PluginReadResponse__HookEventName" });
+export type V2PluginReadResponse__HookEventName = string;
+export const V2PluginReadResponse__HookEventName = Schema.String.annotate({
+  identifier: "V2PluginReadResponse__HookEventName",
+});
 
 export type V2PluginReadResponse__AbsolutePathBuf = string;
 export const V2PluginReadResponse__AbsolutePathBuf = Schema.String.annotate({
@@ -7915,12 +7818,18 @@ export const V2RawResponseItemCompletedNotification__InternalChatMessageMetadata
     identifier: "V2RawResponseItemCompletedNotification__InternalChatMessageMetadataPassthrough",
   });
 
-export type V2RawResponseItemCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2RawResponseItemCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2RawResponseItemCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -8215,12 +8124,15 @@ export const V2ReviewStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ReviewStartResponse__MemoryCitationEntry" });
 
-export type V2ReviewStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ReviewStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ReviewStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -8927,12 +8839,15 @@ export const V2ThreadForkResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadForkResponse__MemoryCitationEntry" });
 
-export type V2ThreadForkResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadForkResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadForkResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -9382,12 +9297,18 @@ export const V2ThreadItemsListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadItemsListResponse__MemoryCitationEntry" });
 
-export type V2ThreadItemsListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadItemsListResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadItemsListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -9872,12 +9793,15 @@ export const V2ThreadListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadListResponse__MemoryCitationEntry" });
 
-export type V2ThreadListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadListResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -10364,12 +10288,18 @@ export const V2ThreadMetadataUpdateResponse__MemoryCitationEntry = Schema.Struct
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadMetadataUpdateResponse__MemoryCitationEntry" });
 
-export type V2ThreadMetadataUpdateResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadMetadataUpdateResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadMetadataUpdateResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -10822,12 +10752,15 @@ export const V2ThreadReadResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadReadResponse__MemoryCitationEntry" });
 
-export type V2ThreadReadResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadReadResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadReadResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -11382,12 +11315,15 @@ export const V2ThreadResumeParams__InternalChatMessageMetadataPassthrough = Sche
   identifier: "V2ThreadResumeParams__InternalChatMessageMetadataPassthrough",
 });
 
-export type V2ThreadResumeParams__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadResumeParams__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadResumeParams__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -11755,12 +11691,15 @@ export const V2ThreadResumeResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadResumeResponse__MemoryCitationEntry" });
 
-export type V2ThreadResumeResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadResumeResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadResumeResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -12202,12 +12141,15 @@ export const V2ThreadRevertResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadRevertResponse__MemoryCitationEntry" });
 
-export type V2ThreadRevertResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadRevertResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadRevertResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -12841,12 +12783,18 @@ export const V2ThreadStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadStartedNotification__MemoryCitationEntry" });
 
-export type V2ThreadStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -13469,12 +13417,15 @@ export const V2ThreadStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadStartResponse__MemoryCitationEntry" });
 
-export type V2ThreadStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2ThreadStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -13910,12 +13861,18 @@ export const V2ThreadTurnsListResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadTurnsListResponse__MemoryCitationEntry" });
 
-export type V2ThreadTurnsListResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadTurnsListResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadTurnsListResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -14384,12 +14341,18 @@ export const V2ThreadUnarchiveResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2ThreadUnarchiveResponse__MemoryCitationEntry" });
 
-export type V2ThreadUnarchiveResponse__MessagePhase = "commentary" | "final_answer";
+export type V2ThreadUnarchiveResponse__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2ThreadUnarchiveResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -14785,12 +14748,18 @@ export const V2TurnCompletedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnCompletedNotification__MemoryCitationEntry" });
 
-export type V2TurnCompletedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2TurnCompletedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2TurnCompletedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -15200,12 +15169,18 @@ export const V2TurnStartedNotification__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnStartedNotification__MemoryCitationEntry" });
 
-export type V2TurnStartedNotification__MessagePhase = "commentary" | "final_answer";
+export type V2TurnStartedNotification__MessagePhase =
+  | "commentary"
+  | "partial_answer"
+  | "final_answer";
 export const V2TurnStartedNotification__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -15729,12 +15704,15 @@ export const V2TurnStartResponse__MemoryCitationEntry = Schema.Struct({
   path: Schema.String,
 }).annotate({ identifier: "V2TurnStartResponse__MemoryCitationEntry" });
 
-export type V2TurnStartResponse__MessagePhase = "commentary" | "final_answer";
+export type V2TurnStartResponse__MessagePhase = "commentary" | "partial_answer" | "final_answer";
 export const V2TurnStartResponse__MessagePhase = Schema.Union(
   [
     Schema.Literal("commentary").annotate({
       description:
         "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
+    }),
+    Schema.Literal("partial_answer").annotate({
+      description: "Stable answer text that may be followed by more assistant output or tools.",
     }),
     Schema.Literal("final_answer").annotate({
       description: "The assistant's terminal answer text for the current turn.",
@@ -17856,21 +17834,7 @@ export const PermissionsRequestApprovalResponse__FileSystemSpecialPath = Schema.
 ).annotate({ identifier: "PermissionsRequestApprovalResponse__FileSystemSpecialPath" });
 
 export type ServerNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -17882,23 +17846,7 @@ export type ServerNotification__CodexErrorInfo =
     };
 export const ServerNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -19942,21 +19890,7 @@ export const V2ConfigWriteResponse__ConfigLayerSource = Schema.Union(
 ).annotate({ identifier: "V2ConfigWriteResponse__ConfigLayerSource" });
 
 export type V2ErrorNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -19968,23 +19902,7 @@ export type V2ErrorNotification__CodexErrorInfo =
     };
 export const V2ErrorNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -22398,21 +22316,7 @@ export const V2RawResponseItemCompletedNotification__ConfigurationReasoning = Sc
 });
 
 export type V2ReviewStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -22424,23 +22328,7 @@ export type V2ReviewStartResponse__CodexErrorInfo =
     };
 export const V2ReviewStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -22936,21 +22824,7 @@ export const V2ThreadForkResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadForkResponse__ThreadStatus" });
 
 export type V2ThreadForkResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -22962,23 +22836,7 @@ export type V2ThreadForkResponse__CodexErrorInfo =
     };
 export const V2ThreadForkResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -23586,21 +23444,7 @@ export const V2ThreadListResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadListResponse__ThreadStatus" });
 
 export type V2ThreadListResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -23612,23 +23456,7 @@ export type V2ThreadListResponse__CodexErrorInfo =
     };
 export const V2ThreadListResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -23995,21 +23823,7 @@ export const V2ThreadMetadataUpdateResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadMetadataUpdateResponse__ThreadStatus" });
 
 export type V2ThreadMetadataUpdateResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -24021,23 +23835,7 @@ export type V2ThreadMetadataUpdateResponse__CodexErrorInfo =
     };
 export const V2ThreadMetadataUpdateResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -24409,21 +24207,7 @@ export const V2ThreadReadResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadReadResponse__ThreadStatus" });
 
 export type V2ThreadReadResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -24435,23 +24219,7 @@ export type V2ThreadReadResponse__CodexErrorInfo =
     };
 export const V2ThreadReadResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -25177,21 +24945,7 @@ export const V2ThreadResumeResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadResumeResponse__ThreadStatus" });
 
 export type V2ThreadResumeResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -25203,23 +24957,7 @@ export type V2ThreadResumeResponse__CodexErrorInfo =
     };
 export const V2ThreadResumeResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -25548,21 +25286,7 @@ export const V2ThreadRevertResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadRevertResponse__ThreadStatus" });
 
 export type V2ThreadRevertResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -25574,23 +25298,7 @@ export type V2ThreadRevertResponse__CodexErrorInfo =
     };
 export const V2ThreadRevertResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26088,21 +25796,7 @@ export const V2ThreadStartedNotification__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadStartedNotification__ThreadStatus" });
 
 export type V2ThreadStartedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26114,23 +25808,7 @@ export type V2ThreadStartedNotification__CodexErrorInfo =
     };
 export const V2ThreadStartedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26593,21 +26271,7 @@ export const V2ThreadStartResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadStartResponse__ThreadStatus" });
 
 export type V2ThreadStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26619,23 +26283,7 @@ export type V2ThreadStartResponse__CodexErrorInfo =
     };
 export const V2ThreadStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -26923,21 +26571,7 @@ export const V2ThreadTokenUsageUpdatedNotification__ThreadTokenUsage = Schema.St
 }).annotate({ identifier: "V2ThreadTokenUsageUpdatedNotification__ThreadTokenUsage" });
 
 export type V2ThreadTurnsListResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -26949,23 +26583,7 @@ export type V2ThreadTurnsListResponse__CodexErrorInfo =
     };
 export const V2ThreadTurnsListResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -27336,21 +26954,7 @@ export const V2ThreadUnarchiveResponse__ThreadStatus = Schema.Union(
 ).annotate({ identifier: "V2ThreadUnarchiveResponse__ThreadStatus" });
 
 export type V2ThreadUnarchiveResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -27362,23 +26966,7 @@ export type V2ThreadUnarchiveResponse__CodexErrorInfo =
     };
 export const V2ThreadUnarchiveResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -27667,21 +27255,7 @@ export const V2ThreadUnarchiveResponse__CollabAgentState = Schema.Struct({
 }).annotate({ identifier: "V2ThreadUnarchiveResponse__CollabAgentState" });
 
 export type V2TurnCompletedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -27693,23 +27267,7 @@ export type V2TurnCompletedNotification__CodexErrorInfo =
     };
 export const V2TurnCompletedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -28008,21 +27566,7 @@ export const V2TurnPlanUpdatedNotification__TurnPlanStep = Schema.Struct({
 }).annotate({ identifier: "V2TurnPlanUpdatedNotification__TurnPlanStep" });
 
 export type V2TurnStartedNotification__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -28034,23 +27578,7 @@ export type V2TurnStartedNotification__CodexErrorInfo =
     };
 export const V2TurnStartedNotification__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -28476,21 +28004,7 @@ export const V2TurnStartParams__SandboxPolicy = Schema.Union(
 ).annotate({ identifier: "V2TurnStartParams__SandboxPolicy" });
 
 export type V2TurnStartResponse__CodexErrorInfo =
-  | "contextWindowExceeded"
-  | "sessionBudgetExceeded"
-  | "usageLimitExceeded"
-  | "rateLimitExceeded"
-  | "flexUnavailable"
-  | "serverOverloaded"
-  | "cyberPolicy"
-  | "misalignmentPolicyViolation"
-  | "tooManyDenials"
-  | "internalServerError"
-  | "unauthorized"
-  | "badRequest"
-  | "threadRollbackFailed"
-  | "sandboxError"
-  | "other"
+  | string
   | { readonly httpConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamConnectionFailed: { readonly httpStatusCode?: number | null } }
   | { readonly responseStreamDisconnected: { readonly httpStatusCode?: number | null } }
@@ -28502,23 +28016,7 @@ export type V2TurnStartResponse__CodexErrorInfo =
     };
 export const V2TurnStartResponse__CodexErrorInfo = Schema.Union(
   [
-    Schema.Literals([
-      "contextWindowExceeded",
-      "sessionBudgetExceeded",
-      "usageLimitExceeded",
-      "rateLimitExceeded",
-      "flexUnavailable",
-      "serverOverloaded",
-      "cyberPolicy",
-      "misalignmentPolicyViolation",
-      "tooManyDenials",
-      "internalServerError",
-      "unauthorized",
-      "badRequest",
-      "threadRollbackFailed",
-      "sandboxError",
-      "other",
-    ]),
+    Schema.String,
     Schema.Struct({
       httpConnectionFailed: Schema.Struct({
         httpStatusCode: Schema.optionalKey(
@@ -33461,12 +32959,13 @@ export type ServerNotification__ThreadItem =
   | {
       readonly failure?: ServerNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: ServerNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -33761,7 +33260,7 @@ export const ServerNotification__ThreadItem = Schema.Union(
         Schema.Union([ServerNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([ServerNotification__AbsolutePathBuf, Schema.Null]),
@@ -33769,6 +33268,7 @@ export const ServerNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -34039,12 +33539,13 @@ export type V2ItemCompletedNotification__ThreadItem =
   | {
       readonly failure?: V2ItemCompletedNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ItemCompletedNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -34349,7 +33850,7 @@ export const V2ItemCompletedNotification__ThreadItem = Schema.Union(
         Schema.Union([V2ItemCompletedNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ItemCompletedNotification__AbsolutePathBuf, Schema.Null]),
@@ -34357,6 +33858,7 @@ export const V2ItemCompletedNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -34524,12 +34026,13 @@ export type V2ItemStartedNotification__ThreadItem =
   | {
       readonly failure?: V2ItemStartedNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ItemStartedNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -34834,7 +34337,7 @@ export const V2ItemStartedNotification__ThreadItem = Schema.Union(
         Schema.Union([V2ItemStartedNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ItemStartedNotification__AbsolutePathBuf, Schema.Null]),
@@ -34842,6 +34345,7 @@ export const V2ItemStartedNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -35743,12 +35247,13 @@ export type V2ReviewStartResponse__ThreadItem =
   | {
       readonly failure?: V2ReviewStartResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ReviewStartResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -36047,7 +35552,7 @@ export const V2ReviewStartResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ReviewStartResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ReviewStartResponse__AbsolutePathBuf, Schema.Null]),
@@ -36055,6 +35560,7 @@ export const V2ReviewStartResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -36209,12 +35715,13 @@ export type V2ThreadForkResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadForkResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadForkResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -36513,7 +36020,7 @@ export const V2ThreadForkResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadForkResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadForkResponse__AbsolutePathBuf, Schema.Null]),
@@ -36521,6 +36028,7 @@ export const V2ThreadForkResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -36664,12 +36172,13 @@ export type V2ThreadItemsListResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadItemsListResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadItemsListResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -36974,7 +36483,7 @@ export const V2ThreadItemsListResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadItemsListResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadItemsListResponse__AbsolutePathBuf, Schema.Null]),
@@ -36982,6 +36491,7 @@ export const V2ThreadItemsListResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -37125,12 +36635,13 @@ export type V2ThreadListResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadListResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadListResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -37429,7 +36940,7 @@ export const V2ThreadListResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadListResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadListResponse__AbsolutePathBuf, Schema.Null]),
@@ -37437,6 +36948,7 @@ export const V2ThreadListResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -37582,12 +37094,13 @@ export type V2ThreadMetadataUpdateResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadMetadataUpdateResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadMetadataUpdateResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -37892,7 +37405,7 @@ export const V2ThreadMetadataUpdateResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadMetadataUpdateResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadMetadataUpdateResponse__AbsolutePathBuf, Schema.Null]),
@@ -37900,6 +37413,7 @@ export const V2ThreadMetadataUpdateResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -38043,12 +37557,13 @@ export type V2ThreadReadResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadReadResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadReadResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -38347,7 +37862,7 @@ export const V2ThreadReadResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadReadResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadReadResponse__AbsolutePathBuf, Schema.Null]),
@@ -38355,6 +37870,7 @@ export const V2ThreadReadResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -38498,12 +38014,13 @@ export type V2ThreadResumeResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadResumeResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadResumeResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -38802,7 +38319,7 @@ export const V2ThreadResumeResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadResumeResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadResumeResponse__AbsolutePathBuf, Schema.Null]),
@@ -38810,6 +38327,7 @@ export const V2ThreadResumeResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -38953,12 +38471,13 @@ export type V2ThreadRevertResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadRevertResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadRevertResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -39257,7 +38776,7 @@ export const V2ThreadRevertResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadRevertResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadRevertResponse__AbsolutePathBuf, Schema.Null]),
@@ -39265,6 +38784,7 @@ export const V2ThreadRevertResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -39457,12 +38977,13 @@ export type V2ThreadStartedNotification__ThreadItem =
   | {
       readonly failure?: V2ThreadStartedNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadStartedNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -39767,7 +39288,7 @@ export const V2ThreadStartedNotification__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadStartedNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadStartedNotification__AbsolutePathBuf, Schema.Null]),
@@ -39775,6 +39296,7 @@ export const V2ThreadStartedNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -39918,12 +39440,13 @@ export type V2ThreadStartResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadStartResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadStartResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -40222,7 +39745,7 @@ export const V2ThreadStartResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadStartResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadStartResponse__AbsolutePathBuf, Schema.Null]),
@@ -40230,6 +39753,7 @@ export const V2ThreadStartResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -40373,12 +39897,13 @@ export type V2ThreadTurnsListResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadTurnsListResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadTurnsListResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -40683,7 +40208,7 @@ export const V2ThreadTurnsListResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadTurnsListResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadTurnsListResponse__AbsolutePathBuf, Schema.Null]),
@@ -40691,6 +40216,7 @@ export const V2ThreadTurnsListResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -40834,12 +40360,13 @@ export type V2ThreadUnarchiveResponse__ThreadItem =
   | {
       readonly failure?: V2ThreadUnarchiveResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2ThreadUnarchiveResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -41144,7 +40671,7 @@ export const V2ThreadUnarchiveResponse__ThreadItem = Schema.Union(
         Schema.Union([V2ThreadUnarchiveResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2ThreadUnarchiveResponse__AbsolutePathBuf, Schema.Null]),
@@ -41152,6 +40679,7 @@ export const V2ThreadUnarchiveResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -41297,12 +40825,13 @@ export type V2TurnCompletedNotification__ThreadItem =
   | {
       readonly failure?: V2TurnCompletedNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2TurnCompletedNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -41607,7 +41136,7 @@ export const V2TurnCompletedNotification__ThreadItem = Schema.Union(
         Schema.Union([V2TurnCompletedNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2TurnCompletedNotification__AbsolutePathBuf, Schema.Null]),
@@ -41615,6 +41144,7 @@ export const V2TurnCompletedNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -41758,12 +41288,13 @@ export type V2TurnStartedNotification__ThreadItem =
   | {
       readonly failure?: V2TurnStartedNotification__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2TurnStartedNotification__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -42068,7 +41599,7 @@ export const V2TurnStartedNotification__ThreadItem = Schema.Union(
         Schema.Union([V2TurnStartedNotification__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2TurnStartedNotification__AbsolutePathBuf, Schema.Null]),
@@ -42076,6 +41607,7 @@ export const V2TurnStartedNotification__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,
@@ -42230,12 +41762,13 @@ export type V2TurnStartResponse__ThreadItem =
   | {
       readonly failure?: V2TurnStartResponse__ImageGenerationFailure | null;
       readonly id: string;
-      readonly result: string;
+      readonly result?: string;
       readonly revisedPrompt?: string | null;
       readonly savedPath?: V2TurnStartResponse__AbsolutePathBuf | null;
       readonly status: string;
       readonly transparentBackground?: boolean | null;
       readonly type: "imageGeneration";
+      readonly fileId?: string;
     }
   | { readonly id: string; readonly review: string; readonly type: "enteredReviewMode" }
   | { readonly id: string; readonly review: string; readonly type: "exitedReviewMode" }
@@ -42530,7 +42063,7 @@ export const V2TurnStartResponse__ThreadItem = Schema.Union(
         Schema.Union([V2TurnStartResponse__ImageGenerationFailure, Schema.Null]),
       ),
       id: Schema.String,
-      result: Schema.String,
+      result: Schema.optionalKey(Schema.String),
       revisedPrompt: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       savedPath: Schema.optionalKey(
         Schema.Union([V2TurnStartResponse__AbsolutePathBuf, Schema.Null]),
@@ -42538,6 +42071,7 @@ export const V2TurnStartResponse__ThreadItem = Schema.Union(
       status: Schema.String,
       transparentBackground: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
       type: Schema.Literal("imageGeneration").annotate({ title: "ImageGenerationThreadItemType" }),
+      fileId: Schema.optionalKey(Schema.String),
     }).annotate({ title: "ImageGenerationThreadItem" }),
     Schema.Struct({
       id: Schema.String,

@@ -1,0 +1,149 @@
+---
+title: Cloud Run jobs
+description: Run batch work to completion with GCP.Run.Job — trigger it from a service with RunJob, or nightly with Cloud Scheduler.
+---
+
+`GCP.Run.Job` runs an Effect program that starts, does its work, and
+exits. Nothing is billed between runs. Use it for nightly reports,
+backfills, and draining a queue in batches.
+
+## Declare a job
+
+A job returns a `run` Effect instead of `fetch`:
+
+```typescript
+// src/Summarize.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { Reports } from "./resources.ts";
+
+export default class Summarize extends GCP.Run.Job<Summarize>()(
+  "Summarize",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const reports = yield* GCP.Storage.WriteBucket(Reports);
+
+    return {
+      run: Effect.gen(function* () {
+        const day = new Date().toISOString().slice(0, 10);
+        yield* reports.put(`daily/${day}.json`, JSON.stringify({ day }), {
+          contentType: "application/json",
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Storage.WriteBucketHttp)),
+) {}
+```
+
+Bindings work the same as on a service. The job gets its own service
+account and only the roles its bindings ask for.
+
+## Retries and timeouts
+
+```diff lang="typescript"
+export default class Summarize extends GCP.Run.Job<Summarize>()(
+  "Summarize",
+-  { main: import.meta.url },
++  { main: import.meta.url, maxRetries: 1, timeout: "300s" },
+```
+
+A failed run retries `maxRetries` times, then the execution fails.
+`timeout` caps each attempt.
+
+## Start it from a service
+
+`RunJob` gives a service permission to start the job and returns a
+function that does it:
+
+```typescript
+// src/Admin.ts
+import Summarize from "./Summarize.ts";
+
+export default class Admin extends GCP.Function<Admin>()(
+  "Admin",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const runSummarize = yield* GCP.Run.RunJob(Summarize);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const operation = yield* runSummarize();
+        return yield* HttpServerResponse.json(
+          { operation: operation.name },
+          { status: 202 },
+        );
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Run.RunJobHttp)),
+) {}
+```
+
+`runSummarize()` returns as soon as the execution starts, not when it
+finishes.
+
+## Run it on a schedule
+
+A Cloud Scheduler job can start the job directly, with no service in
+between. Give the job's own account permission to run it, then point
+the scheduler at the Cloud Run API:
+
+```typescript
+// src/Nightly.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
+import Summarize from "./Summarize.ts";
+
+export const Nightly = Effect.gen(function* () {
+  const job = yield* Summarize;
+
+  const runner = yield* GCP.IAM.Member("NightlyRunner", {
+    kind: "run.job",
+    name: job.name,
+    role: "roles/run.invoker",
+    member: Output.interpolate`serviceAccount:${job.serviceAccount}`,
+  });
+
+  return yield* GCP.CloudScheduler.Job("Nightly", {
+    schedule: "0 2 * * *",
+    timeZone: "Etc/UTC",
+    httpTarget: {
+      uri: Output.interpolate`https://run.googleapis.com/v2/${job.name}:run`,
+      httpMethod: "POST",
+      body: "{}",
+      oauthToken: {
+        serviceAccountEmail: Output.map(runner.member, (member) =>
+          member.replace(/^serviceAccount:/, ""),
+        ),
+        scope: "https://www.googleapis.com/auth/cloud-platform",
+      },
+    },
+  });
+});
+```
+
+Reading `runner.member` makes the scheduler wait for the grant.
+Yield `Nightly` from your Stack.
+
+## Read the execution name
+
+Cloud Run sets `CLOUD_RUN_EXECUTION` in the job's environment. Log it
+to find a run in the console:
+
+```typescript
+const execution = yield* Effect.sync(() => process.env.CLOUD_RUN_EXECUTION);
+```
+
+## Example
+
+[`examples/gcp-scheduled-job`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-scheduled-job)
+rolls BigQuery orders into a daily JSON summary in Cloud Storage,
+nightly and on demand.
+
+## Where next
+
+- [Pub/Sub](/gcp/messaging/pubsub) — a job that drains a subscription
+  into BigQuery.
+- [Cloud Scheduler](/gcp/messaging/scheduler) — schedules that call a
+  service.
+- [Run reference](/providers/gcp/run#job) — every prop and attribute.

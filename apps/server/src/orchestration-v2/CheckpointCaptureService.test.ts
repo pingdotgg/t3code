@@ -477,6 +477,204 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
+  // A stopped run is captured after it ends; by then the next root run, dispatched or queued, may
+  // have re-created the thread's one root scope with its own node and time.
+  it.effect.each([1, 2])(
+    "attributes the baselines a late capture materializes to the stopped run %i",
+    (ordinal) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const requestedAt = yield* DateTime.now;
+        const stoppedAt = DateTime.add(requestedAt, { seconds: 1 });
+        const rescopedAt = DateTime.add(requestedAt, { seconds: 2 });
+        const lateThreadId = ThreadId.make(`thread:checkpoint-capture-late-${ordinal}`);
+        const lateRunId = RunId.make(`run:checkpoint-capture-late-${ordinal}`);
+        const lateRootNodeId = NodeId.make(`node:checkpoint-capture-late-${ordinal}-root`);
+        const lateScopeId = CheckpointScopeId.make(`scope:checkpoint-capture-late-${ordinal}`);
+        const lateProviderThreadId = ProviderThreadId.make(
+          `provider-thread:checkpoint-capture-late-${ordinal}`,
+        );
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-late-${ordinal}:thread`),
+          type: "thread.created",
+          threadId: lateThreadId,
+          occurredAt: requestedAt,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: lateThreadId,
+            projectId,
+            title: "Checkpoint capture after the next run re-created the scope",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: lateThreadId,
+            },
+            forkedFrom: null,
+            createdAt: requestedAt,
+            updatedAt: requestedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-late-${ordinal}:run`),
+          type: "run.updated",
+          threadId: lateThreadId,
+          runId: lateRunId,
+          nodeId: lateRootNodeId,
+          providerInstanceId,
+          occurredAt: stoppedAt,
+          payload: {
+            id: lateRunId,
+            threadId: lateThreadId,
+            ordinal,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: lateProviderThreadId,
+            userMessageId: MessageId.make(`message:checkpoint-capture-late-${ordinal}`),
+            rootNodeId: lateRootNodeId,
+            activeAttemptId: null,
+            status: "interrupted",
+            requestedAt,
+            startedAt: requestedAt,
+            completedAt: stoppedAt,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-late-${ordinal}:node`),
+          type: "node.updated",
+          threadId: lateThreadId,
+          runId: lateRunId,
+          nodeId: lateRootNodeId,
+          providerInstanceId,
+          occurredAt: stoppedAt,
+          payload: {
+            id: lateRootNodeId,
+            threadId: lateThreadId,
+            runId: lateRunId,
+            parentNodeId: null,
+            rootNodeId: lateRootNodeId,
+            kind: "root_turn",
+            status: "interrupted",
+            countsForRun: true,
+            providerThreadId: lateProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: lateScopeId,
+            startedAt: requestedAt,
+            completedAt: stoppedAt,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-late-${ordinal}:provider-thread`),
+          type: "provider-thread.updated",
+          threadId: lateThreadId,
+          nodeId: lateRootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: requestedAt,
+          payload: {
+            id: lateProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: lateThreadId,
+            ownerNodeId: lateRootNodeId,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: ordinal,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: requestedAt,
+            updatedAt: requestedAt,
+          },
+        });
+        const nextRunId = RunId.make(`run:checkpoint-capture-late-${ordinal}-next`);
+        const nextRootNodeId = NodeId.make(`node:checkpoint-capture-late-${ordinal}-next-root`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-late-${ordinal}:scope-of-next-run`),
+          type: "checkpoint-scope.created",
+          threadId: lateThreadId,
+          runId: nextRunId,
+          nodeId: nextRootNodeId,
+          occurredAt: rescopedAt,
+          payload: {
+            id: lateScopeId,
+            threadId: lateThreadId,
+            runId: nextRunId,
+            nodeId: nextRootNodeId,
+            parentScopeId: null,
+            providerThreadId: lateProviderThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo",
+            createdAt: rescopedAt,
+          },
+        });
+
+        const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+        const layerCapture = CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              CheckpointService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    NodeCrypto.layer,
+                    Layer.mock(CheckpointStore.CheckpointStore)({
+                      isGitRepository: () => Effect.succeed(true),
+                      hasCheckpointRef: () => Effect.succeed(true),
+                      captureCheckpoint: () => Effect.void,
+                      diffCheckpoints: () => Effect.succeed(""),
+                      listAuthoredPaths: () => Effect.succeed(null),
+                    }),
+                  ),
+                ),
+              ),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Ref.set(committed, input.events).pipe(Effect.as({ committed: true } as never)),
+              }),
+            ),
+          ),
+        );
+        yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+          service.execute({ threadId: lateThreadId, runId: lateRunId, scopeId: lateScopeId }),
+        ).pipe(Effect.provide(layerCapture));
+
+        const baselines = (yield* Ref.get(committed)).flatMap((event) =>
+          event.type === "checkpoint.captured" && event.payload.runId === null ? [event] : [],
+        );
+        assert.deepEqual(
+          baselines.map((event) => event.payload.ordinalWithinScope),
+          ordinal === 1 ? [0] : [0, 1],
+        );
+        for (const baseline of baselines) {
+          assert.equal(baseline.nodeId, lateRootNodeId);
+          assert.equal(baseline.payload.nodeId, lateRootNodeId);
+          assert.deepEqual(baseline.payload.capturedAt, requestedAt);
+        }
+      }),
+  );
+
   it.effect("records the checkpoint of a cancelled run and keeps it cancelled", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -716,7 +914,210 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         DateTime.formatIso(cancelledAt),
       );
       assert.equal(projected.rootNode?.status, "cancelled");
-      assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
+      assert.deepEqual([...projected.preservedCheckpointOrdinals].toSorted(), [0, 1]);
+
+      // A rewind leaves the run's checkpoint stale; the next capture must rebaseline it.
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-cancelled:captured-stale"),
+        type: "checkpoint.captured",
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        providerInstanceId,
+        occurredAt: cancelledAt,
+        payload: { ...captured, status: "stale" },
+      });
+      const afterRewind = yield* projectionStore.getCheckpointCaptureContext(cancelledThreadId, {
+        runId: cancelledRunId,
+        scopeId: cancelledScopeId,
+      });
+      assert.deepEqual(afterRewind.preservedCheckpointOrdinals, [0]);
+    }),
+  );
+
+  it.effect("completes a side chat run with a missing checkpoint and never touches git", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const sideChatThreadId = ThreadId.make("thread:checkpoint-capture-side-chat");
+      const sideChatRunId = RunId.make("run:checkpoint-capture-side-chat");
+      const sideChatScopeId = CheckpointScopeId.make("scope:checkpoint-capture-side-chat");
+      const sideChatRootNodeId = NodeId.make("node:checkpoint-capture-side-chat-root");
+      const sideChatProviderThreadId = ProviderThreadId.make(
+        "provider-thread:checkpoint-capture-side-chat",
+      );
+      const event = { threadId: sideChatThreadId, occurredAt: now };
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-side-chat:thread"),
+          type: "thread.created",
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: sideChatThreadId,
+            projectId,
+            title: "Side chat",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/repo",
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: threadId,
+              relationshipToParent: "fork",
+              rootThreadId: threadId,
+              sideChat: true,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-side-chat:provider-thread"),
+          type: "provider-thread.updated",
+          driver,
+          providerInstanceId,
+          payload: {
+            id: sideChatProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: sideChatThreadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-side-chat:run"),
+          type: "run.updated",
+          runId: sideChatRunId,
+          payload: {
+            id: sideChatRunId,
+            threadId: sideChatThreadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: sideChatProviderThreadId,
+            userMessageId: MessageId.make("message:checkpoint-capture-side-chat"),
+            rootNodeId: sideChatRootNodeId,
+            activeAttemptId: null,
+            status: "waiting",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-side-chat:node"),
+          type: "node.updated",
+          runId: sideChatRunId,
+          nodeId: sideChatRootNodeId,
+          payload: {
+            id: sideChatRootNodeId,
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            parentNodeId: null,
+            rootNodeId: sideChatRootNodeId,
+            kind: "root_turn",
+            status: "waiting",
+            countsForRun: true,
+            providerThreadId: sideChatProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: sideChatScopeId,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-side-chat:scope"),
+          type: "checkpoint-scope.created",
+          runId: sideChatRunId,
+          nodeId: sideChatRootNodeId,
+          payload: {
+            id: sideChatScopeId,
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            nodeId: sideChatRootNodeId,
+            parentScopeId: null,
+            providerThreadId: sideChatProviderThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo",
+            createdAt: now,
+          },
+        },
+      ];
+      yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
+      const gitUnavailable = () => Effect.die("side chats must not snapshot the shared worktree");
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            CheckpointService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  IdAllocator.layer,
+                  NodeCrypto.layer,
+                  Layer.mock(CheckpointStore.CheckpointStore)({
+                    isGitRepository: gitUnavailable,
+                    captureCheckpoint: gitUnavailable,
+                    hasCheckpointRef: gitUnavailable,
+                  }),
+                ),
+              ),
+            ),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (committed) => projectionStore.apply(committed)).pipe(
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+        service.execute({
+          threadId: sideChatThreadId,
+          runId: sideChatRunId,
+          scopeId: sideChatScopeId,
+        }),
+      ).pipe(Effect.provide(layerCapture));
+
+      const { checkpoints, runs } = yield* projectionStore.getThreadRecords(sideChatThreadId, [
+        "runs",
+        "checkpoints",
+      ]);
+      assert.equal(runs[0]?.status, "completed");
+      const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
+      assert.equal(checkpoint?.status, "missing");
     }),
   );
 });
