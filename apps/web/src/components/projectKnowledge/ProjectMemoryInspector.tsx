@@ -8,6 +8,7 @@ import type {
   ProjectKnowledgeSearchResult,
   ProjectKnowledgeSource,
 } from "@t3tools/contracts";
+import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
   isSupersededFact,
@@ -313,7 +314,8 @@ export function SourceInspector(props: {
       ) : data?.state === "available" ? (
         <>
           <p className="text-muted-foreground text-xs">
-            {data.title} · {data.role} · {dateFormatter.format(new Date(data.createdAt))}
+            {data.title} · {messageAuthorLabel(data.role, data.speaker)} ·{" "}
+            {dateFormatter.format(new Date(data.createdAt))}
             {data.archived ? " · archived" : ""}
           </p>
           <pre className="whitespace-pre-wrap border-s-2 ps-3 font-sans text-sm leading-relaxed">

@@ -4,6 +4,8 @@ import {
   ProjectKnowledgeMutation,
   type AssistedLearningRun,
   type KnowledgeMessageRef,
+  type MessageId,
+  type OrchestrationV2MessageSpeaker,
   type ProjectId,
   RunId,
   ThreadId,
@@ -132,10 +134,15 @@ const make = Effect.gen(function* () {
       if (!settings.enableAssistedLearning)
         return yield* finish("skipped", "Automatic memory is off for this project.");
       const evidence = [];
+      // A seat's reply published into its parent and the seat's own thread are one speaker.
+      const speakerThreads = new Map<RunId, ThreadId>();
       for (const entry of batch) {
         if (yield* knowledge.hasAssistedRun(projectId, entry.runId)) continue;
         const source = yield* projections
-          .getThreadRecords(entry.threadId, ["messages"], { messageRunIds: [entry.runId] })
+          .getThreadRecords(entry.threadId, ["messages", "runs"], {
+            messageRunIds: [entry.runId],
+            runIds: [entry.runId],
+          })
           .pipe(
             Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
           );
@@ -148,6 +155,11 @@ const make = Effect.gen(function* () {
           skippedRuns.add(entry.runId);
           continue;
         }
+        const publication = source.runs[0]?.publication;
+        speakerThreads.set(
+          entry.runId,
+          publication?.type === "peer_reply" ? publication.seatThreadId : entry.threadId,
+        );
         evidence.push(
           ...source.messages.filter(
             (message) =>
@@ -173,7 +185,8 @@ const make = Effect.gen(function* () {
       if (
         !userEvidence &&
         (new Set(completedEvidence.map((message) => message.runId)).size < 2 ||
-          new Set(completedEvidence.map((message) => message.threadId)).size < 2 ||
+          new Set(completedEvidence.map((message) => speakerThreads.get(message.runId!))).size <
+            2 ||
           new Set(completedEvidence.map((message) => message.text.trim().toLowerCase())).size < 2)
       )
         return yield* finish(
@@ -195,6 +208,17 @@ const make = Effect.gen(function* () {
         (left, right) => finalized.indexOf(left) - finalized.indexOf(right),
       );
       // Citations are message ids and digests from this canonical read; the model only names refs.
+      const speakersByMessage = new Map<MessageId, OrchestrationV2MessageSpeaker>();
+      const assistantIds = new Map<ThreadId, Array<MessageId>>();
+      for (const message of transcript) {
+        if (message.role !== "assistant") continue;
+        const ids = assistantIds.get(message.threadId) ?? [];
+        ids.push(message.id);
+        assistantIds.set(message.threadId, ids);
+      }
+      for (const [id, messageIds] of assistantIds)
+        for (const [messageId, speaker] of yield* projections.getPeerSpeakers(id, messageIds))
+          speakersByMessage.set(messageId, speaker);
       const refs = new Map<string, KnowledgeMessageRef>();
       const userRefs = new Set<string>();
       const messages: Array<
@@ -219,14 +243,20 @@ const make = Effect.gen(function* () {
           messageId: message.id,
           digest: yield* digest(message.text),
         });
-        messages.push({
+        const speaker =
+          message.role === "assistant" ? speakersByMessage.get(message.id) : undefined;
+        const shared = {
           ref,
-          role: message.role as "user" | "assistant",
           threadId: message.threadId,
           runId: message.runId!,
           runOutcome: batch.find((entry) => entry.runId === message.runId)!.runOutcome,
           text: message.text.slice(0, textLimits.get(message.id)),
-        });
+        };
+        messages.push(
+          speaker === undefined
+            ? { ...shared, role: message.role as "user" | "assistant" }
+            : { ...shared, role: "peer" as const, speaker },
+        );
       }
       const project = yield* projects.get(projectId);
       const cwd = Option.isSome(project) ? project.value.workspaceRoot : undefined;
@@ -276,7 +306,8 @@ const make = Effect.gen(function* () {
             const corroborated =
               citedMessages.every((message) => message.runOutcome === "completed") &&
               new Set(citedMessages.map((message) => message.runId)).size >= 2 &&
-              new Set(citedMessages.map((message) => message.threadId)).size >= 2 &&
+              new Set(citedMessages.map((message) => speakerThreads.get(message.runId))).size >=
+                2 &&
               new Set(citedMessages.map((message) => message.text.trim().toLowerCase())).size >= 2;
             const userSupported = (candidate?.citations ?? []).some((ref) =>
               userRefs.has(ref.trim()),
@@ -285,7 +316,7 @@ const make = Effect.gen(function* () {
               candidate === null ||
               sources.length === 0 ||
               candidate.citations.some((ref) => !refs.has(ref.trim())) ||
-              (!userSupported && !corroborated)
+              (!userSupported && (!corroborated || candidate.kind === "decision"))
             ) {
               dropped += 1;
               continue;

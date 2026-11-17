@@ -2932,6 +2932,32 @@ it.effect("reads message ordinals through their index", () =>
   messageOrdinalsReadThroughTheirIndex.pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reads peer speakers through the message index when messages are named", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:peer-speakers");
+    const named = traceSqlStatements();
+    yield* projections
+      .getPeerSpeakers(threadId, [MessageId.make("message:peer")])
+      .pipe(Effect.withTracer(named.tracer));
+    yield* assertReadsThroughMessageOrdinalIndex(
+      named.statements.find((statement) => statement.includes("$.speaker.label")),
+      ["thread_id=?", "<expr>=?"],
+    );
+    const open = traceSqlStatements();
+    yield* projections.getPeerSpeakers(threadId).pipe(Effect.withTracer(open.tracer));
+    const plan = yield* queryPlan(
+      open.statements.find((statement) => statement.includes("$.speaker.label")),
+    );
+    const search = plan.find((detail) =>
+      detail.includes("orchestration_v2_projection_turn_items_thread_type_idx"),
+    );
+    assert.isDefined(search, plan.join("\n"));
+    assert.include(search, "thread_id=?");
+    assert.include(search, "type=?");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
 ) {

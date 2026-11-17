@@ -327,6 +327,14 @@ const make = Effect.gen(function* () {
         .filter((message) => !excluded.has(message.id))
         .map((message) => [message.id, message]),
     );
+    const speakers = yield* projections
+      .getPeerSpeakers(
+        input.threadId,
+        [...messages.values()]
+          .filter((message) => message.role === "assistant")
+          .map((message) => message.id),
+      )
+      .pipe(Effect.mapError(storageError(input.projectId)));
     return yield* Effect.forEach(
       input.sources,
       // Per source inside the batch, which already has its span.
@@ -361,6 +369,7 @@ const make = Effect.gen(function* () {
           text: message.text,
           title: projection.thread.title,
           role: message.role,
+          ...(speakers.has(message.id) ? { speaker: speakers.get(message.id)! } : {}),
           createdAt: DateTime.formatIso(message.createdAt),
           archived: projection.thread.archivedAt !== null,
         };

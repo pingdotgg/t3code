@@ -507,6 +507,36 @@ it.effect(
   },
 );
 
+it.effect("sends a peer reply to the summary model as that peer", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seed;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const peer = item(1);
+    if (peer.type !== "assistant_message") return yield* Effect.die("Expected a peer reply");
+    yield* projections.apply({
+      id: EventId.make("peer-reply-attribution"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: { ...peer, speaker: { label: "Astra", model: "gpt-6-astra" } },
+    });
+    yield* summarize;
+    assert.deepEqual(model.calls[0]?.messages[1], {
+      ref: "M2",
+      role: "peer",
+      speaker: { label: "Astra", model: "gpt-6-astra" },
+      text: rawText(1),
+    });
+    assert.deepEqual(model.calls[0]?.messages[3], {
+      ref: "M4",
+      role: "assistant",
+      text: rawText(3),
+    });
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
   const model = citing();
   return Effect.gen(function* () {

@@ -358,6 +358,41 @@ it.effect("saves agent facts for immediate recall and rehydrates exact sources",
     });
     assert.equal(source.state, "available");
     if (source.state !== "available") return;
+    const peerId = MessageId.make("peer-message");
+    yield* projections.apply(message(threadId, peerId, "assistant", "Use Postgres for sessions."));
+    yield* projections.apply({
+      id: EventId.make("peer-item"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId,
+      occurredAt: at(2),
+      payload: {
+        id: TurnItemId.make("peer-item"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: at(2),
+        completedAt: at(2),
+        updatedAt: at(2),
+        type: "assistant_message",
+        messageId: peerId,
+        text: "Use Postgres for sessions.",
+        streaming: false,
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+      },
+    });
+    const peer = yield* knowledge.readSource({ projectId, threadId, messageId: peerId });
+    assert.deepEqual(peer.state === "available" && [peer.role, peer.speaker], [
+      "assistant",
+      { label: "Astra", model: "gpt-6-astra" },
+    ]);
     const saved = yield* knowledge.mutate(
       { ...createFact(projectId), sources: [source.source] },
       { kind: "agent-client", sessionId: "test-agent", label: "Test agent" },

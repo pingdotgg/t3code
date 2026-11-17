@@ -2,6 +2,7 @@ import {
   ConversationSummary,
   ConversationSummaryError,
   ConversationSummaryPass,
+  ConversationSummarySourceRange,
   CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS,
   CONVERSATION_SUMMARY_MAX_SOURCES,
   conversationSummarySourceIdentity,
@@ -19,6 +20,7 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2MessageSpeaker,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
@@ -1048,6 +1050,7 @@ const make = Effect.gen(function* () {
           createdAt: message.createdAt,
         });
       }
+      const speakers = yield* projections.getPeerSpeakers(threadId);
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
         const text = summaryToolText(item);
@@ -1102,11 +1105,18 @@ const make = Effect.gen(function* () {
       let generated = 0;
 
       const publish = Effect.fnUntraced(function* (input: {
-        readonly messages: ReadonlyArray<{
-          readonly role: "user" | "assistant" | "tool" | "summary";
-          readonly text: string;
-          readonly range?: ConversationSummaryRangeRef["range"];
-        }>;
+        readonly messages: ReadonlyArray<
+          {
+            readonly text: string;
+            readonly range?: (typeof ConversationSummarySourceRange)["Type"];
+          } & (
+            | { readonly role: "user" | "assistant" | "tool" | "summary" }
+            | {
+                readonly role: "peer";
+                readonly speaker: OrchestrationV2MessageSpeaker;
+              }
+          )
+        >;
         readonly sources: ReadonlyArray<ConversationSummarySourceRef>;
         readonly ranges: ReadonlyArray<ConversationSummaryRangeRef>;
         readonly position: string;
@@ -1115,12 +1125,7 @@ const make = Effect.gen(function* () {
         const messages = input.messages.map((message, index) => {
           const ref = `M${index + 1}`;
           refs.set(ref, conversationSummarySourceKey(input.sources[index]!));
-          return {
-            ref,
-            role: message.role,
-            text: message.text,
-            ...(message.range === undefined ? {} : { range: message.range }),
-          };
+          return { ref, ...message };
         });
         const reply = yield* textGeneration
           .generateConversationSummary({
@@ -1205,11 +1210,14 @@ const make = Effect.gen(function* () {
 
       const summarizeLeaf = (chunk: ReadonlyArray<SummarySource>) =>
         publish({
-          messages: chunk.map((source) => ({
-            role: source.role,
-            text: source.text,
-            ...(source.ref.range === undefined ? {} : { range: source.ref.range }),
-          })),
+          messages: chunk.map((source) => {
+            const speaker =
+              source.ref.kind === "message" ? speakers.get(source.ref.messageId) : undefined;
+            const range = source.ref.range === undefined ? {} : { range: source.ref.range };
+            return speaker === undefined
+              ? { role: source.role, text: source.text, ...range }
+              : { role: "peer" as const, speaker, text: source.text, ...range };
+          }),
           sources: chunk.map((source) => source.ref),
           ranges: chunk.map((source) => source.ref),
           position: leafPosition(DateTime.formatIso(chunk[0]!.createdAt), chunk[0]!.ref),

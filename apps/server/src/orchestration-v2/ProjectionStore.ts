@@ -76,6 +76,7 @@ import {
   orchestrationV2RunWorkStartedAt,
   RunId,
   MessageId,
+  type OrchestrationV2MessageSpeaker,
   RuntimeRequestId,
   CheckpointScopeId,
   CheckpointId,
@@ -595,6 +596,11 @@ export interface ProjectionStoreV2Shape {
     ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>,
     ProjectionStoreV2Error
   >;
+  /** Speakers of peer replies in the thread, or of the named messages only. */
+  readonly getPeerSpeakers: (
+    threadId: ThreadId,
+    messageIds?: ReadonlyArray<MessageId>,
+  ) => Effect.Effect<ReadonlyMap<MessageId, OrchestrationV2MessageSpeaker>, ProjectionStoreV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -6665,6 +6671,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
     );
 
+    // The type list and `json_valid` term match the message-ordinal index. Speaker fields sit
+    // outside it, so each hit decodes the payload.
+    const getPeerSpeakers = Effect.fn("ProjectionStore.getPeerSpeakers")(
+      function* (threadId: ThreadId, messageIds?: ReadonlyArray<MessageId>) {
+        const speakers = new Map<MessageId, OrchestrationV2MessageSpeaker>();
+        if (messageIds !== undefined && messageIds.length === 0) return speakers;
+        const rows = yield* sql<{
+          readonly message_id: string;
+          readonly label: string | null;
+          readonly model: string | null;
+        }>`
+          SELECT json_extract(payload_json, '$.messageId') AS message_id,
+            json_extract(payload_json, '$.speaker.label') AS label,
+            json_extract(payload_json, '$.speaker.model') AS model
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND type IN ('user_message', 'assistant_message')
+            AND json_valid(payload_json)
+            AND json_extract(payload_json, '$.speaker.label') IS NOT NULL
+            AND json_extract(payload_json, '$.speaker.model') IS NOT NULL
+            ${
+              messageIds === undefined
+                ? sql``
+                : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList([...new Set(messageIds)])}))`
+            }
+        `;
+        for (const row of rows)
+          if (row.label && row.model)
+            speakers.set(MessageId.make(row.message_id), { label: row.label, model: row.model });
+        return speakers;
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getThreadRecords: ProjectionStoreV2Shape["getThreadRecords"] = (
       threadId,
       fields,
@@ -9528,6 +9568,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getActiveGroupThreadIds: readOnReader(getActiveGroupThreadIds),
       getTurnItem: readOnReader(getTurnItem),
       getMessagesById: readOnReader(getMessagesById),
+      getPeerSpeakers: readOnReader(getPeerSpeakers),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),
       getRuntimeRequest: readOnReader(getRuntimeRequest),
