@@ -91,6 +91,7 @@ import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-s
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
+  buildThreadRowProjectsByKey,
   findHomeProjectScope,
   type HomeProjectSortOrder,
   sortHomeProjectScopes,
@@ -328,13 +329,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [projects, selectedEnvironmentId, projectGroupingMode],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
-  const projectByKey = (() => {
-    const map = new Map<string, EnvironmentProject>();
-    for (const project of props.projects) {
-      map.set(scopedProjectKey(project.environmentId, project.id), project);
-    }
-    return map;
-  })();
+  const projectByKey = buildThreadRowProjectsByKey(props.projects, projectScopes);
 
   const v2ProjectScopeKey = props.selectedProjectKey;
   // An archived project's filter reads as all projects, matching the filter menu.

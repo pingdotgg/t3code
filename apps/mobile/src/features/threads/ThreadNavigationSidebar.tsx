@@ -51,6 +51,7 @@ import {
 } from "../home/home-list-filter-menu";
 import {
   buildHomeProjectScopes,
+  buildThreadRowProjectsByKey,
   resolveHomeProjectFilterScope,
   sortHomeProjectScopes,
 } from "../home/homeThreadList";
@@ -220,13 +221,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
   const selectedProjectKey = selectedProjectScope?.key ?? null;
-  const projectByKey = useMemo(() => {
-    const map = new Map<string, EnvironmentProject>();
-    for (const project of projects) {
-      map.set(scopedProjectKey(project.environmentId, project.id), project);
-    }
-    return map;
-  }, [projects]);
+  const projectByKey = useMemo(
+    () => buildThreadRowProjectsByKey(projects, projectScopes),
+    [projects, projectScopes],
+  );
 
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,

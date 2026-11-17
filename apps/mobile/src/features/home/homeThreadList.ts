@@ -1,6 +1,7 @@
 import {
   buildProjectGroups,
   pickableProjectGroups,
+  resolveProjectIconSource,
   resolveScratchProjectScopeKey,
 } from "@t3tools/client-runtime/state/project-grouping";
 import type {
@@ -72,6 +73,28 @@ export function buildHomeProjectScopes(input: {
       archived: group.archived,
     };
   });
+}
+
+/** Rows' projects by scoped key; a checkout without its own icon shows its group's. */
+export function buildThreadRowProjectsByKey(
+  projects: ReadonlyArray<EnvironmentProject>,
+  scopes: ReadonlyArray<HomeProjectScope>,
+): Map<string, EnvironmentProject> {
+  const map = new Map(
+    projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+  );
+  for (const scope of scopes) {
+    for (const project of scope.projects) {
+      const iconSource = resolveProjectIconSource(project, scope.representative);
+      if (iconSource === project) continue;
+      // Keep the checkout itself: rows use its workspace root and defaults.
+      map.set(scopedProjectKey(project.environmentId, project.id), {
+        ...project,
+        projectIcon: iconSource.projectIcon,
+      });
+    }
+  }
+  return map;
 }
 
 /** The scope the thread list's project filter shows; an archived or unknown key shows all projects. */

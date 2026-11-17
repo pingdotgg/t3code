@@ -509,9 +509,15 @@ describe("resolveProjectIconSource", () => {
     expect(resolveProjectIconSource(plain, representative)).toBe(iconed);
   });
 
+  it("shows the group's icon over a checkout's detected favicon", () => {
+    const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
+    const detected = makeProject("b", "/work/b", { faviconPath: "public/favicon.ico" });
+    expect(resolveProjectIconSource(detected, group(iconed, detected).representative)).toBe(iconed);
+  });
+
   it("keeps a checkout's own icon", () => {
     const iconed = makeProject("a", "/work/a", { projectIcon: rocket });
-    const own = makeProject("b", "/work/b", { faviconPath: "public/logo.svg" });
+    const own = makeProject("b", "/work/b", { projectIcon: { ...rocket, name: "turtle" } });
     expect(resolveProjectIconSource(own, group(iconed, own).representative)).toBe(own);
   });
 
