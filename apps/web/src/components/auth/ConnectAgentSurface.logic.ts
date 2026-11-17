@@ -15,7 +15,9 @@ export function resolveMcpAccess(
   requested: AuthMcpClientAccess | null,
   ceiling: AuthMcpApprovalDetails["runtimeModeCeiling"],
   hasCode: boolean,
+  maxAccess?: AuthMcpClientAccess,
 ): AuthMcpClientAccess {
+  if (maxAccess !== undefined) return maxAccess;
   const access = requested ?? (hasCode ? "auto" : "read-only");
   return access !== "read-only" &&
     ceiling !== undefined &&

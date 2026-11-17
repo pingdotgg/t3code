@@ -14,6 +14,7 @@ it.each(RuntimeMode.literals)("keeps MCP access within the %s policy ceiling", (
   );
   expect(resolveMcpAccess("read-only", ceiling, false)).toBe("read-only");
   expect(resolveMcpAccess("approval-required", ceiling, false)).toBe("approval-required");
+  expect(resolveMcpAccess(null, ceiling, true, "read-only")).toBe("read-only");
 });
 
 it("checks a typed code even in a signed-in browser, and approves without one at Read only", () => {

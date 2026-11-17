@@ -156,6 +156,7 @@ export function McpConsent({
           requestedAccess,
           loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
           pairingCode.trim().length > 0,
+          loaded.status === "ready" ? loaded.details.maxAccess : undefined,
         );
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);

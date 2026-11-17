@@ -825,7 +825,26 @@ it.live("a client that asks only for orchestration:read is granted read only acc
         { _tag: "browser-session", access: "full-access", csrfToken: details.csrfToken },
         cookie,
       );
-      expect(new URL(approved.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+      const browserToken = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code: new URL(approved.redirectTo!).searchParams.get("code")!,
+            redirect_uri: readScoped.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+            resource: `${ORIGIN}/mcp`,
+          }),
+        ),
+      ).pipe(Effect.flatMap(json<{ access_token: string; scope: string }>));
+      expect(browserToken.scope).toBe("orchestration:read");
+      const browserClient = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${browserToken.access_token}` } }),
+        ),
+      );
+      expect(browserClient.access).toBe("read-only");
     }),
   ),
 );
