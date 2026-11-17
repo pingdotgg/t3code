@@ -39,6 +39,15 @@ export const run = (command: string, args: ReadonlyArray<string>, cwd: string) =
     maxBuffer: 64 * 1024 * 1024,
   });
 
+/** Builds the production web client the server serves; unminified so profiles name real code. */
+export function buildWebClient() {
+  log("building the web client (production, unminified for readable profiles)");
+  NodeChildProcess.execFileSync("vp", ["build", "--minify", "false"], {
+    cwd: webDir,
+    stdio: "inherit",
+  });
+}
+
 /** Runs the `t3` CLI from source against `home`. */
 export const t3 = (home: string, ...args: string[]) =>
   run(process.execPath, [serverBin, ...args, "--base-dir", home], repo);

@@ -11,6 +11,7 @@ import * as NodeUtil from "node:util";
 import { chromium } from "playwright";
 
 import {
+  buildWebClient,
   changeFile,
   fixturesDir,
   freePort,
@@ -33,7 +34,10 @@ import {
 
 const { values: options, positionals } = NodeUtil.parseArgs({
   allowPositionals: true,
-  options: { headed: { type: "boolean", default: false } },
+  options: {
+    headed: { type: "boolean", default: false },
+    "skip-build": { type: "boolean", default: false },
+  },
 });
 if (positionals[0] === undefined) throw new Error("Usage: vp run stress:record-pr owner/name#123");
 const { repository, number } = parsePullRequest(positionals[0]);
@@ -89,6 +93,7 @@ function recordRevisions() {
 
 async function main() {
   const change = recordRevisions();
+  if (!options["skip-build"]) buildWebClient();
   const home = NodePath.join(repo, ".t3/stress/record-home");
   const workspace = prepareHome(home, `https://github.com/${repository}.git`);
   const server = await startServer({
@@ -134,7 +139,8 @@ async function main() {
       "--model",
       "stress",
     );
-    await page.goto(origin);
+    // Opened from the pull request page's sidebar: reloading the app lands on a new draft, which
+    // races the click.
     await openThread(page, "Record");
     await linkPullRequest(page, `https://github.com/${repository}/pull/${number}`);
     await openPullRequestPanel(page, change.title).catch(async (error: Error) => {

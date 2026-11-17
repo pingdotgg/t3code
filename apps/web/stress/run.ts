@@ -4,7 +4,6 @@
  * the page holds up. Several Replay threads stream long replies and stop for approvals while
  * a scripted user switches threads, approves, types, and opens panels. See README.md.
  */
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
@@ -20,6 +19,7 @@ import {
 } from "./analyze.ts";
 import { installStressProbe } from "./probe.ts";
 import {
+  buildWebClient,
   changeFile,
   fixturesDir,
   freePort,
@@ -110,13 +110,7 @@ async function act(page: Page, step: number) {
 
 async function main() {
   NodeFS.mkdirSync(outDir, { recursive: true });
-  if (!options["skip-build"]) {
-    log("building the web client (production, unminified for readable profiles)");
-    NodeChildProcess.execFileSync("vp", ["build", "--minify", "false"], {
-      cwd: webDir,
-      stdio: "inherit",
-    });
-  }
+  if (!options["skip-build"]) buildWebClient();
   const workspace = prepareHome(
     home,
     pullRequest && `https://github.com/${pullRequest.repository}.git`,
