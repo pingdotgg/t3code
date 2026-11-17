@@ -30,6 +30,12 @@ it("offers distinct source choices within a block and maps recursive folds witho
   expect(expandAssistantCitationsForProvider(markers.join(" "))).toContain(
     '"id": "assistant-quote-2"',
   );
+  const [reference] = collectMobileAssistantTextSelectors(
+    "before [label][id] after\n\n<details><summary>More</summary>\n\n[id]: https://example.com\n\n</details>",
+    "0:0",
+    "before label after",
+  );
+  expect(reference?.selector.text).toBe("before label after");
   const sameBlock = collectMobileAssistantTextSelectors(
     "first **quote** then **quote** last",
     "0:0",
