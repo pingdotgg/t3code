@@ -107,7 +107,7 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
 
   return (
     <GlassSurface
-      glassEffectStyle="clear"
+      glassEffectStyle="regular"
       tintColorClassName="accent-glass-surface"
       style={baseStyle}
     >
@@ -193,6 +193,10 @@ const CommandRow = memo(function CommandRow(props: {
   return (
     <Pressable
       accessibilityRole="button"
+      // Without a label, VoiceOver reads the row icon's symbol name first ("Two people, @plan").
+      accessibilityLabel={
+        props.item.description ? `${props.item.label}, ${props.item.description}` : props.item.label
+      }
       onPress={props.onPress}
       className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
       style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
