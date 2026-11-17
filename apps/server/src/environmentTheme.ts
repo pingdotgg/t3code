@@ -55,7 +55,8 @@ const MAX_THEME_FILES = 32;
  * JSON encoding, at up to 6 bytes per character for a `\uXXXX` escape, plus the colors.
  */
 export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
-const MAX_THEME_TOTAL_BYTES = 6 * MAX_THEME_FILE_BYTES;
+// Clients cache every published theme in localStorage, which holds about 5 MB per origin.
+const MAX_THEME_TOTAL_BYTES = 2 * 1024 * 1024;
 
 /** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
 const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
