@@ -11,7 +11,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Trash2Icon, XIcon } from "lucide-react";
+import { ArrowUpRightIcon, CornerDownRightIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -53,9 +53,13 @@ export default function SideChatPane(props: {
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
+  const promoteThread = useAtomCommand(threadEnvironment.promote, { reportFailure: false });
+  const demoteThread = useAtomCommand(threadEnvironment.demote, { reportFailure: false });
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [bringingBack, setBringingBack] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const promoted = shell?.promotedAt != null;
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
@@ -86,6 +90,24 @@ export default function SideChatPane(props: {
         type: "error",
         title: "Could not bring back the side chat",
         ...(error instanceof Error ? { description: error.message } : {}),
+      });
+    }
+  };
+
+  const togglePromoted = async () => {
+    if (!canOperate || shell === null || shell.archivedAt !== null || promoting) return;
+    setPromoting(true);
+    const result = await (promoted ? demoteThread : promoteThread)({
+      environmentId: parentRef.environmentId,
+      input: { threadId },
+    });
+    setPromoting(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({
+        type: "error",
+        title: promoted
+          ? "Could not move thread back under its parent"
+          : "Could not promote thread",
       });
     }
   };
@@ -132,6 +154,28 @@ export default function SideChatPane(props: {
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {shell?.title ?? "Side chat"}
         </span>
+        {shell?.archivedAt === null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={promoted ? "Move back under parent" : "Promote to thread"}
+                  disabled={!canOperate || promoting || deleting}
+                  onClick={() => void togglePromoted()}
+                />
+              }
+            >
+              {promoted ? <CornerDownRightIcon /> : <ArrowUpRightIcon />}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {promoted
+                ? "Hide this thread from the sidebar again; it stays under its parent"
+                : "Give this chat its own row in the sidebar"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={

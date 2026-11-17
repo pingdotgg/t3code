@@ -586,7 +586,10 @@ export async function deleteSelectedThreadEntries<
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
+  T extends Pick<
+    SidebarThreadSummary,
+    "archivedAt" | "environmentId" | "id" | "lineage" | "promotedAt"
+  > & {
     projectId: string;
   },
 >(
@@ -599,7 +602,7 @@ export function filterSidebarV2VisibleThreads<
       thread.archivedAt === null &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
+        thread,
         delegatedUnderParent,
       ) &&
       (scopedProjectKeys === null ||
@@ -1325,7 +1328,7 @@ export function getFallbackThreadIdAfterDelete<
           !effectiveSnoozed(thread, { now }) &&
           !isShownUnderParent(
             { environmentId: thread.environmentId, threadId: thread.id },
-            thread.lineage,
+            thread,
             delegatedUnderParent,
           ),
       ),
@@ -1416,7 +1419,7 @@ export function sortLogicalProjectsForSidebar<
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
   TThread extends ScopedSidebarThread &
-    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage">,
+    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage" | "promotedAt">,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

@@ -434,7 +434,7 @@ export function CommandPalette(props: {
           thread.archivedAt === null &&
           !isShownUnderParent(
             { environmentId: thread.environmentId, threadId: thread.id },
-            thread.lineage,
+            thread,
             delegatedUnderParent,
           ),
       )

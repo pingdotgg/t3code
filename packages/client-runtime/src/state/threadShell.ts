@@ -7,7 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
-  isListedThreadLineage,
+  isListedThread,
   isProviderNativeSubagentThread,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -57,16 +57,16 @@ const isChildRunLive = (
 
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
- * subagent, a side chat, or a task a linked environment delegated here whose parent the
+ * subagent or side chat the user has not promoted, or a task a linked environment delegated here whose parent the
  * client lists (`delegatedUnderParent`, by thread key). A task whose parent
  * the client cannot list stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
-  lineage: OrchestrationV2ThreadShell["lineage"],
+  thread: Parameters<typeof isListedThread>[0],
   delegatedUnderParent: ReadonlySet<string>,
 ): boolean {
-  return !isListedThreadLineage(lineage) || delegatedUnderParent.has(threadKey(ref));
+  return !isListedThread(thread) || delegatedUnderParent.has(threadKey(ref));
 }
 
 // Subagents, side chats and tasks delegated from a listed parent have no list row,
@@ -76,7 +76,7 @@ export function resolveListedAncestorThreadRef(
   ref: ScopedThreadRef,
   threads: readonly Pick<
     EnvironmentThreadShell,
-    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+    "id" | "environmentId" | "lineage" | "promotedAt" | "delegatedFrom" | "archivedAt"
   >[],
 ): ScopedThreadRef {
   const findThread = (target: ScopedThreadRef) =>
@@ -88,7 +88,7 @@ export function resolveListedAncestorThreadRef(
   let thread = findThread(current);
   while (thread !== undefined) {
     let parent: ScopedThreadRef;
-    if (!isListedThreadLineage(thread.lineage)) {
+    if (!isListedThread(thread)) {
       if (thread.lineage.parentThreadId === null) return ref;
       parent = { environmentId: thread.environmentId, threadId: thread.lineage.parentThreadId };
     } else if (thread.delegatedFrom != null) {
@@ -752,7 +752,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         if (
           thread.archivedAt !== null ||
-          isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, underParent) ||
+          isShownUnderParent({ environmentId, threadId: thread.id }, thread, underParent) ||
           hidden.has(threadKey({ environmentId, threadId: thread.id }))
         ) {
           continue;

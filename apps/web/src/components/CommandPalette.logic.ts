@@ -447,7 +447,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       thread.archivedAt === null &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
+        thread,
         delegatedUnderParent,
       ),
   );

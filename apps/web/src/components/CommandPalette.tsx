@@ -525,7 +525,7 @@ function OpenCommandPaletteDialog(props: {
     (thread) =>
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
+        thread,
         delegatedUnderParent,
       ),
   );

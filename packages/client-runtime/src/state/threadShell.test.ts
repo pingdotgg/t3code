@@ -736,6 +736,14 @@ describe("resolveListedAncestorThreadRef", () => {
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
     expect(rowOf(loopA.id, environmentId, [loopA, loopB])).toEqual(ref(environmentId, loopA.id));
+    // A promoted subagent has its own row, and its children resolve to it.
+    const promoted: Thread = { ...child, promotedAt: "1970-01-01T00:00:00.000Z" };
+    expect(rowOf(promoted.id, environmentId, [root, promoted])).toEqual(
+      ref(environmentId, promoted.id),
+    );
+    expect(rowOf(grandchild.id, environmentId, [root, promoted, grandchild])).toEqual(
+      ref(environmentId, promoted.id),
+    );
   });
 
   it("maps an open task a linked environment delegated to its listed parent", () => {
