@@ -526,7 +526,11 @@ export function ThreadMcpApp(props: {
   }
 
   return (
-    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+    <View
+      style={
+        fullscreen ? { flex: 1 } : { height, marginBottom: height === 0 ? 0 : ROW_BOTTOM_MARGIN }
+      }
+    >
       {navigatedAway ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm text-foreground-muted">

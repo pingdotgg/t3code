@@ -262,6 +262,8 @@ export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined)
 
 export function clampMcpAppHeight(height: number): number {
   if (!Number.isFinite(height)) return MCP_APP_DEFAULT_HEIGHT;
+  // An app with nothing to show reports 0; the minimum would leave an empty box.
+  if (height <= 0) return 0;
   return Math.round(Math.min(MCP_APP_MAX_HEIGHT, Math.max(MCP_APP_MIN_HEIGHT, height)));
 }
 

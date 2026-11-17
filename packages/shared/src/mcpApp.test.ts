@@ -2,6 +2,7 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampMcpAppHeight,
   injectMcpAppCsp,
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
@@ -12,6 +13,14 @@ import {
   readMcpAppCsp,
   readMcpAppReference,
 } from "./mcpApp.ts";
+
+describe("clampMcpAppHeight", () => {
+  it("collapses an app that reports no content and keeps the minimum otherwise", () => {
+    expect(clampMcpAppHeight(0)).toBe(0);
+    expect(clampMcpAppHeight(12)).toBe(80);
+    expect(clampMcpAppHeight(5000)).toBe(2000);
+  });
+});
 
 describe("mcpAppContentSecurityPolicy", () => {
   it("blocks the network and T3's own origin when the app declares nothing", () => {
