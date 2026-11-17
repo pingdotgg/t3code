@@ -98,8 +98,12 @@ export function markdownPlainText(markdown: string): string {
   return markdownNodeText(markdownPreviewParser.parse(markdown)).replace(/\s+/g, " ").trim();
 }
 
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+// The tooltip shows a few lines; bound parsing work for long messages and streaming responses.
+function markdownMinimapPreview(markdown: string | null) {
+  if (markdown === null) return null;
+  const compact = markdownNodeText(markdownPreviewParser.parse(markdown.slice(0, 1_500)))
+    .replace(/\s+/g, " ")
+    .trim();
   return compact.length > 0 ? compact : null;
 }
 
@@ -110,18 +114,14 @@ export function resolveTimelineMinimapPreview(
     ? null
     : {
         ...item,
-        userText: compactMinimapPreview(
+        // Before markdown parsing, which would reduce a citation link to "Assistant quote".
+        userText: markdownMinimapPreview(
           item.userText === null
             ? null
             : assistantCitationsToPlainText(
                 replaceComposerContextReferences(item.userText, (reference) => reference.label),
               ),
         ),
-        // The tooltip shows three lines; bound parsing work while long responses stream.
-        assistantText: compactMinimapPreview(
-          item.assistantText === null
-            ? null
-            : markdownNodeText(markdownPreviewParser.parse(item.assistantText.slice(0, 1_500))),
-        ),
+        assistantText: markdownMinimapPreview(item.assistantText),
       };
 }

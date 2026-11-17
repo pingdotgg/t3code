@@ -51,7 +51,7 @@ describe("resolveTimelineMinimapPreview", () => {
     expect(preview?.assistantText).toBe("Started a thread and Fix CI.");
   });
 
-  it("previews a quote and a context chip in the user's message as their text", () => {
+  it("previews a quote, a context chip and a file link in the user's message as their text", () => {
     const quote = serializeAssistantCitation({
       version: 1,
       environmentId: EnvironmentId.make("env-1"),
@@ -71,11 +71,11 @@ describe("resolveTimelineMinimapPreview", () => {
     const preview = resolveTimelineMinimapPreview({
       id: "turn-1",
       rowIndex: 0,
-      userText: `${quote}\nWhere does ${file} cover this?`,
+      userText: `${quote}\nWhere do ${file} and [math.ts](src/math.ts) cover this?`,
       assistantText: null,
     });
     expect(preview?.userText).toBe(
-      "The cache misses on a cold start. Where does README.md cover this?",
+      "The cache misses on a cold start. Where do README.md and math.ts cover this?",
     );
   });
 });
