@@ -928,6 +928,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
+    // Declared before the event stream starts: an early reconnect clears it.
+    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
@@ -4034,7 +4036,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       return effects.includes("deny") ? "deny" : effects.includes("ask") ? "ask" : "allow";
     };
-    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const agentsIn = Effect.fnUntraced(function* (directory: string, subagent?: string) {
       const known = agentRules.get(directory);
       // A subagent the cached list lacks was added since; its denies must not be skipped.
