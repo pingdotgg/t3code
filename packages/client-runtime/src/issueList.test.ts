@@ -14,6 +14,7 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  issueListTargets,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -219,6 +220,29 @@ describe("groupIssues", () => {
     expect(group!.rows.map((row) => row.url)).toEqual([
       "https://linear.app/acme/issue/ENG-1",
       "https://linear.app/globex/issue/ENG-1",
+    ]);
+  });
+});
+
+describe("issueListTargets", () => {
+  const other = "env-2" as EnvironmentId;
+  const input = { state: "open", limit: 50 } as const;
+
+  it("asks every environment when no project is chosen", () => {
+    expect(issueListTargets([environmentId, other], input, [])).toEqual([
+      { environmentId, input },
+      { environmentId: other, input },
+    ]);
+  });
+
+  it("asks only the environments of the chosen projects, narrowed to them", () => {
+    const chosen = [
+      { environmentId: other, projectId: "web" as ProjectId },
+      { environmentId: other, projectId: api },
+      { environmentId: "env-gone" as EnvironmentId, projectId: api },
+    ];
+    expect(issueListTargets([environmentId, other], input, chosen)).toEqual([
+      { environmentId: other, input: { ...input, projectIds: [api, "web"] } },
     ]);
   });
 });

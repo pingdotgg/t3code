@@ -181,7 +181,12 @@ function makeService(input: {
               IssueTrackerRegistry.fromTrackers(input.trackers),
             ),
             Layer.mock(ProjectService.ProjectService)({
-              listShells: () => Effect.succeed(input.projects),
+              listShells: (options) =>
+                Effect.succeed(
+                  options?.projectIds === undefined
+                    ? input.projects
+                    : input.projects.filter((p) => options.projectIds!.includes(p.id)),
+                ),
               getShell: (projectId) =>
                 Effect.succeed(
                   Option.fromNullishOr(input.projects.find((p) => p.id === projectId)),
@@ -457,6 +462,19 @@ describe("IssueService", () => {
       });
       expect(listed).toEqual(["acme/web"]);
       expect(through.entries.map((entry) => entry.key)).toEqual(["4"]);
+
+      // Narrowing to chosen projects reads their scopes only.
+      listed.length = 0;
+      const chosen = yield* service.list({
+        state: "open",
+        projectIds: ["docs", "gitlab"] as ProjectId[],
+      });
+      expect(listed).toEqual(["acme/docs"]);
+      expect(chosen.entries.map((entry) => [entry.projectId, entry.key])).toEqual([["docs", "3"]]);
+      expect(chosen.trackers.map((tracker) => [tracker.host, tracker.projectCount])).toEqual([
+        ["github.com", 1],
+        ["gitlab.com", 1],
+      ]);
     }),
   );
 });
