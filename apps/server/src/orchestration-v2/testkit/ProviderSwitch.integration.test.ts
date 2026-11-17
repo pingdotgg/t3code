@@ -2497,6 +2497,135 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  it.live("queues a provider switch sent as a steer into a running Claude turn", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("steer-provider-switch-queues");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const started = yield* Deferred.make<void>();
+      const steerThreadId = ThreadId.make("thread:steer-provider-switch-queues");
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          holdFirstTurn: started,
+        }),
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch-queues:create"),
+          threadId: steerThreadId,
+          projectId: ProjectId.make("project:steer-provider-switch-queues"),
+          title: "Steer provider switch",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch-queues:first"),
+          threadId: steerThreadId,
+          messageId: MessageId.make("message:steer-provider-switch-queues:first"),
+          text: "Current Claude turn",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Deferred.await(started);
+        yield* worker.drain();
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(steerThreadId)).runs;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:steer-provider-switch-queues:first-turn-running"),
+              type: "provider-turn.updated",
+              threadId: steerThreadId,
+              runId: claudeRun!.id,
+              nodeId: claudeRun!.rootNodeId!,
+              driver: CLAUDE_DRIVER,
+              providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              occurredAt: now,
+              payload: {
+                id: ProviderTurnId.make("provider-turn:steer-provider-switch-queues:first"),
+                providerThreadId: claudeRun!.providerThreadId!,
+                nodeId: claudeRun!.rootNodeId!,
+                runAttemptId: claudeRun!.activeAttemptId!,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        // Claude cannot restart its turn for new input, so the switch waits for the turn.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch-queues:codex"),
+          threadId: steerThreadId,
+          messageId: MessageId.make("message:steer-provider-switch-queues:codex"),
+          text: "Continue with Codex",
+          attachments: [],
+          modelSelection: CODEX_MODEL_SELECTION,
+          deliveryIntent: "steer",
+          dispatchMode: { type: "start_immediately" },
+        });
+        const projection = yield* orchestrator.getThreadProjection(steerThreadId);
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.providerInstanceId]),
+          [
+            ["running", CLAUDE_MODEL_SELECTION.instanceId],
+            ["queued", CODEX_MODEL_SELECTION.instanceId],
+          ],
+        );
+        assert.deepEqual(projection.thread.modelSelection, CLAUDE_MODEL_SELECTION);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "steer-provider-switch-queues",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.live("hands completed Grok steering context to earlier queued Codex and later Claude", () =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("queued-steer-provider-switch");
