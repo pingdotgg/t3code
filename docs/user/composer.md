@@ -189,6 +189,16 @@ Failed and stopped runs can supply evidence. Change this setting under **Memory
 health** in Project memory or in **Settings → Labs → Zack**. Project memory
 shows the last outcome and the **Automatic** filter lists automatically saved facts.
 
+A second call reads the proposed facts without the conversation and asks whether
+a new agent on unrelated work would need each one.
+A fact that only applies to one task, or that describes how code behaves, is
+saved as set aside: it is never recalled, but search finds it and the **Set
+aside** filter lists it. The fact's details say what the check decided. When
+you edit a fact's text, that decision is cleared and the fact can be recalled
+again; an agent's edit or replacement keeps it. If the check fails, T3 saves nothing and
+tries the batch again later. Some providers, such as Grok, cannot run the check; with one of
+those as your text generation model, T3 skips each batch without calling the model.
+
 An exact repeat can add new citations to a saved fact. You decide when similar
 or conflicting facts should supersede one another. Trust, age and retrieval
 history affect recall. Forgetting a fact removes its content, and a later run

@@ -72,6 +72,23 @@ const CODEX_JUDGE_FEATURES = [
   "in_app_local_automation",
   "workspace_dependencies",
 ] as const;
+const CODEX_JUDGE_ARGS = [
+  "--ignore-rules",
+  "--json",
+  "--config",
+  "project_doc_max_bytes=0",
+  "--config",
+  "tools.experimental_request_user_input.enabled=false",
+  "--config",
+  "tools.update_plan.enabled=false",
+  "--config",
+  "skills.include_instructions=false",
+  "--config",
+  "features.skip_host_skill_discovery=true",
+  "--config",
+  'web_search="disabled"',
+  ...CODEX_JUDGE_FEATURES.flatMap((feature) => ["--config", `features.${feature}=false`]),
+] as const;
 const CODEX_ROUTING_KEYS = new Set([
   "model_provider",
   "oss_provider",
@@ -248,15 +265,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) {
-        yield* Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+        yield* Effect.logWarning("codex mcp list failed", {
           reason: "exit",
           exitCode,
         });
-        return [];
+        return undefined;
       }
       const servers = yield* decodeCodexMcpServers(stdout).pipe(
         Effect.tapError(() =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+          Effect.logWarning("codex mcp list failed", {
             reason: "decode",
           }),
         ),
@@ -268,13 +285,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Effect.flatMap(
       Option.match({
         onNone: () =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+          Effect.logWarning("codex mcp list failed", {
             reason: "timeout",
-          }).pipe(Effect.as<ReadonlyArray<string>>([])),
+          }).pipe(Effect.as<ReadonlyArray<string> | undefined>(undefined)),
         onSome: (names) => Effect.succeed(names),
       }),
     ),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    Effect.orElseSucceed(() => undefined),
   );
 
   const evaluationConfiguration = Effect.fn("CodexTextGeneration.evaluationConfiguration")(
@@ -345,38 +362,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           : [routingConfig(yield* readConfig(`${profile}.config.toml`))]),
         ...overrides,
       ].reduce(mergeRoutingConfig, {});
+      // Codex keys a keyring login by its home path, so a separate home cannot reach it.
       if (
         routing.cli_auth_credentials_store !== undefined &&
         routing.cli_auth_credentials_store !== "file"
-      ) {
-        return yield* new TextGenerationError({
-          operation: "generateModelEvaluation",
-          detail:
-            "Codex blind evaluation requires file-backed login or a model API. Keyring login cannot be isolated.",
-        });
-      }
+      )
+        return { source: null, args: CODEX_JUDGE_ARGS };
       const source = yield* Effect.try({ try: () => stringify(routing), catch: invalid });
-      return {
-        source,
-        args: [
-          ...switches,
-          "--ignore-rules",
-          "--json",
-          "--config",
-          "project_doc_max_bytes=0",
-          "--config",
-          "tools.experimental_request_user_input.enabled=false",
-          "--config",
-          "tools.update_plan.enabled=false",
-          "--config",
-          "skills.include_instructions=false",
-          "--config",
-          "features.skip_host_skill_discovery=true",
-          "--config",
-          'web_search="disabled"',
-          ...CODEX_JUDGE_FEATURES.flatMap((feature) => ["--config", `features.${feature}=false`]),
-        ],
-      };
+      return { source, args: [...switches, ...CODEX_JUDGE_ARGS] };
     },
   );
 
@@ -513,7 +506,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       };
       const originalHome = env.CODEX_HOME ?? path.join(yield* HostProcess.HomeDirectory, ".codex");
       const judgeConfiguration =
-        operation === "generateModelEvaluation"
+        operation === "generateModelEvaluation" || operation === "checkFactStanding"
           ? yield* evaluationConfiguration(originalHome, launchArgs).pipe(
               Effect.mapError(
                 (cause) =>
@@ -525,19 +518,43 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               ),
             )
           : undefined;
-      const enabledMcpServers = judgeConfiguration
-        ? []
-        : yield* listEnabledMcpServers({
-            binary,
-            cwd,
-            env,
-            launchArgs: codexMcpListLaunchArgs(launchArgs),
-          });
+      // The standing check keeps a keyring login working in its own home, without tools or
+      // developer instructions; that home's global AGENTS.md still reaches it.
+      const sharedHome = judgeConfiguration?.source === null;
+      if (sharedHome && operation === "generateModelEvaluation")
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Codex blind evaluation requires file-backed login or a model API. Keyring login cannot be isolated.",
+        });
+      const discoveredMcpServers =
+        judgeConfiguration && !sharedHome
+          ? []
+          : yield* listEnabledMcpServers({
+              binary,
+              cwd,
+              env,
+              launchArgs: codexMcpListLaunchArgs(launchArgs),
+            });
+      if (sharedHome && discoveredMcpServers === undefined)
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Codex MCP discovery failed; cannot disable tools for the standing check.",
+        });
+      const enabledMcpServers = discoveredMcpServers ?? [];
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
-      const execLaunchArgs = judgeConfiguration?.args ?? codexExecLaunchArgs(launchArgs);
+      const execLaunchArgs =
+        judgeConfiguration && !sharedHome
+          ? judgeConfiguration.args
+          : [
+              ...codexExecLaunchArgs(launchArgs),
+              ...(judgeConfiguration
+                ? [...judgeConfiguration.args, "--config", 'developer_instructions=""']
+                : []),
+            ];
       // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
       const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
-      if (judgeConfiguration)
+      if (judgeConfiguration?.source)
         env.CODEX_HOME = yield* isolatedEvaluatorHome(
           originalHome,
           operation,
@@ -552,7 +569,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          // Memory candidates cite the supplied exchange; checkout instructions add unrelated input.
+          // Memory reads only the supplied exchange; checkout instructions add unrelated input.
           ...(operation === "generateKnowledgeCandidates"
             ? ["--config", "project_doc_max_bytes=0"]
             : []),

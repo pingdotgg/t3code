@@ -24,6 +24,7 @@ import {
   ProjectKnowledgeMutation,
   ProjectKnowledgeSearchInput,
   ProjectFactId,
+  type ProjectFactVerdict,
   type ProjectKnowledgePreparedContext,
   type ProjectKnowledgeReadSourceInput,
   type ProjectKnowledgeSearchResult,
@@ -201,12 +202,14 @@ export class ProjectKnowledge extends Context.Service<
       readonly afterId?: string | undefined;
     }) => Effect.Effect<string | null, ProjectKnowledgeError>;
     /**
-     * Saves an automatically learned fact through the normal create path. An exact duplicate
-     * adds only new validated citations; lexical similarities never replace an existing fact.
+     * Saves an automatically learned fact through the normal create path with the blind check's
+     * verdict; recall skips it unless that is standing. An exact duplicate adds only new validated
+     * citations and keeps the existing fact's verdict; lexical similarities never replace a fact.
      */
     readonly saveAutomatic: (
       input: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>,
       actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>,
+      verdict: ProjectFactVerdict,
     ) => Effect.Effect<
       { readonly outcome: "saved" | "duplicate" | "existing" },
       ProjectKnowledgeError
@@ -519,6 +522,7 @@ const make = Effect.gen(function* () {
           includeSuperseded,
           onlyIds,
           input.origin ?? null,
+          input.verdict === "set_aside",
         )
         .pipe(Effect.mapError(storageError(input.projectId)));
       const facts = rows.slice(0, limit);
@@ -675,6 +679,8 @@ const make = Effect.gen(function* () {
                 forgottenAt: null,
                 supersedes: factId,
                 supersededBy: null,
+                // Like an edit, an agent's replacement keeps a set-aside fact out of recall.
+                ...(actor.kind !== "user" && existing.verdict ? { verdict: existing.verdict } : {}),
               };
               const replaced: ProjectFact = {
                 ...existing,
@@ -742,10 +748,18 @@ const make = Effect.gen(function* () {
                   currentRevision: existing.revision,
                 });
               fact = { ...existing, revision: existing.revision + 1, updatedAt: now };
+              // A person's edit is the owner's way back to recall; an agent's edit keeps the verdict.
+              const clearsCheck =
+                input.action === "edit" &&
+                actor.kind === "user" &&
+                input.content !== existing.content &&
+                existing.verdict?.by === "check";
               switch (input.action) {
-                case "edit":
+                case "edit": {
+                  const { verdict, ...rest } = fact;
                   fact = {
-                    ...fact,
+                    ...rest,
+                    ...(verdict && !clearsCheck ? { verdict } : {}),
                     content: input.content,
                     entities: input.entities,
                     tags: input.tags,
@@ -754,6 +768,7 @@ const make = Effect.gen(function* () {
                     origin: actor,
                   };
                   break;
+                }
                 case "forget":
                   fact = {
                     ...fact,
@@ -1561,7 +1576,7 @@ const make = Effect.gen(function* () {
   });
   const saveAutomatic: ProjectKnowledge["Service"]["saveAutomatic"] = Effect.fn(
     "ProjectKnowledge.saveAutomatic",
-  )(function* (input, actor) {
+  )(function* (input, actor, verdict) {
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
@@ -1628,7 +1643,8 @@ const make = Effect.gen(function* () {
             }
             return { outcome: "duplicate" as const };
           }
-          yield* mutate(input, actor);
+          const saved = yield* mutate(input, actor);
+          yield* store.writeCheckVerdict(input.projectId, saved.id, verdict, saved.createdAt);
           return { outcome: "saved" as const };
         }),
       )

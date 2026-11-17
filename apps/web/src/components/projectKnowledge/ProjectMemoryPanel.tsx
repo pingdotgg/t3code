@@ -101,6 +101,11 @@ function useProjectMemoryHistoryAvailable(environmentId: EnvironmentId): boolean
   return config?.environment.capabilities.projectKnowledgeHistory === true;
 }
 
+function useProjectMemoryStandingCheckAvailable(environmentId: EnvironmentId): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return config?.environment.capabilities.projectKnowledgeStandingCheck === true;
+}
+
 function useProjectMemoryAssistedAvailable(environmentId: EnvironmentId): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   return config?.environment.capabilities.projectKnowledgeAssistedLearning === true;
@@ -173,10 +178,11 @@ export function ProjectMemoryDialogHost(props: Scope) {
   );
 }
 
-type ListFilter = "saved" | "automatic" | "forgotten" | "lost";
+type ListFilter = "saved" | "automatic" | "set_aside" | "forgotten" | "lost";
 const FILTER_LABEL: Record<Exclude<ListFilter, "lost">, string> = {
   saved: "Saved",
   automatic: "Automatic",
+  set_aside: "Set aside",
   forgotten: "Forgotten",
 };
 
@@ -254,6 +260,7 @@ function MemoryContents(
   const historyAvailable = useProjectMemoryHistoryAvailable(props.environmentId);
   const showSuperseded = historyAvailable && includeSuperseded;
   const assistedAvailable = useProjectMemoryAssistedAvailable(props.environmentId);
+  const standingCheckAvailable = useProjectMemoryStandingCheckAvailable(props.environmentId);
   const list = useEnvironmentQuery(
     projectKnowledge.list({
       environmentId: props.environmentId,
@@ -263,7 +270,9 @@ function MemoryContents(
           ? { sourceState: "unavailable" as const }
           : filter === "automatic"
             ? { status: "saved" as const, origin: "assisted" as const }
-            : { status: filter === "lost" ? ("saved" as const) : filter }),
+            : filter === "set_aside"
+              ? { status: "saved" as const, verdict: "set_aside" as const }
+              : { status: filter === "lost" ? ("saved" as const) : filter }),
         ...(afterId ? { afterId } : {}),
         ...(showSuperseded ? { includeSuperseded: true } : {}),
       },
@@ -482,6 +491,7 @@ function MemoryContents(
   const filters: ReadonlyArray<ListFilter> = [
     "saved",
     ...(assistedAvailable ? (["automatic"] as const) : []),
+    ...(standingCheckAvailable ? (["set_aside"] as const) : []),
     "forgotten",
     ...(historyAvailable && (lostCount > 0 || filter === "lost") ? (["lost"] as const) : []),
   ];

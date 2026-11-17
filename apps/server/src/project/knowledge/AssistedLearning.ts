@@ -4,6 +4,7 @@ import {
   ProjectKnowledgeMutation,
   type AssistedLearningRun,
   type KnowledgeMessageRef,
+  type KnowledgeOrigin,
   type MessageId,
   type OrchestrationV2MessageSpeaker,
   type ProjectId,
@@ -15,6 +16,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -41,6 +43,8 @@ const MAX_TRANSCRIPT_CHARS = 32_000;
 const MAX_CANDIDATES = 3;
 const MAX_CANDIDATE_CHARS = 2_000;
 const MAX_ENTITIES = 5;
+const MAX_CHECK_ATTEMPTS = 3;
+const CHECK_RETRY_MS = 30 * 60 * 1000;
 const ACKNOWLEDGEMENTS = new Set([
   "ok",
   "okay",
@@ -88,6 +92,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const fileSystem = yield* FileSystem.FileSystem;
   const digest = (text: string) =>
     crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
 
@@ -133,6 +138,17 @@ const make = Effect.gen(function* () {
       // The setting can change between scheduling and running; the latest choice wins.
       if (!settings.enableAssistedLearning)
         return yield* finish("skipped", "Automatic memory is off for this project.");
+      // Without the check nothing can be saved, so don't pay for extraction.
+      if (
+        !(yield* textGeneration.supportsOperation(
+          "checkFactStanding",
+          settings.textGenerationModelSelection.instanceId,
+        ))
+      )
+        return yield* finish(
+          "skipped",
+          "The text generation model's provider can't check memories. Choose another model in Settings → Threads → Text generation.",
+        );
       const evidence = [];
       // A seat's reply published into its parent and the seat's own thread are one speaker.
       const speakerThreads = new Map<RunId, ThreadId>();
@@ -285,6 +301,111 @@ const make = Effect.gen(function* () {
           }),
         );
       if (!generated.ok) return yield* finish("failed", generated.detail.slice(0, 300));
+      let dropped = 0;
+      const proposed: Array<{
+        readonly create: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>;
+        readonly actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>;
+      }> = [];
+      for (const raw of generated.candidates.slice(0, MAX_CANDIDATES)) {
+        const candidate = Option.getOrNull(decodeCandidate(raw));
+        const sources = [...new Set((candidate?.citations ?? []).map((ref) => ref.trim()))].flatMap(
+          (ref) => {
+            const source = refs.get(ref);
+            return source ? [source] : [];
+          },
+        );
+        const citedMessages = messages.filter((message) =>
+          (candidate?.citations ?? []).some((ref) => ref.trim() === message.ref),
+        );
+        const corroborated =
+          citedMessages.every((message) => message.runOutcome === "completed") &&
+          new Set(citedMessages.map((message) => message.runId)).size >= 2 &&
+          new Set(citedMessages.map((message) => speakerThreads.get(message.runId))).size >= 2 &&
+          new Set(citedMessages.map((message) => message.text.trim().toLowerCase())).size >= 2;
+        const userSupported = (candidate?.citations ?? []).some((ref) => userRefs.has(ref.trim()));
+        if (
+          candidate === null ||
+          sources.length === 0 ||
+          candidate.citations.some((ref) => !refs.has(ref.trim())) ||
+          (!userSupported && (!corroborated || candidate.kind === "decision"))
+        ) {
+          dropped += 1;
+          continue;
+        }
+        const support =
+          citedMessages.find((message) => userRefs.has(message.ref)) ?? citedMessages[0]!;
+        const actor = {
+          kind: "assisted" as const,
+          threadId: support.threadId,
+          runId: support.runId,
+          runOutcome: support.runOutcome,
+        };
+        const runContentId = `assisted:${actor.runId}:${(yield* digest(candidate.content)).slice(0, 32)}`;
+        const create = {
+          action: "create" as const,
+          commandId: CommandId.make(runContentId),
+          factId: ProjectFactId.make(runContentId),
+          projectId,
+          kind: candidate.kind,
+          content: candidate.content,
+          entities: [
+            ...new Set(
+              candidate.entities
+                .map((entity) => entity.trim().slice(0, 200))
+                .filter((entity) => entity !== ""),
+            ),
+          ].slice(0, MAX_ENTITIES),
+          tags: [],
+          sources,
+        };
+        if (!isMutation(create)) {
+          dropped += 1;
+          continue;
+        }
+        proposed.push({ create, actor });
+      }
+      // The check reads only the statements, from an empty directory, never the transcript.
+      const checked = yield* (
+        proposed.length === 0
+          ? Effect.succeed({ verdicts: [] })
+          : fileSystem.makeTempDirectoryScoped({ prefix: "t3-memory-check-" }).pipe(
+              Effect.flatMap((emptyDirectory) =>
+                textGeneration.checkFactStanding({
+                  cwd: emptyDirectory,
+                  statements: proposed.map(({ create }) => ({
+                    kind: create.kind,
+                    content: create.content,
+                  })),
+                  modelSelection: settings.textGenerationModelSelection,
+                }),
+              ),
+              Effect.scoped,
+            )
+      ).pipe(
+        Effect.map((result) => ({ ok: true as const, verdicts: result.verdicts })),
+        Effect.catchTags({
+          TextGenerationError: (error) =>
+            Effect.succeed({ ok: false as const, detail: error.detail }),
+        }),
+      );
+      if (!checked.ok) {
+        // Saving unchecked is the failure the check exists to prevent; retry the whole batch later.
+        const runIds = batch.map((entry) => entry.runId);
+        const [previous] = yield* sql<{ readonly attempts: number | null }>`
+          SELECT MAX(check_attempts) AS attempts FROM project_knowledge_learning_queue
+          WHERE ${sql.in("run_id", runIds)}`;
+        const attempts = (previous?.attempts ?? 0) + 1;
+        if (attempts >= MAX_CHECK_ATTEMPTS)
+          return yield* finish("failed", `Standing check failed: ${checked.detail}`.slice(0, 300));
+        const retryAt = DateTime.toEpochMillis(yield* DateTime.now) + CHECK_RETRY_MS;
+        yield* sql`UPDATE project_knowledge_learning_queue
+          SET check_attempts = ${attempts}, retry_at = ${retryAt} WHERE ${sql.in("run_id", runIds)}`;
+        return yield* Effect.logWarning("Automatic memory standing check deferred", {
+          projectId,
+          attempts,
+          detail: checked.detail,
+        });
+      }
       yield* sql.withTransaction(
         Effect.gen(function* () {
           if (
@@ -300,68 +421,11 @@ const make = Effect.gen(function* () {
             return yield* finish("skipped", "Automatic memory is off for this project.");
           let saved = 0;
           let duplicates = 0;
-          let dropped = 0;
-          for (const raw of generated.candidates.slice(0, MAX_CANDIDATES)) {
-            const candidate = Option.getOrNull(decodeCandidate(raw));
-            const sources = [
-              ...new Set((candidate?.citations ?? []).map((ref) => ref.trim())),
-            ].flatMap((ref) => {
-              const source = refs.get(ref);
-              return source ? [source] : [];
-            });
-            const citedMessages = messages.filter((message) =>
-              (candidate?.citations ?? []).some((ref) => ref.trim() === message.ref),
-            );
-            const corroborated =
-              citedMessages.every((message) => message.runOutcome === "completed") &&
-              new Set(citedMessages.map((message) => message.runId)).size >= 2 &&
-              new Set(citedMessages.map((message) => speakerThreads.get(message.runId))).size >=
-                2 &&
-              new Set(citedMessages.map((message) => message.text.trim().toLowerCase())).size >= 2;
-            const userSupported = (candidate?.citations ?? []).some((ref) =>
-              userRefs.has(ref.trim()),
-            );
-            if (
-              candidate === null ||
-              sources.length === 0 ||
-              candidate.citations.some((ref) => !refs.has(ref.trim())) ||
-              (!userSupported && (!corroborated || candidate.kind === "decision"))
-            ) {
-              dropped += 1;
-              continue;
-            }
-            const support =
-              citedMessages.find((message) => userRefs.has(message.ref)) ?? citedMessages[0]!;
-            const actor = {
-              kind: "assisted" as const,
-              threadId: support.threadId,
-              runId: support.runId,
-              runOutcome: support.runOutcome,
-            };
+          const setAside = { task: 0, code: 0 };
+          for (const [index, { create, actor }] of proposed.entries()) {
             if (yield* knowledge.hasAssistedRun(projectId, actor.runId)) continue;
-            const runContentId = `assisted:${actor.runId}:${(yield* digest(candidate.content)).slice(0, 32)}`;
-            const create = {
-              action: "create" as const,
-              commandId: CommandId.make(runContentId),
-              factId: ProjectFactId.make(runContentId),
-              projectId,
-              kind: candidate.kind,
-              content: candidate.content,
-              entities: [
-                ...new Set(
-                  candidate.entities
-                    .map((entity) => entity.trim().slice(0, 200))
-                    .filter((entity) => entity !== ""),
-                ),
-              ].slice(0, MAX_ENTITIES),
-              tags: [],
-              sources,
-            };
-            if (!isMutation(create)) {
-              dropped += 1;
-              continue;
-            }
-            const result = yield* knowledge.saveAutomatic(create, actor).pipe(
+            const verdict = checked.verdicts[index] ?? "task";
+            const result = yield* knowledge.saveAutomatic(create, actor, verdict).pipe(
               Effect.catchTags({
                 ProjectKnowledgeError: (error) =>
                   error.reason === "storage" || error.reason === "missing_project"
@@ -369,19 +433,29 @@ const make = Effect.gen(function* () {
                     : Effect.succeed({ outcome: "dropped" as const }),
               }),
             );
-            if (result.outcome === "saved") {
+            if (result.outcome === "saved" && verdict !== "standing") setAside[verdict] += 1;
+            else if (result.outcome === "saved") {
               saved += 1;
               savedByRun.set(actor.runId, (savedByRun.get(actor.runId) ?? 0) + 1);
             } else if (result.outcome === "duplicate") duplicates += 1;
             else if (result.outcome === "dropped") dropped += 1;
           }
+          const plural = (count: number, noun: string) =>
+            `${count} ${noun}${count === 1 ? "" : "s"}`;
+          const asideTotal = setAside.task + setAside.code;
           const notes = [
-            ...(duplicates > 0
-              ? [`${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped.`]
+            ...(asideTotal > 0
+              ? [
+                  `${asideTotal} set aside: ${[
+                    ...(setAside.task > 0 ? [plural(setAside.task, "task note")] : []),
+                    ...(setAside.code > 0 ? [plural(setAside.code, "code description")] : []),
+                  ].join(", ")}.`,
+                ]
               : []),
+            ...(duplicates > 0 ? [`${plural(duplicates, "duplicate")} skipped.`] : []),
             ...(dropped > 0
               ? [
-                  `${dropped} candidate${dropped === 1 ? "" : "s"} dropped: citations did not verify or exceeded the limit.`,
+                  `${plural(dropped, "candidate")} dropped: citations did not verify or exceeded the limit.`,
                 ]
               : []),
           ];
@@ -433,7 +507,8 @@ const make = Effect.gen(function* () {
       SELECT project_id AS "projectId", root_thread_id AS "rootThreadId",
         SUM(CASE WHEN run_outcome = 'completed' THEN 1 ELSE 0 END) AS completed,
         MAX(queued_at) AS "lastQueuedAt"
-      FROM project_knowledge_learning_queue GROUP BY project_id, root_thread_id`;
+      FROM project_knowledge_learning_queue GROUP BY project_id, root_thread_id
+      HAVING COALESCE(MAX(retry_at), 0) <= ${now}`;
         if (families.length === 0) return;
         const settings = yield* serverSettings.getSettings;
         for (const family of families) {

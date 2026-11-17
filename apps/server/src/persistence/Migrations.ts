@@ -125,6 +125,7 @@ import Migration0111 from "./Migrations/111_TurnItemMessageOrdinalIndex.ts";
 import Migration0112 from "./Migrations/112_TurnItemInlineWorkOutput.ts";
 import Migration0113 from "./Migrations/113_RepairSubagentGroups.ts";
 import Migration0114 from "./Migrations/114_ProjectKnowledgeRecallIndex.ts";
+import Migration0115 from "./Migrations/115_ProjectKnowledgeFactVerdict.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -242,6 +243,7 @@ const migrationEntries = [
   [112, "TurnItemInlineWorkOutput", Migration0112],
   [113, "RepairSubagentGroups", Migration0113],
   [114, "ProjectKnowledgeRecallIndex", Migration0114],
+  [115, "ProjectKnowledgeFactVerdict", Migration0115],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

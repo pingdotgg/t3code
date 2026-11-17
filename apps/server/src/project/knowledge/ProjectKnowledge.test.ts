@@ -20,6 +20,7 @@ import {
   THREAD_SEARCH_QUERY_MAX_LENGTH,
   ThreadId,
   TurnItemId,
+  type KnowledgeOrigin,
   type OrchestrationV2DomainEvent,
   type ProjectKnowledgeMutation,
 } from "@t3tools/contracts";
@@ -2286,6 +2287,140 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("recall skips facts the check set aside, which search still finds", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-set-aside");
+    yield* createProject(projectId);
+    const standing = ProjectFactId.make("standing");
+    const setAside = ProjectFactId.make("set-aside");
+    const unchecked = ProjectFactId.make("unchecked");
+    for (const factId of [standing, setAside, unchecked])
+      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
+    for (const [factId, verdict] of [
+      [standing, "standing"],
+      [setAside, "task"],
+    ] as const)
+      yield* sql`UPDATE project_knowledge_facts
+        SET verdict = ${verdict}, verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
+        WHERE id = ${factId}`;
+    const recall = (id: string, query: string) =>
+      knowledge.recall({
+        projectId,
+        threadId: ThreadId.make(id),
+        requestId: CommandId.make(id),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      });
+    const tenantQuery = "Should tenant IDs be part of the new cache keys?";
+    assert.deepEqual(attachedFactIds(yield* recall("recall-set-aside", tenantQuery)).toSorted(), [
+      standing,
+      unchecked,
+    ]);
+    const searched = yield* knowledge.search({
+      projectId,
+      query: "tenant cache",
+      requestId: CommandId.make("search-set-aside"),
+    });
+    assert.deepEqual(
+      searched.facts.state === "available"
+        ? searched.facts.matches.map((match) => match.fact.id).toSorted()
+        : [],
+      [setAside, standing, unchecked],
+    );
+    const edit = (commandId: string, content: string, actor: KnowledgeOrigin) =>
+      Effect.gen(function* () {
+        const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
+        yield* knowledge.mutate(
+          {
+            ...createFact(projectId, setAside),
+            action: "edit",
+            commandId: CommandId.make(commandId),
+            expectedRevision: fact.revision,
+            content,
+            // Agents cannot cite the user; an agent's edit may carry no sources.
+            sources: actor.kind === "user" ? [{ kind: "user" }] : [],
+          },
+          actor,
+        );
+        return (yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict?.value;
+      });
+    // An agent rewording a set-aside fact has not decided that it should be recalled.
+    assert.equal(
+      yield* edit("agent-edit-set-aside", "Cache keys include tenant IDs and regions.", {
+        kind: "agent-thread",
+        threadId: ThreadId.make("editing-agent"),
+        providerInstanceId,
+      }),
+      "task",
+    );
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-agent-edit", "Add regions to cache keys.")),
+      [],
+    );
+    // A person's edit is the owner's way back: the fact is unchecked and recallable again.
+    assert.isUndefined(
+      yield* edit("edit-set-aside", "Cache keys include tenant IDs and region codes.", {
+        kind: "user",
+      }),
+    );
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-edit", "Add region codes to cache keys.")),
+      [setAside],
+    );
+    // Nor does an agent's replacement of a set-aside fact make it recallable.
+    yield* sql`UPDATE project_knowledge_facts
+      SET verdict = 'task', verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
+      WHERE id = ${setAside}`;
+    const replacement = ProjectFactId.make("agent-replacement");
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, setAside),
+        action: "supersede",
+        commandId: CommandId.make("agent-supersede-set-aside"),
+        expectedRevision: (yield* knowledge.readFact({ projectId, factId: setAside })).fact
+          .revision,
+        replacementFactId: replacement,
+        content: "Cache keys include tenant IDs, region codes and shard numbers.",
+        sources: [],
+      },
+      { kind: "agent-thread", threadId: ThreadId.make("editing-agent"), providerInstanceId },
+    );
+    assert.equal(
+      (yield* knowledge.readFact({ projectId, factId: replacement })).fact.verdict?.value,
+      "task",
+    );
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-supersede", "Add shard numbers to cache keys.")),
+      [],
+    );
+  }).pipe(
+    Effect.provide(
+      knowledgeTestLayer(
+        Layer.succeed(HolographicMemory.HolographicMemory, {
+          scoreCandidates: (input) =>
+            Effect.succeed(
+              input.candidates.map((candidate) => ({
+                id: candidate.id,
+                rawCosine: 1,
+                holographic: 1,
+                decay: 1,
+                reinforcement: 0,
+                score: 1,
+                scoreMillionths: 1_000_000,
+                tokenOverlap: 1,
+                fts: 1,
+                coverage: 1,
+              })),
+            ),
+        }),
+      ),
+    ),
+  ),
+);
+
 it.effect("recall does not score with the holographic kernel", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
@@ -3201,9 +3336,23 @@ it.effect("summarizes memory health by status, trust, feedback and lost sources"
       message(threadId, messageId, "user", "Pin Node to 24.", { minute: 3 }),
     );
 
+    const sql = yield* SqlClient.SqlClient;
+    for (const [verdict, trust] of [
+      ["standing", 0.5],
+      ["task", 0.5],
+      ["code", 0.2],
+    ] as const) {
+      const fact = yield* knowledge.mutate(createFact(projectId, `health-${verdict}`), {
+        kind: "user",
+      });
+      yield* sql`UPDATE project_knowledge_facts
+        SET verdict = ${verdict}, verdict_by = 'check', verdict_at = ${fact.createdAt}, trust = ${trust}
+        WHERE id = ${fact.id}`;
+    }
+
     const status = yield* knowledge.status({ projectId });
-    assert.deepEqual(status.counts, { saved: 4, superseded: 1, forgotten: 1 });
-    assert.deepEqual(status.trustBands, { low: 1, guarded: 0, steady: 3, high: 0 });
+    assert.deepEqual(status.counts, { saved: 7, superseded: 1, forgotten: 1 });
+    assert.deepEqual(status.trustBands, { low: 1, guarded: 0, steady: 4, high: 0 });
     assert.equal(status.belowRecallThreshold, 1);
     assert.deepEqual(status.feedback, { helpful: 1, unhelpful: 3 });
     assert.equal(status.unavailableSources, 1);
@@ -3379,8 +3528,10 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       runOutcome: "completed" as const,
     };
     const candidate = { ...createFact(projectId, "automatic"), sources: [citation.source] };
-    assert.equal((yield* knowledge.saveAutomatic(candidate, actor)).outcome, "duplicate");
+    assert.equal((yield* knowledge.saveAutomatic(candidate, actor, "task")).outcome, "duplicate");
     const merged = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
+    // A verdict is written once: a duplicate's check does not reclassify the fact it joins.
+    assert.isUndefined(merged.verdict);
     assert.deepEqual(merged.sources, [...original.sources, citation.source]);
     assert.equal(merged.content, original.content);
     assert.deepEqual(merged.origin, original.origin);
@@ -3388,6 +3539,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-repeat") },
       actor,
+      "standing",
     );
     assert.deepEqual((yield* knowledge.readFact({ projectId, factId: original.id })).fact, merged);
     const invalid = yield* knowledge
@@ -3398,6 +3550,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
           sources: [{ ...citation.source, runId: RunId.make("fabricated") }],
         },
         actor,
+        "standing",
       )
       .pipe(Effect.result);
     assert.equal(invalid._tag, "Failure");
@@ -3411,6 +3564,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-cap"), sources: extraSources },
       actor,
+      "standing",
     );
     const capped = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
     assert.equal(capped.sources.length, 16);
@@ -3425,7 +3579,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       },
       { kind: "user" },
     );
-    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor);
+    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor, "standing");
     assert.equal(
       (yield* knowledge.readFact({ projectId, factId: original.id })).fact.status,
       "forgotten",

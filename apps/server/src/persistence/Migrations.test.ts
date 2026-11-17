@@ -6,8 +6,10 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ProjectId } from "@t3tools/contracts";
 
 import { createMessageSearchTriggers } from "../orchestration-v2/messageSearchIndex.ts";
+import { makeStore } from "../project/knowledge/persistence.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 import ProjectLoomTimeIndexes from "./Migrations/075_ProjectLoomTimeIndexes.ts";
 import ProjectLoomBoundedReads from "./Migrations/077_ProjectLoomBoundedReads.ts";
@@ -1406,6 +1408,37 @@ it.effect(
         { term: "lantern", doc: 1 },
         { term: "πύλη", doc: 1 },
       ]);
+      // Set-aside facts are never recall candidates, so they never weigh recall's terms.
+      const store = yield* makeStore;
+      const recallStats = store
+        .termStats(["cobalt", "harrier", "kestrel", "lantern", "πύλη"], ProjectId.make("project"))
+        .pipe(Effect.map((stats) => [stats.corpusSize, Object.fromEntries(stats.docs)]));
+      yield* sql`
+      INSERT INTO project_knowledge_facts
+        (id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
+         retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json, verdict)
+      VALUES ('third', 'project', 'saved', 1, 'harrier cobalt', '[]', '[]',
+        'note', 0.6, 0, '2026-11-16', '2026-11-16', NULL, '[]', '{"kind":"assisted"}', 'task')`;
+      assert.deepEqual(yield* recallStats, [1, { cobalt: 1, lantern: 1, πύλη: 1 }]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='code' WHERE id='second'`;
+      assert.deepEqual(yield* recallStats, [0, {}]);
+      yield* sql`UPDATE project_knowledge_facts SET content='cobalt kestrel' WHERE id='second'`;
+      assert.deepEqual(yield* recallStats, [0, {}]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='standing' WHERE id='second'`;
+      const standingOnly = [1, { cobalt: 1, kestrel: 1, lantern: 1 }];
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET verdict=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, [2, { cobalt: 2, harrier: 1, kestrel: 1, lantern: 1 }]);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='task' WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET superseded_by_id='second' WHERE id='third'`;
+      yield* sql`UPDATE project_knowledge_facts SET verdict=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`UPDATE project_knowledge_facts SET verdict='task', superseded_by_id=NULL WHERE id='third'`;
+      yield* sql`UPDATE project_knowledge_facts SET status='forgotten',content=NULL WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
+      yield* sql`DELETE FROM project_knowledge_facts WHERE id='third'`;
+      assert.deepEqual(yield* recallStats, standingOnly);
       yield* sql`UPDATE project_knowledge_facts SET project_id='other' WHERE id='second'`;
       assert.deepEqual(yield* counts, []);
       yield* sql`DELETE FROM project_knowledge_facts WHERE id='second'`;

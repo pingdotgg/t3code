@@ -90,6 +90,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     function* (input) {
       const { operation, prompt, modelSelection } = input;
       const evaluating = operation === "generateModelEvaluation";
+      const blind = evaluating || operation === "checkFactStanding";
       if (evaluating && ["", "auto", "default"].includes(modelSelection.model.trim())) {
         return yield* new TextGenerationError({
           operation,
@@ -130,7 +131,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         apiKey,
         mode: "plan",
         model: cursorSdkModelSelection(modelSelection, getModels?.() ?? []),
-        ...(evaluating ? { tools: [] } : {}),
+        ...(blind ? { tools: [] } : {}),
         local: {
           cwd,
           store,
@@ -188,7 +189,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
-        if (evaluating) {
+        if (blind) {
           yield* Effect.tryPromise({
             try: async () => {
               for await (const event of run.stream()) {
@@ -202,7 +203,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
                 ) {
                   throw new TextGenerationError({
                     operation,
-                    detail: "Cursor attempted tool work or user input during model evaluation.",
+                    detail: "Cursor attempted tool work or user input during a blind request.",
                   });
                 }
               }

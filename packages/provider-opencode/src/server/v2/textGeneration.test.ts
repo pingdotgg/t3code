@@ -2,7 +2,9 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
@@ -308,12 +310,62 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
     Effect.gen(function* () {
       const textGeneration = yield* make(undefined, "https://remote.example.com");
       expect(textGeneration.supportedOperations).not.toContain("generateModelEvaluation");
+      expect(textGeneration.supportedOperations).not.toContain("checkFactStanding");
       const error = yield* textGeneration
         .generateModelEvaluation(evaluationInput)
         .pipe(Effect.flip);
       expect(error.detail).toContain("cannot isolate");
       expect(state.connectUrls).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["answer", "tool activity"] as const)(
+    "runs the standing check on an owned deny-all server (%s)",
+    (reply) =>
+      Effect.gen(function* () {
+        const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
+        state.events[1] = {
+          type: "session.text.ended",
+          data: {
+            sessionID: SESSION_ID,
+            assistantMessageID: "msg_blind_evaluation",
+            ordinal: 0,
+            text: JSON.stringify(answer),
+          },
+        } as OpenCode2Client.OpenCode2StreamEvent;
+        if (reply === "tool activity")
+          state.events.splice(1, 0, {
+            type: "session.tool.called",
+            data: {
+              sessionID: SESSION_ID,
+              id: "tool_read",
+              assistantMessageID: "msg_blind_evaluation",
+              input: { filePath: "/secret" },
+              executed: true,
+            },
+          } as unknown as OpenCode2Client.OpenCode2StreamEvent);
+        const textGeneration = yield* make();
+        const result = yield* textGeneration
+          .checkFactStanding({
+            cwd: "/empty-check-directory",
+            modelSelection: { ...evaluationInput.modelSelection, options: [] },
+            statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+          })
+          .pipe(Effect.exit);
+        if (reply === "tool activity")
+          expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
+            "tool activity",
+          );
+        else
+          expect(Exit.isSuccess(result) ? result.value : result).toEqual({
+            verdicts: ["standing"],
+          });
+        expect(state.connectUrls).toEqual([OWNED_SERVER_URL]);
+        expect(state.sessionInputs[0]).toMatchObject({
+          permissions: [{ action: "*", resource: "*", effect: "deny" }],
+        });
+        expect(state.startEnvironments[0]?.OPENCODE_CONFIG_CONTENT).not.toContain("instructions");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("fails when execution reports a different model", () =>

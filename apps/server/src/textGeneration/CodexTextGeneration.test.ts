@@ -29,6 +29,7 @@ import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as TextGenerators from "./TextGenerators.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
@@ -62,6 +63,7 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  forbidInstructions?: string;
   requireIsolatedHome?: boolean;
   requireMcpServersOff?: ReadonlyArray<string>;
 }
@@ -81,6 +83,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     requiredCwd: input.requiredCwd ?? null,
     requireInstructions: input.requireInstructions ?? null,
+    forbidInstructions: input.forbidInstructions ?? null,
     requireIsolatedHome: input.requireIsolatedHome ?? false,
     requireMcpServersOff: input.requireMcpServersOff ?? [],
     stderr: input.stderr ?? null,
@@ -183,6 +186,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
+        'if (check.forbidInstructions !== null && instructions.includes(check.forbidInstructions)) fail("inherited developer instructions", 11);',
         'for (const arg of check.requiredArgs) if (!originalArgs.includes(` ${arg} `)) fail("missing arg: " + arg, 8);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
@@ -233,7 +237,7 @@ function withFakeCodexEnv<A, E, R>(
     managedRuntime?: boolean;
     configToml?: string;
   },
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -561,22 +565,76 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps checkout instructions out of automatic memory extraction", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({ candidates: [] }),
+  it.effect("keeps checkout instructions out of automatic memory extraction and checks", () =>
+    Effect.gen(function* () {
+      const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
+      const isolation = {
         requireArg: "--config project_doc_max_bytes=0",
         requiredCwd: process.cwd(),
+      };
+      yield* withFakeCodexEnv(
+        { ...isolation, output: JSON.stringify({ candidates: [] }) },
+        (textGeneration) =>
+          textGeneration.generateKnowledgeCandidates({
+            cwd: process.cwd(),
+            modelSelection,
+            runOutcome: "completed",
+            messages: [{ ref: "M1", role: "user", text: "Use the shared test runner." }],
+          }),
+      );
+    }),
+  );
+
+  it.effect.each([
+    "file login",
+    "tool activity",
+    "keyring login",
+    "keyring MCP discovery unavailable",
+  ] as const)("checks fact standing blind (%s)", (state) => {
+    const keyring = state.startsWith("keyring");
+    const discoveryUnavailable = state === "keyring MCP discovery unavailable";
+    const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
+    return withFakeCodexEnv(
+      {
+        output: JSON.stringify(answer),
+        configToml: `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+        ...(keyring
+          ? {
+              launchArgs: "--config 'developer_instructions=\"Do not inherit\"'",
+              mcpServers: discoveryUnavailable ? 2 : [{ name: "augmenter", enabled: true }],
+              requireMcpServersOff: discoveryUnavailable ? [] : ["augmenter"],
+              forbidInstructions: "Do not inherit",
+            }
+          : { requireIsolatedHome: true }),
+        requireArg: "--config project_doc_max_bytes=0",
+        disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "hooks", "view_image"],
+        events: [
+          {
+            type: "item.completed",
+            item:
+              state === "tool activity"
+                ? { type: "command_execution", command: "cat /secret" }
+                : { type: "agent_message", text: JSON.stringify(answer) },
+          },
+        ],
       },
       (textGeneration) =>
-        textGeneration.generateKnowledgeCandidates({
-          cwd: process.cwd(),
-          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
-          runOutcome: "completed",
-          messages: [{ ref: "M1", role: "user", text: "Use the shared test runner." }],
+        Effect.gen(function* () {
+          const exit = yield* textGeneration
+            .checkFactStanding({
+              cwd: process.cwd(),
+              modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
+              statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+            })
+            .pipe(Effect.exit);
+          if (state === "tool activity" || discoveryUnavailable)
+            expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+              discoveryUnavailable ? "MCP" : "tool activity",
+            );
+          else expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual({ verdicts: ["standing"] });
         }),
-    ),
-  );
+    );
+  });
 
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(

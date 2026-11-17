@@ -487,6 +487,8 @@ export const CodexDriver: ProviderDriver<
               "generateConversationSummary",
               nativeGeneration.generateConversationSummary(input),
             ),
+          checkFactStanding: (input) =>
+            protect("checkFactStanding", nativeGeneration.checkFactStanding(input)),
         }
       : nativeGeneration;
     const probeSkills = yield* makeCodexSkillsProbe().pipe(

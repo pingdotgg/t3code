@@ -37,6 +37,8 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const blindEvaluation = input.operation === "generateModelEvaluation";
+  // The standing check gets the evaluator's isolation, without its exact-model checks.
+  const blind = blindEvaluation || input.operation === "checkFactStanding";
   const { client } = connection;
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
   if (parsed === null) {
@@ -84,7 +86,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
       ) {
         return Effect.void;
       }
-      if (blindEvaluation && event.type.startsWith("session.tool.")) {
+      if (blind && event.type.startsWith("session.tool.")) {
         return Deferred.succeed(outcome, {
           _tag: "failed",
           detail: "OpenCode reported tool activity during blind evaluation.",
@@ -110,7 +112,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
           return Effect.void;
         }
         case "session.step.ended":
-          if (blindEvaluation && event.data.finish === "tool-calls") {
+          if (blind && event.data.finish === "tool-calls") {
             return Deferred.succeed(outcome, {
               _tag: "failed",
               detail: "OpenCode reported tool activity during blind evaluation.",
@@ -132,7 +134,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
             .pipe(
               Effect.ignore({ log: true }),
               Effect.andThen(
-                blindEvaluation
+                blind
                   ? Deferred.succeed(outcome, {
                       _tag: "failed",
                       detail: "OpenCode requested tool permission during blind evaluation.",
@@ -180,7 +182,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
         id: Model.ID.make(parsed.modelID),
         ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
       }),
-      permissions: blindEvaluation
+      permissions: blind
         ? [{ action: "*", resource: "*", effect: "deny" as const }]
         : GENERATION_PERMISSIONS,
     });
@@ -280,19 +282,21 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
     return yield* TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw);
   }, Effect.scoped);
   const run: TextGenerationOperations.Runner = (input) => {
-    const blindEvaluation = input.operation === "generateModelEvaluation";
-    const generated = blindEvaluation
-      ? BlindEvaluation.validateBlindEvaluationSelection(
-          input.modelSelection,
-          input.operation,
-        ).pipe(Effect.andThen(runIsolated(input)))
-      : server
-          .withConnection((connection) => runOnServer(connection, input))
-          .pipe(
-            Effect.flatMap((raw) =>
-              TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw),
-            ),
-          );
+    const generated =
+      input.operation === "generateModelEvaluation"
+        ? BlindEvaluation.validateBlindEvaluationSelection(
+            input.modelSelection,
+            input.operation,
+          ).pipe(Effect.andThen(runIsolated(input)))
+        : input.operation === "checkFactStanding"
+          ? runIsolated(input)
+          : server
+              .withConnection((connection) => runOnServer(connection, input))
+              .pipe(
+                Effect.flatMap((raw) =>
+                  TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw),
+                ),
+              );
     return generated.pipe(
       Effect.provideService(ProviderHost.ProviderHost, host),
       Effect.provideService(FileSystem.FileSystem, fileSystem),

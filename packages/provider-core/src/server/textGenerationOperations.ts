@@ -16,6 +16,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildConversationSummaryPrompt,
+  buildFactStandingCheckPrompt,
   buildKnowledgeCandidatesPrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
@@ -243,6 +244,29 @@ export function fromRunner(
       });
     });
 
+  // Fails closed: an omitted, repeated or out-of-range ref, or a standing statement that does not
+  // name what it refers to, is stored as set aside. A reply off the schema fails the call instead.
+  const checkFactStanding: ProviderTextGeneration["checkFactStanding"] = Effect.fn(
+    `${name}.checkFactStanding`,
+  )(function* (input) {
+    if (input.statements.length === 0) return { verdicts: [] };
+    const { results } = yield* run({
+      operation: "checkFactStanding",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildFactStandingCheckPrompt(input.statements),
+    });
+    const answers = new Map<number, (typeof results)[number] | null>();
+    for (const result of results) answers.set(result.ref, answers.has(result.ref) ? null : result);
+    return {
+      verdicts: input.statements.map((_, index) => {
+        const answer = answers.get(index + 1);
+        if (!answer) return "task" as const;
+        return answer.verdict === "standing" && !answer.selfContained ? "task" : answer.verdict;
+      }),
+    };
+  });
+
   const generateConversationSummary: ProviderTextGeneration["generateConversationSummary"] =
     Effect.fn(`${name}.generateConversationSummary`)(function* (input) {
       return yield* run({
@@ -257,7 +281,9 @@ export function fromRunner(
     supportedOperations: TextGenerationOperation.literals.filter(
       (operation) =>
         (operation !== "generateReviewGuide" || options.supportsInvestigation) &&
-        (operation !== "generateModelEvaluation" || options.supportsBlindEvaluation === true),
+        // The standing check must not see tools or workspace instructions either.
+        ((operation !== "generateModelEvaluation" && operation !== "checkFactStanding") ||
+          options.supportsBlindEvaluation === true),
     ),
     generateCommitMessage,
     generatePrContent,
@@ -268,5 +294,6 @@ export function fromRunner(
     generateConversationSummary,
     generateModelEvaluation,
     generateTranscriptionPostProcessing,
+    checkFactStanding,
   } satisfies ProviderTextGenerationRuntime;
 }

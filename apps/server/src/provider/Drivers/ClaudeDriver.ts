@@ -442,6 +442,8 @@ export const ClaudeDriver: ProviderDriver<
               "generateConversationSummary",
               nativeGeneration.generateConversationSummary(input),
             ),
+          checkFactStanding: (input) =>
+            protect("checkFactStanding", nativeGeneration.checkFactStanding(input)),
         }
       : nativeGeneration;
 

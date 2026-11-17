@@ -23,6 +23,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateConversationSummary",
   "generateModelEvaluation",
   "generateTranscriptionPostProcessing",
+  "checkFactStanding",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -194,6 +195,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     input: TextGenerationOperations.Request<S>,
   ) {
     const blindEvaluation = input.operation === "generateModelEvaluation";
+    // The standing check gets the evaluator's isolation, without its exact-model checks.
+    const blind = blindEvaluation || input.operation === "checkFactStanding";
     if (blindEvaluation) {
       yield* BlindEvaluation.validateBlindEvaluationSelection(
         input.modelSelection,
@@ -232,7 +235,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 title: `T3 Code ${input.operation}`,
                 permission: [
                   { permission: "*", pattern: "*", action: "deny" },
-                  ...(!blindEvaluation
+                  ...(!blind
                     ? [{ permission: "read", pattern: "*", action: "allow" as const }]
                     : []),
                 ],
@@ -287,7 +290,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               {
                 sessionID: session.data.id,
                 model: parsedModel,
-                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                // A custom agent brings its own prompt.
+                ...(selectedAgent && !blind ? { agent: selectedAgent } : {}),
                 ...(selectedVariant ? { variant: selectedVariant } : {}),
                 parts: [{ type: "text", text: input.prompt }, ...fileParts],
               },
@@ -341,7 +345,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           });
         }
         const responseParts = result.data?.parts ?? [];
-        if (blindEvaluation && BlindEvaluation.hasBlindEvaluationPartActivity(responseParts)) {
+        if (blind && BlindEvaluation.hasBlindEvaluationPartActivity(responseParts)) {
           return yield* new TextGenerationError({
             operation: input.operation,
             detail: "OpenCode reported tool activity during blind evaluation.",
@@ -417,7 +421,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       });
       return yield* runAgainstServer(server);
     }).pipe(Effect.scoped);
-    const serverOutput = blindEvaluation
+    const serverOutput = blind
       ? isolatedOutput
       : openCodeSettings.serverUrl.length > 0
         ? openCodeRuntime
