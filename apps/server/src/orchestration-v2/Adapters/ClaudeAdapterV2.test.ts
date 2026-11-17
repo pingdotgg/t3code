@@ -8973,6 +8973,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
       });
       assert.equal(forkCalls[0]?.options.upToMessageId, earlierCursor);
+      // A running later turn writes past the head, so the head cannot bound a fork.
+      const busyForkError = yield* harness.runtime
+        .forkThread({
+          sourceProviderThread: pastSilentTurn.providerThread,
+          sourceProviderTurns: [
+            ...turnsAcrossSilent.slice(0, 2),
+            { ...turnsAcrossSilent[2]!, status: "running", completedAt: null },
+          ],
+          providerTurnId: providerTurn.id,
+          targetThreadId: ThreadId.make("thread-claude-fork-while-source-runs"),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(busyForkError, ProviderAdapter.ProviderAdapterForkThreadError);
+      assert.equal(forkCalls.length, 1);
       const interruptedBeforeCompact = yield* rollbackTo(
         [
           {
