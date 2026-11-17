@@ -45,7 +45,7 @@ function toolOutput(toolResponse: ToolResponse, delivered: boolean): SyncHookJSO
         disabledReason: "no_transport",
       },
       additionalContext: delivered
-        ? "T3 Code passed this notification to a connected T3 Code client with notifications on. That client shows it unless the user already has this thread open."
+        ? "T3 Code passed this notification to a connected T3 Code client with notifications on. Whether that client put it on screen is not confirmed."
         : "This notification reached nobody: no T3 Code client with notifications on is connected.",
     },
   };
