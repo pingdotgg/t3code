@@ -312,12 +312,16 @@ const make = Effect.gen(function* () {
     );
 
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
-    const { supported, unimplemented } = yield* listProjects(input);
+    // Trackers name every host so a client narrowed to one can switch to another; only the
+    // narrowed host's scopes are read.
+    const { supported, unimplemented } = yield* listProjects({ projectId: input.projectId });
+    const host = input.host?.trim().toLowerCase();
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;
     // Worktrees of one repository are separate projects, and every repository of an Azure
     // DevOps project shares its work items; read each scope once.
     const scopes = new Map<string, SupportedProject>();
     for (const project of supported) {
+      if (host !== undefined && project.host !== host) continue;
       const key = listCursorKey(project.host, project.scope);
       if (!scopes.has(key)) scopes.set(key, project);
     }
