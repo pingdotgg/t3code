@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueEvent,
   type IssueInvolvement,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
@@ -322,6 +323,25 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
         })),
       );
 
+    /**
+     * The first page of notes with the events of every later one. Comments page by cursor, but
+     * the timeline has no cursor of its own, so it is read whole with the detail.
+     */
+    const firstNotesPage = Effect.fn("GitLabIssueTracker.firstNotesPage")(function* (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly path: string;
+    }) {
+      const first = yield* notesPage({ ...input, page: 1, operation: "getIssue" });
+      const events: IssueEvent[] = [...first.events];
+      for (let cursor = first.nextCursor; cursor !== null;) {
+        const later = yield* notesPage({ ...input, page: Number(cursor), operation: "getIssue" });
+        events.push(...later.events);
+        cursor = later.nextCursor;
+      }
+      return { ...first, events };
+    });
+
     const awards = (input: {
       readonly cwd: string;
       readonly host: string;
@@ -437,13 +457,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   decode: decodeIssueDetailJson,
                 }),
                 viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
-                notesPage({
-                  cwd: input.cwd,
-                  host: input.host,
-                  path,
-                  page: 1,
-                  operation: "getIssue",
-                }),
+                firstNotesPage({ cwd: input.cwd, host: input.host, path }),
                 read({
                   cwd: input.cwd,
                   host: input.host,
