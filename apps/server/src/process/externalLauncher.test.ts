@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -817,6 +818,132 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
         assert.equal(spawned.options.shell, false);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+}
+
+// The Cursor Agent CLI installs a cursor script that fails when no IDE is behind it.
+const failingCursor = "#!/bin/sh\necho 'Error: no IDE behind this script' >&2\nexit 1\n";
+// Stays silent for longer than the `--version` check waits.
+const stalledCursor = "#!/bin/sh\nexec sleep 30\n";
+const isProcessAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+for (const { title, first, later, bundled, expected, platforms } of [
+  {
+    title: "keeps a working cursor on PATH ahead of the Cursor bundle",
+    first: "#!/bin/sh\n",
+    later: false,
+    bundled: true,
+    expected: "path",
+    platforms: ["darwin"],
+  },
+  {
+    title: "skips a failing cursor on PATH for the Cursor bundle",
+    first: failingCursor,
+    later: false,
+    bundled: true,
+    expected: "bundle",
+    platforms: ["darwin"],
+  },
+  {
+    title: "keeps a working cursor on PATH",
+    first: "#!/bin/sh\n",
+    later: false,
+    bundled: false,
+    expected: "path",
+    platforms: ["linux"],
+  },
+  {
+    title: "keeps a cursor on PATH that does not answer --version in time",
+    first: stalledCursor,
+    later: false,
+    bundled: false,
+    expected: "path",
+    platforms: ["darwin", "linux"],
+  },
+  {
+    title: "skips a failing cursor on PATH for a working cursor later on PATH",
+    first: failingCursor,
+    later: true,
+    bundled: false,
+    expected: "later",
+    platforms: ["darwin", "linux"],
+  },
+  {
+    title: "does not offer Cursor when the only cursor on PATH fails",
+    first: failingCursor,
+    later: false,
+    bundled: false,
+    expected: "none",
+    platforms: ["darwin", "linux"],
+  },
+] as const) {
+  for (const platform of platforms) {
+    it.effect.skipIf(windowsHost)(platform === "darwin" ? title : `${title} on Linux`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-agent-cli-" });
+        const bundle = path.join(home, "Applications/Cursor.app/Contents/Resources/app/bin/cursor");
+        const binDir = path.join(home, ".local/bin");
+        const laterCursor = path.join(home, "later-bin/cursor");
+        for (const [command, script] of [
+          [path.join(binDir, "cursor"), first],
+          ...(later ? [[laterCursor, "#!/bin/sh\n"] as const] : []),
+          ...(bundled ? [[bundle, "#!/bin/sh\n"] as const] : []),
+        ] as const) {
+          yield* fs.makeDirectory(path.dirname(command), { recursive: true });
+          yield* fs.writeFileString(command, script);
+          yield* fs.chmod(command, 0o755);
+        }
+        const editor = EDITORS.find((editor) => editor.id === "cursor")!;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const firstPid = yield* Deferred.make<number>();
+        const resolving = yield* resolveEditorCommand(editor, {
+          HOME: home,
+          PATH: `${binDir}:${path.dirname(laterCursor)}`,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, platform),
+          // Keep a Cursor installed on the host, in /Applications or /usr/bin, out of the result.
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (file) =>
+              fs.stat(file.startsWith(`${home}${path.sep}`) ? file : path.join(home, "missing")),
+          }),
+          // Report the PID of the first `--version` check once its process runs.
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              spawner
+                .spawn(command)
+                .pipe(Effect.tap((handle) => Deferred.succeed(firstPid, handle.pid))),
+            ),
+          ),
+          Effect.forkChild,
+        );
+        const stalled = first === stalledCursor;
+        if (stalled) {
+          // The check runs on the test clock, so its timeout passes only when the clock moves.
+          assert.isTrue(isProcessAlive(yield* Deferred.await(firstPid)));
+          yield* TestClock.adjust("2 seconds");
+        }
+
+        const commands = { path: "cursor", bundle, later: laterCursor };
+        assert.deepEqual(
+          yield* Fiber.join(resolving),
+          expected === "none"
+            ? Option.none()
+            : Option.some({ command: commands[expected], baseArgs: ["--classic"] }),
+        );
+        // The timed-out check must not leave its child process behind.
+        if (stalled) assert.isFalse(isProcessAlive(yield* Deferred.await(firstPid)));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 }
 
 for (const { layout, pathNames, fallbackNames, expected } of [
