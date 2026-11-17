@@ -1846,27 +1846,26 @@ export const layer: Layer.Layer<
           const startInput = noteContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
+          const missedAttachments =
+            compact || goalCommand
+              ? []
+              : retryHandoff.attachments.filter(
+                  (missed) =>
+                    !turnInput.message.attachments.some((current) => current.id === missed.id),
+                );
+          // Like pending history, pending images need a prompt; native resume carries none.
+          const prompted = context !== "" || missedAttachments.length > 0;
           const operation =
-            turnInput.resume && context === "" && session.resumeTurn !== undefined
+            turnInput.resume && !prompted && session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
               : start({
-                  ...(context === "" ? startInput : contextInput),
+                  ...(prompted ? contextInput : startInput),
                   message: {
                     ...turnInput.message,
                     text,
-                    ...(compact || goalCommand || retryHandoff.attachments.length === 0
+                    ...(missedAttachments.length === 0
                       ? {}
-                      : {
-                          attachments: [
-                            ...retryHandoff.attachments.filter(
-                              (missed) =>
-                                !turnInput.message.attachments.some(
-                                  (current) => current.id === missed.id,
-                                ),
-                            ),
-                            ...turnInput.message.attachments,
-                          ],
-                        }),
+                      : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
                   },
                   ...(text === userText
                     ? {}
