@@ -1402,8 +1402,16 @@ describe("adding a remark to the chat", () => {
       kind: "comment",
       comment: remark("c1", `<details>\n${"script ".repeat(400)}</details> Tail.\nVisible.`),
     });
+    const nested = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c2",
+        `<details>\n<details>\n${"script ".repeat(400)}</details></details>\nFinding.`,
+      ),
+    });
 
     expect(context?.text).toMatch(/^octocat: Tail\.\nVisible\./u);
+    expect(nested?.text).toMatch(/^octocat: Finding\./u);
   });
 
   it("gives way to the newest replies when a thread outgrows what the composer sends", () => {

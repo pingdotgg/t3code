@@ -740,17 +740,21 @@ function visibleTextFirst(body: string): string {
     // Quoted values are dropped first so `title="open logs"` does not read as the attribute.
     const attributes = opener?.[1]?.replace(/"[^"]*"|'[^']*'/gu, "") ?? "";
     if (opener) sections.push(!/(?:^|\s)open(?:[\s=/]|$)/iu.test(attributes));
-    const closer = inCode || sections.length === 0 ? null : /<\/details>/iu.exec(line);
-    if (closer === null) {
+    // Each closing tag ends a section; text after it goes with what follows.
+    let rest = line;
+    let closer = inCode ? null : /<\/details>/iu.exec(rest);
+    if (sections.length === 0 || closer === null) {
       (sections.includes(true) ? folded : shown).push(line);
       continue;
     }
-    // Text after the closing tag is outside the section, so it goes with what follows.
-    const end = closer.index + closer[0].length;
-    (sections.includes(true) ? folded : shown).push(line.slice(0, end));
-    sections.pop();
-    const after = line.slice(end).trim();
-    if (after !== "") (sections.includes(true) ? folded : shown).push(after);
+    while (sections.length > 0 && closer !== null) {
+      const end = closer.index + closer[0].length;
+      (sections.includes(true) ? folded : shown).push(rest.slice(0, end));
+      sections.pop();
+      rest = rest.slice(end);
+      closer = /<\/details>/iu.exec(rest);
+    }
+    if (rest.trim() !== "") (sections.includes(true) ? folded : shown).push(rest.trim());
   }
   return folded.length === 0 ? body : [...shown, "", ...folded].join("\n").trim();
 }
