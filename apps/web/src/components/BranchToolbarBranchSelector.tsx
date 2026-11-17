@@ -1,4 +1,5 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { useRightPanelStore } from "../rightPanelStore";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -48,6 +49,7 @@ import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles
 import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
 import type { ReactElement } from "react";
 import { createPortal } from "react-dom";
+import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -806,6 +808,7 @@ export function BranchToolbarBranchSelector({
     gitStatus: branchStatusQuery.data,
   });
   const openPrLink = useOpenPrLink(threadRef);
+  const linkedIssues = serverThread?.issues ?? [];
 
   function selectPickerItem(itemValue: string) {
     if (isInitialBranchesLoadPending || isBranchActionPending) return;
@@ -1069,13 +1072,29 @@ export function BranchToolbarBranchSelector({
         {displayMode === "panel" && prRowsContainer !== null
           ? portalTo(
               prRowsContainer,
-              <ThreadDetailsThreadPrRows
-                threadRef={threadRef}
-                project={activeProject}
-                branchPr={branchPr}
-                branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
-                onActed={() => branchStatusQuery.refresh()}
-              />,
+              <>
+                <ThreadDetailsThreadPrRows
+                  threadRef={threadRef}
+                  project={activeProject}
+                  branchPr={branchPr}
+                  branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
+                  onActed={() => branchStatusQuery.refresh()}
+                />
+                <ThreadDetailsIssueRows
+                  links={linkedIssues}
+                  onOpenLink={(event, link) => {
+                    event.stopPropagation();
+                    useRightPanelStore.getState().openIssue(threadRef, {
+                      projectId: link.projectId,
+                      tracker: link.tracker,
+                      host: link.host,
+                      scope: link.scope,
+                      key: link.key,
+                      url: link.url,
+                    });
+                  }}
+                />
+              </>,
             )
           : null}
       </div>

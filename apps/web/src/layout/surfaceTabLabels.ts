@@ -30,6 +30,9 @@ export function surfaceTabTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "issue":
+      // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
+      return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":

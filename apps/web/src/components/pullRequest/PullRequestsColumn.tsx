@@ -22,6 +22,7 @@ export function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   maximizedAway,
   split,
   listBody,
@@ -35,6 +36,7 @@ export function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   maximizedAway: boolean;
   /** Whether the list sits beside an open review as its own pane. */
   split: boolean;
@@ -104,6 +106,7 @@ export function PullRequestsColumn({
               <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
                 {sortMenu}
                 {filtersMenu}
+                {savedViewsMenu}
                 <PullRequestCompactFilterMenu
                   label="Filter by provider"
                   iconOnly={host !== undefined}

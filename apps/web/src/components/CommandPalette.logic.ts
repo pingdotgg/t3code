@@ -897,7 +897,7 @@ export function buildPaletteRemoteSourceReadiness(
           ...entry,
           hint: entry.hint.replace(
             "Open source control settings",
-            "Open Settings -> Source control",
+            "Open Settings -> Source control & issues",
           ),
         };
   };

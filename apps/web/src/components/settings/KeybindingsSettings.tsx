@@ -23,7 +23,10 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import {
+  mergeWithDefaultKeybindings,
+  parseKeybindingWhenExpression,
+} from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -705,6 +708,16 @@ function useKeybindingRowEditor({
     when: whenDraftExpression,
   });
 
+  // Giving an unassigned row a shortcut brings back its default condition.
+  const setKeyDraft = (next: string, patch: Partial<KeybindingRowDraftState> = {}) =>
+    setDraft({
+      ...patch,
+      keyDraft: next,
+      ...(row.isUnassigned && whenDraftExpression === "false"
+        ? { whenDraft: parseKeybindingWhenExpression(row.defaultWhen) ?? undefined }
+        : {}),
+    });
+
   const save = () => {
     onSave({
       command: row.command,
@@ -721,7 +734,15 @@ function useKeybindingRowEditor({
       // An unhandled Escape closes the settings page.
       event.stopPropagation();
       const field = event.currentTarget;
-      flushSync(() => setDraft({ keyDraft: row.key, isRecording: false }));
+      flushSync(() =>
+        setDraft({
+          keyDraft: row.key,
+          isRecording: false,
+          ...(row.isUnassigned && whenDraftExpression === row.defaultWhen
+            ? { whenDraft: parseKeybindingWhenExpression(row.when) ?? undefined }
+            : {}),
+        }),
+      );
       // The field may unmount for the pill; focus would otherwise drop to the page.
       if (pillRef.current) pillRef.current.focus();
       else field.blur();
@@ -731,7 +752,7 @@ function useKeybindingRowEditor({
       layoutCharacter: true,
     });
     if (!next) return;
-    setDraft({ keyDraft: next, isRecording: false });
+    setKeyDraft(next, { isRecording: false });
   };
 
   return {
@@ -743,6 +764,7 @@ function useKeybindingRowEditor({
     isDirty,
     conflictLabels,
     setDraft,
+    setKeyDraft,
     save,
     captureKeybinding,
     pillRef,
@@ -756,6 +778,7 @@ interface KeybindingRowActions {
   variables: ReadonlyArray<WhenVariableOption>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
   onReset: (row: KeybindingRow) => void;
+  onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }
 
@@ -773,7 +796,8 @@ function KeybindingKeyControl({
   row: KeybindingRow;
   editor: KeybindingRowEditor;
 }) {
-  const { keyDraft, isRecording, isDirty, setDraft, captureKeybinding, pillRef } = editor;
+  const { keyDraft, isRecording, isDirty, setDraft, setKeyDraft, captureKeybinding, pillRef } =
+    editor;
   const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
 
   return showPill ? (
@@ -781,10 +805,14 @@ function KeybindingKeyControl({
       ref={pillRef}
       type="button"
       onClick={() => setDraft({ isRecording: true })}
-      aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+      aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${row.isUnassigned ? "Unassigned" : formatShortcutLabel(row.binding.shortcut)}`}
       className="-ml-1.5 inline-flex h-7 max-w-full cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <KeybindingPill value={row.key} />
+      {row.isUnassigned ? (
+        <span className="text-body text-muted-foreground">Unassigned</span>
+      ) : (
+        <KeybindingPill value={row.key} />
+      )}
     </button>
   ) : (
     <Input
@@ -797,7 +825,7 @@ function KeybindingKeyControl({
       font="mono"
       onFocus={() => setDraft({ isRecording: true })}
       onBlur={() => setDraft({ isRecording: false })}
-      onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
+      onChange={(event) => setKeyDraft(event.currentTarget.value)}
       onKeyDown={captureKeybinding}
     />
   );
@@ -863,16 +891,19 @@ function KeybindingRowMenu({
   row,
   isSaving,
   onReset,
+  onUnassign,
   onRemove,
 }: {
   row: KeybindingRow;
   isSaving: boolean;
   onReset: (row: KeybindingRow) => void;
+  onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }) {
   const canReset = row.source === "Custom" && row.defaultKey !== null;
-  const canRemove = row.source !== "Default";
-  if (!canReset && !canRemove) return null;
+  const canUnassign = row.source === "Default";
+  // Reset to default is the way back; removing would drop the default for good.
+  const canRemove = row.source !== "Default" && !row.isUnassigned;
 
   return (
     <Menu>
@@ -893,6 +924,11 @@ function KeybindingRowMenu({
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
             Reset to default
+          </MenuItem>
+        ) : null}
+        {canUnassign ? (
+          <MenuItem variant="destructive" disabled={isSaving} onClick={() => onUnassign(row)}>
+            Unassign
           </MenuItem>
         ) : null}
         {canRemove ? (
@@ -930,6 +966,7 @@ function KeybindingHoverRowMenu(props: {
   row: KeybindingRow;
   isSaving: boolean;
   onReset: (row: KeybindingRow) => void;
+  onUnassign: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }) {
   return (
@@ -970,7 +1007,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
   const [editing, setEditing] = useState<"shortcut" | "when" | null>(null);
   const [focused, setFocused] = useState(false);
   if (editing) return <EditableKeybindingSettingsRow {...props} initialEditor={editing} />;
-  const { row, anchorId, allRows, isSaving, onReset, onRemove } = props;
+  const { row, anchorId, allRows, isSaving, onReset, onUnassign, onRemove } = props;
   const active = props.activate || focused;
   const title = active ? (
     <KeybindingRowTitle row={row} />
@@ -996,12 +1033,12 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+            aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${row.isUnassigned ? "Unassigned" : formatShortcutLabel(row.binding.shortcut)}`}
             onClick={() => setEditing("shortcut")}
           >
-            {row.key ? <KeybindingPill value={row.key} /> : "Unassigned"}
+            {row.key && !row.isUnassigned ? <KeybindingPill value={row.key} /> : "Unassigned"}
           </Button>
-        ) : row.key ? (
+        ) : row.key && !row.isUnassigned ? (
           <KeybindingPill value={row.key} />
         ) : (
           "Unassigned"
@@ -1009,7 +1046,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
       </span>
       <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
         <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
-          {active ? (
+          {row.isUnassigned ? null : active ? (
             <Button
               variant={row.when ? "ghost" : "ghost-muted"}
               size="micro"
@@ -1040,6 +1077,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
                 row={row}
                 isSaving={isSaving}
                 onReset={onReset}
+                onUnassign={onUnassign}
                 onRemove={onRemove}
               />
             </>
@@ -1053,7 +1091,8 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
 function EditableKeybindingSettingsRow(
   props: KeybindingRowProps & { initialEditor: "shortcut" | "when" },
 ) {
-  const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
+  const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onUnassign, onRemove } =
+    props;
   const editor = useKeybindingRowEditor({
     row,
     allRows,
@@ -1075,15 +1114,17 @@ function EditableKeybindingSettingsRow(
       </span>
       <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
         <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
-          <WhenClauseControl
-            defaultOpen={props.initialEditor === "when"}
-            label={commandLabel(row.command)}
-            expression={editor.whenDraftExpression}
-            value={editor.whenDraft}
-            variables={variables}
-            onChange={(whenDraft) => editor.setDraft({ whenDraft })}
-            onValidityChange={(isWhenDraftValid) => editor.setDraft({ isWhenDraftValid })}
-          />
+          {row.isUnassigned && !editor.isDirty ? null : (
+            <WhenClauseControl
+              defaultOpen={props.initialEditor === "when"}
+              label={commandLabel(row.command)}
+              expression={editor.whenDraftExpression}
+              value={editor.whenDraft}
+              variables={variables}
+              onChange={(whenDraft) => editor.setDraft({ whenDraft })}
+              onValidityChange={(isWhenDraftValid) => editor.setDraft({ isWhenDraftValid })}
+            />
+          )}
         </span>
         <span role="cell" className="flex shrink-0 items-center gap-1">
           <KeybindingConflictWarning labels={editor.conflictLabels} />
@@ -1100,6 +1141,7 @@ function EditableKeybindingSettingsRow(
             row={row}
             isSaving={isSaving}
             onReset={onReset}
+            onUnassign={onUnassign}
             onRemove={onRemove}
           />
         </span>
@@ -1598,6 +1640,16 @@ export function KeybindingsSettingsPanel() {
     })();
   };
 
+  const unassignKeybinding = (row: KeybindingRow) => {
+    if (row.source !== "Default") return;
+    saveKeybinding({
+      command: row.command,
+      key: row.key,
+      when: "false",
+      replace: rowKeybindingTarget(row),
+    });
+  };
+
   const resetKeybinding = (row: KeybindingRow) => {
     if (!row.defaultKey) return;
     saveKeybinding({
@@ -1630,6 +1682,7 @@ export function KeybindingsSettingsPanel() {
     onClearQuery: () => setQuery(""),
     onSave: saveKeybinding,
     onReset: resetKeybinding,
+    onUnassign: unassignKeybinding,
     onRemove: removeKeybinding,
   };
 

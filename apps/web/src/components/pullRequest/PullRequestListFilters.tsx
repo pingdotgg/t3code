@@ -103,11 +103,15 @@ export function pullRequestHostLabel(
 export function PullRequestSearchInput({
   value,
   busy,
+  label,
+  placeholder,
   onChange,
   onSubmit,
 }: {
   value: string;
   busy?: boolean;
+  label: string;
+  placeholder: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
 }) {
@@ -136,8 +140,8 @@ export function PullRequestSearchInput({
             onSubmit(event.currentTarget.value);
           }
         }}
-        placeholder="Search pull requests, or label:bug"
-        aria-label="Search pull requests"
+        placeholder={placeholder}
+        aria-label={label}
       />
       {(draft ?? value).length > 0 ? (
         <InputGroupAddon align="inline-end">
@@ -236,7 +240,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
   );
 }
 
-function PullRequestFilterRadioSubmenu<Value extends string>({
+export function PullRequestFilterRadioSubmenu<Value extends string>({
   label,
   icon: Icon,
   value,

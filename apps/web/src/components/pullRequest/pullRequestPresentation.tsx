@@ -22,7 +22,7 @@ import {
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -557,4 +557,34 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   }
   if (pending > 0) return `${pending} of ${checks.length} running`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+}
+
+function separatorKey(segment: ReactNode): string {
+  return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
+}
+
+export function PullRequestMetaLine({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const segments = Children.toArray(children);
+  return (
+    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      {segments.flatMap((segment, index) =>
+        index === 0
+          ? segment
+          : [
+              <span
+                aria-hidden
+                className="size-0.5 shrink-0 rounded-full bg-current opacity-50"
+                key={separatorKey(segment)}
+              />,
+              segment,
+            ],
+      )}
+    </span>
+  );
 }

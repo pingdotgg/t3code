@@ -120,6 +120,7 @@ import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 
 interface GitActionsControlProps {
   /** "shortcut" keeps the commit and push shortcut and its dialogs live. */
@@ -515,6 +516,7 @@ export default function GitActionsControl({
     changesPreview.data?.sources.find((source) => source.kind === "branch-range"),
   );
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
+  const changesBreakdown = resolvedChangesTotals?.breakdown ?? null;
   const changesBaseLabel = resolvedChangesTotals
     ? resolvedChangesTotals.baseRef === null
       ? "Uncommitted"
@@ -1323,38 +1325,54 @@ export default function GitActionsControl({
 
       {isPanel && showChanges && isRepo && (displayMode === "panel" || !quietEmptyDraft) ? (
         <div className="col-span-2 min-w-0">
-          <ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges}>
-            <FileDiffIcon aria-hidden />
-            <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-              <span className="shrink-0">Changes</span>
-              {changesBaseLabel ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="min-w-0 truncate text-muted-foreground" />}
+          <Tooltip>
+            <TooltipTrigger
+              render={<ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges} />}
+            >
+              <FileDiffIcon aria-hidden />
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span className="shrink-0">Changes</span>
+                {changesBaseLabel ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="min-w-0 truncate text-muted-foreground" />}
+                    >
+                      {changesBaseLabel}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+                  <span
+                    className={
+                      changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"
+                    }
                   >
-                    {changesBaseLabel}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
-                </Tooltip>
-              ) : null}
-              <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
-                <span
-                  className={
-                    changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"
-                  }
-                >
-                  +{formatDiffCount(changesTotals?.insertions ?? 0)}
-                </span>
-                <span
-                  className={
-                    changesTotals?.deletions ? "text-diff-deletion" : "text-muted-foreground"
-                  }
-                >
-                  -{formatDiffCount(changesTotals?.deletions ?? 0)}
+                    +{formatDiffCount(changesTotals?.insertions ?? 0)}
+                  </span>
+                  <span
+                    className={
+                      changesTotals?.deletions ? "text-diff-deletion" : "text-muted-foreground"
+                    }
+                  >
+                    -{formatDiffCount(changesTotals?.deletions ?? 0)}
+                  </span>
                 </span>
               </span>
-            </span>
-          </ThreadDetailsControl>
+            </TooltipTrigger>
+            {changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
+              // Base UI fixes the popup width on open; remeasure when the breakdown changes.
+              <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
+                <ChangeBreakdownGrid
+                  breakdown={changesBreakdown}
+                  total={{
+                    additions: changesTotals.insertions,
+                    deletions: changesTotals.deletions,
+                  }}
+                />
+              </TooltipPopup>
+            ) : null}
+          </Tooltip>
         </div>
       ) : null}
 

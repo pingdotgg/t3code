@@ -240,7 +240,27 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function Section({
+export function PullRequestMetaRow({
+  icon,
+  label,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-meta sm:min-h-6">
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        {icon}
+        {label}
+      </span>
+      <span className="min-w-0 text-foreground">{children}</span>
+    </div>
+  );
+}
+
+export function PullRequestSection({
   title,
   count,
   meta,
@@ -985,7 +1005,7 @@ export function PullRequestSummaryTab({
       >
         {readiness ? <section className="px-4 pt-0.75 pb-1">{readiness}</section> : null}
 
-        <Section
+        <PullRequestSection
           key={`description:${detail.url}`}
           title="Description"
           keepMounted
@@ -1052,10 +1072,14 @@ export function PullRequestSummaryTab({
               ) : null}
             </div>
           ) : null}
-        </Section>
+        </PullRequestSection>
 
         {attachments.length > 0 ? (
-          <Section key={`attachments:${detail.url}`} title="Attachments" count={attachments.length}>
+          <PullRequestSection
+            key={`attachments:${detail.url}`}
+            title="Attachments"
+            count={attachments.length}
+          >
             <ScrollArea
               chainVerticalScroll
               className="-mx-4 h-auto w-auto"
@@ -1083,10 +1107,10 @@ export function PullRequestSummaryTab({
                 ))}
               </div>
             </ScrollArea>
-          </Section>
+          </PullRequestSection>
         ) : null}
 
-        <Section
+        <PullRequestSection
           key={`conversation:${detail.url}`}
           title="Conversation"
           revealCount={linked?.url === detail.url ? linked.count : 0}
@@ -1222,7 +1246,7 @@ export function PullRequestSummaryTab({
               )}
             </>
           )}
-        </Section>
+        </PullRequestSection>
       </div>
     </div>
   );

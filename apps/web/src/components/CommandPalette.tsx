@@ -288,6 +288,8 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
+import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -1204,7 +1206,8 @@ function OpenCommandPaletteDialog(props: {
               }
             />
             <TooltipPopup align="end" side="left">
-              {disabledHint ?? "Open Settings -> Source control to configure this provider."}
+              {disabledHint ??
+                "Open Settings -> Source control & issues to configure this provider."}
             </TooltipPopup>
           </Tooltip>
         </span>
@@ -1806,6 +1809,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await openLayoutPage("pull-requests");
+      },
+    });
+  }
+
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.issues === true,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:issues",
+      searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
+      title: "Open issues",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues", search: readIssueListPreferences() });
       },
     });
   }

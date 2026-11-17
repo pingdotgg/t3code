@@ -12,6 +12,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
+import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
@@ -503,4 +504,64 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   await expect
     .element(screen.getByRole("button", { name: "2 resolved conversations" }))
     .toBeVisible();
+});
+
+// regression: #37996
+it("keeps an unsent reply when the appearance switches between light and dark", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  setAppearanceMode("dark");
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      setAppearanceMode("system");
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        capabilities: {
+          ...detail.capabilities,
+          review: { ...detail.capabilities.review, reply: true },
+        },
+        viewerPermissions: { ...detail.viewerPermissions, comment: true },
+        reviewThreads: [
+          {
+            id: "thread",
+            path: "a.ts",
+            line: 3,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "comment",
+                author: { login: "reviewer", name: null, avatarUrl: null },
+                body: "Rename this.",
+                createdAt: "2026-09-01T00:00:00Z",
+                url: null,
+              },
+            ],
+          },
+        ],
+      }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />,
+    { container },
+  );
+  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().fill("Unsent");
+
+  setAppearanceMode("light");
+
+  await expect.element(reply()).toHaveValue("Unsent");
 });

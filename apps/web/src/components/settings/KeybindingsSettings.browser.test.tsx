@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -27,7 +28,13 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
     const environment = {
       environmentId: "env",
       label: "Build workstation",
-      serverConfig: { keybindings: [], keybindingsConfigPath: null, availableEditors: [] },
+      serverConfig: {
+        keybindings: compileResolvedKeybindingsConfig([
+          { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        ]),
+        keybindingsConfigPath: null,
+        availableEditors: [],
+      },
     };
     return {
       scope: { kind: "environment" },
@@ -113,6 +120,49 @@ describe("Esc in a shortcut recorder", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
+  });
+});
+
+it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
+  setup();
+  runCommand.mockImplementation(async () => ({ _tag: "Success", value: [] }));
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  const search = screen.getByRole("searchbox", { name: "Search keybindings" });
+
+  await search.fill("Toggle sidebar");
+  await screen.getByRole("button", { name: "Actions for Toggle sidebar" }).click();
+  await screen.getByRole("menuitem", { name: "Unassign" }).click();
+  expect(runCommand).toHaveBeenLastCalledWith({
+    environmentId: "env",
+    input: {
+      command: "sidebar.toggle",
+      key: "mod+b",
+      when: "false",
+      replace: { command: "sidebar.toggle", key: "mod+b" },
+    },
+  });
+
+  await search.fill("Start in background");
+  const unassigned = screen.getByRole("button", {
+    name: "Edit shortcut for Start in background: Unassigned",
+  });
+  const save = screen.getByRole("button", { name: "Save" });
+  await unassigned.click();
+  await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+  await expect.element(save).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(save).not.toBeInTheDocument();
+
+  await unassigned.click();
+  await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+  await save.click();
+  expect(runCommand).toHaveBeenLastCalledWith({
+    environmentId: "env",
+    input: expect.objectContaining({
+      command: "composer.sendBackground",
+      when: "composerFocus && draftThreadRoute",
+      replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+    }),
   });
 });
 

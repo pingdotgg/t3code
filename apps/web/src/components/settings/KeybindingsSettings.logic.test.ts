@@ -264,6 +264,12 @@ describe("KeybindingsSettings.logic", () => {
     ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows[0]?.conflicts).toEqual(["New local thread"]);
+    const disabledRows = buildKeybindingRows([
+      rows[0]!.binding,
+      { ...rows[1]!.binding, whenAst: { type: "identifier", name: "false" } },
+    ]);
+    expect(disabledRows.map((row) => row.conflicts)).toEqual([[], []]);
+
     expect(
       keybindingConflictLabels(rows, {
         rowId: rows[0]?.id ?? "",
