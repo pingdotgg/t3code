@@ -26,6 +26,7 @@ import {
 } from "../lib/composerChipPresentation";
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import {
   acknowledgeComposerNativeEvent,
@@ -176,7 +177,8 @@ export function ComposerEditor({
     setConfirmedTokens({ value: props.value, tokens });
   }
   const theme = useUniwindTheme();
-  const { fonts, composerFontSize } = useAppearancePreferences();
+  const { fonts } = useAppearancePreferences();
+  const bodyText = useComposerTextRole();
   const fontFamily = fonts.composer.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
@@ -354,12 +356,12 @@ export function ComposerEditor({
       fontSize={
         typeof resolvedTextStyle.fontSize === "number"
           ? resolvedTextStyle.fontSize
-          : composerFontSize
+          : bodyText.fontSize
       }
       lineHeight={
         typeof resolvedTextStyle.lineHeight === "number"
           ? resolvedTextStyle.lineHeight
-          : Math.round((composerFontSize * 23) / 16)
+          : bodyText.lineHeight
       }
       contentInsetVertical={contentInsetVertical}
       editable={props.editable ?? true}
