@@ -19,9 +19,10 @@ import {
   HOST_HISTORY_MS,
   type HostSample,
 } from "./heroWidgets.logic";
-import { ACCENT, GHOST, readStored, useDebugValue, WidgetCard, writeStored } from "./widgetChrome";
+import { GHOST, readStored, useDebugValue, WidgetCard, writeStored } from "./widgetChrome";
 
 const POLL_MS = 5_000;
+const SPARK = "color-mix(in oklab, var(--primary) 30%, #6f8fff)";
 const HISTORY_KEY = "t3code:hero-widgets:host-samples:v1";
 const hostHistory = new Map<string, ReadonlyArray<HostSample>>(
   Object.entries(readStored<Record<string, HostSample[]>>(HISTORY_KEY, {})),
@@ -244,7 +245,7 @@ function CpuSparkline({
   readonly showCeiling?: boolean;
 }) {
   const peak = Math.max(0, ...history.map((sample) => sample.cpu ?? 0));
-  const ceiling = Math.max(0.4, Math.min(1, peak * 1.2));
+  const ceiling = Math.max(0.25, Math.min(1, peak * 1.25));
   const drawNow = Math.max(now, history.at(-1)?.t ?? 0);
   return (
     <div className={cn("relative", className)}>
@@ -255,8 +256,8 @@ function CpuSparkline({
           const cell = 3;
           const rows = Math.floor(height / cell);
           const columns = Math.floor(width / cell);
-          const fill = color(ACCENT);
-          const crest = color("color-mix(in oklab, var(--primary) 60%, white)");
+          const fill = color(SPARK);
+          const crest = color(`color-mix(in oklab, ${SPARK} 55%, white)`);
           drawDottedLine(context, [0, 0], [width, 0], color(GHOST), 6, 1);
           context.fillStyle = color("color-mix(in oklab, var(--foreground) 12%, transparent)");
           context.fillRect(0, rows * cell - 1, width, 1);
@@ -309,9 +310,7 @@ function MemoryBar({
           { x: 0, y: 0, width, height },
           (column) => (column < columns * share ? 0.95 - (column / columns) * 0.25 : 0),
           color(
-            share > 0.9
-              ? "var(--warning)"
-              : "color-mix(in oklab, var(--primary) 70%, var(--foreground))",
+            share > 0.9 ? "var(--warning)" : `color-mix(in oklab, ${SPARK} 75%, var(--foreground))`,
           ),
           { ghost: color(GHOST) },
         );

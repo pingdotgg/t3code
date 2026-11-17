@@ -266,7 +266,7 @@ function PoolLegend({ model }: { readonly model: PoolModel }) {
             />
             <span>{poolLabel(provider.driver)}</span>
             <span className="text-muted-foreground">
-              {formatPercent(provider.left)}/{formatPercent(provider.capacity)}
+              {Math.round(provider.left)}/{formatPercent(provider.capacity)}
               {burn && burn.perHour > 0 ? ` · −${formatRate(burn.perHour * 24)}/day` : ""}
             </span>
           </span>
@@ -383,27 +383,39 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
               {hoverValues === null ? (
                 <span className="text-muted-foreground">No history recorded here yet.</span>
               ) : (
-                model.providers.map((provider, index) => {
-                  const value = hoverValues[index] ?? 0;
-                  return (
-                    <div
-                      key={provider.driver}
-                      className="flex items-baseline justify-between gap-4 tabular-nums"
-                    >
-                      <span className="inline-flex items-baseline gap-1.5">
-                        <span
-                          aria-hidden
-                          className="size-2 self-center rounded-xs"
-                          style={{ background: poolColor(provider.driver) }}
-                        />
-                        {poolLabel(provider.driver)}
-                      </span>
-                      <span className={cn(value < 0.5 && "text-warning")}>
-                        {value < 0.5 ? "empty" : `${formatPercent(value)} left`}
-                      </span>
-                    </div>
-                  );
-                })
+                [
+                  ...model.providers.map((provider, index) => {
+                    const value = hoverValues[index] ?? 0;
+                    return (
+                      <div
+                        key={provider.driver}
+                        className="flex items-baseline justify-between gap-4 tabular-nums"
+                      >
+                        <span className="inline-flex items-baseline gap-1.5">
+                          <span
+                            aria-hidden
+                            className="size-2 self-center rounded-xs"
+                            style={{ background: poolColor(provider.driver) }}
+                          />
+                          {poolLabel(provider.driver)}
+                        </span>
+                        <span className={cn(value < 0.5 && "text-warning")}>
+                          {value < 0.5 ? "empty" : `${formatPercent(value)} left`}
+                        </span>
+                      </div>
+                    );
+                  }),
+                  <div
+                    key="total"
+                    className="mt-1 flex items-baseline justify-between gap-4 border-t pt-1 text-muted-foreground tabular-nums"
+                  >
+                    <span>Pool</span>
+                    <span>
+                      {formatPercent(hoverValues.reduce((sum, value) => sum + value, 0))} of{" "}
+                      {formatPercent(model.capacity)}
+                    </span>
+                  </div>,
+                ]
               )}
             </div>
           </>
