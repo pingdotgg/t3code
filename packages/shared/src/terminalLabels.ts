@@ -1,6 +1,6 @@
 import type { TerminalSummary } from "@t3tools/contracts";
 
-function terminalNumber(terminalId: string): string | undefined {
+export function terminalNumber(terminalId: string): string | undefined {
   return /^term(?:inal)?-(\d+)(?:-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})?$/i.exec(
     terminalId,
   )?.[1];
