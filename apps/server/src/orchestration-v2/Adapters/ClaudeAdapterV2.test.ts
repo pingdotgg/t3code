@@ -12243,6 +12243,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         // A sleep is a timer the agent ends its turn on, so a restart must wake it.
+        const sleeps = [
+          ["timer", "sleep 1740; date", true],
+          ["computed_timer", "sleep $((29 * 60)); date", true],
+          ["quoted_timer", 'sleep "60" && date', true],
+          ["single_quoted_timer", "sleep '60'; date", true],
+          ["quoted_computed_timer", 'sleep "$((29 * 60))"; date', true],
+          ["unit_timer", "sleep 5m; date", true],
+          ["endless_sleep", "sleep infinity", false],
+        ] as const;
         yield* Queue.offer(
           harness.sdkMessages,
           claudeSdkFrame({
@@ -12252,30 +12261,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               id: "msg_background_timer",
               type: "message",
               role: "assistant",
-              content: [
-                {
-                  type: "tool_use",
-                  id: "toolu_timer",
-                  name: "Bash",
-                  input: { command: "sleep 1740; date", run_in_background: true },
-                },
-                {
-                  type: "tool_use",
-                  id: "toolu_computed_timer",
-                  name: "Bash",
-                  input: { command: "sleep $((29 * 60)); date", run_in_background: true },
-                },
-              ],
+              content: sleeps.map(([taskId, command]) => ({
+                type: "tool_use",
+                id: `toolu_${taskId}`,
+                name: "Bash",
+                input: { command, run_in_background: true },
+              })),
             },
             parent_tool_use_id: null,
             uuid: "background-timer-launch",
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        for (const [taskId, uuid] of [
-          ["timer", "00000000-0000-4000-8000-000000000205"],
-          ["computed_timer", "00000000-0000-4000-8000-000000000206"],
-        ]) {
+        for (const [index, [taskId]] of sleeps.entries()) {
           yield* Queue.offer(
             harness.sdkMessages,
             claudeSdkFrame({
@@ -12283,10 +12281,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               subtype: "task_started",
               task_id: taskId,
               tool_use_id: `toolu_${taskId}`,
-              description: "Wait 29 minutes before the next check",
+              description: "Wait before the next check",
               is_backgrounded: true,
               task_type: "local_bash",
-              uuid,
+              uuid: `00000000-0000-4000-8000-00000000021${index}`,
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
@@ -12306,11 +12304,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             task.taskId,
             task.awaited === true,
           ]),
-          [
-            [WAKE_TASK_ID, false],
-            ["timer", true],
-            ["computed_timer", true],
-          ],
+          [[WAKE_TASK_ID, false], ...sleeps.map(([taskId, , awaited]) => [taskId, awaited])],
         );
 
         const command = harness.events.find(
