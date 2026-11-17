@@ -9,6 +9,7 @@ import {
   type EnvironmentIssueEntry,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
+import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -202,7 +203,9 @@ export function IssuesScreen(
     ...groups.flatMap((group) => [
       ...(group.tracker.configured
         ? []
-        : [`${group.tracker.host}: ${group.tracker.detail ?? gt("This tracker cannot be read.")}`]),
+        : [
+            `${group.tracker.host}: ${group.tracker.detail === null ? gt("This tracker cannot be read.") : issueTrackerDetailText(group.tracker.detail, messages)}`,
+          ]),
       ...group.errors.map((error) => `${error.projectTitle}: ${error.message}`),
     ]),
   ];

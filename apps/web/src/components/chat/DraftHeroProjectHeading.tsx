@@ -14,11 +14,12 @@ export function DraftHeroProjectHeading({
 }) {
   const gt = useGT();
   // One sentence for translators; the layout places the project picker at the placeholder.
-  const [buildIn = "", buildInSuffix = ""] = gt("What should we build in {project}?", {
+  // The flex gap stands in for the space before it; the suffix keeps its own leading space.
+  const [before = "", after = ""] = gt("What should we build in {project}?", {
     project: PROJECT_SLOT,
-  })
-    .split(PROJECT_SLOT)
-    .map((part) => part.trim());
+  }).split(PROJECT_SLOT);
+  const buildIn = before.trim();
+  const buildInSuffix = after.trimEnd();
   const containerRef = useRef<HTMLDivElement>(null);
   const inlineRef = useRef<HTMLSpanElement>(null);
   const [fitsInline, setFitsInline] = useState(false);
@@ -65,7 +66,7 @@ export function DraftHeroProjectHeading({
         </span>
         <span className="flex min-w-0 max-w-full items-baseline justify-center text-base tracking-normal lg:group-data-[inline=true]/draft-hero:text-3xl lg:group-data-[inline=true]/draft-hero:tracking-tight">
           <span className="min-w-0">{children}</span>
-          <span className="hidden shrink-0 lg:group-data-[inline=true]/draft-hero:inline [@media(max-height:28rem)]:hidden!">
+          <span className="hidden shrink-0 whitespace-pre lg:group-data-[inline=true]/draft-hero:inline [@media(max-height:28rem)]:hidden!">
             {buildInSuffix}
           </span>
         </span>

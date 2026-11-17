@@ -8,6 +8,7 @@ import {
   issueTrackerKey,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
+import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
@@ -164,7 +165,14 @@ function hostOptionsFor(
           ? tracker.host
           : `${issueTrackerPresentation(tracker.tracker).providerName} (${tracker.host})`,
       Icon: issueTrackerPresentation(tracker.tracker).Icon,
-      ...(tracker.configured ? {} : { unavailable: tracker.detail ?? resolve(msg("Unavailable")) }),
+      ...(tracker.configured
+        ? {}
+        : {
+            unavailable:
+              tracker.detail === null
+                ? resolve(msg("Unavailable"))
+                : issueTrackerDetailText(tracker.detail, resolve),
+          }),
     })),
   ];
 }
@@ -458,7 +466,9 @@ export function IssuesPage() {
             </h2>
             {!group.tracker.configured ? (
               <p className="px-3 text-sm text-muted-foreground">
-                {group.tracker.detail ?? gt("This tracker cannot be read right now.")}
+                {group.tracker.detail === null
+                  ? gt("This tracker cannot be read right now.")
+                  : issueTrackerDetailText(group.tracker.detail, resolve)}
               </p>
             ) : null}
             {group.errors.map((error) => (

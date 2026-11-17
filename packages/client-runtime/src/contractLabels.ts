@@ -255,7 +255,7 @@ const INSTALL_HINTS = [
       command: "`az extension add --name azure-devops`",
     },
   ),
-  msg("Add a Bitbucket token in Settings → Source Control."),
+  msg("Add a Bitbucket token in Settings → Source control & issues."),
   msg("Install the Origin CLI with {install}, then run {login}.", {
     install: "`curl -fsSL https://downloads.cursor.com/origin/install.sh | sh`",
     login: "`origin auth login`",

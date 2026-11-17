@@ -119,6 +119,14 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": msg("Archive"),
 };
 
+/** Sidebar labels; an entry of its own lets a translator shorten one below its page title. */
+export const SETTINGS_NAV_LABELS: Readonly<Record<SettingsPath, string>> = {
+  ...SETTINGS_SECTION_LABELS,
+  "/settings/source-control": msg("Source control & issues", {
+    $context: "settings navigation item",
+  }),
+};
+
 /** Sidebar order. A group with a hidden heading is set apart on screen by space alone. */
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   readonly heading: string;
