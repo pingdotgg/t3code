@@ -907,6 +907,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
+    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const modelVariants = new Map<string, Map<string, ReadonlySet<string>>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
@@ -3853,6 +3854,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
+      // A restarted server may have reloaded agent config; list agents again.
+      agentRules.clear();
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
@@ -4033,7 +4036,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
-    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const agentsIn = Effect.fnUntraced(function* (directory: string) {
       let known = agentRules.get(directory);
       if (known === undefined) {
