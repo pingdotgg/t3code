@@ -1056,11 +1056,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 :root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well:not(
-    [data-surface-preview] *
-  ),
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well:not([data-surface-preview] *),
 [data-surface-preview="gradient-rim"]
-  :where([data-slot="select-trigger"], [data-slot="combobox-trigger"]).surface-well {
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well {
   --well-fill: var(--raised-fill);
   --well-rim: var(--raised-rim);
   --well-shadow: var(--raised-shadow);
