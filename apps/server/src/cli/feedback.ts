@@ -59,8 +59,7 @@ export const feedbackCommand = Command.make("feedback", {
     Flag.withDescription("What went wrong."),
   ),
   subject: Flag.String("subject").pipe(
-    Flag.withDescription("The T3 tool or t3 command, such as `t3 thread send`."),
-    Flag.withDefault(""),
+    Flag.withDescription("The T3 tool name, t3 command such as `t3 thread send`, or `general`."),
   ),
   expected: Flag.String("expected").pipe(Flag.withDescription("What you expected.")),
   actual: Flag.String("actual").pipe(Flag.withDescription("What happened instead.")),
@@ -68,17 +67,21 @@ export const feedbackCommand = Command.make("feedback", {
     Flag.withDescription("What you did instead."),
     Flag.withDefault(""),
   ),
+  userRequested: Flag.Boolean("user-requested").pipe(
+    Flag.withDescription("The user asked for this report."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription(
-    "Send a report about a T3 Code problem to the T3 team. Agent feedback must be on in Settings.",
+    "Send feedback about T3 Code to the T3 team. Agent feedback must be on in Settings > Labs.",
   ),
-  Command.withHandler(({ baseDir, kind, subject, expected, actual, workaround }) =>
+  Command.withHandler(({ baseDir, kind, subject, expected, actual, workaround, userRequested }) =>
     withThreadTools(
       { baseDir, json: true, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
       Effect.fn("cli.feedback.submit")(function* (tools) {
         const report = yield* tools.call(
           "t3_feedback",
-          { kind, subject, expected, actual, workaround },
+          { kind, subject, expected, actual, workaround, userRequested },
           FeedbackReport,
         );
         yield* printJson(report);

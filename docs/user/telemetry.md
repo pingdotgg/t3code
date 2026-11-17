@@ -22,8 +22,10 @@ off in the same place. While it is off, agents do not see the feedback tools and
 stops with a message pointing to Labs.
 
 While it is on, agents are told to report these problems, and you can send one yourself with
-`t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. Each report has
-the kind of problem, the T3 tool or command it concerns, and up to 300 characters each of expected
+`t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. You can also ask
+your agent to send feedback to the T3 team about anything in T3 Code; it sends its own description,
+not a copy of the conversation. Each report has the kind of problem, the T3 tool or command it
+concerns (or `general`), whether you asked for it, and up to 300 characters each of expected
 behavior, actual behavior, and workaround, written by the agent. Before anything is saved, T3 Code
 removes file paths (when a report mentions one, the rest of that line goes with it), your user
 name, machine name, project title, branch, and git remote, and anything that looks like a key,

@@ -1,6 +1,6 @@
 /** Only while agent feedback is on, so users who never opt in pay no context for it. */
 export const AGENT_FEEDBACK_INSTRUCTIONS =
-  "Report with `t3_feedback` when a T3 tool or `t3` command does not do what you expected, you fall back to a workaround after a T3 tool fails, or the user corrects you about how T3 Code works. Only T3 Code problems: not the user's code, other tools, or general complaints.";
+  "Report with `t3_feedback` when a T3 tool or `t3` command does not do what you expected, you fall back to a workaround after a T3 tool fails, or the user corrects you about how T3 Code works. Not for the user's code or other tools, unless the user asks you to send T3 feedback.";
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>

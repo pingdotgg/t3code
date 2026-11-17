@@ -69,7 +69,7 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
       config: { host: "127.0.0.1", devUrl: undefined },
       port: 3_773,
     });
-    const submit = ["--kind", "bug", "--expected", "a", "--actual", "b"];
+    const submit = ["--kind", "bug", "--subject", "general", "--expected", "a", "--actual", "b"];
     const cases: ReadonlyArray<{
       readonly args: ReadonlyArray<string>;
       readonly running?: false;

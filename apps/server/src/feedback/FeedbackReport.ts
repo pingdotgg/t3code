@@ -1,16 +1,18 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 // Code points, as the scrubber caps them, so a valid input stays a valid report after redaction.
 const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 
 export const FeedbackInput = Schema.Struct({
-  kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs"]),
-  subject: Schema.String.annotate({
-    description: "The T3 tool name or `t3` command, such as `t3 thread send`.",
-  }),
+  kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs", "other"]),
+  subject: Schema.String.annotate({ description: "T3 tool name, `t3` command, or `general`." }),
   expected: FeedbackText,
   actual: FeedbackText,
   workaround: FeedbackText.annotate({ description: "What you did instead, or empty." }),
+  userRequested: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))).annotate(
+    { description: "The user asked for this report." },
+  ),
 });
 
 export const FeedbackReport = Schema.Struct({
@@ -99,3 +101,17 @@ export const T3_CLI_COMMANDS: ReadonlyArray<string> = [
 
 export type FeedbackInput = typeof FeedbackInput.Type;
 export type FeedbackReport = typeof FeedbackReport.Type;
+
+export const FEEDBACK_SUBJECT_MESSAGE =
+  "Set subject to the exact T3 tool name, the t3 command, or `general`.";
+
+// Claude names T3 tools `mcp__t3-code__<tool>`; Codex Code Mode names them `mcp__t3_code__<tool>`.
+const PROVIDER_TOOL_PREFIX = /^mcp__t3[-_]code__/;
+
+/** The stored subject, or undefined when the value names no T3 tool, `t3` command, or `general`. */
+export const resolveFeedbackSubject = (value: string, toolNames: ReadonlyArray<string>) => {
+  const subject = value.trim();
+  if (subject === "general" || T3_CLI_COMMANDS.includes(subject)) return subject;
+  const tool = subject.replace(PROVIDER_TOOL_PREFIX, "");
+  return toolNames.includes(tool) ? tool : undefined;
+};

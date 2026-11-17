@@ -19,9 +19,10 @@ import * as Analytics from "../telemetry/AnalyticsService.ts";
 import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
   FEEDBACK_OFF_MESSAGE,
+  FEEDBACK_SUBJECT_MESSAGE,
   type FeedbackInput,
   type FeedbackReport,
-  T3_CLI_COMMANDS,
+  resolveFeedbackSubject,
 } from "./FeedbackReport.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
@@ -47,6 +48,15 @@ export class FeedbackLimitError extends Schema.TaggedError<FeedbackLimitError>()
   }
 }
 
+export class FeedbackSubjectError extends Schema.TaggedError<FeedbackSubjectError>()(
+  "FeedbackSubjectError",
+  {},
+) {
+  override get message() {
+    return FEEDBACK_SUBJECT_MESSAGE;
+  }
+}
+
 export class FeedbackStorageError extends Schema.TaggedError<FeedbackStorageError>()(
   "FeedbackStorageError",
   { cause: Schema.Defect() },
@@ -69,7 +79,7 @@ export class FeedbackService extends Context.Service<
       caller: FeedbackCaller,
     ) => Effect.Effect<
       FeedbackReport,
-      FeedbackOffError | FeedbackLimitError | FeedbackStorageError
+      FeedbackOffError | FeedbackSubjectError | FeedbackLimitError | FeedbackStorageError
     >;
     /** Newest first. */
     readonly list: Effect.Effect<
@@ -106,6 +116,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
     caller: FeedbackCaller,
   ) {
     yield* requireOn;
+    const subject = resolveFeedbackSubject(input.subject, mcpToolNames());
+    if (subject === undefined) return yield* new FeedbackSubjectError({});
 
     const thread =
       caller.threadId === undefined
@@ -137,17 +149,17 @@ const make = Effect.fn("FeedbackService.make")(function* (
         ? `${repository.owner}/${repository.name}`
         : "",
     ];
-    const subjects = new Set([...mcpToolNames(), ...T3_CLI_COMMANDS]);
     const dimensions =
       caller.source === "mcp" && thread !== undefined
         ? providerDimensions(yield* providers.getProviders, thread.modelSelection)
         : {};
     const properties = {
       kind: input.kind,
-      subject: subjects.has(input.subject.trim()) ? input.subject.trim() : "",
+      subject,
       expected: scrubFeedback(input.expected, sensitive),
       actual: scrubFeedback(input.actual, sensitive),
       workaround: scrubFeedback(input.workaround, sensitive),
+      userRequested: input.userRequested,
       source: caller.source,
       ...dimensions,
     };
@@ -157,6 +169,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
       expected: properties.expected,
       actual: properties.actual,
       workaround: properties.workaround,
+      userRequested: properties.userRequested,
       source: properties.source,
       id: yield* random.uuidV7(),
       threadId: caller.threadId ?? null,
@@ -189,6 +202,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
               expected: report.expected,
               actual: report.actual,
               workaround: report.workaround,
+              user_requested: report.userRequested ? 1 : 0,
               source: report.source,
               sent: 0,
             })}`;
@@ -212,14 +226,21 @@ const make = Effect.fn("FeedbackService.make")(function* (
 
   const list = requireOn.pipe(
     Effect.andThen(() =>
-      sql<Omit<FeedbackReport, "sent"> & { readonly sent: number }>`
+      sql<
+        Omit<FeedbackReport, "sent" | "userRequested"> & {
+          readonly sent: number;
+          readonly userRequested: number;
+        }
+      >`
       SELECT id, thread_id AS "threadId", created_at AS "createdAt", kind, subject,
-        expected, actual, workaround, source, sent
+        expected, actual, workaround, user_requested AS "userRequested", source, sent
       FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`.pipe(
         Effect.mapError(storageError),
       ),
     ),
-    Effect.map((rows) => rows.map((row) => ({ ...row, sent: row.sent === 1 }))),
+    Effect.map((rows) =>
+      rows.map((row) => ({ ...row, userRequested: row.userRequested === 1, sent: row.sent === 1 })),
+    ),
   );
 
   return FeedbackService.of({ submit, list });

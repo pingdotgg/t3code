@@ -98,6 +98,7 @@ const input = {
   expected: "Items for a completed thread.",
   actual: "No items.",
   workaround: "",
+  userRequested: false,
 };
 const fromThread = { source: "mcp" as const, threadId };
 
@@ -124,20 +125,23 @@ it.effect("scrubs the caller's private values and sends only the event contract"
       yield* Ref.set(telemetry, false);
       const local = yield* feedback.submit(
         {
-          kind: "confusing",
-          subject: "acme payments roadmap",
+          kind: "other",
+          subject: "mcp__t3-code__t3_thread_read",
           expected: `Reading /srv/checkouts/acme-app-7 on acme/secret-launch as ${NodeOS.userInfo().username}`,
           actual:
             "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
           workaround: "x".repeat(400),
+          userRequested: true,
         },
         fromThread,
       );
       expect(local).toMatchObject({
-        subject: "",
+        kind: "other",
+        subject: "t3_thread_read",
         expected: "Reading [redacted] on [redacted] as [redacted]",
         actual: "[redacted] in [redacted] with [redacted]",
         workaround: "x".repeat(300),
+        userRequested: true,
         threadId,
         source: "mcp",
         sent: false,
@@ -156,31 +160,52 @@ it.effect("scrubs the caller's private values and sends only the event contract"
             expected: input.expected,
             actual: input.actual,
             workaround: "",
+            userRequested: false,
             source: "mcp",
             provider: "codex",
             model: "gpt-5.5",
           },
         ],
       ]);
-      yield* feedback.submit(input, { source: "cli" });
-      expect((yield* Ref.get(events))[1]).toEqual(["agent.feedback", { ...input, source: "cli" }]);
-      expect((yield* feedback.list).map(({ sent, threadId }) => ({ sent, threadId }))).toEqual([
-        { sent: true, threadId: null },
-        { sent: true, threadId },
-        { sent: false, threadId },
+      const general = { ...input, subject: " general ", userRequested: true };
+      yield* feedback.submit(general, { source: "cli" });
+      expect((yield* Ref.get(events))[1]).toEqual([
+        "agent.feedback",
+        { ...general, subject: "general", source: "cli" },
+      ]);
+      yield* feedback.submit({ ...input, subject: "mcp__t3_code__t3_thread_read" }, fromThread);
+      expect(
+        (yield* feedback.list).map(({ subject, userRequested, sent, threadId }) => ({
+          subject,
+          userRequested,
+          sent,
+          threadId,
+        })),
+      ).toEqual([
+        { subject: "t3_thread_read", userRequested: false, sent: true, threadId },
+        { subject: "general", userRequested: true, sent: true, threadId: null },
+        { subject: "t3 thread show", userRequested: false, sent: true, threadId },
+        { subject: "t3_thread_read", userRequested: true, sent: false, threadId },
       ]);
     }).pipe(Effect.provide(layer));
   }),
 );
 
-it.effect("allows 3 reports per turn and 10 per thread", () =>
+it.effect("allows 3 reports per turn and 10 per thread, not counting rejected subjects", () =>
   Effect.gen(function* () {
-    const { runId, layer } = yield* harness;
+    const { runId, events, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
       const limited = Effect.flip(feedback.submit(input, fromThread)).pipe(
         Effect.map((error) => error._tag),
       );
+      for (const subject of ["", "acme payments roadmap", "mcp__other__t3_thread_read"]) {
+        const error = yield* Effect.flip(feedback.submit({ ...input, subject }, fromThread));
+        expect(error.message).toBe(
+          "Set subject to the exact T3 tool name, the t3 command, or `general`.",
+        );
+      }
+      expect(yield* Ref.get(events)).toEqual([]);
       yield* Effect.replicateEffect(feedback.submit(input, fromThread), 3, { discard: true });
       expect(yield* limited).toBe("FeedbackLimitError");
       for (const run of ["run:2", "run:3"]) {

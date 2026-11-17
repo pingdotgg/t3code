@@ -57,7 +57,11 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
-import { FeedbackInput } from "../../apps/server/src/feedback/FeedbackReport.ts";
+import {
+  FEEDBACK_SUBJECT_MESSAGE,
+  FeedbackInput,
+  resolveFeedbackSubject,
+} from "../../apps/server/src/feedback/FeedbackReport.ts";
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -1740,8 +1744,14 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const decoded = decodeFeedbackInput(input);
     if (Result.isFailure(decoded)) return failed(decoded.failure.message);
     const report = decoded.success;
+    const subject = resolveFeedbackSubject(
+      report.subject,
+      t3SourceTools.map((tool) => tool.name),
+    );
+    if (subject === undefined) return failed(FEEDBACK_SUBJECT_MESSAGE);
     return toolResult(call.id, {
       ...report,
+      subject,
       expected: scrubFeedback(report.expected, []),
       actual: scrubFeedback(report.actual, []),
       workaround: scrubFeedback(report.workaround, []),
