@@ -1,367 +1,42 @@
-//! Payload limits that the contract's schemas check and the generated Rust types do not: a
-//! string's length and pattern, a number's range, array bounds and record entry counts. The table is
-//! generated (`limits/generated.rs`, by `tools/gen-upstream.mjs`) from the payload schemas in
-//! `packages/contracts/src/rpc.ts`, for the methods it lists.
-//!
-//! `MethodTable` calls [`check`] before it decodes a payload. A payload over a limit ends the
-//! call with a defect, as a schema failure does in the T3 server. The text is ours: it names
-//! the limit and the path, not Effect's whole issue tree. A record entry whose key breaks the
-//! key's limits is dropped, as Effect's decode drops it (a terminal env key such as `1FOO`).
-//! `tools/limits-cases.json` holds the cases; `tools/limits-diff.mjs` runs them through the T3
-//! contract's own decode and a test here through [`check`].
-//!
-//! A string length counts UTF-16 code units, as JavaScript's `length` does. Fields with the
-//! contract's `TrimmedString` and `TrimmedNonEmptyString` transform are trimmed before checks.
+//! RPC payload limits generated from `packages/contracts/src/rpc.ts`.
+//! Type errors stay with contract decode; invalid record keys are dropped before entry checks.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::sync::OnceLock;
 
-use regex_automata::meta::Regex;
-use serde::Deserialize;
+use conn_support::input::{Problem, Rules};
 use serde_json::Value;
 
 use crate::table::Failure;
 
 mod generated;
 
-/// One schema node's limits, as the generator writes them.
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RawLimit {
-    #[serde(default)]
-    fields: HashMap<String, RawLimit>,
-    keys: Option<Box<RawLimit>>,
-    values: Option<Box<RawLimit>>,
-    #[serde(default)]
-    variants: HashMap<String, RawLimit>,
-    discriminator: Option<String>,
-    #[serde(default)]
-    trim: bool,
-    #[serde(default)]
-    non_blank: bool,
-    min_length: Option<usize>,
-    max_length: Option<usize>,
-    items: Option<Box<RawLimit>>,
-    pattern: Option<String>,
-    max_properties: Option<usize>,
-    #[serde(default)]
-    int: bool,
-    minimum: Option<f64>,
-    maximum: Option<f64>,
-    max_area: Option<u64>,
+fn table() -> Result<&'static Rules, &'static str> {
+    static TABLE: OnceLock<Result<Rules, String>> = OnceLock::new();
+    TABLE
+        .get_or_init(|| Rules::parse(generated::LIMITS))
+        .as_ref()
+        .map_err(|error| {
+            eprintln!("conn-server: the generated payload limits do not parse: {error}");
+            "invalid generated payload limits"
+        })
 }
 
-struct Limit {
-    fields: Vec<(String, Limit)>,
-    keys: Option<Box<Limit>>,
-    values: Option<Box<Limit>>,
-    variants: Vec<(String, Limit)>,
-    discriminator: Option<String>,
-    trim: bool,
-    non_blank: bool,
-    min_length: Option<usize>,
-    max_length: Option<usize>,
-    items: Option<Box<Limit>>,
-    pattern: Option<(String, Pattern)>,
-    max_properties: Option<usize>,
-    int: bool,
-    minimum: Option<f64>,
-    maximum: Option<f64>,
-    max_area: Option<u64>,
-}
-
-/// A payload pattern. Rust's regex has no lookaround, so a leading negative lookahead
-/// (`^(?!X)rest`, as T3's theme ids use) becomes a second regex the value must not match.
-struct Pattern {
-    allow: Regex,
-    deny: Option<Regex>,
-}
-
-impl Pattern {
-    fn is_match(&self, text: &str) -> bool {
-        self.allow.is_match(text) && !self.deny.as_ref().is_some_and(|deny| deny.is_match(text))
-    }
-}
-
-/// The index of the `)` that closes the group opened just before `from`.
-fn group_end(source: &str, from: usize) -> Option<usize> {
-    let mut depth = 1usize;
-    let mut escaped = false;
-    let mut class = false;
-    for (index, c) in source[from..].char_indices() {
-        match c {
-            _ if escaped => escaped = false,
-            '\\' => escaped = true,
-            '[' if !class => class = true,
-            ']' if class => class = false,
-            '(' if !class => depth += 1,
-            ')' if !class => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(from + index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn compile_pattern(source: &str) -> Result<Pattern, String> {
-    const LOOKAHEAD: &str = "^(?!";
-    if source.starts_with(LOOKAHEAD)
-        && let Some(end) = group_end(source, LOOKAHEAD.len())
-    {
-        let negated = &source[LOOKAHEAD.len()..end];
-        let after = &source[end + 1..];
-        let deny = Regex::new(&format!("^(?:{negated})")).map_err(|e| e.to_string())?;
-        let allow = Regex::new(&format!("^{after}")).map_err(|e| e.to_string())?;
-        return Ok(Pattern {
-            allow,
-            deny: Some(deny),
-        });
-    }
-    Regex::new(source)
-        .map(|allow| Pattern { allow, deny: None })
-        .map_err(|e| e.to_string())
-}
-
-impl Limit {
-    /// Compiles the patterns. A pattern Rust's regex cannot compile is dropped with a warning;
-    /// the test `every_generated_pattern_compiles` keeps that from shipping.
-    fn build(raw: RawLimit) -> Self {
-        let pattern = raw
-            .pattern
-            .and_then(|source| match compile_pattern(&source) {
-                Ok(regex) => Some((source, regex)),
-                Err(error) => {
-                    eprintln!("conn-server: payload pattern {source:?} does not compile: {error}");
-                    None
-                }
-            });
-        let mut fields: Vec<_> = raw
-            .fields
-            .into_iter()
-            .map(|(k, v)| (k, Self::build(v)))
-            .collect();
-        fields.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut variants: Vec<_> = raw
-            .variants
-            .into_iter()
-            .map(|(k, v)| (k, Self::build(v)))
-            .collect();
-        variants.sort_by(|a, b| a.0.cmp(&b.0));
-        Self {
-            discriminator: raw.discriminator,
-            trim: raw.trim,
-            non_blank: raw.non_blank,
-            min_length: raw.min_length,
-            fields,
-            keys: raw.keys.map(|k| Box::new(Self::build(*k))),
-            values: raw.values.map(|v| Box::new(Self::build(*v))),
-            variants,
-            max_length: raw.max_length,
-            items: raw.items.map(|i| Box::new(Self::build(*i))),
-            pattern,
-            max_properties: raw.max_properties,
-            int: raw.int,
-            minimum: raw.minimum,
-            maximum: raw.maximum,
-            max_area: raw.max_area,
-        }
-    }
-
-    /// The first broken limit in `value`, with its path, or `None`. Values of another JSON
-    /// type than the limit expects pass: decode reports those.
-    ///
-    /// A record entry whose key breaks the key's limits is removed, not refused: Effect's
-    /// `Schema.Record` decode drops such an entry and never reads its value. The entry count
-    /// is checked after that, as Effect checks it on the decoded record.
-    fn problem(&self, value: &mut Value, path: &mut Vec<String>) -> Option<String> {
-        match value {
-            Value::String(text) => {
-                if self.trim {
-                    let trimmed = conn_support::text::js_trim(text);
-                    if trimmed.len() != text.len() {
-                        *text = trimmed.to_owned();
-                    }
-                }
-                self.text_problem(text, path)
-            }
-            Value::Number(number) => self.number_problem(number.as_f64()?, path),
-            Value::Object(map) => {
-                if let Some(Value::String(tag)) =
-                    map.get(self.discriminator.as_deref().unwrap_or("_tag"))
-                    && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
-                {
-                    return variant.problem(value, path);
-                }
-                for (name, limit) in &self.fields {
-                    if let Some(field) = map.get_mut(name) {
-                        path.push(name.clone());
-                        let found = limit.problem(field, path);
-                        path.pop();
-                        if found.is_some() {
-                            return found;
-                        }
-                    }
-                }
-                if let Some(max) = self.max_area {
-                    let area = map
-                        .get("width")
-                        .and_then(Value::as_u64)
-                        .zip(map.get("height").and_then(Value::as_u64))
-                        .map(|(w, h)| w.saturating_mul(h));
-                    if area.is_some_and(|area| area > max) {
-                        return Some(at(format!("a viewport area at most {max} pixels"), path));
-                    }
-                }
-                if let Some(keys) = &self.keys {
-                    map.retain(|key, _| keys.text_problem(key, &[]).is_none());
-                }
-                if let Some(values) = &self.values {
-                    for (key, field) in map.iter_mut() {
-                        path.push(key.clone());
-                        let found = values.problem(field, path);
-                        path.pop();
-                        if found.is_some() {
-                            return found;
-                        }
-                    }
-                }
-                match self.max_properties {
-                    Some(max) if map.len() > max => Some(at(
-                        format!("a value with at most {max} entries, got {}", map.len()),
-                        path,
-                    )),
-                    _ => None,
-                }
-            }
-            Value::Array(values) => {
-                if let Some(min) = self.min_length
-                    && values.len() < min
-                {
-                    return Some(at(
-                        format!(
-                            "a value with a length of at least {min}, got {}",
-                            values.len()
-                        ),
-                        path,
-                    ));
-                }
-                if let Some(max) = self.max_length
-                    && values.len() > max
-                {
-                    return Some(at(
-                        format!(
-                            "a value with a length of at most {max}, got {}",
-                            values.len()
-                        ),
-                        path,
-                    ));
-                }
-                if let Some(limit) = &self.items {
-                    for (index, value) in values.iter_mut().enumerate() {
-                        path.push(index.to_string());
-                        let problem = limit.problem(value, path);
-                        path.pop();
-                        if problem.is_some() {
-                            return problem;
-                        }
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
-        if self.non_blank && text.is_empty() {
-            return Some(at("a non-blank string".to_owned(), path));
-        }
-        if let Some(min) = self.min_length {
-            let length = text.encode_utf16().count();
-            if length < min {
-                return Some(at(
-                    format!("a value with a length of at least {min}, got {length}"),
-                    path,
-                ));
-            }
-        }
-        if let Some(max) = self.max_length {
-            let length = text.encode_utf16().count();
-            if length > max {
-                return Some(at(
-                    format!("a value with a length of at most {max}, got {length}"),
-                    path,
-                ));
-            }
-        }
-        if let Some((source, regex)) = &self.pattern
-            && !regex.is_match(text)
-        {
-            return Some(at(format!("a string matching the RegExp {source}"), path));
-        }
-        None
-    }
-
-    fn number_problem(&self, n: f64, path: &[String]) -> Option<String> {
-        if self.int && n.fract() != 0.0 {
-            return Some(at("an integer".to_owned(), path));
-        }
-        if let Some(min) = self.minimum
-            && n < min
-        {
-            return Some(at(format!("a value greater than or equal to {min}"), path));
-        }
-        if let Some(max) = self.maximum
-            && n > max
-        {
-            return Some(at(format!("a value less than or equal to {max}"), path));
-        }
-        None
-    }
-}
-
-fn at(expected: String, path: &[String]) -> String {
-    let mut text = format!("expected {expected}");
-    if !path.is_empty() {
-        text.push_str(" at ");
-        for step in path {
-            text.push('[');
-            text.push_str(&Value::String(step.clone()).to_string());
-            text.push(']');
-        }
+fn problem(problem: Problem) -> String {
+    let mut text = format!("expected {}", problem.expected.unwrap_or_default());
+    if !problem.path.is_empty() {
+        text.push_str(&format!(" at {}", problem.path));
     }
     text
 }
 
-fn table() -> &'static HashMap<String, Limit> {
-    static TABLE: OnceLock<HashMap<String, Limit>> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let raw: HashMap<String, RawLimit> = match serde_json::from_str(generated::LIMITS) {
-            Ok(raw) => raw,
-            Err(error) => {
-                eprintln!("conn-server: the generated payload limits do not parse: {error}");
-                HashMap::new()
-            }
-        };
-        raw.into_iter().map(|(k, v)| (k, Limit::build(v))).collect()
-    })
-}
-
-/// Checks `payload` against the limits of method `tag`, and drops the record entries that
-/// Effect's decode would drop. A method without limits passes unchanged.
+/// Checks and normalizes payload limits before the method table decodes the contract type.
 pub fn check(tag: &str, payload: &mut Value) -> Result<(), Failure> {
-    let Some(limit) = table().get(tag) else {
+    let Ok(rules) = table() else {
         return Ok(());
     };
-    match limit.problem(payload, &mut Vec::new()) {
-        Some(problem) => Err(Failure::die(format!(
-            "invalid payload for `{tag}`: {problem}"
-        ))),
-        None => Ok(()),
-    }
+    rules
+        .check(tag, payload)
+        .map_err(|error| Failure::die(format!("invalid payload for `{tag}`: {}", problem(error))))
 }
 
 #[cfg(test)]
@@ -373,32 +48,9 @@ mod tests {
 
     #[test]
     fn every_generated_pattern_compiles() {
-        let raw: HashMap<String, RawLimit> =
-            serde_json::from_str(generated::LIMITS).expect("generated limits parse");
-        fn walk(limit: &RawLimit) {
-            if let Some(source) = &limit.pattern {
-                compile_pattern(source).expect("pattern compiles");
-            }
-            limit.fields.values().for_each(walk);
-            limit.variants.values().for_each(walk);
-            limit.keys.iter().for_each(|k| walk(k));
-            limit.values.iter().for_each(|v| walk(v));
-            limit.items.iter().for_each(|item| walk(item));
-        }
-        raw.values().for_each(walk);
-        assert!(raw.contains_key("terminal.open") && raw.contains_key("assets.createUrl"));
-    }
-
-    #[test]
-    fn a_leading_negative_lookahead_refuses_what_it_names() {
-        let pattern =
-            compile_pattern("^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$").unwrap();
-        for ok in ["ocean", "dark-blue", "lightning", "s"] {
-            assert!(pattern.is_match(ok), "{ok}");
-        }
-        for refused in ["system", "light", "dark", "Dark", "-x", ""] {
-            assert!(!pattern.is_match(refused), "{refused}");
-        }
+        assert!(Rules::parse(generated::LIMITS).is_ok());
+        let raw: Value = serde_json::from_str(generated::LIMITS).expect("generated limits parse");
+        assert!(raw.get("terminal.open").is_some() && raw.get("assets.createUrl").is_some());
     }
 
     #[derive(Deserialize)]
@@ -437,9 +89,7 @@ mod tests {
     #[test]
     fn the_failure_names_the_limit_and_the_path() {
         let problem = |tag: &str, mut payload: Value| {
-            table()
-                .get(tag)
-                .and_then(|l| l.problem(&mut payload, &mut Vec::new()))
+            table().ok()?.check(tag, &mut payload).err().map(problem)
         };
         let long = json!({ "resource": { "_tag": "workspace-file", "threadId": "t", "path": "a".repeat(1025) } });
         let text = problem("assets.createUrl", long).expect("over the limit");

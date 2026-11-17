@@ -21,8 +21,6 @@ conn-features.workspace = true
 # The host definition registry: pull request keys, URLs and chains for the link tools.
 conn-source-control.workspace = true
 serde_json.workspace = true
-# Already in conn-server: the generated attachment and provider-id patterns.
-regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 # Already in the tree through axum: request and response types without a framework.

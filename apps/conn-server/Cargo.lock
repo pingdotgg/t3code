@@ -240,7 +240,6 @@ dependencies = [
  "getrandom 0.3.4",
  "http",
  "jiff",
- "regex-automata",
  "rusqlite",
  "serde_json",
  "sha2",
@@ -368,7 +367,6 @@ dependencies = [
  "futures-core",
  "getrandom 0.3.4",
  "jiff",
- "regex-automata",
  "rusqlite",
  "rustix",
  "serde",
@@ -402,7 +400,10 @@ name = "conn-support"
 version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
+ "regex-automata",
  "rustls",
+ "serde",
+ "serde_json",
  "sha2",
  "uuid",
  "webpki-roots",

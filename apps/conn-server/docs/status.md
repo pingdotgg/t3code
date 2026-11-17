@@ -9,6 +9,10 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 "Released and running in Orbit"); the web and iOS clients were tested against it in a VM
 (see "Client parity, wave 1").
 
+**Input validators (2026-11-17):** RPC limits and MCP input decode share
+`conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
+`tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
+
 ## Released and running in Orbit (2026-11-16)
 
 - **Release `conn-server-v0.1.0`** (Conn `a7755b30bd`): the release workflow's first run built
