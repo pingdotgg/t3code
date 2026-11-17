@@ -124,7 +124,10 @@ export const make = Effect.gen(function* () {
               );
             } catch {}
           }
-          const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+          const desktopEntryPath = NodePath.posix.join(
+            applicationsDir,
+            linux.linuxDesktopEntryName,
+          );
           const { appImagePath } = linuxDesktopEntryConfig;
           if (
             Option.isSome(appImagePath) &&

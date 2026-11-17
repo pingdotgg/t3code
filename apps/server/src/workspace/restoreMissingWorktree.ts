@@ -176,7 +176,10 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
       Effect.map(Option.getOrUndefined),
       Effect.orElseSucceed(() => undefined),
     );
-    if (project === undefined || !(yield* isManagedWorktreePath(worktreePath, project.workspaceRoot)))
+    if (
+      project === undefined ||
+      !(yield* isManagedWorktreePath(worktreePath, project.workspaceRoot))
+    )
       return;
     yield* Effect.logWarning("recreating missing worktree", {
       threadId: thread.id,

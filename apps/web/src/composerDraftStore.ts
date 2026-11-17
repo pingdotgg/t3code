@@ -3406,7 +3406,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...currentForProvider,
               ...createModelSelection(
                 instanceKey,
-                normalizeCustomModelSlug(options?.model) ?? currentForProvider?.model ?? fallbackModel,
+                normalizeCustomModelSlug(options?.model) ??
+                  currentForProvider?.model ??
+                  fallbackModel,
                 providerOpts,
               ),
               options: providerOpts ?? [],

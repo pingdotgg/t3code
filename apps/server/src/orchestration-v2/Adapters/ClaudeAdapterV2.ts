@@ -13006,9 +13006,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     message.type === "system" &&
                     message.subtype === "init" &&
                     Option.isSome(inventory)
-                      ? inventory.value.record(adapterOptions.instanceId, message).pipe(
-                          Effect.andThen(handled),
-                        )
+                      ? inventory.value
+                          .record(adapterOptions.instanceId, message)
+                          .pipe(Effect.andThen(handled))
                       : handled;
                   const reportedCwd = turnInput.runtimePolicy.cwd;
                   if (!firstInit || reportedCwd === null || !adapterOptions.onSessionInit) {
