@@ -1792,6 +1792,34 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("previews an image read that only names the file", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    await using screen = await renderTimeline(
+      [
+        work("read-shot", {
+          label: "Read turn_4.jpg",
+          toolTitle: "Read",
+          tone: "tool",
+          itemType: "dynamic_tool",
+          toolLifecycleStatus: "completed",
+          toolData: { toolName: "Read", input: { path: "/repo/qa/turn_4.jpg" } },
+        }),
+      ],
+      { workspaceRoot: "/repo" },
+    );
+    await click(screen.button(/turn_4\.jpg/));
+    await vi.waitFor(() => {
+      const image = [...screen.container.querySelectorAll("img")].find(
+        (img) => img.alt === "turn_4.jpg",
+      );
+      expect(image).toBeTruthy();
+    });
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
