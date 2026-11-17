@@ -28,7 +28,8 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { T, useGT } from "gt-react";
+import { msg, T, useGT } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -40,6 +41,7 @@ import { isImageAttachment, type ChatImageAttachment, type ChatMessage } from ".
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { m } from "../../i18n/messages";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
@@ -192,8 +194,11 @@ export function QueuedRunsControl({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Could not send queued message",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: m(msg("Could not send queued message")),
+        description:
+          error instanceof Error
+            ? (errorDisplayMessage(error, m) ?? error.message)
+            : m(msg("An error occurred.")),
       });
     }
   };
@@ -255,7 +260,9 @@ export function QueuedRunsControl({
       className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
     >
       <span className="sr-only" aria-live="polite">
-        {gt("{count} queued", { count: items.length })}
+        {gt("{count, plural, one {{count} queued} other {{count} queued}}", {
+          count: items.length,
+        })}
       </span>
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
@@ -422,7 +429,12 @@ export function QueuedRunsControl({
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => setShowAll((value) => !value)}
           >
-            {showAll ? gt("Show fewer") : gt("Show all {count} queued", { count: items.length })}
+            {showAll
+              ? gt("Show fewer")
+              : gt(
+                  "{count, plural, one {Show all {count} queued} other {Show all {count} queued}}",
+                  { count: items.length },
+                )}
             <ChevronDownIcon
               aria-hidden
               className={cn(

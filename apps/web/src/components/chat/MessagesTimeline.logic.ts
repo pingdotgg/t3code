@@ -34,7 +34,6 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
-  formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
@@ -71,14 +70,15 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
-import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { collectToolFilePaths } from "@t3tools/shared/toolActivity";
 import {
-  collectToolFilePaths,
+  dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+} from "@t3tools/shared/toolActivityCopy";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
@@ -106,11 +106,13 @@ function singleToolCallLabel(entry: WorkLogEntry, resolve: MessageResolver): str
   if (entry.itemType === "reasoning") {
     return entry.detail?.trim().replace(/\s+/g, " ") || resolve(msg("Thought"));
   }
-  const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
+  const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed", resolve);
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
   const title =
-    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
+    item?.type === "dynamic_tool"
+      ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
+      : null;
   if (title) return title;
   if (entry.itemType === "web_search") return entry.toolTitle ?? resolve(msg("Web search"));
   return workEntryDisplayLabel(entry, undefined, resolve);
@@ -152,7 +154,7 @@ export function workEntryDisplayLabel(
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;
   }
-  const toolPresentation = resolveWorkEntryToolPresentation(entry);
+  const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
   const action = toolGroupAction(entry);
@@ -160,18 +162,20 @@ export function workEntryDisplayLabel(
     const searchLabel =
       entry.itemType === "file_search"
         ? entry.label
-        : formatSearchToolLabel(workEntryToolDataRecord(entry));
+        : formatSearchToolLabel(workEntryToolDataRecord(entry), resolve);
     if (searchLabel) return searchLabel;
   }
   const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
   if (action === "read" && readPaths[0]) {
-    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
+    return formatReadToolLabel(readPaths[0], readPaths.length - 1, resolve);
   }
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
   const item = entry.structuredPayload;
   const title =
-    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
+    item?.type === "dynamic_tool"
+      ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
+      : null;
   if (title) return title;
   const compactDetail = entry.detail?.trim();
   const detailIsSearchOutput =
@@ -184,7 +188,12 @@ export function workEntryDisplayLabel(
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
     return entry.changedFiles!.length === 1
       ? path
-      : resolve(msg("{path} +{count} more", { path, count: entry.changedFiles!.length - 1 }));
+      : resolve(
+          msg("{count, plural, one {{path} +{count} more} other {{path} +{count} more}}", {
+            path,
+            count: entry.changedFiles!.length - 1,
+          }),
+        );
   }
   if (action === "read" && !entry.viewedImagePath) {
     return resolve(msg("Read file"));
@@ -203,7 +212,14 @@ export function threadReadTargetId(entry: Pick<WorkLogEntry, "structuredPayload"
   return typeof threadId === "string" && threadId.trim().length > 0 ? threadId.trim() : null;
 }
 
-const THREAD_READ_OBJECT = " a T3 thread";
+// Same English as client-runtime's thread-read tool sentence, so it shares that catalog key.
+const THREAD_READ_SENTENCE = msg(
+  "{status, select, inProgress {Reading a T3 thread} completed {Read a T3 thread} failed {Failed to read a T3 thread} declined {Declined to read a T3 thread} stopped {Stopped reading a T3 thread} other {Reading a T3 thread}}",
+);
+const THREAD_READ_PREFIX = msg(
+  "{status, select, inProgress {Reading thread} completed {Read thread} failed {Failed to read thread} declined {Declined to read thread} stopped {Stopped reading thread} other {Reading thread}}",
+);
+const THREAD_READ_STATUSES = ["inProgress", "completed", "failed", "declined", "stopped"] as const;
 
 export function threadReadTargetTitle(
   shell: Pick<ThreadShell, "title" | "archivedAt" | "deletedAt"> | null,
@@ -212,10 +228,11 @@ export function threadReadTargetTitle(
   return shell.title.trim() || null;
 }
 
-export function threadReadLabelPrefix(label: string) {
-  return label.endsWith(THREAD_READ_OBJECT)
-    ? `${label.slice(0, -THREAD_READ_OBJECT.length)} thread`
-    : null;
+export function threadReadLabelPrefix(label: string, resolve: MessageResolver = m) {
+  const status = THREAD_READ_STATUSES.find(
+    (candidate) => resolve(THREAD_READ_SENTENCE, { status: candidate }) === label,
+  );
+  return status === undefined ? null : resolve(THREAD_READ_PREFIX, { status });
 }
 
 export function workEntryReadOutput(
@@ -260,10 +277,11 @@ export function liveWorkEntryLabel(
       (status === "inProgress" ? resolve(msg("Thinking")) : resolve(msg("Thought")))
     );
   }
-  const toolPresentation = resolveWorkEntryToolPresentation({
-    ...entry,
-    toolLifecycleStatus: status,
-  });
+  const toolPresentation = resolveWorkEntryToolPresentation(
+    { ...entry, toolLifecycleStatus: status },
+    undefined,
+    resolve,
+  );
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) {
@@ -1244,8 +1262,8 @@ function deriveTurnFolds(input: {
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const { resolve } = input;
+    const duration = elapsedMs !== null ? formatDuration(elapsedMs, resolve) : null;
     const label = isLatestInterruptedTurn
       ? duration
         ? resolve(msg("You stopped after {duration}", { duration }))
@@ -1285,7 +1303,9 @@ function deriveTurnFolds(input: {
         entryIds: new Set(entries.map((entry) => entry.id)),
         label:
           segmentMs !== null
-            ? resolve(msg("Continued for {duration}", { duration: formatDuration(segmentMs) }))
+            ? resolve(
+                msg("Continued for {duration}", { duration: formatDuration(segmentMs, resolve) }),
+              )
             : resolve(msg("Continued")),
       });
     }
@@ -2498,7 +2518,6 @@ export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimeline
 interface MessagesTimelineRowsProjection {
   readonly input: MessagesTimelineRowsInput;
   readonly rows: MessagesTimelineRow[];
-  readonly resolve: MessageResolver;
 }
 
 /**
@@ -2721,11 +2740,8 @@ export function deriveMessagesTimelineRowsWithState(
   return {
     input,
     rows:
-      (previous === null || previous.resolve !== resolve
-        ? null
-        : replaceStreamingMessageRows(input, previous)) ??
+      (previous === null ? null : replaceStreamingMessageRows(input, previous)) ??
       deriveMessagesTimelineRows(input, resolve),
-    resolve,
   };
 }
 

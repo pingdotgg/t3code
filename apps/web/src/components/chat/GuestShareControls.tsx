@@ -79,7 +79,12 @@ function GuestShareDialog({
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
   });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "guest link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: gt("guest link", {
+      $context:
+        'noun inserted into clipboard errors like "Failed to copy {target} to the clipboard."',
+    }),
+  });
   const [state, setState] = useState<CreateState>({ status: "idle" });
 
   const create = async () => {
@@ -152,7 +157,7 @@ function GuestShareDialog({
         <DialogFooter>
           {state.status === "created" ? (
             <Button size="sm" onClick={onClose}>
-              <T>Done</T>
+              <T context="button that closes the dialog">Done</T>
             </Button>
           ) : (
             <>

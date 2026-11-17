@@ -2930,9 +2930,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             if (activeThreadId) {
               setThreadError(
                 activeThreadId,
-                gt("You can attach up to {count} files per message.", {
-                  count: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-                }),
+                gt(
+                  "{count, plural, one {You can attach up to {count} files per message.} other {You can attach up to {count} files per message.}}",
+                  {
+                    count: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+                  },
+                ),
               );
             }
           },

@@ -1,7 +1,7 @@
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
-import { msg, T, useGT } from "gt-react";
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { GaugeIcon } from "lucide-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -60,7 +60,7 @@ export function usageLimitsBannerItem(
     <AccountSummary account={single} />
   ) : (
     resolve(
-      msg("{count, plural, other {{count} accounts}}", {
+      msg("{count, plural, one {{count} account} other {{count} accounts}}", {
         count: report.accounts.length,
       }),
     )
@@ -133,6 +133,7 @@ function UsageLimitsBannerBody({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
+  const messages = useMessages();
   const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
@@ -141,7 +142,7 @@ function UsageLimitsBannerBody({
           const resetCreditInput =
             account.resetCreditInput ??
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
-          const notice = limitsNotice(account.limits);
+          const notice = limitsNotice(account.limits, messages);
           const externalUsage = account.limits.externalUsage;
           return (
             <div key={account.id} className="flex min-w-0 flex-col gap-1">

@@ -65,7 +65,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     reportFailure: false,
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: "plan",
+    target: gt("plan", {
+      $context:
+        'noun inserted into clipboard errors like "Failed to copy {target} to the clipboard."',
+    }),
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({

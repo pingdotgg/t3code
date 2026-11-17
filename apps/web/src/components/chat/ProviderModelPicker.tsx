@@ -260,7 +260,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? selectedEntries.length === 0
       ? gt("Choose models")
       : selectedEntries.length > 2
-        ? gt("{models}, {count} more", {
+        ? gt("{count, plural, one {{models}, {count} more} other {{models}, {count} more}}", {
             models: selectedEntries
               .slice(0, 2)
               .map((selection) => selection.label)
@@ -443,7 +443,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
-              <T>Unavailable</T>
+              <T context="badge on a model that cannot be selected">Unavailable</T>
             </Badge>
           ) : null}
         </span>

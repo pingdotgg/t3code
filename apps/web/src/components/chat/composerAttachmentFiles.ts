@@ -3,10 +3,7 @@ import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "@t3tools/contracts";
-import {
-  clampFileAttachmentUploadBytes,
-  fileAttachmentTooLargeMessage,
-} from "@t3tools/client-runtime/state/attachments";
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { msg } from "gt-react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
@@ -205,6 +202,25 @@ export function fileAttachmentStagingLimit(input: FileAttachmentCapabilityState)
   return clampFileAttachmentUploadBytes(input.maxFileAttachmentBytes);
 }
 
+// client-runtime's fileAttachmentTooLargeMessage has no resolver yet; same English.
+function fileAttachmentTooLargeText(
+  name: string,
+  maxUploadBytes: number,
+  resolve: MessageResolver,
+) {
+  const size =
+    maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
+      ? resolve(msg("{count} MB", { count: maxUploadBytes / (1024 * 1024) }))
+      : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
+        ? resolve(msg("{count} KB", { count: maxUploadBytes / 1024 }))
+        : resolve(
+            msg("{count, plural, one {{count} byte} other {{count} bytes}}", {
+              count: maxUploadBytes,
+            }),
+          );
+  return resolve(msg("''{name}'' exceeds the {size} attachment limit.", { name, size }));
+}
+
 export function fileAttachmentCapabilityBlockReason(
   input: FileAttachmentCapabilityState & {
     readonly files: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
@@ -225,7 +241,7 @@ export function fileAttachmentCapabilityBlockReason(
   }
   const oversizedFile = input.files.find((file) => file.sizeBytes > maxFileAttachmentBytes);
   if (oversizedFile) {
-    return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes);
+    return fileAttachmentTooLargeText(oversizedFile.name, maxFileAttachmentBytes, resolve);
   }
   return null;
 }

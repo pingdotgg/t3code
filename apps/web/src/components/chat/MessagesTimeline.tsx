@@ -1,4 +1,5 @@
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -1514,6 +1515,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
 function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
   const gt = useGT();
+  const messages = useMessages();
   if (!props.hasMoreHistory && props.error === null) {
     return null;
   }
@@ -1537,7 +1539,7 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
         ) : null}
         {props.error !== null ? (
           <p role="status" className="text-center text-muted-foreground text-xs">
-            {props.error}
+            {threadErrorText(props.error, messages)}
           </p>
         ) : null}
       </div>
@@ -1759,6 +1761,7 @@ function ContextCompactionTimelineRow({
         label
       )}
       {row.failure ? (
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- separator before server-authored failure text
         <span className="min-w-0 truncate opacity-80">&middot; {row.failure}</span>
       ) : null}
     </span>

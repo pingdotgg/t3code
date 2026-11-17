@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -357,6 +357,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const locale = useLocale();
   const {
     searchInputRef,
     keybindings: providedKeybindings,
@@ -745,7 +746,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ? matchesLockedProvider(entry)
       : entry.instanceId === selectedEntry?.instanceId;
     const notice = shown
-      ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages)
+      ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
       : null;
     return notice ? [{ instanceId: entry.instanceId, notice }] : [];
   });
@@ -1043,7 +1044,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       className="group w-full cursor-pointer"
                     >
                       <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
-                        {legacySection.isExpanded ? gt("Show less") : gt("Show more")}
+                        {legacySection.isExpanded
+                          ? gt("Show less", { $context: "collapses the list of older models" })
+                          : gt("Show more", { $context: "expands the list of older models" })}
                       </span>
                     </ComboboxItem>
                   );

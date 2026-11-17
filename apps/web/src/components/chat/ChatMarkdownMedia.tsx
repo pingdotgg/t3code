@@ -1,4 +1,3 @@
-import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
@@ -409,6 +408,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
+  const gt = useGT();
   const resource = props.resource;
   const threadWorkspaceMutationId = use(WorkspaceMutationIdContext);
   const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
@@ -427,7 +427,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     assetUrl._tag === "Failure" &&
     assetUrl.reason === "missing-file-access" &&
     fallbackSrc === undefined;
-  const unavailableDetail = missingFileAccess ? MISSING_FILE_ACCESS_MESSAGE : undefined;
+  const unavailableDetail = missingFileAccess
+    ? gt("This connection cannot read host files. Pair again with a new link to view it.")
+    : undefined;
   const src =
     assetUrl._tag === "Success"
       ? assetUrl.url + (props.srcFragment ?? "")
