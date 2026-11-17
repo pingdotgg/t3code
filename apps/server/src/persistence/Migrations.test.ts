@@ -1364,3 +1364,59 @@ it.effect("registers every migration file", () =>
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "backfills project recall frequencies and maintains current facts through lifecycle changes",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 112 });
+      const insert = (id: string, project: string) => sql`
+      INSERT INTO project_knowledge_facts
+        (id, project_id, status, revision, content, entities_json, tags_json, kind, trust,
+         retrieval_count, created_at, updated_at, forgotten_at, sources_json, origin_json)
+      VALUES (${id}, ${project}, 'saved', 1, 'πύλη cobalt cobalt', '["cobalt"]', '["lantern"]',
+        'note', 0.6, 0, '2026-11-16', '2026-11-16', NULL, '[]', '{"kind":"user"}')`;
+      yield* insert("first", "project");
+      yield* insert("foreign", "other");
+      yield* runMigrations();
+      const counts = sql`SELECT term, doc FROM project_knowledge_recall_terms WHERE project_id = 'project' ORDER BY term`;
+      assert.deepEqual(yield* counts, [
+        { term: "cobalt", doc: 1 },
+        { term: "lantern", doc: 1 },
+        { term: "πύλη", doc: 1 },
+      ]);
+      yield* insert("second", "project");
+      yield* sql`UPDATE project_knowledge_facts SET content='cobalt kestrel', entities_json='[]', tags_json='[]' WHERE id='first'`;
+      assert.deepEqual(yield* counts, [
+        { term: "cobalt", doc: 2 },
+        { term: "kestrel", doc: 1 },
+        { term: "lantern", doc: 1 },
+        { term: "πύλη", doc: 1 },
+      ]);
+      yield* sql`UPDATE project_knowledge_facts SET superseded_by_id='first' WHERE id='second'`;
+      assert.deepEqual(yield* counts, [
+        { term: "cobalt", doc: 1 },
+        { term: "kestrel", doc: 1 },
+      ]);
+      yield* sql`UPDATE project_knowledge_facts SET superseded_by_id=NULL WHERE id='second'`;
+      yield* sql`UPDATE project_knowledge_facts SET status='forgotten',content=NULL,entities_json='[]',tags_json='[]',sources_json='[]',forgotten_at='2026-11-17' WHERE id='first'`;
+      assert.deepEqual(yield* counts, [
+        { term: "cobalt", doc: 1 },
+        { term: "lantern", doc: 1 },
+        { term: "πύλη", doc: 1 },
+      ]);
+      yield* sql`UPDATE project_knowledge_facts SET project_id='other' WHERE id='second'`;
+      assert.deepEqual(yield* counts, []);
+      yield* sql`DELETE FROM project_knowledge_facts WHERE id='second'`;
+      assert.deepEqual(
+        yield* sql`SELECT term,doc FROM project_knowledge_recall_terms WHERE project_id='other' ORDER BY term`,
+        [
+          { term: "cobalt", doc: 1 },
+          { term: "lantern", doc: 1 },
+          { term: "πύλη", doc: 1 },
+        ],
+      );
+      assert.deepEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);

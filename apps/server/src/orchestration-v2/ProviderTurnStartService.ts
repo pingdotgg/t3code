@@ -1951,10 +1951,13 @@ export const layer: Layer.Layer<
               threadId: projection.thread.id,
               requestId: CommandId.make(`memory-recall:${attempt.id}`),
               query: providerMessage.text,
+              ...(providerMessage.notification === undefined
+                ? {}
+                : { notification: providerMessage.notification }),
               composer: pstackComposer,
               knowledgeAllowance: budget.knowledgeAllowance,
               turn: {
-                messageId: message.id,
+                messageId: providerMessage.id,
                 attemptId: attempt.id,
                 providerInstanceId: run.providerInstanceId,
                 providerThreadId: runningProviderThread.id,

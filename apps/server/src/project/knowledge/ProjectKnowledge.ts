@@ -1,9 +1,7 @@
 import {
   ActiveProjectFact,
-  boundProjectMemoryRecallQuery,
-  isSubstantiveProjectMemoryQuery,
-  selectProjectMemoryRecallMatches,
   type AssistedLearningRun,
+  type OrchestrationV2Notification,
   type CommandId,
   ComposerContextId,
   type ComposerContextRecord,
@@ -66,6 +64,15 @@ import {
 } from "./persistence.ts";
 import * as HolographicMemory from "./HolographicMemory.ts";
 import { projectMemorySearchTokens } from "./holographicScoring.ts";
+import {
+  rankRecallCandidates,
+  recallTerms,
+  recallTrigger,
+  RECALL_CANDIDATE_LIMIT,
+  RECALL_MAX_FACTS,
+  RECALL_MESSAGE_CHARS,
+  type TermStats,
+} from "./recallRelevance.ts";
 import { conflictHints } from "./knowledgeConflicts.ts";
 import { DeliveryScrubRunner } from "./deliveryScrubSchedule.ts";
 
@@ -75,10 +82,15 @@ type RecallComposer = {
 };
 
 export type RecallOutcome =
-  | { readonly _tag: "Attached"; readonly composer: RecallComposer }
+  | {
+      readonly _tag: "Attached";
+      readonly composer: RecallComposer;
+      readonly top?: ReadonlyArray<{ readonly factId: string }>;
+    }
   | {
       readonly _tag: "Skipped";
-      readonly reason: "slash" | "hand_attached" | "not_substantive" | "no_budget" | "no_match";
+      readonly reason: "slash" | "hand_attached" | "progress_notice" | "no_budget" | "no_match";
+      readonly top?: ReadonlyArray<{ readonly factId: string }>;
     }
   | { readonly _tag: "Omitted"; readonly reason: "timed_out" | "failed" };
 const RECALL_CONTEXT_ID = ComposerContextId.make("recall");
@@ -99,12 +111,6 @@ type KnowledgeFormat = "attached" | "recalled";
 // on it.
 const recalledPreamble = (projectId: ProjectId) =>
   `Saved facts from project ${projectId}, for reference. Rate any you rely on with t3_knowledge_mutate feedback: helpful, or unhelpful if it misled you.`;
-
-/** Whether a thread's own messages or agent produced this fact, so its agent already has it. */
-const cameFromThread = (fact: Pick<ProjectFact, "origin" | "sources">, threadId: ThreadId) =>
-  ((fact.origin.kind === "agent-thread" || fact.origin.kind === "assisted") &&
-    fact.origin.threadId === threadId) ||
-  fact.sources.some((source) => source.kind === "message" && source.threadId === threadId);
 
 export class ProjectKnowledge extends Context.Service<
   ProjectKnowledge,
@@ -158,6 +164,8 @@ export class ProjectKnowledge extends Context.Service<
       readonly threadId: ThreadId;
       readonly requestId: CommandId;
       readonly query: string;
+      readonly notification?: OrchestrationV2Notification;
+      readonly candidateLimit?: number;
       readonly composer: RecallComposer;
       /** The turn's remaining knowledge budget, in bytes. */
       readonly knowledgeAllowance: number;
@@ -917,369 +925,302 @@ const make = Effect.gen(function* () {
       ...(resolved.items ? { items: resolved.items } : {}),
     };
   });
-  const searchFacts = Effect.fn("ProjectKnowledge.search")(
-    // Recall keeps its best two matches after removing facts the thread has already seen.
-    function* (
-      request: ProjectKnowledgeSearchInput,
-      recallOptions?: {
-        readonly skip: (fact: ProjectFact) => boolean;
-        readonly threadId: ThreadId;
-        readonly excludeFactIds: ReadonlyArray<ProjectFactId>;
-      },
-    ): Effect.fn.Return<ProjectKnowledgeSearchResult, ProjectKnowledgeError> {
-      const skip = recallOptions?.skip;
-      const {
-        factCursor: _recallFactCursor,
-        cursor: _recallMessageCursor,
-        ...recallRequest
-      } = request;
-      const input =
-        recallOptions !== undefined
-          ? {
-              ...recallRequest,
-              query: boundProjectMemoryRecallQuery(request.query),
-              limit: 8,
-            }
-          : request;
-      yield* requireProject(input.projectId);
-      if (recallOptions !== undefined && !isSubstantiveProjectMemoryQuery(input.query))
-        return {
-          messages: { matches: [] },
-          facts: {
-            state: "available" as const,
-            matches: [],
-            coverage: "complete" as const,
-            nextCursor: null,
-          },
-        };
-      const messages =
-        recallOptions !== undefined
-          ? { matches: [] }
-          : yield* threads
-              .search({
-                ...input,
-                ...(input.messageLimit === undefined ? {} : { limit: input.messageLimit }),
-              })
-              .pipe(Effect.mapError(storageError(input.projectId)));
-      const entities = [
-        ...new Set((input.entities ?? []).map((entity) => entity.toLowerCase())),
-      ].sort();
-      const minTrust = input.minTrust ?? 0.3;
-      const queryDigest = yield* encodeQuery({
+  const searchFacts = Effect.fn("ProjectKnowledge.search")(function* (
+    input: ProjectKnowledgeSearchInput,
+  ): Effect.fn.Return<ProjectKnowledgeSearchResult, ProjectKnowledgeError> {
+    yield* requireProject(input.projectId);
+    const messages = yield* threads
+      .search({
+        ...input,
+        ...(input.messageLimit === undefined ? {} : { limit: input.messageLimit }),
+      })
+      .pipe(Effect.mapError(storageError(input.projectId)));
+    const entities = [
+      ...new Set((input.entities ?? []).map((entity) => entity.toLowerCase())),
+    ].sort();
+    const minTrust = input.minTrust ?? 0.3;
+    const queryDigest = yield* encodeQuery({
+      projectId: input.projectId,
+      query: input.query,
+      entities,
+      entityMatch: input.entityMatch ?? "any",
+      includeArchived: input.includeArchived ?? false,
+      minTrust,
+      ...(input.includeSuperseded ? { includeSuperseded: true } : {}),
+    }).pipe(Effect.flatMap(digest), Effect.mapError(storageError(input.projectId)));
+    const { cursor: _messageCursor, ...factInput } = input;
+    const requestDigest = yield* encodeSearch(factInput).pipe(
+      Effect.flatMap(digest),
+      Effect.mapError(storageError(input.projectId)),
+    );
+    const searchedAt = yield* DateTime.now;
+    const receiptsNotBefore = DateTime.formatIso(
+      DateTime.subtract(searchedAt, { milliseconds: SEARCH_RECEIPT_TTL_MILLIS }),
+    );
+    const prior = yield* store
+      .receipt(input.requestId, receiptsNotBefore)
+      .pipe(Effect.mapError(storageError(input.projectId)));
+    if (
+      prior !== null &&
+      (prior.projectId !== input.projectId ||
+        prior.factId !== null ||
+        prior.digest !== requestDigest ||
+        prior.search === null)
+    ) {
+      return yield* new ProjectKnowledgeError({
+        reason: "command_reused",
         projectId: input.projectId,
-        query: input.query,
-        entities,
-        entityMatch: input.entityMatch ?? "any",
-        includeArchived: input.includeArchived ?? false,
-        minTrust,
-        ...(input.includeSuperseded ? { includeSuperseded: true } : {}),
-      }).pipe(Effect.flatMap(digest), Effect.mapError(storageError(input.projectId)));
-      const { cursor: _messageCursor, ...factInput } = input;
-      const requestDigest = yield* encodeSearch(factInput).pipe(
-        Effect.flatMap(digest),
-        Effect.mapError(storageError(input.projectId)),
-      );
-      const searchedAt = yield* DateTime.now;
-      const receiptsNotBefore = DateTime.formatIso(
-        DateTime.subtract(searchedAt, { milliseconds: SEARCH_RECEIPT_TTL_MILLIS }),
-      );
-      const prior = yield* store
-        .receipt(input.requestId, receiptsNotBefore)
+      });
+    }
+    const rootRequestId =
+      prior?.search?.rootRequestId ?? input.factCursor?.requestId ?? input.requestId;
+    const rootReceipt =
+      rootRequestId === input.requestId
+        ? prior
+        : yield* store
+            .receipt(rootRequestId, receiptsNotBefore)
+            .pipe(Effect.mapError(storageError(input.projectId)));
+    if (
+      (input.factCursor !== undefined || prior !== null) &&
+      (rootReceipt === null ||
+        rootReceipt.projectId !== input.projectId ||
+        rootReceipt.search?.ranking == null ||
+        rootReceipt.search.queryDigest !== queryDigest ||
+        (input.factCursor?.offset ?? 0) > rootReceipt.search.ranking.matches.length)
+    ) {
+      return yield* new ProjectKnowledgeError({
+        reason: "invalid_cursor",
+        projectId: input.projectId,
+      });
+    }
+    let ranking = rootReceipt?.search?.ranking ?? null;
+    if (ranking === null) {
+      const candidates = yield* store
+        .candidates(
+          input.projectId,
+          projectMemorySearchTokens(input.query),
+          entities,
+          minTrust,
+          input.includeSuperseded ?? false,
+        )
         .pipe(Effect.mapError(storageError(input.projectId)));
-      if (
-        prior !== null &&
-        (prior.projectId !== input.projectId ||
-          prior.factId !== null ||
-          prior.digest !== requestDigest ||
-          prior.search === null)
-      ) {
-        return yield* new ProjectKnowledgeError({
-          reason: "command_reused",
-          projectId: input.projectId,
-        });
-      }
-      const rootRequestId =
-        prior?.search?.rootRequestId ?? input.factCursor?.requestId ?? input.requestId;
-      const rootReceipt =
-        rootRequestId === input.requestId
-          ? prior
-          : yield* store
-              .receipt(rootRequestId, receiptsNotBefore)
-              .pipe(Effect.mapError(storageError(input.projectId)));
-      if (
-        (input.factCursor !== undefined || prior !== null) &&
-        (rootReceipt === null ||
-          rootReceipt.projectId !== input.projectId ||
-          rootReceipt.search?.ranking == null ||
-          rootReceipt.search.queryDigest !== queryDigest ||
-          (input.factCursor?.offset ?? 0) > rootReceipt.search.ranking.matches.length)
-      ) {
-        return yield* new ProjectKnowledgeError({
-          reason: "invalid_cursor",
-          projectId: input.projectId,
-        });
-      }
-      let ranking = rootReceipt?.search?.ranking ?? null;
-      if (ranking === null) {
-        const candidates = yield* (
-          recallOptions === undefined
-            ? store.candidates(
-                input.projectId,
-                projectMemorySearchTokens(input.query),
-                entities,
-                minTrust,
-                input.includeSuperseded ?? false,
-              )
-            : store.recallCandidates(
-                input.projectId,
-                projectMemorySearchTokens(input.query),
-                minTrust,
-                recallOptions.threadId,
-                recallOptions.excludeFactIds,
-              )
-        ).pipe(Effect.mapError(storageError(input.projectId)));
-        const eligible = candidates.facts.filter(
-          (fact): fact is typeof ActiveProjectFact.Type =>
-            fact.status !== "forgotten" &&
-            fact.content !== null &&
-            skip?.(fact) !== true &&
-            (entities.length === 0 ||
-              (input.entityMatch === "all"
-                ? entities.every((entity) =>
-                    fact.entities.some((value) => value.toLowerCase() === entity),
-                  )
-                : entities.some((entity) =>
-                    fact.entities.some((value) => value.toLowerCase() === entity),
-                  ))),
+      const eligible = candidates.facts.filter(
+        (fact): fact is typeof ActiveProjectFact.Type =>
+          fact.status !== "forgotten" &&
+          fact.content !== null &&
+          (entities.length === 0 ||
+            (input.entityMatch === "all"
+              ? entities.every((entity) =>
+                  fact.entities.some((value) => value.toLowerCase() === entity),
+                )
+              : entities.some((entity) =>
+                  fact.entities.some((value) => value.toLowerCase() === entity),
+                ))),
+      );
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const scored = yield* holographic
+        .scoreCandidates({
+          query: input.query,
+          now,
+          candidates: eligible.map((fact) => ({
+            id: fact.id,
+            content: fact.content,
+            entities: fact.entities,
+            tags: fact.tags,
+            trust: fact.trust,
+            updatedAt: Date.parse(fact.updatedAt),
+            retrievalCount: fact.retrievalCount,
+            ...(candidates.ranks.has(fact.id) ? { ftsRank: candidates.ranks.get(fact.id)! } : {}),
+          })),
+        })
+        .pipe(
+          Effect.map((scores) => ({ state: "available" as const, scores })),
+          Effect.catchTags({
+            HolographicMemoryError: (cause) =>
+              cause.reason === "unavailable"
+                ? Effect.succeed({ state: "unavailable" as const })
+                : Effect.fail(
+                    new ProjectKnowledgeError({
+                      reason: "scoring",
+                      projectId: input.projectId,
+                      cause,
+                    }),
+                  ),
+          }),
         );
-        const now = DateTime.toEpochMillis(yield* DateTime.now);
-        const scored = yield* holographic
-          .scoreCandidates({
-            query: input.query,
-            now,
-            candidates: eligible.map((fact) => ({
-              id: fact.id,
-              content: fact.content,
-              entities: fact.entities,
-              tags: fact.tags,
+      if (scored.state === "unavailable")
+        return { messages, facts: { state: "unavailable", reason: "kernel_unavailable" } };
+      const snapshots = new Map(eligible.map((fact) => [fact.id, fact]));
+      const matches = scored.scores.flatMap((score) => {
+        const fact = snapshots.get(ProjectFactId.make(score.id));
+        if (!fact) return [];
+        return [
+          {
+            factId: fact.id,
+            revision: fact.revision,
+            updatedAt: fact.updatedAt,
+            scoreMillionths: score.scoreMillionths,
+            score: {
+              holographic: score.holographic,
+              lexical: score.fts,
+              tokenOverlap: score.tokenOverlap,
+              temporalDecay: score.decay,
+              reinforcement: score.reinforcement,
               trust: fact.trust,
-              updatedAt: Date.parse(fact.updatedAt),
-              retrievalCount: fact.retrievalCount,
-              ...(candidates.ranks.has(fact.id) ? { ftsRank: candidates.ranks.get(fact.id)! } : {}),
-            })),
-          })
-          .pipe(
-            Effect.map((scores) => ({ state: "available" as const, scores })),
-            Effect.catchTags({
-              HolographicMemoryError: (cause) =>
-                cause.reason === "unavailable"
-                  ? Effect.succeed({ state: "unavailable" as const })
-                  : Effect.fail(
-                      new ProjectKnowledgeError({
-                        reason: "scoring",
-                        projectId: input.projectId,
-                        cause,
-                      }),
-                    ),
-            }),
-          );
-        if (scored.state === "unavailable")
-          return { messages, facts: { state: "unavailable", reason: "kernel_unavailable" } };
-        const snapshots = new Map(eligible.map((fact) => [fact.id, fact]));
-        const matches = scored.scores.flatMap((score) => {
-          const fact = snapshots.get(ProjectFactId.make(score.id));
-          if (!fact) return [];
-          return [
-            {
-              factId: fact.id,
-              revision: fact.revision,
-              updatedAt: fact.updatedAt,
-              scoreMillionths: score.scoreMillionths,
-              score: {
-                holographic: score.holographic,
-                lexical: score.fts,
-                tokenOverlap: score.tokenOverlap,
-                temporalDecay: score.decay,
-                reinforcement: score.reinforcement,
-                trust: fact.trust,
-                combined: score.score,
-              },
+              combined: score.score,
             },
-          ];
-        });
-        matches.sort(
-          (left, right) =>
-            right.scoreMillionths - left.scoreMillionths ||
-            (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0) ||
-            (left.factId < right.factId ? -1 : left.factId > right.factId ? 1 : 0),
+          },
+        ];
+      });
+      matches.sort(
+        (left, right) =>
+          right.scoreMillionths - left.scoreMillionths ||
+          (left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0) ||
+          (left.factId < right.factId ? -1 : left.factId > right.factId ? 1 : 0),
+      );
+      ranking = {
+        matches: matches.map(({ factId, revision, score }) => ({ factId, revision, score })),
+        coverage: candidates.partial ? "partial" : "complete",
+      };
+    }
+    const initialRanking = ranking;
+    const limit = input.limit ?? 20;
+    const recallable = (
+      fact: ProjectFact | undefined,
+      revision: number,
+    ): fact is typeof ActiveProjectFact.Type =>
+      fact !== undefined &&
+      fact.revision === revision &&
+      fact.status !== "forgotten" &&
+      fact.content !== null &&
+      (fact.supersededBy == null || input.includeSuperseded === true);
+    // Walks ranked positions in order and checks citations a batch at a time, so a page reads
+    // sources for about as many facts as it returns instead of for the whole ranking.
+    const resolveMatches = Effect.fn("ProjectKnowledge.resolveMatches")(function* (
+      searchReceipt: SearchReceipt | null,
+    ) {
+      const ranked = searchReceipt?.ranking ?? initialRanking;
+      const positions =
+        searchReceipt?.positions ??
+        ranked.matches.map((_, position) => position).slice(input.factCursor?.offset ?? 0);
+      // A fresh page looks one past the limit to know whether a continuation exists.
+      const take = searchReceipt === null ? limit + 1 : positions.length;
+      const resolved: Array<{
+        readonly fact: typeof ActiveProjectFact.Type;
+        readonly score: typeof KnowledgeScore.Type;
+        readonly position: number;
+      }> = [];
+      let next = 0;
+      while (resolved.length < take && next < positions.length) {
+        const batch = positions.slice(next, next + Math.max(take - resolved.length, RESOLVE_BATCH));
+        next += batch.length;
+        const current = new Map(
+          (yield* store.findMany(
+            input.projectId,
+            batch.map((position) => ranked.matches[position]!.factId),
+          )).map((fact) => [fact.id, fact]),
         );
-        ranking = {
-          matches: matches.map(({ factId, revision, score }) => ({ factId, revision, score })),
-          coverage: candidates.partial ? "partial" : "complete",
-        };
+        const candidates = batch.flatMap((position) => {
+          const match = ranked.matches[position]!;
+          const fact = current.get(match.factId);
+          return recallable(fact, match.revision) ? [{ fact, score: match.score, position }] : [];
+        });
+        const lost = new Set(
+          (yield* unavailableSources(
+            input.projectId,
+            candidates.map((candidate) => candidate.fact),
+            input.includeArchived ?? false,
+          )).map((item) => item.factId),
+        );
+        for (const candidate of candidates)
+          if (!lost.has(candidate.fact.id) && resolved.length < take) resolved.push(candidate);
       }
-      const initialRanking = ranking;
-      const limit = input.limit ?? 20;
-      const recallable = (
-        fact: ProjectFact | undefined,
-        revision: number,
-      ): fact is typeof ActiveProjectFact.Type =>
-        fact !== undefined &&
-        fact.revision === revision &&
-        fact.status !== "forgotten" &&
-        fact.content !== null &&
-        (fact.supersededBy == null || input.includeSuperseded === true);
-      // Walks ranked positions in order and checks citations a batch at a time, so a page reads
-      // sources for about as many facts as it returns instead of for the whole ranking.
-      const resolveMatches = Effect.fn("ProjectKnowledge.resolveMatches")(function* (
-        searchReceipt: SearchReceipt | null,
-      ) {
-        const ranked = searchReceipt?.ranking ?? initialRanking;
-        const positions =
-          searchReceipt?.positions ??
-          ranked.matches.map((_, position) => position).slice(input.factCursor?.offset ?? 0);
-        // A fresh page looks one past the limit to know whether a continuation exists.
-        const take = searchReceipt === null ? limit + 1 : positions.length;
-        const resolved: Array<{
-          readonly fact: typeof ActiveProjectFact.Type;
-          readonly score: typeof KnowledgeScore.Type;
-          readonly position: number;
-        }> = [];
-        let next = 0;
-        while (resolved.length < take && next < positions.length) {
-          const batch = positions.slice(
-            next,
-            next + Math.max(take - resolved.length, RESOLVE_BATCH),
-          );
-          next += batch.length;
+      return { ranked, resolved };
+    });
+    // Citation checks are reads; they run before the write transaction, which only re-reads
+    // the rows of the facts it returns.
+    const early = yield* resolveMatches(prior?.search ?? null).pipe(
+      Effect.mapError(storageError(input.projectId)),
+    );
+    return yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* requireProject(input.projectId);
+          const receipt = yield* store.receipt(input.requestId, receiptsNotBefore);
+          if (
+            receipt !== null &&
+            (receipt.projectId !== input.projectId ||
+              receipt.factId !== null ||
+              receipt.digest !== requestDigest)
+          ) {
+            return yield* new ProjectKnowledgeError({
+              reason: "command_reused",
+              projectId: input.projectId,
+            });
+          }
+          const searchReceipt = receipt?.search ?? null;
+          // A duplicate request can commit its receipt after the early read; follow it.
+          const { ranked, resolved } =
+            (searchReceipt === null) === (prior?.search == null)
+              ? early
+              : yield* resolveMatches(searchReceipt);
+          const page = searchReceipt === null ? resolved.slice(0, limit) : resolved;
           const current = new Map(
             (yield* store.findMany(
               input.projectId,
-              batch.map((position) => ranked.matches[position]!.factId),
+              page.map((match) => match.fact.id),
             )).map((fact) => [fact.id, fact]),
           );
-          const candidates = batch.flatMap((position) => {
-            const match = ranked.matches[position]!;
-            const fact = current.get(match.factId);
-            return recallable(fact, match.revision) && skip?.(fact) !== true
-              ? [{ fact, score: match.score, position }]
-              : [];
+          const selected = page.flatMap((match) => {
+            const fact = current.get(match.fact.id);
+            return recallable(fact, match.fact.revision) ? [{ ...match, fact }] : [];
           });
-          const lost = new Set(
-            (yield* unavailableSources(
+          const last = page.at(-1);
+          const nextOffset =
+            searchReceipt === null
+              ? resolved.length > page.length && last !== undefined
+                ? last.position + 1
+                : null
+              : searchReceipt.nextOffset;
+          const reinforce = receipt === null && input.recordRetrieval !== false;
+          if (reinforce)
+            yield* store.recordRetrieval(
               input.projectId,
-              candidates.map((candidate) => candidate.fact),
-              input.includeArchived ?? false,
-            )).map((item) => item.factId),
-          );
-          for (const candidate of candidates)
-            if (!lost.has(candidate.fact.id) && resolved.length < take) resolved.push(candidate);
-        }
-        return { ranked, resolved };
-      });
-      // Citation checks are reads; they run before the write transaction, which only re-reads
-      // the rows of the facts it returns.
-      const early = yield* resolveMatches(prior?.search ?? null).pipe(
-        Effect.mapError(storageError(input.projectId)),
-      );
-      if (recallOptions !== undefined)
-        return {
-          messages,
-          facts: {
-            state: "available" as const,
-            matches: selectProjectMemoryRecallMatches({
-              messages: { matches: [] },
-              facts: {
-                state: "available",
-                matches: early.resolved.map(({ fact, score }) => ({ fact, score })),
-                coverage: early.ranked.coverage,
-                nextCursor: null,
-              },
-            }),
-            coverage: early.ranked.coverage,
-            nextCursor: null,
-          },
-        };
-      return yield* sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* requireProject(input.projectId);
-            const receipt = yield* store.receipt(input.requestId, receiptsNotBefore);
-            if (
-              receipt !== null &&
-              (receipt.projectId !== input.projectId ||
-                receipt.factId !== null ||
-                receipt.digest !== requestDigest)
-            ) {
-              return yield* new ProjectKnowledgeError({
-                reason: "command_reused",
-                projectId: input.projectId,
-              });
-            }
-            const searchReceipt = receipt?.search ?? null;
-            // A duplicate request can commit its receipt after the early read; follow it.
-            const { ranked, resolved } =
-              (searchReceipt === null) === (prior?.search == null)
-                ? early
-                : yield* resolveMatches(searchReceipt);
-            const page = searchReceipt === null ? resolved.slice(0, limit) : resolved;
-            const current = new Map(
-              (yield* store.findMany(
-                input.projectId,
-                page.map((match) => match.fact.id),
-              )).map((fact) => [fact.id, fact]),
+              selected.map((match) => match.fact.id),
             );
-            const selected = page.flatMap((match) => {
-              const fact = current.get(match.fact.id);
-              return recallable(fact, match.fact.revision) ? [{ ...match, fact }] : [];
-            });
-            const last = page.at(-1);
-            const nextOffset =
-              searchReceipt === null
-                ? resolved.length > page.length && last !== undefined
-                  ? last.position + 1
-                  : null
-                : searchReceipt.nextOffset;
-            const reinforce = receipt === null && input.recordRetrieval !== false;
-            if (reinforce)
-              yield* store.recordRetrieval(
-                input.projectId,
-                selected.map((match) => match.fact.id),
-              );
-            if (receipt === null) {
-              yield* store.recordSearch(
-                input.requestId,
-                input.projectId,
-                requestDigest,
-                {
-                  rootRequestId,
-                  queryDigest,
-                  ranking: input.factCursor === undefined ? ranked : null,
-                  positions: selected.map((match) => match.position),
-                  nextOffset,
-                },
-                DateTime.formatIso(searchedAt),
-                receiptsNotBefore,
-              );
-            }
-            return {
-              messages,
-              facts: {
-                state: "available" as const,
-                matches: selected.map(({ fact, score }) => ({
-                  fact: reinforce ? { ...fact, retrievalCount: fact.retrievalCount + 1 } : fact,
-                  score,
-                })),
-                coverage: ranked.coverage,
-                nextCursor:
-                  nextOffset === null ? null : { requestId: rootRequestId, offset: nextOffset },
+          if (receipt === null) {
+            yield* store.recordSearch(
+              input.requestId,
+              input.projectId,
+              requestDigest,
+              {
+                rootRequestId,
+                queryDigest,
+                ranking: input.factCursor === undefined ? ranked : null,
+                positions: selected.map((match) => match.position),
+                nextOffset,
               },
-            };
-          }),
-        )
-        .pipe(Effect.mapError(storageError(input.projectId)));
-    },
-  );
+              DateTime.formatIso(searchedAt),
+              receiptsNotBefore,
+            );
+          }
+          return {
+            messages,
+            facts: {
+              state: "available" as const,
+              matches: selected.map(({ fact, score }) => ({
+                fact: reinforce ? { ...fact, retrievalCount: fact.retrievalCount + 1 } : fact,
+                score,
+              })),
+              coverage: ranked.coverage,
+              nextCursor:
+                nextOffset === null ? null : { requestId: rootRequestId, offset: nextOffset },
+            },
+          };
+        }),
+      )
+      .pipe(Effect.mapError(storageError(input.projectId)));
+  });
   const search: ProjectKnowledge["Service"]["search"] = (input, viewer) =>
     searchFacts(input).pipe(
       Effect.tap((result) =>
@@ -1313,10 +1254,11 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.andThen(note({ _tag: "Omitted", reason })));
       if (input.composer.records.some((record) => record.kind === "project-knowledge"))
         return yield* note({ _tag: "Skipped", reason: "hand_attached" });
-      if (input.query.trimStart().startsWith("/"))
-        return yield* note({ _tag: "Skipped", reason: "slash" });
-      if (!isSubstantiveProjectMemoryQuery(input.query))
-        return yield* note({ _tag: "Skipped", reason: "not_substantive" });
+      const trigger = recallTrigger({
+        text: input.query,
+        ...(input.notification === undefined ? {} : { notification: input.notification }),
+      });
+      if (!trigger.recall) return yield* note({ _tag: "Skipped", reason: trigger.reason });
       const factBytes = Math.min(
         RECALL_MAX_BYTES,
         Math.floor(input.knowledgeAllowance) - RECALL_ENVELOPE_BYTES,
@@ -1324,29 +1266,57 @@ const make = Effect.gen(function* () {
       if (factBytes < RECALL_MIN_BYTES)
         return yield* note({ _tag: "Skipped", reason: "no_budget" });
       const lookup = Effect.gen(function* () {
+        const text = input.query.slice(0, RECALL_MESSAGE_CHARS);
+        const messageTokens = yield* store
+          .tokenize([text])
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const terms = [...recallTerms(text, (value) => messageTokens.get(value)!)];
         const seen = yield* store
           .seenFactIds(input.projectId, input.threadId, input.turn)
           .pipe(Effect.mapError(storageError(input.projectId)));
-        const result = yield* searchFacts(
-          {
-            projectId: input.projectId,
-            requestId: input.requestId,
-            query: input.query,
-            recordRetrieval: false,
-            minTrust: 0.5,
-          },
-          {
-            skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId),
-            threadId: input.threadId,
-            excludeFactIds: [...seen],
-          },
+        const candidates = yield* store
+          .recallCandidates(
+            input.projectId,
+            terms,
+            0.5,
+            input.threadId,
+            [...seen],
+            input.candidateLimit ?? RECALL_CANDIDATE_LIMIT,
+          )
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const active = candidates.facts.flatMap((fact) =>
+          fact.status === "forgotten" || fact.content === null ? [] : [fact],
         );
-        if (result.facts.state !== "available") return yield* omit("failed");
-        const selections = result.facts.matches.map(({ fact }) => ({
-          kind: "fact" as const,
-          factId: fact.id,
-          revision: fact.revision,
-        }));
+        const tokens = yield* store
+          .tokenize(active.map((fact) => [fact.content, ...fact.entities].join(" ")))
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const tokenize = (value: string): ReadonlyArray<string> =>
+          tokens.get(value) ?? messageTokens.get(value) ?? [];
+        const allTerms = new Set(terms);
+        for (const fact of active)
+          for (const term of recallTerms([fact.content, ...fact.entities].join(" "), tokenize))
+            allTerms.add(term);
+        const counted = yield* store
+          .termStats([...allTerms], input.projectId)
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const stats: TermStats = {
+          corpusSize: counted.corpusSize,
+          docs: (term) => counted.docs.get(term) ?? 0,
+          tokenize,
+        };
+        const ranked = rankRecallCandidates(text, active, stats, input.notification);
+        const top = ranked.slice(0, 5).map((match) => ({ factId: match.fact.id }));
+        const selections = [];
+        for (const match of ranked) {
+          if (!match.passes) continue;
+          if (!(yield* sourcesAvailable(match.fact, false))) continue;
+          selections.push({
+            kind: "fact" as const,
+            factId: match.fact.id,
+            revision: match.fact.revision,
+          });
+          if (selections.length === RECALL_MAX_FACTS) break;
+        }
         const environmentId = yield* environment.getEnvironmentId;
         // Drop the weakest match until the rest resolve within the turn's knowledge budget.
         for (let count = selections.length; count > 0; count--) {
@@ -1369,13 +1339,14 @@ const make = Effect.gen(function* () {
           if (Option.isSome(resolved))
             return {
               _tag: "Attached" as const,
+              top,
               composer: {
                 text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
                 records: [...input.composer.records, record],
               },
             };
         }
-        return { _tag: "Skipped" as const, reason: "no_match" as const };
+        return { _tag: "Skipped" as const, reason: "no_match" as const, top };
       }).pipe(NodeSqliteClient.readOnly);
       return yield* lookup.pipe(
         Effect.timeoutOption(RECALL_TIMEOUT),

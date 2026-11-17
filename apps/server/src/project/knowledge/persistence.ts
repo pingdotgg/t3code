@@ -68,6 +68,14 @@ const FactRow = Schema.Struct({
 const encodeOrigin = Schema.encodeSync(Schema.fromJsonString(KnowledgeOrigin));
 const encodeFactIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ProjectFactId)));
 const encodeLabels = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeTokenRows = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      text: Schema.String,
+      tokens: Schema.fromJsonString(Schema.Array(Schema.String)),
+    }),
+  ),
+);
 const encodeSources = Schema.encodeSync(Schema.fromJsonString(Schema.Array(KnowledgeFactSource)));
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(FactRow));
 const decodeProjectFacts = Schema.decodeUnknownEffect(Schema.Array(ProjectFact));
@@ -156,9 +164,12 @@ const withoutForgotten = (
   );
 };
 
-const ftsMatch = (terms: ReadonlyArray<string>) =>
+const ftsMatch = (terms: ReadonlyArray<string>, exact = false) =>
   terms
-    .map((term) => `"${term.replaceAll('"', '""')}"${Buffer.byteLength(term) >= 4 ? "*" : ""}`)
+    .map((term) => {
+      const quoted = `"${term.replaceAll('"', '""')}"`;
+      return exact || Buffer.byteLength(term) < 4 ? quoted : `${quoted}*`;
+    })
     .join(" OR ");
 
 export const makeStore = Effect.gen(function* () {
@@ -309,22 +320,52 @@ export const makeStore = Effect.gen(function* () {
       partial: ids.length > 1000,
     };
   });
+  const tokenize = Effect.fn("ProjectKnowledgeStore.tokenize")(function* (
+    texts: ReadonlyArray<string>,
+  ) {
+    const rows = yield* sql<{ readonly text: string; readonly tokens: string }>`
+      SELECT j.value AS text,
+        (SELECT json_group_array(token) FROM project_knowledge_tokenizer WHERE input = j.value) AS tokens
+      FROM json_each(${encodeLabels([...new Set(texts)])}) j`;
+    const tokens = new Map<string, ReadonlyArray<string>>();
+    for (const row of yield* decodeTokenRows(rows)) tokens.set(row.text, row.tokens);
+    return tokens;
+  });
+  const termStats = Effect.fn("ProjectKnowledgeStore.termStats")(function* (
+    terms: ReadonlyArray<string>,
+    projectId: ProjectId,
+  ) {
+    const [count] = yield* sql<{
+      readonly n: number;
+    }>`SELECT count(*) AS n FROM project_knowledge_facts WHERE project_id=${projectId} AND status='saved' AND superseded_by_id IS NULL`;
+    const rows =
+      terms.length === 0
+        ? []
+        : yield* sql<{
+            readonly term: string;
+            readonly doc: number;
+          }>`SELECT term, doc FROM project_knowledge_recall_terms WHERE project_id=${projectId} AND ${sql.in("term", terms)}`;
+    return {
+      corpusSize: Number(count?.n ?? 0),
+      docs: new Map(rows.map((r) => [r.term, Number(r.doc)])),
+    };
+  });
   const recallCandidates = Effect.fn("ProjectKnowledgeStore.recallCandidates")(function* (
     projectId: ProjectId,
     terms: ReadonlyArray<string>,
     minTrust: number,
     threadId: ThreadId,
     excludeFactIds: ReadonlyArray<ProjectFactId>,
+    limit: number,
   ) {
-    const ftsQuery = ftsMatch(terms);
-    if (ftsQuery === "")
-      return { facts: [], ranks: new Map<ProjectFactId, number>(), partial: false };
+    const ftsQuery = ftsMatch(terms, true);
+    if (ftsQuery === "") return { facts: [], partial: false };
     const unseen =
       excludeFactIds.length === 0
         ? sql`1 = 1`
         : sql`f.id NOT IN (SELECT value FROM json_each(${encodeFactIds(excludeFactIds)}))`;
-    const rows = yield* sql<{ readonly id: ProjectFactId; readonly rank: number }>`
-      SELECT f.id, bm25(project_knowledge_fts) AS rank
+    const rows = yield* sql<{ readonly id: ProjectFactId }>`
+      SELECT f.id
       FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
       WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
         AND f.status = 'saved' AND f.trust >= ${minTrust} AND f.superseded_by_id IS NULL
@@ -338,13 +379,17 @@ export const makeStore = Effect.gen(function* () {
           WHERE json_extract(source.value, '$.kind') = 'message'
             AND json_extract(source.value, '$.threadId') = ${threadId}
         )
-      ORDER BY rank ASC, f.trust DESC, f.updated_at DESC, f.id ASC LIMIT 40`;
+      ORDER BY f.trust DESC, f.updated_at DESC, f.id ASC LIMIT ${limit}`;
+    const loaded = yield* findMany(
+      projectId,
+      rows.map((row) => row.id),
+    );
+    const byId = new Map(loaded.map((fact) => [fact.id, fact]));
     return {
-      facts: yield* findMany(
-        projectId,
-        rows.map((row) => row.id),
-      ),
-      ranks: new Map(rows.map((row) => [row.id, row.rank])),
+      facts: rows.flatMap((row) => {
+        const fact = byId.get(row.id);
+        return fact === undefined ? [] : [fact];
+      }),
       partial: false,
     };
   });
@@ -812,6 +857,8 @@ export const makeStore = Effect.gen(function* () {
     record,
     recordSearch,
     candidates,
+    tokenize,
+    termStats,
     recallCandidates,
     similar,
     findDuplicateContent,
