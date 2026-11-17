@@ -514,6 +514,55 @@ const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(functi
   return { threadId, completedAt, snoozedUntil };
 });
 
+it.effect("a settled thread snoozed for later wakes into the active list", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    for (const wake of ["expiry", "manual"] as const) {
+      const { threadId, snoozedUntil } = yield* completeAndSnoozeThread(`settled-${wake}`, 60);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle-before-${wake}`),
+        threadId,
+      });
+      yield* TestClock.adjust("1 second");
+      const remindedAt = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`remind-settled-${wake}`),
+        threadId,
+        snoozedUntil: DateTime.formatIso(snoozedUntil),
+      });
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        settledOverride: "active",
+        settledAt: null,
+        unsettledAt: remindedAt,
+        snoozedAt: remindedAt,
+        snoozedUntil,
+      });
+      yield* TestClock.adjust("1 second");
+      const manuallyWokenAt = yield* DateTime.now;
+      if (wake === "expiry") {
+        yield* TestClock.adjust("61 minutes");
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.unsnooze",
+          commandId: CommandId.make(`wake-settled-${wake}`),
+          threadId,
+          reason: "user",
+        });
+      }
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        settledOverride: "active",
+        settledAt: null,
+        unsettledAt: remindedAt,
+        snoozedUntil: wake === "expiry" ? snoozedUntil : null,
+        ...(wake === "manual" ? { lastSnoozeWakeAt: manuallyWokenAt } : {}),
+      });
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("mark unread retires an expired snooze so a dismissed wake stays dismissed", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2204,7 +2253,6 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
       creationSource: "web",
     });
     const now = yield* DateTime.now;
-    const settledAt = DateTime.add(now, { seconds: 1 });
     const snoozedUntil = DateTime.add(now, { hours: 1 });
     for (const round of [1, 2]) {
       yield* orchestrator.dispatch({
@@ -2220,9 +2268,10 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
       yield* TestClock.adjust("1 second");
       const commandId = CommandId.make(`settle-snoozed-${round}`);
       yield* orchestrator.dispatch({ type: "thread.settle", commandId, threadId });
+      // Snoozing settled work leaves Settled, so round 2 settles anew.
       const expected = {
         settledOverride: "settled",
-        settledAt,
+        settledAt: yield* DateTime.now,
         snoozedUntil: null,
         snoozedAt: null,
         updatedAt: yield* DateTime.now,

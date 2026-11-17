@@ -115,8 +115,11 @@ function useThreadActionExecutor(
   const executeAction = async (
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
-    onStarted?: () => void,
-    restoreUnsettledAt?: string | null,
+    options?: {
+      readonly onStarted?: () => void;
+      readonly settledAt?: string;
+      readonly restoreUnsettledAt?: string | null;
+    },
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -147,7 +150,7 @@ function useThreadActionExecutor(
         return false;
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
-      onStarted?.();
+      options?.onStarted?.();
       const result = await withThreadDismissal(
         key,
         async () =>
@@ -159,7 +162,9 @@ function useThreadActionExecutor(
                 input: {
                   threadId: thread.id,
                   reason: "user",
-                  ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
+                  ...(options?.restoreUnsettledAt === undefined
+                    ? {}
+                    : { restoreUnsettledAt: options.restoreUnsettledAt }),
                 },
               })
             : await (
@@ -172,7 +177,12 @@ function useThreadActionExecutor(
                       : deleteMutation
               )({
                 environmentId: thread.environmentId,
-                input: { threadId: thread.id },
+                input: {
+                  threadId: thread.id,
+                  ...(action === "settle" && options?.settledAt !== undefined
+                    ? { settledAt: options.settledAt }
+                    : {}),
+                },
               }),
         (result) => result._tag === "Success",
       );
@@ -269,6 +279,14 @@ export function useThreadListActions(): {
             plan,
             async (step) => {
               switch (step.action) {
+                case "settle":
+                  return (
+                    (await executeAction(
+                      "settle",
+                      thread,
+                      step.settledAt === undefined ? {} : { settledAt: step.settledAt },
+                    )) === true
+                  );
                 case "unsettle":
                   return unsettleThread(thread, step.restoreUnsettledAt);
                 case "unsnooze":
@@ -317,10 +335,12 @@ export function useThreadListActions(): {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
-    const succeeded = await executeAction("settle", thread, () => {
-      ThreadUndo.invalidate("pin", key);
-      ThreadUndo.invalidate("snooze", key);
-      claim = ThreadUndo.begin("settle", key);
+    const succeeded = await executeAction("settle", thread, {
+      onStarted: () => {
+        ThreadUndo.invalidate("pin", key);
+        ThreadUndo.invalidate("snooze", key);
+        claim = ThreadUndo.begin("settle", key);
+      },
     });
     if (claim) {
       if (succeeded) offerUndo(thread, "Settled", claim, plan);
@@ -378,7 +398,7 @@ export function useThreadListActions(): {
         );
         return false;
       }
-      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
+      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze", thread));
       return true;
     })();
     snoozeInFlightThreadKeys.current.delete(key);
@@ -429,7 +449,12 @@ export function useThreadListActions(): {
   const unsettleThread = async (
     thread: EnvironmentThreadShell,
     restoreUnsettledAt?: string | null,
-  ) => (await executeAction("unsettle", thread, undefined, restoreUnsettledAt)) === true;
+  ) =>
+    (await executeAction(
+      "unsettle",
+      thread,
+      restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt },
+    )) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {
