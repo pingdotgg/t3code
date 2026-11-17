@@ -236,6 +236,7 @@ function ConversationCard({
   reactions,
   showPath = true,
   reply = false,
+  resolveButton = null,
 }: {
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
@@ -245,6 +246,7 @@ function ConversationCard({
   showPath?: boolean;
   /** A reply goes with its conversation, from the card that heads it. */
   reply?: boolean;
+  resolveButton?: ReactNode;
 }) {
   const canReact = reactions.canReact(event);
   const [editing, setEditing] = useState(false);
@@ -304,6 +306,7 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
+          {resolveButton}
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
@@ -477,60 +480,46 @@ function ReviewThreadEvent({
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
-      <div className="flex min-w-0 items-center gap-1">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {thread.path === null ? (
-            <span className="min-w-0 truncate">Overview</span>
-          ) : (
-            <>
-              <FileCode2Icon aria-hidden className="size-3 shrink-0" />
-              <span className="min-w-0 truncate font-mono">
-                {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
-              </span>
-            </>
-          )}
-          {thread.isResolved ? (
-            <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
-              <CircleCheckIcon aria-hidden className="size-3" />
-              Resolved
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        {thread.path === null ? (
+          <span className="min-w-0 truncate">Overview</span>
+        ) : (
+          <>
+            <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+            <span className="min-w-0 truncate font-mono">
+              {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
             </span>
-          ) : null}
-          {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
-          {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
-          {expanded ? null : (
-            <span className="shrink-0">
-              · {event.actor?.login ?? "ghost"}
-              {replyCount > 0 ? (
-                <>
-                  {" "}
-                  · {replyCount.toLocaleString()} {replyCount === 1 ? "reply" : "replies"}
-                </>
-              ) : null}
-            </span>
-          )}
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              "ml-auto size-3.5 shrink-0 transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </button>
-        {expanded ? (
-          <PullRequestResolveThreadButton
-            environmentId={reactions.environmentId}
-            reference={reactions.reference}
-            detail={detail}
-            thread={thread}
-            onRefresh={reactions.onRefresh}
-          />
+          </>
+        )}
+        {thread.isResolved ? (
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
+            <CircleCheckIcon aria-hidden className="size-3" />
+            Resolved
+          </span>
         ) : null}
-      </div>
+        {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
+        {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+        {expanded ? null : (
+          <span className="shrink-0">
+            · {event.actor?.login ?? "ghost"}
+            {replyCount > 0 ? (
+              <>
+                {" "}
+                · {replyCount.toLocaleString()} {replyCount === 1 ? "reply" : "replies"}
+              </>
+            ) : null}
+          </span>
+        )}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
+        />
+      </button>
       {expanded ? (
         <>
           <ConversationCard
@@ -540,6 +529,15 @@ function ReviewThreadEvent({
             onOpen={onOpen}
             reactions={reactions}
             showPath={false}
+            resolveButton={
+              <PullRequestResolveThreadButton
+                environmentId={reactions.environmentId}
+                reference={reactions.reference}
+                detail={detail}
+                thread={thread}
+                onRefresh={reactions.onRefresh}
+              />
+            }
           />
           {thread.replies.length > 0 ? (
             <div className="ml-2 space-y-1 border-l border-border/60 pl-3">
