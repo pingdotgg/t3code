@@ -19,7 +19,7 @@ Build desktop artifacts with `--brand dulli`; omitting the flag retains upstream
 | Updates                          | `YJJosh/t3dulli` prereleases                |
 | Default T3 home                  | `~/.t3-dulli`                               |
 
-The fork never claims upstream's `t3code://` callbacks. Its Chromium profile is `t3-dulli` under the platform's application-data directory, separate from upstream profiles. Its systemd service is `t3-dulli.service`; its launchd label is `com.yjjosh.t3dulli.service`. The npm CLI and desktop shim both use `t3`, matching the old fork. Choose which installation owns `t3` on PATH; the desktop installer refuses to replace a foreign command and only removes its own shim.
+The fork never claims upstream's `t3code://` callbacks. Its Chromium profile is `t3-dulli` under the platform's application-data directory, separate from upstream profiles. Its systemd service is `t3-dulli.service`, its launchd label is `com.yjjosh.t3dulli.service`, and its Windows task is `t3-dulli-<domain>-<user name>`. The npm CLI and desktop shim both use `t3`, matching the old fork. Choose which installation owns `t3` on PATH; the desktop installer refuses to replace a foreign command and only removes its own shim.
 
 Existing fork userdata stays in `~/.t3-dulli/userdata`. `T3CODE_HOME` and `--base-dir` still override the home explicitly. Never test against either live `~/.t3/userdata` or `~/.t3-dulli/userdata`: copy read-only snapshots into the worktree's `.t3` instead. Dev uses isolated worktree state, not the installed application's data.
 
