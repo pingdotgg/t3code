@@ -194,6 +194,12 @@ describe("scrubFeedback", () => {
     expect(scrubFeedback("Project\nAurora Labs, Aurora Labs", ["Project\nAurora Labs"])).toBe(
       "[redacted]\n[redacted], [redacted]",
     );
+    expect(scrubFeedbackText("Q1\nX", ["Q1\nX"], 1_000).text).toBe("[redacted]\n[redacted]");
+    expect(scrubFeedbackText("Aurora\nX", ["Aurora\nX"], 1_000).text).toBe(
+      "[redacted]\n[redacted]",
+    );
+    // A standalone value under three characters still redacts nothing.
+    expect(scrubFeedback("Q1 and X", ["Q1", "X"])).toBe("Q1 and X");
     const reply = Array.from({ length: 100 }, (_, index) => `Line ${index} of the reply.`).join(
       "\n",
     );

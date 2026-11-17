@@ -98,12 +98,17 @@ export function scrubFeedbackText(
   if (next !== undefined && next !== "\n") {
     scrubbed = `${scrubbed.slice(0, scrubbed.lastIndexOf("\n") + 1)}${REDACTED}`;
   }
-  // Split on line breaks so no known value can match across lines.
+  // Values under three characters would redact ordinary words. A value that holds line breaks is
+  // matched line by line, every line however short, so no known value can match across lines.
   const known = [
-    ...new Set(sensitive.flatMap((value) => value.split("\n").map((line) => line.trim()))),
-  ]
-    .filter((value) => value.length >= 3)
-    .map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
+    ...new Set(
+      sensitive
+        .map((value) => value.trim())
+        .filter((value) => value.length >= 3)
+        .flatMap((value) => value.split("\n").map((line) => line.trim()))
+        .filter((line) => line.length > 0),
+    ),
+  ].map((value) => new RegExp(`(?<![A-Za-z0-9_])${escapeRegExp(value)}(?![A-Za-z0-9_])`, "gu"));
   // Secrets and known values on the original text, before either can break the other's match.
   scrubbed = redactAll(scrubbed, [CREDENTIAL_URL, TOKEN_PREFIX, JWT, EMAIL, ...known])
     .replaceAll(QUOTED_PATH, (quoted) => `${quoted[0]}${REDACTED}${quoted[0]}`)
