@@ -8271,7 +8271,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const scenario = "mcp-resource-thread-recovery";
         const nativeThreadId = `native-${scenario}`;
+        const providerSettings = {
+          _tag: "codex",
+          id: "lean",
+          settings: { features: { memories: false } },
+        } as const;
+        const threadConfig = { ...CodexAdapterV2.CODEX_THREAD_CONFIG, "features.memories": false };
         const preamble = codexReplayPreamble({
+          threadConfig,
           nativeThreadId,
           nativeTurnId: "unused-turn",
           prompt: "unused-prompt",
@@ -8325,7 +8332,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 params: {
                   threadId: nativeThreadId,
                   excludeTurns: true,
-                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  config: threadConfig,
                 },
               },
             },
@@ -8360,7 +8367,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
 
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          providerSettings,
+        );
         const mcpApps = harness.runtime.mcpApps;
         assert.ok(mcpApps, "Codex runtime should expose MCP apps");
 

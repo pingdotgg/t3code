@@ -7806,6 +7806,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   resumeNativeThread(threadId, {
                     excludeTurns: true,
                     ...codexThreadRuntimeParams({
+                      profileConfig: profile.config,
                       threadId: providerThread.appThreadId,
                       mcpSession,
                       modelSelection: input.modelSelection,
