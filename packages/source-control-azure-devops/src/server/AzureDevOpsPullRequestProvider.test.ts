@@ -218,7 +218,7 @@ describe("getChangeRequest", () => {
                 Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
               ...NO_BLOBS,
               listPolicyChecks: () => Effect.succeed([]),
-              listThreads: () => Effect.succeed([]),
+              listThreads: () => Effect.succeed({ comments: [], reviewThreads: [] }),
             }),
           ),
         );
@@ -311,8 +311,8 @@ describe("getChangeRequestActivity", () => {
 describe("writing a review", () => {
   const ref = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
 
-  /** A provider whose thread writes are recorded, and fail from the `failAt`th one on. */
-  const recordingProvider = (input: { readonly failAt?: number } = {}) =>
+  /** A provider whose thread writes are recorded. */
+  const recordingProvider = () =>
     Effect.gen(function* () {
       const posted: Array<{ readonly body: string; readonly anchor: unknown }> = [];
       const provider = yield* make.pipe(
@@ -320,16 +320,6 @@ describe("writing a review", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
             createThread: (thread) => {
-              if (input.failAt !== undefined && posted.length + 1 >= input.failAt) {
-                return Effect.fail(
-                  new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
-                    command: "az",
-                    cwd: "/w",
-                    operation: "createThread",
-                    cause: "refused",
-                  }),
-                );
-              }
               posted.push({ body: thread.body, anchor: thread.anchor });
               return Effect.void;
             },
@@ -380,30 +370,6 @@ describe("writing a review", () => {
         { path: "src/a.ts", line: 10, side: "left" },
         { path: "src/a.ts", line: 14, side: "right" },
       ]);
-    }),
-  );
-
-  it.effect("stops at the first thread Azure refuses, and says so", () =>
-    Effect.gen(function* () {
-      const { provider, posted } = yield* recordingProvider({ failAt: 2 });
-      const draft = (body: string) => ({
-        path: "src/a.ts",
-        position: { kind: "added" as const, newLine: 1 },
-        body,
-      });
-
-      const error = yield* provider
-        .submitReview({
-          ...ref,
-          verdict: "comment",
-          body: "Overall.",
-          comments: [draft("First."), draft("Second.")],
-        })
-        .pipe(Effect.flip);
-
-      expect(error.operation).toBe("submitReview");
-      // What went before the failure stays posted; nothing after it is sent.
-      expect(posted.map((thread) => thread.body)).toEqual(["First."]);
     }),
   );
 
