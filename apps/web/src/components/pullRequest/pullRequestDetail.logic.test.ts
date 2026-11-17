@@ -1131,6 +1131,16 @@ describe("adding a remark to the chat", () => {
     expect(context?.text).toBe("octocat: Why not reuse the existing parser?");
   });
 
+  it("keeps a review summary longer than a fix finding's bound whole", () => {
+    const summary = `No critical issues. ${"One misplaced doc comment inline. ".repeat(80)}End.`;
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", summary),
+    });
+
+    expect(context?.text).toBe(`octocat: ${summary.trim()}`);
+  });
+
   it("keeps every added remark when a later hand-off lands", () => {
     const added = ["c1", "c2"].flatMap(
       (id) =>
