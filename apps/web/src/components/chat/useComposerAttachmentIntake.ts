@@ -18,6 +18,7 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
+import type { PendingUserInputProgress } from "../../pendingUserInput";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -28,6 +29,7 @@ import {
   classifyComposerAttachmentFile,
   composerFileAttachmentMimeType,
   composerImageSourceKey,
+  readComposerImageBytes,
   normalizeComposerImageFileMimeType,
   rememberComposerImageSource,
 } from "./composerAttachmentFiles";
@@ -62,7 +64,7 @@ import {
  */
 export function useComposerAttachmentIntake(input: {
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
-  readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
+  readonly activePendingProgress: PendingUserInputProgress | null;
   readonly activePendingIsResponding: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
@@ -289,6 +291,7 @@ export function useComposerAttachmentIntake(input: {
         continue;
       }
       await inheritComposerImageThumbnail(file, result.file);
+      await readComposerImageBytes(result.file);
       rememberComposerImageSource(file, result.file);
       compressed.push({ id, file: result.file });
     }

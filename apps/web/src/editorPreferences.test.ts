@@ -88,3 +88,25 @@ it.each(["read", "write"] as const)(
     });
   },
 );
+
+it.each([
+  ["file:///work/read%20me.md", "/work/read me.md", {}],
+  [
+    "file://foreign/share/read%20me.md:12#L5",
+    String.raw`\\foreign\share\read me.md:12`,
+    { line: 5 },
+  ],
+  ["file:///work/report.txt:12", "/work/report.txt:12", {}],
+  ["file:///work/report.txt:12#L5C3", "/work/report.txt:12", { line: 5, column: 3 }],
+])(
+  "sends a plain exact path for %s to compatible and older servers",
+  async (uri, cwd, position) => {
+    state.allowed.add(secondary);
+    const open = useOpenInPreferredEditor(secondary, ["vscode"]);
+    await open(uri);
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: secondary,
+      input: { cwd, position, editor: "vscode" },
+    });
+  },
+);

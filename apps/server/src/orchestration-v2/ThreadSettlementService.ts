@@ -700,13 +700,13 @@ export const make = Effect.gen(function* () {
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
       const settled = yield* projections.getThread(threadId);
-      if (settled.settledOverride !== "settled") return;
+      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
-      // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
+      // Recheck after closing and worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
-      if (thread.settledOverride !== "settled") return;
+      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // The parent's worktree belongs to the parent; shared-worktree children

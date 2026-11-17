@@ -1,6 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import {
   applyPendingPullRequestReactions,
+  type PendingPullRequestReaction,
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
@@ -26,7 +27,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
-const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
+const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction> =
+  new Map();
 const PILL = "min-h-8 flex-row items-center gap-1 rounded-full border px-2.5 active:opacity-70";
 
 function ReactionPills(props: {
@@ -45,7 +47,8 @@ function ReactionPills(props: {
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(props.reactions, values);
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
-    setPending({ signature, values: new Map([...values, [content, reacted]]) });
+    const entry: PendingPullRequestReaction = { reacted };
+    setPending({ signature, values: new Map([...values, [content, entry]]) });
     const result = await setReaction({
       ...target,
       input: {
@@ -57,6 +60,7 @@ function ReactionPills(props: {
     });
     if (AsyncResult.isFailure(result)) {
       setPending((current) => {
+        if (current.values.get(content) !== entry) return current;
         const next = new Map(current.values);
         next.delete(content);
         return { signature: current.signature, values: next };

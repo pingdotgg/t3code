@@ -46,7 +46,7 @@ export function useGuideDiffFiles({
   const pageAtom = (cursor: string | null) =>
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(cursor === null ? {} : { cursor }) },
+      input: { ...reference, cacheHeadSha: headSha, ...(cursor === null ? {} : { cursor }) },
     });
   const loading = isMissing(current) && !current.done;
   const query = useEnvironmentQuery(loading ? pageAtom(current.cursor) : null);

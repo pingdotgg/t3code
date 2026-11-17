@@ -89,6 +89,7 @@ export type OpenCodeOrchestratorReplayHarnessError =
 
 function replayValueMatches(expected: unknown, actual: unknown): boolean {
   if (expected === "<any>" || expected === "<workspace>") return true;
+  if (expected === "<string>") return typeof actual === "string" && actual.length > 0;
   if (Array.isArray(expected)) {
     return (
       Array.isArray(actual) &&

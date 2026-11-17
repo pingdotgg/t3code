@@ -222,6 +222,19 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.apply-thread-title":
+            return providerTurnControl
+              .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-turn.start":
             return startRun(effect, effect.request.runId, willRetry).pipe(
               Effect.mapError(

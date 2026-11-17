@@ -7,6 +7,7 @@ import { useState } from "react";
 import { AsyncResult } from "effect/reactivity";
 
 import { APP_VERSION } from "~/branding";
+import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import { useEnvironments } from "~/state/environments";
 import { npmReleaseAtom, npmReleaseFailureMessage } from "~/state/npmRelease";
@@ -104,6 +105,7 @@ function SwitchPlan({
       databaseMigration: environment.serverConfig?.environment.databaseMigration,
     })),
     window.desktopBridge?.getLocalEnvironmentBootstraps().length ?? 0,
+    !isLocalEnvironmentDisabled(),
   );
 
   const run = async () => {

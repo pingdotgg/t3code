@@ -561,9 +561,7 @@ function isOwnedPastedImageUri(uri: string): boolean {
       return false;
     }
     const segments = url.pathname.split("/").filter(Boolean);
-    return (
-      segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY && segments.at(-1)?.endsWith(".png") === true
-    );
+    return segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY;
   } catch {
     return false;
   }

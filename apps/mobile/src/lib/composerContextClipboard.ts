@@ -253,6 +253,11 @@ async function persistImportedAttachment(
     sizeBytes: new File(fileUri).size,
   };
   return record.kind === "image"
-    ? { ...common, type: "image", previewUri: fileUri }
+    ? {
+        ...common,
+        type: "image",
+        previewUri: fileUri,
+        ...(record.source ? { source: record.source } : {}),
+      }
     : { ...common, type: "file" };
 }

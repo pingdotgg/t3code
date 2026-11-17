@@ -149,6 +149,23 @@ function fillGhosttyRunText(
   }
 }
 
+// Draws in the current fill style, so a block cursor can redraw them in its text colour.
+function fillCellDecorations(
+  context: CanvasRenderingContext2D,
+  cell: GhosttyCell,
+  underline: boolean,
+  left: number,
+  top: number,
+  width: number,
+  metrics: GhosttyCellMetrics,
+): void {
+  if (underline) context.fillRect(left, top + metrics.height - 2, width, 1);
+  if (cell.strikethrough) {
+    context.fillRect(left, top + Math.floor(metrics.height * 0.55), width, 1);
+  }
+  if (cell.overline) context.fillRect(left, top + 1, width, 1);
+}
+
 function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): string {
   const style = cell.italic ? "italic" : "normal";
   const weight = cell.bold ? "700" : "400";
@@ -344,24 +361,25 @@ export function renderGhosttySnapshot(options: {
 
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
+      if (!cell || cell.invisible) continue;
       const hoveredLink =
         hoveredLinkRange !== null &&
         rowIndex >= hoveredLinkRange.start.y &&
         rowIndex <= hoveredLinkRange.end.y &&
         (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) &&
         (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
-      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
-        continue;
-      }
+      if (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink) continue;
       context.fillStyle = cssColor(cell.foreground);
       const left = padding + column * metrics.width;
-      if (cell.underline || hoveredLink) {
-        context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
-      }
-      if (cell.strikethrough) {
-        context.fillRect(left, top + Math.floor(metrics.height * 0.55), metrics.width, 1);
-      }
-      if (cell.overline) context.fillRect(left, top + 1, metrics.width, 1);
+      fillCellDecorations(
+        context,
+        cell,
+        cell.underline || hoveredLink,
+        left,
+        top,
+        metrics.width,
+        metrics,
+      );
     }
   }
 
@@ -383,8 +401,8 @@ export function renderGhosttySnapshot(options: {
     } else {
       const cell = cells[snapshot.cursorX];
       context.fillRect(left, top, width, height);
-      if (cell?.text) {
-        context.fillStyle = cssColor(snapshot.background);
+      context.fillStyle = cssColor(snapshot.background);
+      if (cell?.text && !cell.invisible) {
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
@@ -398,6 +416,9 @@ export function renderGhosttySnapshot(options: {
           );
           context.textAlign = "start";
         }
+      }
+      if (cell && !cell.invisible) {
+        fillCellDecorations(context, cell, cell.underline, left, top, width, metrics);
       }
     }
   }

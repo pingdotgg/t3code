@@ -18,6 +18,7 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
   SnapShotAccessibilityData,
+  SnapShotCopyButton,
   SnapShotContentsButton,
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
@@ -277,6 +278,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               ) : item.source ? (
                 <SnapShotContentsButton source={item.source} side="top" />
               ) : null}
+              {item.onCopySnapshot && (
+                <div className="-my-1.5">
+                  <SnapShotCopyButton onCopy={item.onCopySnapshot} />
+                </div>
+              )}
             </div>
           </div>
         </MediaActions>

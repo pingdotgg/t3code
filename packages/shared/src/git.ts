@@ -9,6 +9,8 @@ import type {
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 
+import { foldLatinDiacritics } from "./path.ts";
+
 export const WORKTREE_BRANCH_PREFIX = "t3";
 const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
 const TEMP_WORKTREE_UUID_V4_TOKEN =
@@ -18,9 +20,7 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
 );
 
 export function sanitizeBranchFragment(raw: string): string {
-  const normalized = raw
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+  const normalized = foldLatinDiacritics(raw)
     .trim()
     .toLowerCase()
     .replace(/['"`]/g, "")
@@ -283,8 +283,7 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
-  for (const rawLine of joined.split(/\r?\n/)) {
+  for (const rawLine of gitConfigLines(configText)) {
     let line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,

@@ -166,12 +166,25 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
+const isLoopbackIpAddress = (address: string): boolean =>
+  (NodeNet.isIPv4(address) && address.startsWith("127.")) || address === "::1";
+
+// A loopback peer is a local reverse proxy (Tailscale Serve); trust only the entry it appended.
+function resolveClientIpAddress(request: HttpServerRequest.HttpServerRequest): string | undefined {
+  const peer = readRemoteAddressFromSource(request.source);
+  if (!peer || !isLoopbackIpAddress(peer)) {
+    return peer;
+  }
+  const forwarded = normalizeIpAddress(request.headers["x-forwarded-for"]?.split(",").at(-1));
+  return forwarded && NodeNet.isIP(forwarded) !== 0 ? forwarded : peer;
+}
+
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly presented?: AuthClientPresentationMetadata;
 }): AuthClientMetadata {
   const userAgent = normalizeNonEmptyString(input.request.headers["user-agent"]);
-  const ipAddress = readRemoteAddressFromSource(input.request.source);
+  const ipAddress = resolveClientIpAddress(input.request);
   const os = input.presented?.os ?? inferOs(userAgent);
   const browser = inferBrowser(userAgent);
   return {
