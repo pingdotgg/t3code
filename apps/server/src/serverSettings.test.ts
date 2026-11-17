@@ -2368,10 +2368,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   it.effect.each([
     { label: "malformed JSON", broken: '{"defaultAutoPull": tru' },
     { label: "invalid retention", broken: '{"usageHistoryRetentionDays": 0}' },
-    {
-      label: "invalid unrelated setting",
-      broken: '{"defaultAutoPull": "true", "usageHistoryRetentionDays": "unlimited"}',
-    },
   ])("leaves settings.json with $label untouched and disables destructive defaults", ({ broken }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

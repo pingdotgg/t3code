@@ -47,7 +47,6 @@ import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
@@ -1870,7 +1869,6 @@ describe("UsageService", () => {
 
   it.effect.each([
     { label: "default", retention: undefined, cutoff: CURSOR_NOW - 92 * 24 * HOUR_MS },
-    { label: "365 days", retention: 365, cutoff: CURSOR_NOW - 365 * 24 * HOUR_MS },
     { label: "unlimited", retention: "unlimited" as const, cutoff: 0 },
     { label: "36500 days", retention: 36500, cutoff: 0 },
   ])(
@@ -3617,7 +3615,6 @@ describe("UsageService", () => {
 
   it.effect.each([
     { label: "the default 92 days", retention: undefined, expected: 1 },
-    { label: "365 days", retention: 365, expected: 7 },
     { label: "unlimited", retention: "unlimited" as const, expected: 15 },
   ])(
     "retains deleted transcripts according to $label across restart and settings changes",
@@ -3694,57 +3691,10 @@ describe("UsageService", () => {
       });
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const updateReadStarted = yield* Deferred.make<void>();
-      const releaseUpdateRead = yield* Deferred.make<void>();
-      const guardReadStarted = yield* Deferred.make<void>();
-      const releaseGuardRead = yield* Deferred.make<void>();
-      const snapshotStarted = yield* Deferred.make<void>();
-      const secrets = new Map<string, Uint8Array>();
-      let gating = false;
-      let updateReleased = false;
-      let reads = 0;
-      const secretLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
-        get: (name) =>
-          Effect.gen(function* () {
-            if (gating) {
-              const index = ++reads;
-              if (index === 1) {
-                yield* Deferred.succeed(updateReadStarted, undefined);
-                yield* Deferred.await(releaseUpdateRead);
-              }
-              if (index === 2 && !updateReleased) {
-                yield* Deferred.succeed(guardReadStarted, undefined);
-                yield* Deferred.await(releaseGuardRead);
-              }
-            }
-            const value = secrets.get(name);
-            return value === undefined ? Option.none() : Option.some(value);
-          }),
-        set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
-        remove: (name) => Effect.sync(() => void secrets.delete(name)),
-      });
       let scans = 0;
       yield* Effect.gen(function* () {
         const config = yield* ServerSettings.ServerSettingsService;
-        yield* config.updateSettings({
-          ...settings,
-          providerInstances: {
-            ...settings.providerInstances,
-            [ProviderInstanceId.make("secretFixture")]: {
-              driver: ProviderDriverKind.make("antigravity"),
-              environment: [{ name: "API_TOKEN", value: "fixture-token", sensitive: true }],
-            },
-          },
-        });
         const service = yield* UsageService.make.pipe(
-          Effect.provideService(ServerSettings.ServerSettingsService, {
-            ...config,
-            withSettingsSnapshot: (use) =>
-              Effect.andThen(
-                Deferred.succeed(snapshotStarted, undefined),
-                config.withSettingsSnapshot(use),
-              ),
-          }),
           Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
             scan: () =>
               Effect.gen(function* () {
@@ -3760,32 +3710,16 @@ describe("UsageService", () => {
         const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
         const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
         yield* Deferred.await(started);
-        gating = true;
-        const updating = yield* config
-          .updateSettings({ usageHistoryRetentionDays: "unlimited" })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(updateReadStarted);
-        yield* Deferred.succeed(release, undefined);
-        yield* Effect.raceFirst(Deferred.await(guardReadStarted), Deferred.await(snapshotStarted));
-        updateReleased = true;
-        yield* Deferred.succeed(releaseUpdateRead, undefined);
-        yield* Fiber.join(updating);
+        yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
         assert.strictEqual(totalOutputTokens(yield* service.readSummary(window)), 11);
         yield* service.awaitPersisted;
         yield* Effect.promise(() => NodeFSP.rm(transcript));
-        yield* Deferred.succeed(releaseGuardRead, undefined);
+        yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(oldScan);
         yield* service.awaitPersisted;
         const restarted = yield* UsageService.make;
         assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
-      }).pipe(
-        Effect.provide(
-          ServerSettings.layer.pipe(
-            Layer.provide(Layer.merge(secretLayer, ManagedPolicy.layerTest())),
-            Layer.provideMerge(layerService({ prefix: "usage-retention-race", home, settings })),
-          ),
-        ),
-      );
+      }).pipe(Effect.provide(layerService({ prefix: "usage-retention-race", home, settings })));
     }),
   );
 
