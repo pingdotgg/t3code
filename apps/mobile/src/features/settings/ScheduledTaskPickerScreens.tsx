@@ -1,8 +1,10 @@
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
-import { FlatList, Platform } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -65,6 +67,7 @@ export function ScheduledTaskModelPickerRouteScreen() {
     <ThreadSettingsPickerScreen
       environmentId={editor.environmentId}
       projectId={projectId}
+      cwd={null}
       providerGroups={providerGroups}
       selectedModel={selectedModel}
       prompt={editor.draft.prompt}
@@ -237,9 +240,13 @@ export function ScheduledTaskThreadPickerRouteScreen() {
 
   return (
     <SettingsScreen title="Destination" search={search}>
-      <FlatList
+      <LegendList
+        renderScrollComponent={NativeScrollView}
         data={rows}
         keyExtractor={(row) => row.key}
+        extraData={selectedKey}
+        estimatedItemSize={56}
+        recycleItems
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
         automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
