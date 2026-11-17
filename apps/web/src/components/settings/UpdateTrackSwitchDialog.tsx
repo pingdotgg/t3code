@@ -27,16 +27,16 @@ import {
   nothingToMove,
   prepareLocalTrackSwitch,
 } from "./updateTrackSwitch.logic";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 /** Moves this app and every connected machine to `channel`. */
@@ -56,15 +56,15 @@ export function UpdateTrackSwitchDialog({
   }
   const label = channelSwitchLabel(channel, m);
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
-      <AlertDialogPopup>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup role="alertdialog" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>
             <T>
               Switch to <Var>{label}</Var>
             </T>
-          </AlertDialogTitle>
-          <AlertDialogDescription>
+          </DialogTitle>
+          <DialogDescription className="wrap-anywhere">
             {AsyncResult.isFailure(release)
               ? npmReleaseFailureMessage(release.cause, m)
               : AsyncResult.isSuccess(release)
@@ -75,15 +75,15 @@ export function UpdateTrackSwitchDialog({
                     },
                   )
                 : gt("Checking releases…")}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>
-          </AlertDialogClose>
-        </AlertDialogFooter>
-      </AlertDialogPopup>
-    </AlertDialog>
+          </DialogClose>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
