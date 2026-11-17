@@ -34,6 +34,8 @@ export interface HeldIssuePage {
    * succeeds or a new first page arrives.
    */
   readonly moreFailure: string | null;
+  /** Only request failures need a footer message; scope errors already appear in the list. */
+  readonly moreFailureKind: "request" | "scope" | null;
 }
 
 export function issueTrackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
@@ -59,6 +61,7 @@ export function holdIssuePages(
             moreErrors: [],
             nextCursors: answer.nextCursors,
             moreFailure: null,
+            moreFailureKind: null,
           },
     );
   }
@@ -80,7 +83,9 @@ export function continueIssuePage(
   next: IssueListResult | { readonly failure: string },
   asked: IssueListCursors = page.nextCursors,
 ): HeldIssuePage {
-  if ("failure" in next) return { ...page, moreFailure: next.failure };
+  if ("failure" in next) {
+    return { ...page, moreFailure: next.failure, moreFailureKind: "request" };
+  }
   const moreErrors = page.moreErrors.filter((more) => !more.asked.some((key) => key in asked));
   if (next.errors.length > 0) moreErrors.push({ asked: Object.keys(asked), errors: next.errors });
   return {
@@ -97,6 +102,7 @@ export function continueIssuePage(
       next.errors.length > 0
         ? next.errors.map((error) => `${error.projectTitle}: ${error.message}`).join("\n")
         : null,
+    moreFailureKind: next.errors.length > 0 ? "scope" : null,
   };
 }
 

@@ -79,6 +79,11 @@ describe("continueIssuePage", () => {
       answer({ errors: [failure], nextCursors: linear }),
       linear,
     );
+    expect(linearFailed.moreFailureKind).toBe("scope");
+    const requestFailed = continueIssuePage(linearFailed, { failure: "offline" }, linear);
+    expect(requestFailed.moreFailureKind).toBe("request");
+    expect(requestFailed.moreFailure).toBe("offline");
+    expect(requestFailed.errors).toEqual([failure]);
     const github = issueCursorsForHost(linearFailed.nextCursors, "github.com");
     const next = continueIssuePage(
       linearFailed,

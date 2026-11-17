@@ -501,7 +501,8 @@ export function IssuesPage() {
               );
             })}
             {group.more.map((environmentId) => {
-              const moreFailure = held.get(environmentId)?.moreFailure ?? null;
+              const page = held.get(environmentId);
+              const moreFailure = page?.moreFailureKind === "request" ? page.moreFailure : null;
               return (
                 <Fragment key={environmentId}>
                   {moreFailure === null ? null : (

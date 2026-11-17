@@ -157,9 +157,11 @@ export function IssuesScreen(
   const [loadingMore, setLoadingMore] = useState(false);
   const loading = useRef(false);
   const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
-  const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
+  const requestFailure = continuable.find(([, page]) => page.moreFailureKind === "request")?.[1]
+    .moreFailure;
+  const needsRetry = continuable.some(([, page]) => page.moreFailureKind !== null);
   const loadMore = async (retry = false) => {
-    if (loading.current || (moreFailure !== null && !retry)) return;
+    if (loading.current || (needsRetry && !retry)) return;
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(
@@ -436,9 +438,11 @@ export function IssuesScreen(
                 accessibilityLabel="Loading more issues"
               />
             </View>
-          ) : moreFailure ? (
+          ) : needsRetry ? (
             <View className="items-center gap-2 px-8 py-4">
-              <Text className="text-xs text-foreground-muted">{moreFailure}</Text>
+              {requestFailure ? (
+                <Text className="text-xs text-foreground-muted">{requestFailure}</Text>
+              ) : null}
               <Button
                 label="Try again"
                 accessibilityLabel="Retry loading more issues"
