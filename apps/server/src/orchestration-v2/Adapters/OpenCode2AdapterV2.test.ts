@@ -8074,12 +8074,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each([
-    { status: "complete", reconnect: false },
-    { status: "paused", reconnect: false },
-    { status: "complete", reconnect: true },
+    { status: "complete", reconnect: false, silent: false },
+    { status: "paused", reconnect: false, silent: false },
+    { status: "complete", reconnect: true, silent: false },
+    { status: "paused", reconnect: false, silent: true },
   ] as const)(
-    "keeps an OpenCode goal turn open until $status, with reconnect $reconnect",
-    ({ status, reconnect }) =>
+    "keeps an OpenCode goal turn open until $status, with reconnect $reconnect and silent $silent",
+    ({ status, reconnect, silent }) =>
       Effect.gen(function* () {
         const recovered = reconnected({ [SESSION]: { type: "running" } });
         const { runtime, thread } = yield* resumed(
@@ -8092,6 +8093,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             reply("session.command", null),
             event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
             event("session.execution.succeeded", { sessionID: SESSION }),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", { output: nativeGoal(silent ? status : "active") }),
             ...(status === "complete"
               ? reconnect
                 ? [
@@ -8104,7 +8107,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   ]
                 : [event("session.execution.started", { sessionID: SESSION })]
               : []),
-            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
+            ...(silent
+              ? []
+              : [
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal(status),
+                  }),
+                ]),
             ...(status === "complete"
               ? [
                   event("session.text.ended", {
@@ -8273,6 +8283,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             reply("rpc.call", { output: recovered === "unreadable" ? {} : nativeGoal(recovered) }),
             ...(recovered === "active"
               ? [
+                  out("rpc.call", "<any>"),
+                  reply("rpc.call", { output: nativeGoal("active") }),
                   event("session.execution.started", { sessionID: SESSION }),
                   event("session.text.ended", {
                     sessionID: SESSION,
