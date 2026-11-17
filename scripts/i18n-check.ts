@@ -41,9 +41,14 @@ for (const app of APPS) {
       continue;
     }
     const generated: Catalog = readJson(NodePath.join(tmp, `${config.defaultLocale}.json`));
-    // Keys hash the source text, so comparing key sets also catches edited strings.
-    for (const key of missingFrom(generated, source)) {
-      problems.push(`${app}: ${key} ${JSON.stringify(generated[key])} is missing from en.json`);
+    for (const [key, text] of Object.entries(generated)) {
+      if (!Object.hasOwn(source, key)) {
+        problems.push(`${app}: ${key} ${JSON.stringify(text)} is missing from en.json`);
+      } else if (source[key] !== text) {
+        problems.push(
+          `${app}: en.json has ${key} ${JSON.stringify(source[key])}, source says ${JSON.stringify(text)}`,
+        );
+      }
     }
     for (const key of missingFrom(source, generated)) {
       problems.push(`${app}: ${key} ${JSON.stringify(source[key])} in en.json is stale`);
