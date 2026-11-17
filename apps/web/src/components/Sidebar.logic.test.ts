@@ -35,6 +35,8 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  orderSidebarFolderThreads,
+  orderSidebarProjectFolders,
   resolveSidebarFolderStatus,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -43,7 +45,7 @@ import {
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { resolveProjectExpanded } from "../uiStateStore";
+import { legacyProjectCwdPreferenceKey, resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -1659,6 +1661,88 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("orderSidebarFolderThreads", () => {
+  it("leads with running pinned threads, then pinned, then running, keeping order within each", () => {
+    const runtime = (status: "running" | "waiting" | "idle") => ({
+      status,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const thread = (
+      id: string,
+      pinned: boolean,
+      status: "running" | "waiting" | "idle" | null,
+    ) => ({
+      id,
+      pinnedAt: pinned ? "2026-03-09T10:00:00.000Z" : null,
+      runtime: status === null ? null : runtime(status),
+    });
+
+    expect(
+      orderSidebarFolderThreads([
+        thread("plain-1", false, null),
+        thread("pinned-1", true, "idle"),
+        thread("running-1", false, "running"),
+        thread("pinned-running-1", true, "running"),
+        thread("plain-2", false, "idle"),
+        thread("pinned-2", true, null),
+        thread("waiting-1", false, "waiting"),
+        thread("pinned-waiting-1", true, "waiting"),
+      ]).map((entry) => entry.id),
+    ).toEqual([
+      "pinned-running-1",
+      "pinned-waiting-1",
+      "pinned-1",
+      "pinned-2",
+      "running-1",
+      "waiting-1",
+      "plain-1",
+      "plain-2",
+    ]);
+  });
+});
+
+describe("orderSidebarProjectFolders", () => {
+  it("follows the dragged order and lists unplaced projects in the order they were added", () => {
+    const group = (
+      projectKey: string,
+      createdAt: string,
+      workspaceRoot = `/repo/${projectKey}`,
+    ) => ({
+      projectKey,
+      memberProjects: [{ physicalProjectKey: `env:${projectKey}`, workspaceRoot, createdAt }],
+    });
+    const newest = group("newest", "2026-03-09T12:00:00.000Z");
+    const oldest = group("oldest", "2026-03-09T08:00:00.000Z");
+    const middle = group("middle", "2026-03-09T10:00:00.000Z");
+    const legacy = group("legacy", "2026-03-09T11:00:00.000Z");
+    const merged = {
+      projectKey: "merged",
+      memberProjects: [
+        ...group("merged-a", "2026-03-09T09:00:00.000Z").memberProjects,
+        ...group("merged-b", "2026-03-09T07:00:00.000Z").memberProjects,
+      ],
+    };
+    const groups = [newest, oldest, middle, legacy, merged];
+    const order = (projectOrder: string[]) =>
+      orderSidebarProjectFolders(groups, projectOrder).map((entry) => entry.projectKey);
+
+    // A grouped project counts from its earliest member.
+    expect(order([])).toEqual(["merged", "oldest", "middle", "legacy", "newest"]);
+    expect(
+      order([
+        "env:newest",
+        legacyProjectCwdPreferenceKey("/repo/legacy"),
+        "env:merged-b",
+        "env:gone",
+      ]),
+    ).toEqual(["newest", "legacy", "merged", "oldest", "middle"]);
   });
 });
 

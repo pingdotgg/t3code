@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -1085,6 +1088,61 @@ export function groupSidebarThreadsByProject<
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+}
+
+/** Pinned running, pinned, running, then the rest; each keeps the order it came in. */
+export function orderSidebarFolderThreads<
+  TThread extends Pick<SidebarThreadSummary, "pinnedAt" | "runtime">,
+>(threads: readonly TThread[]): TThread[] {
+  const rank = (thread: TThread) =>
+    (thread.pinnedAt != null ? 0 : 2) + (threadRuntimeIsActive(thread.runtime) ? 0 : 1);
+  return threads
+    .map((thread, index) => ({ thread, index, rank: rank(thread) }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ thread }) => thread);
+}
+
+/**
+ * Boring-sidebar folders follow the order the user dragged them into; projects
+ * not placed yet follow in the order they were added.
+ */
+export function orderSidebarProjectFolders<
+  TGroup extends {
+    readonly projectKey: string;
+    readonly memberProjects: ReadonlyArray<{
+      readonly physicalProjectKey: string;
+      readonly workspaceRoot: string;
+      readonly createdAt: string;
+    }>;
+  },
+>(groups: readonly TGroup[], projectOrder: readonly string[]): TGroup[] {
+  const orderIndex = new Map(projectOrder.map((key, index) => [key, index] as const));
+  return groups
+    .map((group) => {
+      let placed = Number.POSITIVE_INFINITY;
+      let added = Number.POSITIVE_INFINITY;
+      for (const member of group.memberProjects) {
+        placed = Math.min(
+          placed,
+          orderIndex.get(member.physicalProjectKey) ?? Number.POSITIVE_INFINITY,
+          orderIndex.get(legacyProjectCwdPreferenceKey(member.workspaceRoot)) ??
+            Number.POSITIVE_INFINITY,
+        );
+        added = Math.min(added, toSortableTimestamp(member.createdAt) ?? Number.POSITIVE_INFINITY);
+      }
+      return { group, placed, added };
+    })
+    .sort(
+      (left, right) =>
+        compareNumbers(left.placed, right.placed) ||
+        compareNumbers(left.added, right.added) ||
+        left.group.projectKey.localeCompare(right.group.projectKey),
+    )
+    .map(({ group }) => group);
+}
+
+function compareNumbers(left: number, right: number): number {
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export type SidebarV2TopStatusKind =

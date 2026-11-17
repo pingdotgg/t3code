@@ -178,6 +178,7 @@ import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
+  orderSidebarFolderThreads,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -228,6 +229,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { useProjectFolderOrder } from "./sidebar/useProjectFolderOrder";
 import {
   resolveSidebarRouteReveal,
   type SidebarRouteReveal,
@@ -565,15 +567,14 @@ function useSidebarThreads(input: {
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
           );
+          const folderThreads = orderSidebarFolderThreads(folder.threads);
           return {
             group: folder.group,
             collapsed,
             // A closed folder still shows the open thread, and hints at the rest.
-            threads: collapsed
-              ? routeThreadOnly(folder.threads, routeRowThreadKey)
-              : folder.threads,
+            threads: collapsed ? routeThreadOnly(folderThreads, routeRowThreadKey) : folderThreads,
             hiddenThreads: collapsed
-              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+              ? folderThreads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
               : EMPTY_THREADS,
           };
         });
@@ -1108,6 +1109,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
   const scopeGroups = pickableProjectGroups(projectGroups);
+  // Folders keep the order the user dragged them into; the picker follows the project-order setting.
+  const projectFolderOrder = useProjectFolderOrder(projectGroups);
+  const folderScopeGroups = pickableProjectGroups(projectFolderOrder.orderedGroups);
   const archivedProjectKeys = new Set(
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
   );
@@ -1381,8 +1385,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-        : scopedProjectGroups
+          [
+            ...folderScopeGroups,
+            ...projectFolderOrder.orderedGroups.filter((project) => project.archived),
+          ]
+        : folderScopeGroups.filter((project) => scopedProjectGroups.includes(project))
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
@@ -3569,6 +3576,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 onToggle={toggleProjectFolder}
                                 onNewThread={startThreadInProjectFolder}
                                 onContextMenu={handleProjectFolderContextMenu}
+                                dragging={projectFolderOrder.draggedKey === folder.group.projectKey}
+                                dropEdge={projectFolderOrder.dropEdge(folder.group)}
+                                onDragStart={projectFolderOrder.onDragStart}
+                                onDragOver={projectFolderOrder.onDragOver}
+                                onDragLeave={projectFolderOrder.onDragLeave}
+                                onDrop={projectFolderOrder.onDrop}
+                                onDragEnd={projectFolderOrder.onDragEnd}
                               />,
                             );
                             for (const thread of folder.threads) {

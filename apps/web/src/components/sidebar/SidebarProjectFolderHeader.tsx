@@ -1,7 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, type DragEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -11,6 +11,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { ProjectFolderDropEdge } from "./useProjectFolderOrder";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -41,6 +42,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
+  dragging: boolean;
+  dropEdge: ProjectFolderDropEdge | null;
+  onDragStart: (group: SidebarProjectSnapshot, event: DragEvent) => void;
+  onDragOver: (group: SidebarProjectSnapshot, event: DragEvent) => void;
+  onDragLeave: (group: SidebarProjectSnapshot, event: DragEvent) => void;
+  onDrop: (group: SidebarProjectSnapshot, event: DragEvent) => void;
+  onDragEnd: () => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
@@ -61,8 +69,26 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   return (
     <li
       data-testid="sidebar-project-folder"
-      className="group/project-folder relative mt-2 list-none first:mt-0"
+      draggable={!group.archived}
+      onDragStart={(event) => props.onDragStart(group, event)}
+      onDragOver={(event) => props.onDragOver(group, event)}
+      onDragLeave={(event) => props.onDragLeave(group, event)}
+      onDrop={(event) => props.onDrop(group, event)}
+      onDragEnd={props.onDragEnd}
+      className={cn(
+        "group/project-folder relative mt-2 list-none first:mt-0",
+        props.dragging && "opacity-50",
+      )}
     >
+      {props.dropEdge ? (
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-primary",
+            props.dropEdge === "before" ? "-top-1.25" : "-bottom-0.5",
+          )}
+        />
+      ) : null}
       <button
         type="button"
         data-sidebar-row={rowId}
