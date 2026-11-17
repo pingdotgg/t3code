@@ -12,7 +12,7 @@ export function checkZipDirectory(bytes: ArrayBuffer, entryLimit = 2048) {
   ) {
     if (view.getUint32(offset, true) !== 0x06054b50) continue;
     if (offset + 22 + view.getUint16(offset + 20, true) !== bytes.byteLength)
-      throw new ZipError("zip-unreadable");
+      throw new ZipError({ code: "zip-unreadable" });
     let count = view.getUint16(offset + 10, true);
     directorySize = view.getUint32(offset + 12, true);
     let directoryOffset = view.getUint32(offset + 16, true);
@@ -26,7 +26,8 @@ export function checkZipDirectory(bytes: ArrayBuffer, entryLimit = 2048) {
       const record = locator - 56;
       // JSZip uses the last locator, including signatures inside the archive comment.
       for (let candidate = bytes.byteLength - 4; candidate > locator; candidate--)
-        if (view.getUint32(candidate, true) === 0x07064b50) throw new ZipError("zip64-unsupported");
+        if (view.getUint32(candidate, true) === 0x07064b50)
+          throw new ZipError({ code: "zip64-unsupported" });
       if (
         record < 0 ||
         view.getUint32(locator, true) !== 0x07064b50 ||
@@ -38,7 +39,7 @@ export function checkZipDirectory(bytes: ArrayBuffer, entryLimit = 2048) {
         view.getUint32(locator + 16, true) !== 1 ||
         view.getBigUint64(locator + 8, true) !== BigInt(record)
       )
-        throw new ZipError("zip64-unsupported");
+        throw new ZipError({ code: "zip64-unsupported" });
       const records = view.getBigUint64(record + 32, true);
       const size = view.getBigUint64(record + 40, true);
       const start = view.getBigUint64(record + 48, true);
@@ -49,26 +50,28 @@ export function checkZipDirectory(bytes: ArrayBuffer, entryLimit = 2048) {
         view.getBigUint64(locator + 8, true) !== start + size ||
         view.getBigUint64(record + 24, true) !== records
       )
-        throw new ZipError("zip64-damaged");
+        throw new ZipError({ code: "zip64-damaged" });
       count = Number(records);
       directorySize = Number(size);
       directoryOffset = Number(start);
       directoryEnd = record;
     }
-    if (count > entryLimit) throw new ZipError("archive-too-many-entries");
-    if (directoryOffset > directoryEnd - directorySize) throw new ZipError("zip-directory-damaged");
+    if (count > entryLimit) throw new ZipError({ code: "archive-too-many-entries" });
+    if (directoryOffset > directoryEnd - directorySize)
+      throw new ZipError({ code: "zip-directory-damaged" });
     break;
   }
-  if (directoryEnd < 0 || directorySize > directoryEnd) throw new ZipError("zip-unreadable");
+  if (directoryEnd < 0 || directorySize > directoryEnd)
+    throw new ZipError({ code: "zip-unreadable" });
   let records = 0;
   for (let offset = directoryEnd - directorySize; offset < directoryEnd;) {
     if (offset + 46 > directoryEnd || view.getUint32(offset, true) !== 0x02014b50)
-      throw new ZipError("zip-directory-damaged");
-    if (++records > entryLimit) throw new ZipError("archive-too-many-entries");
+      throw new ZipError({ code: "zip-directory-damaged" });
+    if (++records > entryLimit) throw new ZipError({ code: "archive-too-many-entries" });
     const nameLength = view.getUint16(offset + 28, true);
-    if (nameLength > 1024) throw new ZipError("archive-path-too-long");
+    if (nameLength > 1024) throw new ZipError({ code: "archive-path-too-long" });
     offset +=
       46 + nameLength + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
-    if (offset > directoryEnd) throw new ZipError("zip-directory-damaged");
+    if (offset > directoryEnd) throw new ZipError({ code: "zip-directory-damaged" });
   }
 }
