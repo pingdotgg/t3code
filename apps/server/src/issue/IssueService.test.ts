@@ -424,6 +424,14 @@ describe("IssueService", () => {
         }),
       ]);
 
+      // Narrowing to one host still names every tracker, so the client can switch between them.
+      const narrowed = yield* service.list({ state: "open", host: "github.com" });
+      expect(narrowed.entries.every((entry) => entry.host === "github.com")).toBe(true);
+      expect(narrowed.trackers.map((tracker) => tracker.host)).toEqual([
+        "github.com",
+        "gitlab.com",
+      ]);
+
       // A continuation only reads the scopes it names.
       listed.length = 0;
       const failed = yield* service.list({
