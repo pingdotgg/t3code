@@ -13,7 +13,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
@@ -202,11 +201,11 @@ export const hiddenWhileLinksOff = (): boolean => {
   return scope?.linkedEnvironments !== false;
 };
 
-/** `McpSchema.EnabledWhen` for agent feedback tools. `t3 feedback` still reaches them to report the setting is off. */
+/** `McpSchema.EnabledWhen` for agent feedback tools, for every client including `t3 feedback`. */
 export const hiddenWhileFeedbackOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.agentFeedback === true || scope?.client?.label === FEEDBACK_CLI_CLIENT_LABEL;
+  return scope?.agentFeedback === true;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

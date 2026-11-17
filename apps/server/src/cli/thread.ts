@@ -84,6 +84,17 @@ export class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedEr
   }
 }
 
+/** The server answered that it has no such tool: it predates the tool, or hides it from this session. */
+class ThreadToolMissingError extends Schema.TaggedError<ThreadToolMissingError>()(
+  "ThreadToolMissingError",
+  { tool: Schema.String },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message(): string {
+    return `This T3 Code server has no ${this.tool} tool. Update T3 Code, then retry.`;
+  }
+}
+
 export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("ThreadUsageError", {
   detail: Schema.String,
 }) {
@@ -131,6 +142,7 @@ const ThreadCliError = Schema.Union([
   ThreadServerNotRunningError,
   ThreadServerUnreachableError,
   ThreadToolFailedError,
+  ThreadToolMissingError,
   ThreadUsageError,
   ThreadProjectNotFoundError,
   ThreadNeedsInputError,
@@ -195,10 +207,18 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
       tool: string,
       args: Readonly<Record<string, unknown>>,
       schema: S,
-    ): Effect.fn.Return<S["Type"], ThreadServerUnreachableError | ThreadToolFailedError> {
-      const raw = yield* session
-        .call(tool, args)
-        .pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
+    ): Effect.fn.Return<
+      S["Type"],
+      ThreadServerUnreachableError | ThreadToolFailedError | ThreadToolMissingError
+    > {
+      const raw = yield* session.call(tool, args).pipe(
+        Effect.mapError((cause) =>
+          // Effect's MCP server words an unknown or hidden tool exactly this way.
+          cause.rpcError?.code === -32602 && cause.rpcError.message === `Tool '${tool}' not found`
+            ? new ThreadToolMissingError({ tool })
+            : new ThreadServerUnreachableError({ origin, cause }),
+        ),
+      );
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
       if (result.isError === true) {
         return yield* new ThreadToolFailedError({ tool, detail: toolFailureDetail(result) });

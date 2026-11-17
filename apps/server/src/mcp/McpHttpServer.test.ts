@@ -1699,7 +1699,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("offers agent feedback tools only while the setting is on, except to `t3 feedback`", () =>
+it.effect("offers agent feedback tools only while the setting is on, to every client", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const agentScope: McpInvocationContext.McpThreadInvocationScope = {
@@ -1714,6 +1714,7 @@ it.effect("offers agent feedback tools only while the setting is on, except to `
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       };
+      // Any OAuth client can register under the label `t3 feedback` signs in with.
       const cliScope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         requestNamespace: "cliToken",
@@ -1732,17 +1733,12 @@ it.effect("offers agent feedback tools only while the setting is on, except to `
       ).pipe(
         Layer.provide(Layer.succeedContext(settingsContext)),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(
-          Layer.mock(Feedback.FeedbackService)({
-            submit: () => Effect.fail(new Feedback.FeedbackOffError({})),
-          }),
-        ),
+        Layer.provide(Layer.mock(Feedback.FeedbackService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(token === "agentToken" ? agentScope : undefined),
           }),
         ),
-        // `t3 feedback` signs in as a client, not a provider session.
         Layer.provide(
           Layer.succeed(McpHttpServer.McpClientAuthenticator)({
             authenticate: (request) =>
@@ -1801,6 +1797,7 @@ it.effect("offers agent feedback tools only while the setting is on, except to `
         rpc(token, "tools/list", {}).pipe(
           Effect.map((body) => body.result?.tools?.map((tool) => tool.name)),
         );
+      // Only provider sessions can search.
       const found = rpc("agentToken", "tools/call", {
         name: "tool_search",
         arguments: { query: "t3_feedback feedback report" },
@@ -1813,18 +1810,20 @@ it.effect("offers agent feedback tools only while the setting is on, except to `
           arguments: { kind: "bug", subject: "", expected: "a", actual: "b", workaround: "" },
         });
 
-      expect(yield* listed("agentToken")).toEqual([]);
       expect(yield* found).toEqual([]);
-      expect(yield* report("agentToken")).toMatchObject({ error: expect.anything() });
-      // The CLI reaches the tool, so the service's off error tells the user where to turn it on.
-      expect(yield* listed("cliToken")).toEqual(["t3_feedback", "t3_feedback_list"]);
-      expect(yield* report("cliToken")).toMatchObject({
-        result: { content: [{ text: expect.stringContaining("Settings > Labs") }] },
-      });
+      for (const token of ["agentToken", "cliToken"]) {
+        expect(yield* listed(token)).toEqual([]);
+        // `t3 feedback` turns exactly this answer into the Labs message.
+        expect(yield* report(token)).toMatchObject({
+          error: { code: -32602, message: "Tool 't3_feedback' not found" },
+        });
+      }
 
       yield* settings.updateSettings({ agentFeedback: { enabled: true } });
-      expect(yield* listed("agentToken")).toEqual(["t3_feedback", "t3_feedback_list"]);
       expect(yield* found).toEqual(expect.arrayContaining(["t3_feedback", "t3_feedback_list"]));
+      for (const token of ["agentToken", "cliToken"]) {
+        expect(yield* listed(token)).toEqual(["t3_feedback", "t3_feedback_list"]);
+      }
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

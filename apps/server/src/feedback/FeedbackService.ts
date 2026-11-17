@@ -17,7 +17,12 @@ import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
 import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
-import { type FeedbackInput, type FeedbackReport, T3_CLI_COMMANDS } from "./FeedbackReport.ts";
+import {
+  FEEDBACK_OFF_MESSAGE,
+  type FeedbackInput,
+  type FeedbackReport,
+  T3_CLI_COMMANDS,
+} from "./FeedbackReport.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
 const MAX_REPORTS_PER_RUN = 3;
@@ -29,7 +34,7 @@ export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
   {},
 ) {
   override get message() {
-    return "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
+    return FEEDBACK_OFF_MESSAGE;
   }
 }
 

@@ -22,6 +22,9 @@ export const FeedbackReport = Schema.Struct({
   sent: Schema.Boolean,
 });
 
+export const FEEDBACK_OFF_MESSAGE =
+  "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
+
 /** The MCP client label `t3 feedback` signs in with, so its reports count as `cli`. */
 export const FEEDBACK_CLI_CLIENT_LABEL = "t3 feedback cli";
 

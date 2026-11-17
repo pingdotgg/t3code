@@ -5,11 +5,22 @@ import { Command, Flag } from "effect/cli";
 
 import {
   FEEDBACK_CLI_CLIENT_LABEL,
+  FEEDBACK_OFF_MESSAGE,
   FeedbackInput,
   FeedbackReport,
 } from "../feedback/FeedbackReport.ts";
 import { projectLocationFlags } from "./config.ts";
-import { jsonFlag, printJson, reportThreadErrors, withThreadTools } from "./thread.ts";
+import {
+  jsonFlag,
+  printJson,
+  reportThreadErrors,
+  ThreadToolFailedError,
+  withThreadTools,
+} from "./thread.ts";
+
+/** The server hides the feedback tools from every session while the setting is off. */
+const feedbackOff = ({ tool }: { readonly tool: string }) =>
+  Effect.fail(new ThreadToolFailedError({ tool, detail: FEEDBACK_OFF_MESSAGE }));
 
 const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json: jsonFlag }).pipe(
   Command.withDescription("List recent feedback reports saved on this machine, newest first."),
@@ -38,7 +49,7 @@ const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json
           if (report.workaround) yield* Console.log(`  workaround: ${report.workaround}`);
         }
       }),
-    ).pipe(reportThreadErrors),
+    ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
   ),
 );
 
@@ -72,7 +83,7 @@ export const feedbackCommand = Command.make("feedback", {
         );
         yield* printJson(report);
       }),
-    ).pipe(reportThreadErrors),
+    ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
   ),
   Command.withSubcommands([feedbackListCommand]),
 );
