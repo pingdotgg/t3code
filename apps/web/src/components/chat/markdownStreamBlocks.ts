@@ -48,14 +48,24 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     headingKeys.add(key);
     return false;
   };
+  const repeatsHeadingOnLine = (line: string, previous: string, afterBlank: boolean) => {
+    const headingText = SETEXT_UNDERLINE_PATTERN.test(line)
+      ? afterBlank
+        ? undefined
+        : previous
+      : ATX_HEADING_PATTERN.exec(line)?.[1];
+    return repeatsHeading(headingText);
+  };
   for (const line of text.split("\n")) {
     const opener = FENCE_PATTERN.exec(line)?.[1];
     if (fence !== null) {
       // A line left of an indented fence may end the list item holding it, which isn't tracked.
       if (/\S/.test(line.slice(0, fenceIndent))) {
         const rest = text.slice(lineStart).split("\n");
-        if (rest.some((restLine) => repeatsHeading(ATX_HEADING_PATTERN.exec(restLine)?.[1]))) {
-          return null;
+        for (const restLine of rest) {
+          if (repeatsHeadingOnLine(restLine, previousLine, afterBlankLine)) return null;
+          previousLine = restLine;
+          afterBlankLine = restLine.trim() === "";
         }
         break;
       }
@@ -73,12 +83,7 @@ export function splitMarkdownBlocks(text: string): string[] | null {
     } else if (line.trim() === "") {
       afterBlankLine = true;
     } else {
-      const headingText = SETEXT_UNDERLINE_PATTERN.test(line)
-        ? afterBlankLine
-          ? undefined
-          : previousLine
-        : ATX_HEADING_PATTERN.exec(line)?.[1];
-      if (repeatsHeading(headingText)) return null;
+      if (repeatsHeadingOnLine(line, previousLine, afterBlankLine)) return null;
       if (
         afterBlankLine &&
         insightIndent === null &&
