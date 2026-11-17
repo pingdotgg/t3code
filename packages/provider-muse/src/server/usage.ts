@@ -138,7 +138,6 @@ export const museUsageReader: ProviderUsageReader<
     const binaryPath = expandHomePath(config?.binaryPath ?? "muse", home);
     const museHome = yield* usageHome.resolve({
       binaryPath,
-      // Discovery is a background read, so a lazy mise shim must not start installing Muse here.
       environment: providerProbeEnvironment(makeMuseEnvironment(processEnvironment)),
       awaitRefresh,
     });

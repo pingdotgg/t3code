@@ -226,7 +226,6 @@ describe("Muse history discovery", () => {
             PATH: "/host/bin",
             XDG_DATA_HOME: xdg ?? "/host/data",
             MUSE_NO_AUTO_UPDATE: "1",
-            // A lazy mise shim must not install Muse during background discovery.
             MISE_OFFLINE: "1",
           },
           readOnly: true,
