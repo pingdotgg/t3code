@@ -6843,7 +6843,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
   it.effect("sends MCP app model context with the next Claude turn", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
       const runTurn = Effect.fnUntraced(function* (ordinal: number, note: string) {
         yield* harness.runtime.startTurn({
           ...makeClaudeTestTurnInput({
@@ -6869,6 +6872,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.take(harness.terminalReceipts);
       });
 
+      assert.include(yield* runTurn(0, "Created Jira issue PROJ-42"), "PROJ-42");
+      // A turn that does not complete may not have put the note in Claude's history.
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: "turn:mcp-app-context-0",
+        }),
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
       assert.include(yield* runTurn(1, "Created Jira issue PROJ-42"), "PROJ-42");
       yield* finishTurn(1);
       // Already in Claude's history: resending it every turn would only grow the context.

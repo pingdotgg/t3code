@@ -5076,6 +5076,8 @@ interface ActiveClaudeTurnContext {
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly promptUuid: string | null;
   promptEcho: "pending" | "confirmed";
+  // MCP app notes this turn's prompt carries, recorded as delivered only if the turn completes.
+  appContextOffered?: ReadonlyMap<string, string> | undefined;
   promptStarted: boolean;
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
@@ -9249,6 +9251,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else {
             yield* cutOffStreamedText(input.context);
           }
+          if (input.status === "completed" && input.context.appContextOffered !== undefined) {
+            deliveredAppContext.set(input.context.nativeThreadId, input.context.appContextOffered);
+          }
           // A turn that completes has taken in every steer; one that stops drops them unread.
           const droppedSteers = [...input.context.pendingSteers];
           input.context.pendingSteers.clear();
@@ -10958,6 +10963,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Every trigger discards the conversation, so reset whatever the trigger is.
           if (message.type === "conversation_reset") {
             deliveredAppContext.delete(context.nativeThreadId);
+            context.appContextOffered = undefined;
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             context.compactionTokens = 0;
             yield* emitContextUsage(context, 0);
@@ -11028,6 +11034,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* persistAttachmentBudget(context.nativeThreadId);
             }
             deliveredAppContext.delete(context.nativeThreadId);
+            context.appContextOffered = undefined;
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             const postTokens = message.compact_metadata.post_tokens;
             const afterTokenCount =
@@ -13382,9 +13389,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const commitOffer = () => {
               pdfReservation.commit();
               if (appContextSent) {
-                deliveredAppContext.set(
-                  nativeThreadId,
-                  new Map(appContext.map((entry) => [entry.key, entry.text])),
+                context.appContextOffered = new Map(
+                  appContext.map((entry) => [entry.key, entry.text]),
                 );
               }
             };
@@ -14444,6 +14450,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
+              // The rewound history may no longer hold the turns that carried app notes.
+              deliveredAppContext.delete(nativeThreadId);
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
 
