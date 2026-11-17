@@ -378,5 +378,8 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
     Effect.timeout("25 seconds"),
     Effect.orElseSucceed(() => ""),
   );
-  return yield* claudeResetClaimOutcome(response.status, body);
+  return yield* claudeResetClaimOutcome(response.status, body, {
+    expected: input.expectedOrganization,
+    answeredFor: claudeOrganizationHeader(response.headers),
+  });
 });
