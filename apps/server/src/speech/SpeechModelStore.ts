@@ -249,10 +249,11 @@ const make = Effect.gen(function* () {
         ),
       );
       yield* fs.makeDirectory(directory, { recursive: true });
-      const linked: string[] = [];
+      // By file, since several files can come from one repository.
+      const linked = new Set<ModelFile>();
       for (const { file, size } of yield* filesUnder(root)) {
         for (const model of models) {
-          if (model.size !== size || linked.includes(model.id)) continue;
+          if (model.size !== size || linked.has(model)) continue;
           const finalPath = modelPath(model);
           // Pointing at T3 Code's own model folder must not replace a file with a link to itself.
           if ((yield* realPath(file)) === (yield* realPath(finalPath))) continue;
@@ -282,10 +283,10 @@ const make = Effect.gen(function* () {
           yield* fs
             .writeFileString(`${finalPath}.verified`, marker, { mode: 0o600 })
             .pipe(Effect.ignore);
-          linked.push(model.id);
+          linked.add(model);
         }
       }
-      return linked;
+      return [...linked].map((model) => model.id);
     },
   );
 

@@ -27,12 +27,33 @@ import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
 
+/** A preset the model names itself, or one it reads from its own file. */
+type LocalVoice = { readonly id: string; readonly file?: SpeechModelStore.ModelFile };
+
 type LocalModel = {
   readonly id: string;
   readonly name: string;
+  readonly description: string;
   readonly file: SpeechModelStore.ModelFile;
-  readonly voices: readonly string[];
+  /** Whether the model honors the speed option; clients speed up playback for the rest. */
+  readonly appliesSpeed: boolean;
+  readonly voices: readonly LocalVoice[];
 };
+
+const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
+const POCKET_REVISION = "7a103b33f04120535bdfe97b5f65b79d3c90d708";
+// Named per model, since every Pocket TTS language ships voice files with the same names.
+const pocketVoice = (name: string, size: number, sha256: string): LocalVoice => ({
+  id: name[0]!.toUpperCase() + name.slice(1),
+  file: {
+    id: AUDIO_CPP_GGUF,
+    revision: POCKET_REVISION,
+    filename: `pocket-tts-english-${name}.safetensors`,
+    url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${POCKET_REVISION}/PocketTTS-GGUF/english/embeddings/${name}.safetensors`,
+    size,
+    sha256,
+  },
+});
 
 // Families that phonemize with eSpeak-ng (Kokoro, Kitten, Piper) need a GPL library that
 // upstream does not ship, so only self-contained models belong here.
@@ -40,16 +61,80 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
   {
     id: "supertonic-3",
     name: "Supertonic 3",
+    description: "31 languages. Fastest with a GPU.",
     file: {
-      id: "audio-cpp/audio.cpp-gguf",
+      id: AUDIO_CPP_GGUF,
       revision: "ca0b203eb1bb87f333a7cfbad2d5f6672b4ccba7",
       filename: "Supertonic-3-GGUF/supertonic-3-f16.gguf",
       size: 312_785_732,
       sha256: "7a44c47d1f387e4fb163e2eed9615b58470c77e26ac8b2b1a6be49dfb8670899",
     },
-    voices: ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"],
+    appliesSpeed: true,
+    voices: ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].map((id) => ({ id })),
+  },
+  {
+    id: "pocket-tts-english",
+    name: "Pocket TTS",
+    description: "English only. Small, and fast without a GPU.",
+    file: {
+      id: AUDIO_CPP_GGUF,
+      revision: POCKET_REVISION,
+      filename: "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
+      size: 127_867_968,
+      sha256: "3f71cf6a51f93c2f2e554e98970a3f49fb9a98d0c64bed5a815e65be3d2ff588",
+    },
+    appliesSpeed: false,
+    voices: [
+      pocketVoice(
+        "alba",
+        6_194_424,
+        "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845",
+      ),
+      pocketVoice(
+        "anna",
+        7_816_440,
+        "5ea82f78db006c9fd34e32ddd5aae82674b5b32646097977436458d00af80dfa",
+      ),
+      pocketVoice(
+        "eve",
+        6_538_488,
+        "ea9c2faf862a6c9d2cb61910fdf02842ae56940382cc8c1000fdb1b43269692b",
+      ),
+      pocketVoice(
+        "jane",
+        7_374_072,
+        "37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008",
+      ),
+      pocketVoice(
+        "charles",
+        6_194_424,
+        "299edc20182eeccfbf94e308626f259da4fbf339daa8d5905218f2b1774639b8",
+      ),
+      pocketVoice(
+        "george",
+        6_243_576,
+        "0c1c6c57c55a98d81254b33728150c7776f40647fe95258d1a6c1a02780b5d02",
+      ),
+      pocketVoice(
+        "michael",
+        7_275_768,
+        "8937f724ac4719b9aa51ea0ba1f18f9de0af7a663ad6263558266c1a53c9722d",
+      ),
+      pocketVoice(
+        "paul",
+        6_980_856,
+        "ed7a019168f94dfe77009f1b0de59387abc6fbb0db954d38ce722ecb77da61aa",
+      ),
+    ],
   },
 ];
+
+const modelFiles = (model: LocalModel) => [
+  model.file,
+  ...model.voices.flatMap((voice) => (voice.file ? [voice.file] : [])),
+];
+const totalSize = (files: readonly SpeechModelStore.ModelFile[]) =>
+  files.reduce((size, file) => size + file.size, 0);
 
 const IDLE_UNLOAD_MS = 10 * 60_000;
 
@@ -233,25 +318,33 @@ const make = Effect.gen(function* () {
     const models = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
       Effect.gen(function* () {
         const active = transfer?.modelId === model.id ? transfer : undefined;
-        const modelReady = yield* store.isReady(model.file);
-        const linkedFrom = ready && modelReady ? yield* store.linkedFrom(model.file) : undefined;
+        const files = modelFiles(model);
+        const missing = yield* Effect.filter(files, (file) =>
+          store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
+        );
+        const installed = ready && missing.length === 0;
+        const linkedFrom = installed ? yield* store.linkedFrom(model.file) : undefined;
         const install = active
           ? {
               state: active.verifying ? ("verifying" as const) : ("downloading" as const),
               size: active.size,
               downloaded: active.runtime + active.model,
             }
-          : ready && modelReady
+          : installed
             ? {
                 state: "installed" as const,
-                size: model.file.size,
+                size: totalSize(files),
                 ...(linkedFrom && { linkedFrom }),
               }
-            : {
-                state: "downloadable" as const,
-                size: (modelReady ? 0 : model.file.size) + runtimeSize,
-              };
-        return { id: model.id, name: model.name, voices: model.voices, install };
+            : { state: "downloadable" as const, size: totalSize(missing) + runtimeSize };
+        return {
+          id: model.id,
+          name: model.name,
+          description: model.description,
+          voices: model.voices.map((voice) => voice.id),
+          install,
+          ...(model.appliesSpeed ? {} : { speedAppliedByProvider: false }),
+        };
       }),
     );
     return {
@@ -283,7 +376,7 @@ const make = Effect.gen(function* () {
     if (!transfer) {
       const state: Transfer = {
         modelId,
-        size: model.file.size,
+        size: totalSize(modelFiles(model)),
         runtime: 0,
         model: 0,
         verifying: false,
@@ -292,9 +385,11 @@ const make = Effect.gen(function* () {
       const install = Effect.gen(function* () {
         // Read after claiming: no removal or link can start while this transfer exists.
         const needsRuntime = !(yield* runtimeReady);
-        state.size =
-          (needsRuntime ? runtimeFile.size : 0) +
-          ((yield* store.isReady(model.file)) ? 0 : model.file.size);
+        const files = modelFiles(model);
+        const missing = yield* Effect.filter(files, (file) =>
+          store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
+        );
+        state.size = (needsRuntime ? runtimeFile.size : 0) + totalSize(missing);
         if (needsRuntime) {
           const archivePath = yield* store.download(runtimeFile, {
             onProgress: (downloaded) => {
@@ -311,15 +406,21 @@ const make = Effect.gen(function* () {
           state.runtime = runtimeFile.size;
         }
         state.verifying = false;
-        yield* store.download(model.file, {
-          onProgress: (downloaded) => {
-            state.model = downloaded;
-            state.verifying = false;
-          },
-          onVerificationStart: () => {
-            state.verifying = true;
-          },
-        });
+        // Files already in place still go through `download`, which verifies them.
+        let finished = 0;
+        for (const file of files) {
+          const counted = missing.includes(file);
+          yield* store.download(file, {
+            onProgress: (downloaded) => {
+              if (counted) state.model = finished + downloaded;
+              state.verifying = false;
+            },
+            onVerificationStart: () => {
+              state.verifying = true;
+            },
+          });
+          if (counted) finished += file.size;
+        }
       });
       // Owned by the service, so a dropped request does not abandon a large download.
       state.fiber = yield* install.pipe(
@@ -389,19 +490,28 @@ const make = Effect.gen(function* () {
   const link = Effect.fn("LocalSpeechSynthesis.link")(function* (source: string) {
     if (!runtimeFile)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
+    const linkedBefore = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
+      store.isReady(model.file),
+    );
     const linked = yield* exclusive(
       store
-        .link(
-          LOCAL_SYNTHESIS_MODELS.map((model) => model.file),
-          source,
-        )
+        .link(LOCAL_SYNTHESIS_MODELS.flatMap(modelFiles), source)
         .pipe(Effect.mapError(installFailed)),
     );
-    const model = LOCAL_SYNTHESIS_MODELS.find((entry) => linked.includes(entry.file.id));
+    const linkedAfter = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
+      store.isReady(model.file),
+    );
+    const model = linked.length
+      ? (LOCAL_SYNTHESIS_MODELS.find((_, index) => linkedAfter[index] && !linkedBefore[index]) ??
+        LOCAL_SYNTHESIS_MODELS.find((_, index) => linkedAfter[index]))
+      : undefined;
     if (!model) return yield* new LocalSynthesisInstallError({ reason: "not-found" });
-    // The model is in place; an install now fetches only the runtime.
-    if (!(yield* runtimeReady)) return yield* download(model.id);
-    return yield* catalog;
+    const missing = yield* Effect.filter(modelFiles(model), (file) =>
+      store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
+    );
+    if ((yield* runtimeReady) && missing.length === 0) return yield* catalog;
+    // The model file is in place; an install fetches only the runtime and voices it lacks.
+    return yield* download(model.id);
   });
 
   const remove = Effect.fn("LocalSpeechSynthesis.remove")(function* (modelId: string) {
@@ -410,7 +520,9 @@ const make = Effect.gen(function* () {
       permit.withPermits(1)(
         Effect.gen(function* () {
           if (worker?.modelId === modelId) yield* unloadWorker;
-          yield* store.remove(model.file).pipe(Effect.mapError(installFailed));
+          yield* Effect.forEach(modelFiles(model), (file) => store.remove(file)).pipe(
+            Effect.mapError(installFailed),
+          );
           const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
             store.isReady(entry.file),
           );
@@ -443,7 +555,10 @@ const make = Effect.gen(function* () {
     if (!definition) return yield* failure("model-unavailable");
     if (!(yield* runtimeReady)) return yield* failure("missing-model");
     const modelPath = yield* store.installedPath(definition.file);
-    if (!modelPath) return yield* failure("missing-model");
+    const voice =
+      definition.voices.find((entry) => entry.id === request.voice) ?? definition.voices[0]!;
+    const voicePath = voice.file && (yield* store.installedPath(voice.file));
+    if (!modelPath || (voice.file && !voicePath)) return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
     // Interruptible, so a request abandoned while waiting stops waiting.
     yield* Effect.acquireRelease(
@@ -486,10 +601,8 @@ const make = Effect.gen(function* () {
           text: request.text,
           ...(language ? { language } : {}),
           options: {
-            voice_id: definition.voices.includes(request.voice)
-              ? request.voice
-              : definition.voices[0]!,
-            speed: String(request.speed),
+            ...(voicePath ? { voice_embedding_file: voicePath } : { voice_id: voice.id }),
+            ...(definition.appliesSpeed ? { speed: String(request.speed) } : {}),
           },
         },
         (bytes) => Queue.offerUnsafe(queue, bytes),

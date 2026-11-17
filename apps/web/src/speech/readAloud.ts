@@ -1,4 +1,4 @@
-import type { SpeechSynthesisCatalog } from "@t3tools/contracts";
+import { speechSpeedAppliedByProvider, type SpeechSynthesisCatalog } from "@t3tools/contracts";
 import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
@@ -66,10 +66,11 @@ export const readAloudController = createReadAloudController(async (text, settin
   const catalog = await pendingCatalog;
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
+  const model = settings.model || catalog.defaultModel;
   const url = await runEnvironmentSpeech(
     startSpeechSynthesis(prepared, settings.provider, {
       text,
-      model: settings.model || catalog.defaultModel,
+      model,
       voice: settings.voice,
       speed: settings.speed,
       language: settings.language,
@@ -78,7 +79,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   );
   signal.throwIfAborted();
   const audio = new Audio(url);
-  if (!catalog.speedAppliedByProvider) audio.playbackRate = settings.speed;
+  if (!speechSpeedAppliedByProvider(catalog, model)) audio.playbackRate = settings.speed;
   let done: () => void = () => {};
   const finished = new Promise<void>((resolve, reject) => {
     done = resolve;

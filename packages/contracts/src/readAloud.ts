@@ -93,13 +93,21 @@ export const SpeechSynthesisCatalog = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       name: Schema.String,
+      description: Schema.optionalKey(Schema.String),
       voices: Schema.Array(Schema.String),
       /** Present for models that run on the environment and must be downloaded first. */
       install: Schema.optionalKey(SpeechSynthesisModelInstall),
+      /** Overrides the catalog's `speedAppliedByProvider` for this model. */
+      speedAppliedByProvider: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
 export type SpeechSynthesisCatalog = typeof SpeechSynthesisCatalog.Type;
+
+/** Whether synthesis already honors the speed setting; otherwise players speed up playback. */
+export const speechSpeedAppliedByProvider = (catalog: SpeechSynthesisCatalog, model: string) =>
+  catalog.models.find((entry) => entry.id === model)?.speedAppliedByProvider ??
+  catalog.speedAppliedByProvider;
 
 export const EMPTY_SPEECH_SYNTHESIS_CATALOG: SpeechSynthesisCatalog = {
   defaultModel: "",

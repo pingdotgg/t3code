@@ -25,7 +25,7 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { readAloudController } from "../../speech/readAloud";
-import { DownloadIcon, XIcon } from "lucide-react";
+import { CheckIcon, DownloadIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -128,20 +128,22 @@ const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 function LocalSpeechModel({
   prepared,
   model,
+  selected,
   refreshing,
+  onSelect,
   onChanged,
 }: {
   prepared: PreparedConnection;
   model: SpeechSynthesisCatalog["models"][number];
+  selected: boolean;
   /** A catalog request is in flight; polling waits for it rather than aborting it. */
   refreshing: boolean;
+  onSelect: () => void;
   onChanged: () => void;
 }) {
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
-  const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
-  const [existingPath, setExistingPath] = useState("");
   const install = model.install;
   const downloading = install?.state === "downloading" || install?.state === "verifying";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
@@ -151,7 +153,7 @@ function LocalSpeechModel({
     return () => window.clearTimeout(timer);
   }, [downloading, requesting, refreshing, onChanged]);
   if (!install) return null;
-  const run = async (action: "download" | "cancel" | "remove" | "link") => {
+  const run = async (action: "download" | "cancel" | "remove") => {
     setRequesting(true);
     setError("");
     try {
@@ -160,18 +162,14 @@ function LocalSpeechModel({
           ? downloadSpeechSynthesisModel(prepared, model.id)
           : action === "cancel"
             ? cancelSpeechSynthesisModelDownload(prepared, model.id)
-            : action === "link"
-              ? linkSpeechSynthesisModels(prepared, existingPath)
-              : removeSpeechSynthesisModel(prepared, model.id),
+            : removeSpeechSynthesisModel(prepared, model.id),
       );
-      if (action === "link") setExistingPath("");
+      if (action === "download") onSelect();
     } catch {
       setError(
         action === "download"
           ? "Could not download the model. Check the environment's connection and disk space."
-          : action === "link"
-            ? `No ${model.name} file was found at that path.`
-            : "Could not change the model. Try again.",
+          : "Could not change the model. Try again.",
       );
     }
     setRequesting(false);
@@ -186,9 +184,10 @@ function LocalSpeechModel({
       title={model.name}
       description={
         <>
+          {model.description}{" "}
           {install.state === "installed"
-            ? "Installed on the selected environment. Replies are read without leaving it."
-            : `Runs on the selected environment after a ${formatSize(install.size)} download.`}
+            ? `Installed on the selected environment (${formatSize(install.size)}).`
+            : `${formatSize(install.size)} download.`}
           {install.linkedFrom && (
             <span className="mt-0.5 block break-all text-2xs">
               Using your file at {install.linkedFrom}
@@ -231,19 +230,31 @@ function LocalSpeechModel({
             <XIcon className="size-3.5" />
           </Button>
         ) : install.state === "installed" ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canManage || requesting}
-            aria-label={
-              install.linkedFrom
-                ? `Stop using your ${model.name} file; the file stays on disk`
-                : undefined
-            }
-            onClick={() => void run("remove")}
-          >
-            {install.linkedFrom ? "Stop using" : "Remove"}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {selected ? (
+              <Button size="sm" variant="secondary" disabled>
+                <CheckIcon />
+                Selected
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onSelect}>
+                Use model
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canManage || requesting}
+              aria-label={
+                install.linkedFrom
+                  ? `Stop using your ${model.name} file; the file stays on disk`
+                  : `Remove ${model.name}`
+              }
+              onClick={() => void run("remove")}
+            >
+              {install.linkedFrom ? "Stop using" : "Remove"}
+            </Button>
+          </div>
         ) : (
           <Button
             size="sm"
@@ -256,34 +267,65 @@ function LocalSpeechModel({
           </Button>
         )
       }
+    />
+  );
+}
+
+/** Links model files already on the environment instead of downloading them. */
+function LocalSpeechModelLink({
+  prepared,
+  onChanged,
+}: {
+  prepared: PreparedConnection;
+  onChanged: () => void;
+}) {
+  const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
+  const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
+  const [path, setPath] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [error, setError] = useState("");
+  if (!canManage || !canReadFiles) return null;
+  return (
+    <SettingsRow
+      title="Use existing"
+      description={
+        <>
+          Already downloaded one of these models elsewhere on this environment? Paste the file or
+          folder path to use it in place.
+          {error && <span role="alert"> {error}</span>}
+        </>
+      }
     >
-      {install.state === "downloadable" && canManage && canReadFiles && (
-        <form
-          className="mt-2 flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void run("link");
-          }}
-        >
-          <div className="min-w-0 flex-1">
-            <Input
-              size="compact"
-              aria-label={`Path to a ${model.name} file or folder already on this environment`}
-              placeholder="Already downloaded elsewhere? Paste the model file or folder path"
-              value={existingPath}
-              onChange={(event) => setExistingPath(event.target.value)}
-            />
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            variant="outline"
-            disabled={requesting || !existingPath.trim()}
-          >
-            Use existing
-          </Button>
-        </form>
-      )}
+      <form
+        className="mt-2 flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setLinking(true);
+          setError("");
+          void runEnvironmentSpeech(linkSpeechSynthesisModels(prepared, path))
+            .then(
+              () => setPath(""),
+              () => setError("No speech model file was found at that path."),
+            )
+            .finally(() => {
+              setLinking(false);
+              onChanged();
+            });
+        }}
+      >
+        <div className="min-w-0 flex-1">
+          <Input
+            size="compact"
+            aria-label="Path to a speech model file or folder already on this environment"
+            placeholder="Model file or folder path"
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
+          />
+        </div>
+        <Button type="submit" size="sm" variant="outline" disabled={linking || !path.trim()}>
+          Use existing
+        </Button>
+      </form>
     </SettingsRow>
   );
 }
@@ -308,7 +350,8 @@ export function ReadAloudSettingsSection() {
       ? catalogState.error || catalog.error || ""
       : "";
   const model = settings.model || catalog.defaultModel;
-  const localModel = catalog.models.find((entry) => entry.id === model && entry.install);
+  const localModels =
+    settings.provider === "local" ? catalog.models.filter((entry) => entry.install) : [];
   const refreshCatalog = () => setCatalogVersion((value) => value + 1);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const state = useSyncExternalStore(
@@ -463,21 +506,27 @@ export function ReadAloudSettingsSection() {
               onSaved={() => setCatalogVersion((value) => value + 1)}
             />
           )}
-          {settings.provider === "local" && prepared && localModel && (
-            <LocalSpeechModel
-              key={`${prepared.environmentId}:${localModel.id}`}
-              prepared={prepared}
-              model={localModel}
-              refreshing={catalogState.version !== catalogVersion}
-              onChanged={refreshCatalog}
-            />
+          {prepared &&
+            localModels.map((entry) => (
+              <LocalSpeechModel
+                key={`${prepared.environmentId}:${entry.id}`}
+                prepared={prepared}
+                model={entry}
+                selected={entry.id === model}
+                refreshing={catalogState.version !== catalogVersion}
+                onSelect={() => change({ model: entry.id, voice: "" })}
+                onChanged={refreshCatalog}
+              />
+            ))}
+          {prepared && localModels.some((entry) => entry.install?.state === "downloadable") && (
+            <LocalSpeechModelLink prepared={prepared} onChanged={refreshCatalog} />
           )}
           {remote && error && (
             <p role="alert" className="text-destructive text-sm">
               {error}
             </p>
           )}
-          {remote && catalog.supportsModelSelection && (
+          {remote && !localModels.length && catalog.supportsModelSelection && (
             <SettingsRow
               title="Speech model"
               description="Choose a speech model from the provider catalog."

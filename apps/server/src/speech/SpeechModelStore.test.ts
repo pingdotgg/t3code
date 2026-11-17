@@ -198,11 +198,23 @@ it.effect("links a verified model file from another folder and never deletes it"
     const existing = path.join(nested, "renamed-by-the-other-app.gguf");
     yield* h.fs.writeFile(impostor, new Uint8Array(bytes.length));
     yield* h.fs.writeFile(existing, bytes);
+    // A second file from the same repository, such as a voice beside its model.
+    const voiceBytes = bytes.subarray(0, 32);
+    const voice = {
+      ...h.model,
+      filename: "voice.safetensors",
+      size: voiceBytes.length,
+      sha256: Hex.encode(
+        yield* (yield* Digest.Digest).digest(Digest.sha256, voiceBytes).pipe(Effect.orDie),
+      ),
+    };
+    yield* h.fs.writeFile(path.join(nested, "voice.safetensors"), voiceBytes);
 
     expect(yield* h.store.link([h.model], impostor)).toEqual([]);
     expect(yield* h.store.linkedFrom(h.model)).toBeUndefined();
 
-    expect(yield* h.store.link([h.model], elsewhere)).toEqual([h.model.id]);
+    expect(yield* h.store.link([h.model, voice], elsewhere)).toEqual([h.model.id, voice.id]);
+    expect(yield* h.store.installedPath(voice)).toBeDefined();
     expect(yield* h.store.linkedFrom(h.model)).toBe(existing);
     expect(yield* h.store.installedPath(h.model)).toBe(h.stale);
     expect(h.requests).toHaveLength(0);

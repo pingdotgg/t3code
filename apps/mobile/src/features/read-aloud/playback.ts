@@ -7,7 +7,11 @@ import { createAudioPlayer } from "expo-audio";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
 import { AppState, Platform } from "react-native";
-import type { ReadAloudSettings, SpeechSynthesisCatalog } from "@t3tools/contracts";
+import {
+  speechSpeedAppliedByProvider,
+  type ReadAloudSettings,
+  type SpeechSynthesisCatalog,
+} from "@t3tools/contracts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
@@ -125,10 +129,11 @@ export const readAloudController = createReadAloudController(async (text, settin
   const catalog = await pendingCatalog;
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
+  const model = settings.model || catalog.defaultModel;
   const url = await runSpeech(
     startSpeechSynthesis(prepared, settings.provider, {
       text,
-      model: settings.model || catalog.defaultModel,
+      model,
       voice: settings.voice,
       speed: settings.speed,
       language: settings.language,
@@ -137,7 +142,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   );
   signal.throwIfAborted();
   const player = createAudioPlayer(url, { updateInterval: 500 });
-  if (!catalog.speedAppliedByProvider) player.setPlaybackRate(settings.speed);
+  if (!speechSpeedAppliedByProvider(catalog, model)) player.setPlaybackRate(settings.speed);
   const stopWatching = watchForeground(settings);
   const session = createAudioPlaybackSession(
     {

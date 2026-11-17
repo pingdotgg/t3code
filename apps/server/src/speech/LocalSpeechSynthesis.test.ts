@@ -59,14 +59,20 @@ const withService = <A, E>(
 
 it.effect("counts only the files an install still needs in its download size", () =>
   withService(
-    { isReady: (file) => Effect.succeed(file.id !== "pingdotgg/audio.cpp") },
+    {
+      isReady: (file) =>
+        Effect.succeed(
+          file.id !== "pingdotgg/audio.cpp" && !file.filename.endsWith("-alba.safetensors"),
+        ),
+    },
     (service) =>
       Effect.gen(function* () {
+        const runtime = audioCppRuntime("darwin", "arm64")!.size;
         const { models } = yield* service.catalog;
-        expect(models[0]?.install).toEqual({
-          state: "downloadable",
-          size: audioCppRuntime("darwin", "arm64")!.size,
-        });
+        expect(models.map((model) => [model.id, model.install])).toEqual([
+          ["supertonic-3", { state: "downloadable", size: runtime }],
+          ["pocket-tts-english", { state: "downloadable", size: runtime + 6_194_424 }],
+        ]);
       }),
     { runtime: false },
   ),

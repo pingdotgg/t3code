@@ -206,12 +206,13 @@ System voices run on your device. OpenAI, Grok TTS, and OpenRouter send the repl
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
 voice, then use the preview to try it.
 
-**Local model** reads replies in English with Supertonic 3 on your selected environment,
-so the text never leaves it. Download it once from the same settings page (330–360 MB).
-Like dictation models, it reuses a copy already in the Hugging Face cache, and on web or desktop
-you can paste the path of a copy elsewhere and choose **Use existing**. It uses the GPU through Metal on Apple silicon Macs and Vulkan on Windows and Linux. Intel Macs and
-machines without a GPU run it on the CPU, which takes a few seconds longer to start speaking. Local
-models run on macOS, Windows, and Linux with glibc 2.28 or newer.
+**Local model** reads replies on your selected environment, so the text never leaves it.
+Download a model once from the same settings page. Supertonic 3 (330–360 MB) speaks 31
+languages and is fastest with a GPU. Pocket TTS (about 200 MB) speaks English and stays fast
+on machines without one. Like dictation models, they reuse a copy already in the Hugging Face
+cache, and on web or desktop you can paste the path of a copy elsewhere and choose **Use
+existing**. Local models use the GPU through Metal on Apple silicon Macs and Vulkan on Windows
+and Linux, and run on macOS, Windows, and Linux with glibc 2.28 or newer.
 
 On mobile, **Background playback** allows speech to continue while the app is in the background.
 
