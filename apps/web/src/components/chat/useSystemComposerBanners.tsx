@@ -8,7 +8,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { WifiOffIcon } from "lucide-react";
+import { MoonIcon, WifiOffIcon } from "lucide-react";
+import type { BoatCloudSleep } from "../../boatCloud";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
@@ -45,6 +46,7 @@ interface SystemComposerBannersInput {
   readonly activeEnvironment: EnvironmentPresentation | null;
   readonly activeEnvironmentUnavailable: boolean;
   readonly activeEnvironmentUnavailableState: EnvironmentUnavailableState | null;
+  readonly boatCloudSleep: BoatCloudSleep | null;
   readonly activeThreadEnvironmentId: EnvironmentId | null;
   readonly serverConfig: EnvironmentPresentation["serverConfig"] | null;
   readonly hasMultipleRegisteredEnvironments: boolean;
@@ -61,6 +63,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     activeEnvironment,
     activeEnvironmentUnavailable,
     activeEnvironmentUnavailableState,
+    boatCloudSleep,
     activeThreadEnvironmentId,
     serverConfig,
     hasMultipleRegisteredEnvironments,
@@ -187,6 +190,17 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
       !suppressUnavailableBanner;
+    // A wake lists its steps in the thread, so the banner only marks a VM that is asleep.
+    if (boatCloudSleep?.state === "sleeping" && activeEnvironment !== null) {
+      items.push({
+        id: `boat-cloud-sleep:${activeEnvironment.environmentId}`,
+        variant: "info",
+        group: "environment",
+        icon: <MoonIcon />,
+        title: `${activeEnvironment.label} is sleeping`,
+        description: "Send a message to wake it.",
+      });
+    }
     if (showUnavailableBanner) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,

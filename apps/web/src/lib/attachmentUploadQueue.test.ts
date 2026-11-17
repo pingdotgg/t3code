@@ -864,6 +864,57 @@ describe("attachmentUploadQueue", () => {
     },
   );
 
+  it("sends the new machine's copy after a draft moves, and drops the old one", async () => {
+    const draftId = DraftId.make("draft-environment-move");
+    const store = useComposerDraftStore.getState();
+    const file = makeFile("moved");
+    store.addFiles(draftId, [file]);
+    try {
+      store.setProjectDraftThreadId(
+        { environmentId: firstEnvironment, projectId: ProjectId.make("project") },
+        draftId,
+      );
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      let settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+
+      // A Boat cloud send retargets the draft, then uploads to the machine it now runs on.
+      store.setProjectDraftThreadId(
+        { environmentId: secondEnvironment, projectId: ProjectId.make("vm-project") },
+        draftId,
+      );
+      startAttachmentUpload({
+        environmentId: secondEnvironment,
+        image: file,
+        draftTarget: draftId,
+      });
+      await Promise.resolve();
+      settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[1]!.complete();
+      await settled;
+
+      expect(getUploadedAttachments({ environmentId: secondEnvironment, images: [file] })).toEqual([
+        expect.objectContaining({ id: "pending-environment-2-moved.pdf" }),
+      ]);
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [file] }),
+      ).toBeNull();
+      expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        mocks.removeUpload,
+        {
+          environmentId: firstEnvironment,
+          input: { attachmentId: "pending-environment-1-moved.pdf" },
+        },
+        expect.anything(),
+      );
+    } finally {
+      store.clearDraftThread(draftId);
+    }
+  });
+
   it("does not let stalled uploads block another environment", async () => {
     const images = ["image-a", "image-b", "image-c", "image-d"].map(makeImage);
     for (const image of images) {

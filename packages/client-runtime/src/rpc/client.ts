@@ -45,6 +45,20 @@ export class EnvironmentRpcRequestObserver extends Context.Reference<{
   }),
 }) {}
 
+/**
+ * Turns an environment that stopped by itself back on before a command runs there, so an
+ * action on a sleeping Boat cloud VM wakes it rather than failing. Reads never wake one.
+ */
+export class EnvironmentWaker extends Context.Reference<{
+  readonly wakeIfAsleep: (
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<void, EnvironmentRpcUnavailableError>;
+}>("@t3tools/client-runtime/rpc/EnvironmentWaker", {
+  defaultValue: () => ({
+    wakeIfAsleep: () => Effect.void,
+  }),
+}) {}
+
 export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
@@ -60,6 +74,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
+  | typeof WS_METHODS.boatCloudSubscribe
+  | typeof WS_METHODS.boxdCloudSubscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
   | typeof WS_METHODS.serverGetDatabaseStorage
   | typeof WS_METHODS.subscribeTerminalMetadata

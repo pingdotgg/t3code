@@ -492,6 +492,11 @@ export function createThreadEnvironmentAtoms<R, E>(
     rowActionsAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
+    archive: optimistic.wrap(commands.archive, (thread, _input, now) => ({
+      ...thread,
+      archivedAt: thread.archivedAt ?? now,
+    })),
+    unarchive: optimistic.wrap(commands.unarchive, (thread) => ({ ...thread, archivedAt: null })),
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||

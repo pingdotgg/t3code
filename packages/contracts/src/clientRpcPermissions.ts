@@ -83,6 +83,17 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.botsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.botsGenerateAvatar]: AuthOrchestrationOperateScope,
+  // The Boat key spends money on VMs, as a provider API key does.
+  [WS_METHODS.boatCloudConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.boatCloudDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.boatCloudRunSetup]: AuthSettingsWriteScope,
+  [WS_METHODS.boatCloudConfigureEnvironment]: AuthSettingsWriteScope,
+  [WS_METHODS.boatCloudAcquire]: AuthOrchestrationOperateScope,
+  [WS_METHODS.boatCloudWake]: AuthOrchestrationOperateScope,
+  [WS_METHODS.boxdCloudConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.boxdCloudDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.boxdCloudRunSetup]: AuthSettingsWriteScope,
+  [WS_METHODS.boxdCloudAcquire]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,

@@ -13,13 +13,14 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
-import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { v2Now, v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import {
   childThreadInputsTitle,
   createEnvironmentThreadShellAtoms,
   resolveListedAncestorThreadRef,
+  mostWorkedRepositories,
 } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -747,5 +748,69 @@ describe("resolveListedAncestorThreadRef", () => {
     expect(rowOf(task.id, environmentId, [parent, task])).toEqual(
       ref(remoteEnvironmentId, parent.id),
     );
+  });
+});
+
+describe("mostWorkedRepositories", () => {
+  const project = (id: string, remoteUrl: string | null, extra: object = {}) => ({
+    ...v2Project,
+    id: ProjectId.make(id),
+    repositoryIdentity:
+      remoteUrl === null
+        ? null
+        : {
+            canonicalKey: remoteUrl,
+            locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+          },
+    ...extra,
+  });
+  const threads = (projectId: string, count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(`${projectId}-${index}`),
+      projectId: ProjectId.make(projectId),
+    }));
+
+  it("sums each repository's threads across machines and remote forms, most first", () => {
+    const laptop: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      projects: [
+        project("app", "git@github.com:acme/app.git"),
+        project("site", "https://github.com/acme/site"),
+        project("local", null),
+        project("old", "https://github.com/acme/old", { archivedAt: v2Now.toString() }),
+        project("fork", "https://github.com/upstream/tool", {
+          repositoryIdentity: {
+            canonicalKey: "github.com/upstream/tool",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "upstream",
+              remoteUrl: "https://github.com/upstream/tool",
+            },
+            origin: { canonicalKey: "github.com/me/tool", remoteUrl: "https://github.com/me/tool" },
+          },
+        }),
+      ],
+      threads: [...threads("app", 2), ...threads("site", 3), ...threads("local", 9)],
+      archivedThreads: [...threads("old", 9), ...threads("fork", 1)],
+    };
+    const desktop: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      projects: [project("app-2", "https://github.com/ACME/app")],
+      threads: threads("app-2", 1),
+      archivedThreads: [],
+      olderSettled: {
+        before: v2Now.toString(),
+        asOfSequence: 0,
+        counts: [{ projectId: ProjectId.make("app-2"), count: 4 }],
+      },
+    };
+
+    expect(mostWorkedRepositories([laptop, null, desktop], 10)).toEqual([
+      "git@github.com:acme/app.git",
+      "https://github.com/acme/site",
+      "https://github.com/me/tool",
+    ]);
+    expect(mostWorkedRepositories([laptop, desktop], 1)).toEqual(["git@github.com:acme/app.git"]);
   });
 });

@@ -1,11 +1,20 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
-import type { EnvironmentId, WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
+import type {
+  BoatCloudStartStep,
+  BoatCloudStepProgress,
+  EnvironmentId,
+  WorktreeSetupSnapshot,
+  WorktreeSetupStage,
+} from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   BrainIcon,
+  CloudIcon,
   FolderGit2Icon,
   GitBranchIcon,
   PackageIcon,
+  PlugIcon,
+  ServerIcon,
   TerminalIcon,
   XIcon,
 } from "lucide-react";
@@ -371,6 +380,76 @@ export function WorktreeSetupRows({
         stageRows
       )}
       {starting ? <LiveStageRow icon={BrainIcon} label={starting} /> : null}
+    </section>
+  );
+}
+
+/** A Boat cloud start as the thread shows it while its first message waits. */
+export interface BoatCloudStartRowsState {
+  readonly steps: ReadonlyArray<BoatCloudStepProgress>;
+  /** `owner/repo`, for the checkout step. */
+  readonly repository: string | null;
+  /** A stopped VM turning back on rather than a new start. */
+  readonly waking?: boolean;
+}
+
+const BOAT_CLOUD_STEP_ICONS = {
+  machine: CloudIcon,
+  server: ServerIcon,
+  repository: GitBranchIcon,
+  connect: PlugIcon,
+  project: FolderGit2Icon,
+  thread: BrainIcon,
+} satisfies Record<BoatCloudStartStep, typeof GitBranchIcon>;
+
+/** Running, done and failed labels per step. */
+const BOAT_CLOUD_STEP_LABELS = {
+  machine: ["Starting a VM", "Started a VM", "Couldn't start a VM"],
+  server: [
+    "Starting T3 Code on the VM",
+    "Started T3 Code on the VM",
+    "Couldn't start T3 Code on the VM",
+  ],
+  repository: ["Checking out", "Checked out", "Couldn't check out"],
+  connect: ["Connecting to the VM", "Connected to the VM", "Couldn't connect to the VM"],
+  project: ["Opening the project", "Opened the project", "Couldn't open the project"],
+  thread: ["Starting agent", "Started agent", "Couldn't start agent"],
+} satisfies Record<BoatCloudStartStep, readonly [string, string, string]>;
+
+const WAKING_MACHINE_LABELS = ["Waking the VM", "Woke the VM", "Couldn't wake the VM"] as const;
+
+function boatCloudStepLabel(
+  entry: BoatCloudStepProgress,
+  repository: string | null,
+  waking: boolean,
+): string {
+  const [running, done, failed] =
+    waking && entry.step === "machine" ? WAKING_MACHINE_LABELS : BOAT_CLOUD_STEP_LABELS[entry.step];
+  const label = entry.state === "failed" ? failed : entry.state === "done" ? done : running;
+  return entry.step === "repository" ? `${label} ${repository ?? "the repository"}` : label;
+}
+
+/** The Boat cloud steps still left when the first message was sent, as setup rows that appear as they start. */
+export function BoatCloudStartRows({ steps, repository, waking = false }: BoatCloudStartRowsState) {
+  return (
+    <section aria-label="Boat cloud start" className="flex min-w-0 flex-col gap-1">
+      {steps.map((entry) => {
+        const icon = BOAT_CLOUD_STEP_ICONS[entry.step];
+        const label = boatCloudStepLabel(entry, repository, waking);
+        return entry.state === "active" ? (
+          <div key={entry.step} data-boat-cloud-step={entry.step}>
+            <LiveStageRow icon={icon} label={label} />
+          </div>
+        ) : (
+          <SettledRow
+            key={entry.step}
+            icon={icon}
+            label={label}
+            failed={entry.state === "failed"}
+            body={entry.step === "repository" ? null : entry.detail}
+          />
+        );
+      })}
     </section>
   );
 }

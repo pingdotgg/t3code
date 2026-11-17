@@ -28,6 +28,7 @@ import {
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   EnvironmentRpcUnavailableError,
+  EnvironmentWaker,
   request,
   requestGuarded,
   RpcPermissionGuard,
@@ -933,9 +934,14 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
     ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
     execute: (target, registry) =>
-      runInEnvironment(
-        target.environmentId,
-        options.execute(target.input, registry, target.environmentId),
+      EnvironmentWaker.pipe(
+        Effect.flatMap((waker) => waker.wakeIfAsleep(target.environmentId)),
+        Effect.andThen(
+          runInEnvironment(
+            target.environmentId,
+            options.execute(target.input, registry, target.environmentId),
+          ),
+        ),
       ),
   });
 }

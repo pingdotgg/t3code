@@ -2030,7 +2030,11 @@ export function createNewTaskDraft(project: {
 export function retargetNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
-  options?: { readonly keepPullRequestWorkspace?: boolean },
+  options?: {
+    readonly keepPullRequestWorkspace?: boolean;
+    /** Keeps the mode and branch for a fresh checkout of the same repository, such as a Boat VM. */
+    readonly keepBranch?: boolean;
+  },
 ): void {
   updateComposerDrafts((current) => {
     const existing = current[draftKey];
@@ -2045,7 +2049,10 @@ export function retargetNewTaskDraft(
     const { workspaceSelection, ...retained } = normalizeDraft(existing);
     // The PR checkout is recreated on the target machine, so only the old local path is dropped.
     const keptWorkspaceSelection =
-      options?.keepPullRequestWorkspace && workspaceSelection?.pullRequestReference !== undefined
+      workspaceSelection !== undefined &&
+      (options?.keepBranch ||
+        (options?.keepPullRequestWorkspace &&
+          workspaceSelection.pullRequestReference !== undefined))
         ? { ...workspaceSelection, worktreePath: null }
         : undefined;
     // Keep bytes across environment moves but drop server-specific upload stamps.

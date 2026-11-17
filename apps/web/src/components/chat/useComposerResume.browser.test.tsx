@@ -5,7 +5,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   startedTurn: null as ReturnType<typeof deferred<unknown>> | null,
+  sleep: null as BoatCloudSleep | null,
 }));
+
+vi.mock(import("../../boatCloud"), () => ({ useBoatCloudSleep: () => state.sleep }));
 
 vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -16,6 +19,7 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
 }));
 
 import { render } from "../../../test/render";
+import type { BoatCloudSleep } from "../../boatCloud";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import { useComposerResume } from "./useComposerResume";
 
@@ -30,6 +34,7 @@ function deferred<T>() {
 function setup() {
   const startedTurn = deferred<unknown>();
   state.startedTurn = startedTurn;
+  state.sleep = null;
   return { startedTurn };
 }
 
@@ -44,6 +49,7 @@ function composerShowing(selectedModelSelection: typeof threadAModel) {
 function ResumeButton(props: {
   readonly composerRef: ComposerHandleRef;
   readonly persistSettings: () => Promise<AtomCommandResult<void, unknown>>;
+  readonly environmentUnavailable?: boolean;
 }) {
   const { onResume } = useComposerResume({
     environmentId: EnvironmentId.make("environment:test"),
@@ -56,7 +62,7 @@ function ResumeButton(props: {
     isSendBusy: false,
     isRevertingCheckpoint: false,
     threadDetailLoading: false,
-    activeEnvironmentUnavailable: false,
+    activeEnvironmentUnavailable: props.environmentUnavailable ?? false,
     runtimeMode: "full-access",
     localCheckoutBranchMismatch: null,
     composerRef: props.composerRef,
@@ -89,5 +95,35 @@ it("continues on the resumed thread's model after the composer moves to another 
     threadId: threadA,
     manualContinuationOfRunId: "run:interrupted",
     modelSelection: threadAModel,
+  });
+});
+
+it("wakes a sleeping Boat VM before resuming on it", async () => {
+  const { startedTurn } = setup();
+  const woken = deferred<boolean>();
+  const wake = vi.fn(() => woken.promise);
+  state.sleep = { state: "sleeping", wake };
+  const composerRef: ComposerHandleRef = { current: composerShowing(threadAModel) };
+  const persistSettings = async () => AsyncResult.success(undefined);
+  await using screen = await render(
+    <ResumeButton
+      composerRef={composerRef}
+      persistSettings={persistSettings}
+      environmentUnavailable
+    />,
+  );
+
+  await screen.getByRole("button", { name: "Resume" }).click();
+  expect(wake).toHaveBeenCalledOnce();
+  // The wake resolves only after the VM is connected again.
+  state.sleep = null;
+  await screen.rerender(
+    <ResumeButton composerRef={composerRef} persistSettings={persistSettings} />,
+  );
+  woken.resolve(true);
+
+  expect(await startedTurn.promise).toMatchObject({
+    threadId: threadA,
+    manualContinuationOfRunId: "run:interrupted",
   });
 });

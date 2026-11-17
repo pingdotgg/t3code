@@ -18,6 +18,7 @@ const loads = vi.hoisted(() => [] as string[]);
 
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("../connection/catalog", () => ({ environmentCatalog: {} }));
+vi.mock("../features/boatCloud/boatCloudThreads", () => ({ boatCloudThreadList: {} }));
 vi.mock("./shell", () => ({ environmentShell: {} }));
 vi.mock("@t3tools/client-runtime/state/threads", async (importOriginal) => {
   const { Atom } = await import("effect/reactivity");

@@ -7,13 +7,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isBoatCloudHttpBaseUrl,
   isListedThreadLineage,
   isProviderNativeSubagentThread,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { parseRepository } from "@t3tools/shared/boatCloudVm";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
+import { connectionCatalogDisplayUrl } from "../connection/presentation.ts";
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
@@ -248,6 +251,74 @@ function sameApartFromStreaming(
   );
 }
 
+/**
+ * A Boat cloud VM keeps the threads of every device and repository that used it, so a
+ * client lists only the VM threads it started or opened, from `openedThreadsAtom`.
+ */
+export function createBoatCloudThreadListAtoms(input: {
+  readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
+  readonly openedThreadsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
+}) {
+  const onBoatCloudAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const entry = get(input.catalogValueAtom).entries.get(environmentId);
+      return entry !== undefined && isBoatCloudHttpBaseUrl(connectionCatalogDisplayUrl(entry));
+    }).pipe(Atom.withLabel(`boat-cloud-environment:${environmentId}`)),
+  );
+  const listedThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): ReadonlySet<ThreadId> | null =>
+      get(onBoatCloudAtom(environmentId))
+        ? new Set(
+            get(input.openedThreadsAtom)
+              .filter((ref) => ref.environmentId === environmentId)
+              .map((ref) => ref.threadId),
+          )
+        : null,
+    ).pipe(Atom.withLabel(`boat-cloud-listed-thread-ids:${environmentId}`)),
+  );
+  return { onBoatCloudAtom, listedThreadIdsAtom };
+}
+
+/**
+ * Git remotes with the most threads across these environments' snapshots, most first and one
+ * per repository, for the Boat cloud snapshot to check out. Archived and older settled threads
+ * count; archived projects do not.
+ */
+export function mostWorkedRepositories(
+  snapshots: Iterable<OrchestrationV2ShellSnapshot | null>,
+  limit: number,
+): Array<string> {
+  const byRepository = new Map<string, { remoteUrl: string; threads: number }>();
+  for (const snapshot of snapshots) {
+    if (snapshot === null) continue;
+    const threadsByProject = new Map<ProjectId, number>();
+    const add = (projectId: ProjectId, count: number) =>
+      threadsByProject.set(projectId, (threadsByProject.get(projectId) ?? 0) + count);
+    for (const thread of snapshot.threads) add(thread.projectId, 1);
+    for (const thread of snapshot.archivedThreads) add(thread.projectId, 1);
+    for (const older of snapshot.olderSettled?.counts ?? []) add(older.projectId, older.count);
+    for (const project of snapshot.projects) {
+      const threads = threadsByProject.get(project.id) ?? 0;
+      // A fork's own remote, where the agent can push, as a Boat cloud start clones it.
+      const identity = project.repositoryIdentity;
+      const remoteUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
+      const repository = remoteUrl === undefined ? null : parseRepository(remoteUrl);
+      if (threads === 0 || project.archivedAt || remoteUrl === undefined || repository === null) {
+        continue;
+      }
+      const known = byRepository.get(repository.key);
+      byRepository.set(repository.key, {
+        remoteUrl: known?.remoteUrl ?? remoteUrl,
+        threads: (known?.threads ?? 0) + threads,
+      });
+    }
+  }
+  return [...byRepository.values()]
+    .sort((left, right) => right.threads - left.threads)
+    .slice(0, limit)
+    .map((repository) => repository.remoteUrl);
+}
+
 export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
@@ -257,6 +328,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<string> | null>;
+  /** The only top-level threads display lists show for an environment; null shows them all. */
+  readonly listedThreadIdsAtom?: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlySet<ThreadId> | null>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
@@ -664,10 +739,18 @@ export function createEnvironmentThreadShellAtoms(input: {
       (environmentId) => ({
         environmentId,
         hiddenTags: get(input.hiddenThreadTagsAtom(environmentId)),
+        listedThreadIds:
+          input.listedThreadIdsAtom === undefined
+            ? null
+            : get(input.listedThreadIdsAtom(environmentId)),
       }),
     );
-    // Read shells only while some environment hides tags, so streaming ticks cost nothing otherwise.
-    if (!environments.some((environment) => environment.hiddenTags !== null)) {
+    // Read shells only while some environment filters, so streaming ticks cost nothing otherwise.
+    if (
+      !environments.some(
+        (environment) => environment.hiddenTags !== null || environment.listedThreadIds !== null,
+      )
+    ) {
       previousHiddenThreadKeys = NO_HIDDEN_THREADS;
       return NO_HIDDEN_THREADS;
     }

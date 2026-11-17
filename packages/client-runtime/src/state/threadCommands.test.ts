@@ -382,6 +382,8 @@ describe("remote thread lifecycle commands", () => {
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
+    ["archive", {}, { archivedAt: expect.anything() }],
+    ["unarchive", {}, { archivedAt: null }],
   ] as const;
 
   it.effect.each(actions)(
@@ -404,6 +406,7 @@ describe("remote thread lifecycle commands", () => {
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }
                 : {}),
+              ...(action === "unarchive" ? { archivedAt: NOW } : {}),
             },
           ],
         };

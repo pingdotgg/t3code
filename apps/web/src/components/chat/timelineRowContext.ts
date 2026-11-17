@@ -21,6 +21,7 @@ import { useEffect, useRef, createContext, type MouseEvent, type ReactNode } fro
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
+import type { BoatCloudStartRowsState } from "./WorktreeSetupCard";
 import { type ChatFileAttachment } from "../../types";
 import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
@@ -124,6 +125,8 @@ export interface TimelineRowActivityState {
   latestRunId: RunId | null;
   /** The worktree setup of the live turn, drawn as the working row's first rows. */
   worktreeSetup: WorktreeSetupSnapshot | null;
+  /** The Boat cloud steps a draft's first message still waits on, drawn the same way. */
+  boatCloudStart: BoatCloudStartRowsState | null;
   liveAnswerPreview: string | null;
   /** The approval or question the running turn waits on; it pauses the clock. */
   pendingRequest: TimelinePendingRequest | null;

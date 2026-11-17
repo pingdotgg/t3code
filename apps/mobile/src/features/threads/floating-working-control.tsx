@@ -19,6 +19,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ControlPill } from "../../components/ui/ControlPill";
+import { cn } from "../../lib/cn";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
@@ -422,7 +423,16 @@ function FloatingStatusLabel(props: {
         onLayout={props.onLayout}
         onPress={props.status.onPress}
       >
-        <View className="h-2 w-2 rounded-full bg-red-500" />
+        {props.status.tone === "waking" ? (
+          <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
+        ) : (
+          <View
+            className={cn(
+              "h-2 w-2 rounded-full",
+              props.status.tone === "sleeping" ? "bg-foreground-muted" : "bg-red-500",
+            )}
+          />
+        )}
         <Text
           className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
           numberOfLines={1}

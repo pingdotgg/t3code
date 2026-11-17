@@ -24,6 +24,7 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useOpenBoatCloudThread } from "../state/boatCloudThreads";
 import { useEnvironmentShellStatus } from "../state/shell";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
@@ -135,7 +136,11 @@ export function ThreadRouteView({
   );
   const hidingAnywhere = useAnyEnvironmentHiding();
   const draftRedirectShell = useQuietThreadShell(draftRedirect ?? null);
-  const hiddenByTagFilter = serverThreadRef !== null && hiddenKeys.has(threadKey(serverThreadRef));
+  const openingBoatCloudThread = useOpenBoatCloudThread(serverThreadRef ?? draftThreadRef);
+  // A VM thread is hidden until this device opens it, and opening it here lists it next render.
+  const isHidden = (ref: ScopedThreadRef) =>
+    !openingBoatCloudThread && hiddenKeys.has(threadKey(ref));
+  const hiddenByTagFilter = serverThreadRef !== null && isHidden(serverThreadRef);
   // Cached detail can predate a tag or an archive, so while hiding an off-shell thread opens only
   // as the child of a loaded, visible parent (lineage never changes); anything else stays closed.
   const offShellBlocked =
@@ -178,9 +183,7 @@ export function ThreadRouteView({
   if (target.kind === "draft") {
     if (
       draftSession &&
-      hiddenKeys.has(
-        threadKey({ environmentId: draftSession.environmentId, threadId: draftSession.threadId }),
-      )
+      isHidden({ environmentId: draftSession.environmentId, threadId: draftSession.threadId })
     ) {
       // A draft whose thread is already live and hidden (mid-promotion): never mount it.
       redirect = <Navigate to="/" replace />;
@@ -195,7 +198,7 @@ export function ThreadRouteView({
           forceExpandedMobileComposer
         />
       );
-    } else if (draftRedirect && hiddenKeys.has(threadKey(draftRedirect))) {
+    } else if (draftRedirect && isHidden(draftRedirect)) {
       // Back to a promoted draft whose thread is now hidden: never mount it.
       redirect = <Navigate to="/" replace />;
     } else if (draftRedirect && hidingAnywhere && draftRedirectShell === null) {

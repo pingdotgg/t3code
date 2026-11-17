@@ -11,8 +11,12 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { newMessageId } from "~/lib/utils";
+import { useBoatCloudSleep } from "../../boatCloud";
 import type { ComposerHandleRef } from "../../composerHandleContext";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useEnvironment } from "../../state/environments";
 import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -84,6 +88,10 @@ export function useComposerResume(input: ComposerResumeInput) {
   );
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const boatCloudSleep = useBoatCloudSleep(
+    environmentId,
+    useEnvironment(environmentId)?.connection.phase ?? null,
+  );
 
   const onResume = async () => {
     if (
@@ -163,5 +171,20 @@ export function useComposerResume(input: ComposerResumeInput) {
     });
   };
 
-  return { onResume, isResuming };
+  // A sleeping Boat VM wakes first, as a send does, then the resume reads the connected state.
+  const onResumeLatest = useStableCallback(onResume);
+  const onResumeWithWake = async () => {
+    if (boatCloudSleep === null || !activeThread || !canResume || sendInFlightRef.current) {
+      return onResume();
+    }
+    sendInFlightRef.current = true;
+    const ready = await boatCloudSleep.wake().finally(() => {
+      sendInFlightRef.current = false;
+    });
+    if (!ready || currentRouteThreadKeyRef.current !== routeThreadKey) return;
+    flushSync(() => {});
+    await onResumeLatest();
+  };
+
+  return { onResume: onResumeWithWake, isResuming };
 }

@@ -156,6 +156,8 @@ import {
   startNewThreadFromContext,
   threadHasStarted,
 } from "../lib/chatThreadActions";
+import { boatCloudReady, usePrimaryBoatCloudStatus } from "../boatCloud";
+import { boxdCloudReady, usePrimaryBoxdCloudStatus } from "../boxdCloud";
 import {
   appendBrowsePathSegment,
   findProjectByPath,
@@ -266,6 +268,8 @@ import {
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { BoatIcon, BoxdIcon } from "./Icons";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
@@ -534,6 +538,8 @@ function OpenCommandPaletteDialog(props: {
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
+  const boatCloud = usePrimaryBoatCloudStatus();
+  const boxdCloud = usePrimaryBoxdCloudStatus();
   const paletteRouteTarget = useThreadRouteTarget();
   const projects = useProjects();
   const referenceThreadRef =
@@ -1423,6 +1429,52 @@ function OpenCommandPaletteDialog(props: {
             activeThread: activeThread ?? undefined,
             defaultProjectRef,
             handleNewThread,
+          });
+        },
+      });
+    }
+
+    if (activeProjectTitle && contextualProjectRef && boatCloudReady(boatCloud.status)) {
+      actionItems.push({
+        kind: "action",
+        value: "action:new-boat-cloud-thread",
+        searchTerms: ["boat", "cloud", "vm", "remote", "new thread"],
+        title: "New Boat cloud thread",
+        icon: <BoatIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          const opened = await handleNewThread(contextualProjectRef, {
+            envMode: "worktree",
+            worktreePath: null,
+          });
+          if (!opened) return;
+          useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+            environmentSelection: "cloud",
+            loadBalancedEnvironmentId: null,
+            envMode: "worktree",
+            worktreePath: null,
+          });
+        },
+      });
+    }
+
+    if (activeProjectTitle && contextualProjectRef && boxdCloudReady(boxdCloud.status)) {
+      actionItems.push({
+        kind: "action",
+        value: "action:new-boxd-cloud-thread",
+        searchTerms: ["boxd", "cloud", "vm", "remote", "new thread"],
+        title: "New boxd cloud thread",
+        icon: <BoxdIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          const opened = await handleNewThread(contextualProjectRef, {
+            envMode: "worktree",
+            worktreePath: null,
+          });
+          if (!opened) return;
+          useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+            environmentSelection: "boxd",
+            loadBalancedEnvironmentId: null,
+            envMode: "worktree",
+            worktreePath: null,
           });
         },
       });

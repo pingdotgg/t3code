@@ -46,8 +46,14 @@ describe("mobile environment settings sections", () => {
       isRelayManaged: true,
     });
 
+    const boatVm = connectedEnvironment({
+      environmentId: "environment-boat",
+      isRelayManaged: false,
+      displayUrl: "https://box-node-1dca660d802d15b6-3773.on.boat.dev",
+    });
+
     const sections = splitEnvironmentSections({
-      connectedEnvironments: [cloud, local],
+      connectedEnvironments: [cloud, local, boatVm],
       cloudEnvironments: [
         cloudEnvironment("environment-cloud"),
         cloudEnvironment("environment-new"),

@@ -2036,6 +2036,19 @@ describe("mobile composer drafts", () => {
     });
     retargetNewTaskDraft(key, to);
     expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
+
+    // A Boat VM checks out the same repository, so the branch moves without the local path.
+    const branchSelection = {
+      mode: "worktree" as const,
+      branch: "feature/b",
+      worktreePath: "/old-machine/worktrees/feature-b",
+    };
+    updateComposerDraftSettings(key, { workspaceSelection: branchSelection });
+    retargetNewTaskDraft(key, from, { keepBranch: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual({
+      ...branchSelection,
+      worktreePath: null,
+    });
   });
 
   it("retargets a saved new-task draft only after drafts load", async () => {

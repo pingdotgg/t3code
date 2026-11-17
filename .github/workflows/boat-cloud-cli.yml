@@ -1,0 +1,113 @@
+name: Boat cloud CLI
+
+# Builds this fork's t3 for Boat cloud VMs and publishes it as the latest
+# GitHub release. Setup installs that release in the snapshot, and the holder
+# of the Boat key saves a snapshot of each new one (packages/shared/src/boatCloudStart.ts).
+# Push a tag such as boat-cli-v0.1.9-boat.1; v* tags stay with release.yml.
+
+on:
+  push:
+    tags:
+      - "boat-cli-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: boat-cloud-cli-${{ github.ref_name }}
+
+jobs:
+  release:
+    name: Build and publish the Linux x64 CLI
+    if: github.repository == 'vkpdeveloper/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      # checkout's credential cleanup runs submodule foreach, which fails on the
+      # orphaned gitlinks in the vendored .repos tree.
+      - name: Checkout
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - name: Read the version from the tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#boat-cli-v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Tag $GITHUB_REF_NAME does not carry an exact version." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions and public configuration
+        run: |
+          node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+          # Public T3 Connect identifiers (Clerk publishable key, relay URL).
+          cp .env.example .env
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$RUNNER_TEMP/cli-resource-monitor/linux-x64/"
+
+      # The Linux archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
+      - name: Build server and web client
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: |
+          vp run build:desktop:bundle
+          node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+
+      - name: Build CLI single-executable
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build and smoke-test CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "${{ steps.version.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ steps.version.outputs.version }}"
+          (cd release-cli && sha256sum t3-*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-cli/* \
+            --title "Boat cloud CLI ${{ steps.version.outputs.version }}" \
+            --notes "t3 ${{ steps.version.outputs.version }} for Boat cloud VMs, built from ${GITHUB_SHA}." \
+            --latest

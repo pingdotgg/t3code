@@ -68,6 +68,7 @@ import { projectEnvironment } from "../../state/projects";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectCloneBanner } from "./ProjectCloneBanner";
+import { BoatCloudStartSteps } from "../boatCloud/BoatCloudSteps";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
@@ -650,6 +651,11 @@ export function NewTaskDraftScreen(props: {
       return null;
     }
 
+    if (flow.boatCloud?.startsOnSend) {
+      // The send continues on the VM once the draft renders on its project (see below).
+      await flow.startBoatCloud();
+      return null;
+    }
     const message = flow.buildPendingTaskMessage(creationMetadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
@@ -689,6 +695,14 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
+  const boatCloudSendPending = flow.boatCloud?.sendPending === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a Boat cloud send resumes once the draft renders on the VM project, because handleStart reads that render's project and server config
+  useEffect(() => {
+    if (!boatCloudSendPending || flow.submitting) return;
+    flow.finishBoatCloudSend();
+    void handleStart();
+  }, [boatCloudSendPending, flow, handleStart]);
+
   // Keep the current surface until the local draft selection is ready. Publishing
   // an empty loading surface here flashes between two already-cached threads.
   if (!selectedProject) return null;
@@ -725,6 +739,8 @@ export function NewTaskDraftScreen(props: {
       connectionState={connectionState}
       label={selectedEnvironmentLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+      boatCloud={flow.boatCloud?.selected === true}
+      boxdCloud={flow.boatCloud?.selected === true && flow.boatCloud.provider === "boxd"}
       disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
     />
@@ -868,7 +884,9 @@ export function NewTaskDraftScreen(props: {
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={
+          isComposerInteractionLocked || !flow.isGitRepo || flow.boatCloud?.selected === true
+        }
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -898,6 +916,13 @@ export function NewTaskDraftScreen(props: {
 
   const draftControls = (viewportHeight: number) => (
     <View className="pb-1">
+      {flow.boatCloud?.steps ? (
+        <View className="px-1 pb-2">
+          <View className="overflow-hidden rounded-2xl bg-grouped-card">
+            <BoatCloudStartSteps steps={flow.boatCloud.steps} />
+          </View>
+        </View>
+      ) : null}
       {projectClone && projectClone.phase !== "done" && selectedProject ? (
         <View className="px-1 pb-2">
           <ProjectCloneBanner

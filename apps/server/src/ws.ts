@@ -128,6 +128,8 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Bots from "./bots/BotService.ts";
+import * as BoatCloud from "./boatCloud/BoatCloudService.ts";
+import * as BoxdCloud from "./boxdCloud/BoxdCloudService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1484,6 +1486,8 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const bots = yield* Bots.BotService;
+      const boatCloud = yield* BoatCloud.BoatCloudService;
+      const boxdCloud = yield* BoxdCloud.BoxdCloudService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2366,6 +2370,19 @@ export const layerWsRpc = (
             Effect.andThen(bots.generateAvatar(input)),
           ),
         [WS_METHODS.botsPreviews]: () => bots.previews(),
+        [WS_METHODS.boatCloudSubscribe]: () => boatCloud.subscribe,
+        [WS_METHODS.boatCloudConnect]: (input) => boatCloud.connect(input),
+        [WS_METHODS.boatCloudDisconnect]: () => boatCloud.disconnect,
+        [WS_METHODS.boatCloudRunSetup]: (input) => boatCloud.runSetup(input),
+        [WS_METHODS.boatCloudConfigureEnvironment]: (input) =>
+          boatCloud.configureEnvironment(input),
+        [WS_METHODS.boatCloudAcquire]: (input) => boatCloud.acquire(input),
+        [WS_METHODS.boatCloudWake]: (input) => boatCloud.wake(input),
+        [WS_METHODS.boxdCloudSubscribe]: () => boxdCloud.subscribe,
+        [WS_METHODS.boxdCloudConnect]: (input) => boxdCloud.connect(input),
+        [WS_METHODS.boxdCloudDisconnect]: () => boxdCloud.disconnect,
+        [WS_METHODS.boxdCloudRunSetup]: (input) => boxdCloud.runSetup(input),
+        [WS_METHODS.boxdCloudAcquire]: (input) => boxdCloud.acquire(input),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(guestShares.create(input)),

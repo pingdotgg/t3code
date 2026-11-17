@@ -45,7 +45,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, EnvironmentWaker } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
@@ -58,6 +58,7 @@ import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2Te
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
+  createEnvironmentCommand,
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   selectEnvironmentQueryData,
@@ -1500,6 +1501,58 @@ describe("executeAtomQuery", () => {
 });
 
 describe("runtime command runner", () => {
+  it("wakes the environment before an environment command runs, and stops if it stays asleep", async () => {
+    const events: string[] = [];
+    const asleep = EnvironmentId.make("asleep-environment");
+    const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+      _environmentId,
+      effect,
+    ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, {} as never);
+    const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+    } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const runtime = Atom.runtime(
+      Layer.mergeAll(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Layer.succeed(EnvironmentWaker, {
+          wakeIfAsleep: (environmentId) =>
+            Effect.sync(() => events.push(`wake:${environmentId}`)).pipe(
+              Effect.andThen(
+                environmentId === asleep
+                  ? Effect.fail(
+                      new EnvironmentRpcUnavailableError({
+                        environmentId,
+                        message: "Still asleep.",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
+        }),
+      ),
+    );
+    const command = createEnvironmentCommand(runtime, {
+      label: "test.environment-command",
+      execute: (_input: undefined, _registry, environmentId) =>
+        Effect.sync(() => events.push(`run:${environmentId}`)),
+    });
+    const registry = AtomRegistry.make();
+
+    const woken = await command.run(registry, {
+      environmentId: QUERY_ENVIRONMENT.environmentId,
+      input: undefined,
+    });
+    expect(woken._tag).toBe("Success");
+    const stillAsleep = await command.run(registry, { environmentId: asleep, input: undefined });
+    expect(stillAsleep._tag).toBe("Failure");
+    expect(events).toEqual([
+      "wake:query-environment",
+      "run:query-environment",
+      "wake:asleep-environment",
+    ]);
+    registry.dispose();
+  });
+
   it("settles generated command scheduler defects from direct callers", async () => {
     const defect = new Error("invalid command key");
     const runtime = Atom.runtime(Layer.empty);

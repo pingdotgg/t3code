@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   serverConfig: vi.fn(),
   openScratch: vi.fn(),
   prepareTriage: vi.fn(),
+  boatCloudStarter: vi.fn(),
+  prepareBoatCloud: vi.fn(),
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -110,6 +112,17 @@ vi.mock("../../state/workspace", () => ({
 }));
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
+vi.mock("../boatCloud/boatCloud", () => ({
+  boatCloudMachinesAtom: Atom.make(new Map([["vm", "https://vm-3773.on.boat.dev"]])),
+  useBoatCloudStarter: mocks.boatCloudStarter,
+  useBoatCloudProviderDrivers: () => null,
+  prepareBoatCloudProject: mocks.prepareBoatCloud,
+}));
+vi.mock("../boxdCloud/boxdCloud", () => ({
+  boxdCloudMachinesAtom: Atom.make(new Map()),
+  useBoxdCloudStarter: () => null,
+  prepareBoxdCloudProject: vi.fn(),
+}));
 
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
@@ -132,6 +145,7 @@ function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
+  mocks.boatCloudStarter.mockReturnValue(null);
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
@@ -385,6 +399,77 @@ it("uses cached repository capability and branch defaults while offline", async 
   await screen.render(true);
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
+});
+
+it("starts a Boat VM only when the first send asks, and sends onto the worktree it made", async () => {
+  using screen = setup();
+  const repositoryIdentity = {
+    canonicalKey: "github.com/pingdotgg/t3code",
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "upstream",
+      remoteUrl: "https://github.com/pingdotgg/t3code.git",
+    },
+    origin: {
+      canonicalKey: "github.com/fork/t3code",
+      remoteUrl: "https://github.com/fork/t3code.git",
+    },
+  };
+  const local = { ...project("one", "a"), repositoryIdentity };
+  const vm = { ...project("vm", "t3code"), repositoryIdentity };
+  mocks.projects.mockReturnValue([local, vm]);
+  mocks.boatCloudStarter.mockReturnValue({ kind: "phone" });
+  await screen.render(true);
+  const draftKey = screen.current.draftKey!;
+  act(() => screen.current.setWorkspaceMode("local"));
+  expect(screen.current.workspaceMode).toBe("local");
+
+  act(() => void screen.current.chooseBoatCloud());
+  expect(mocks.prepareBoatCloud).not.toHaveBeenCalled();
+  expect(screen.current.selectedProject).toEqual(local);
+  expect(screen.current.boatCloud).toMatchObject({ selected: true, startsOnSend: true });
+  expect(screen.current.workspaceMode).toBe("worktree");
+  expect(screen.current.startFromOrigin).toBe(true);
+  act(() => screen.current.setWorkspaceMode("local"));
+  act(() => screen.current.setStartFromOrigin(false));
+  expect(screen.current.workspaceMode).toBe("worktree");
+  expect(screen.current.startFromOrigin).toBe(true);
+
+  const worktree = { path: "/vm/worktrees/t3-0a1b2c3d", branch: "t3/0a1b2c3d", baseBranch: "main" };
+  mocks.prepareBoatCloud.mockResolvedValue({ project: vm, worktree });
+  await act(async () => screen.current.startBoatCloud());
+  expect(mocks.prepareBoatCloud).toHaveBeenCalledWith(
+    expect.objectContaining({ repositoryUrl: "https://github.com/fork/t3code.git" }),
+  );
+  expect(screen.current.draftKey).toBe(draftKey);
+  expect(screen.current.selectedProject).toEqual(vm);
+  expect(screen.current.boatCloud).toMatchObject({ startsOnSend: false, sendPending: true });
+  expect(screen.current).toMatchObject({
+    workspaceMode: "local",
+    selectedBranchName: worktree.branch,
+    selectedWorktreePath: worktree.path,
+  });
+
+  // Later sends on the VM each get a new worktree.
+  act(() => screen.current.finishBoatCloudSend());
+  expect(screen.current.boatCloud).toMatchObject({ selected: true, sendPending: false });
+  expect(screen.current).toMatchObject({ workspaceMode: "worktree", selectedWorktreePath: null });
+});
+
+it("drops a Boat cloud choice when a machine is picked before sending", async () => {
+  using screen = setup();
+  const repositoryIdentity = {
+    canonicalKey: "github.com/pingdotgg/t3code",
+    locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "git@x:y.git" },
+  };
+  mocks.projects.mockReturnValue([{ ...project("one", "a"), repositoryIdentity }]);
+  mocks.boatCloudStarter.mockReturnValue({ kind: "phone" });
+  await screen.render(true);
+  act(() => void screen.current.chooseBoatCloud());
+  expect(screen.current.boatCloud?.selected).toBe(true);
+  await act(async () => void (await screen.current.switchEnvironment(EnvironmentId.make("one"))));
+  expect(screen.current.boatCloud).toMatchObject({ selected: false, startsOnSend: false });
+  expect(mocks.prepareBoatCloud).not.toHaveBeenCalled();
 });
 
 const playbookPrompt = (machine: string) =>

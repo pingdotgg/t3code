@@ -25,6 +25,7 @@ import {
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -61,10 +62,15 @@ function layerPairingHttp(
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
+    readonly descriptorAnswersAfterExchange?: boolean;
   },
 ) {
   const grantScopes = options?.grantScopes ?? AuthStandardClientScopes;
   let sessionScopes: ReadonlyArray<string> = [];
+  let exchangeRequested: () => void = () => undefined;
+  const exchangeSeen = new Promise<void>((resolve) => {
+    exchangeRequested = resolve;
+  });
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
@@ -75,7 +81,8 @@ function layerPairingHttp(
           Response.json({ message: "descriptor unavailable" }, { status: 503 }),
         );
       }
-      return Promise.resolve(
+      const answered = options?.descriptorAnswersAfterExchange === true ? exchangeSeen : undefined;
+      return Promise.resolve(answered).then(() =>
         Response.json({
           environmentId: "environment-paired",
           label: "Paired environment",
@@ -94,6 +101,7 @@ function layerPairingHttp(
     }
 
     if (url.endsWith("/oauth/token")) {
+      exchangeRequested();
       if (options?.failExchange === true) {
         return Promise.resolve(
           Response.json(
@@ -163,8 +171,24 @@ function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
   provision?: ClientCapabilities.SshEnvironmentGateway["Service"]["provision"],
+  rememberedDescriptors: Array<{
+    readonly httpBaseUrl: string;
+    readonly environmentId?: string;
+  }> = [],
 ) {
   const dependencies = Layer.mergeAll(
+    Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({
+      rememberCheckedDescriptor: (httpBaseUrl, descriptor) =>
+        Effect.sync(() => {
+          rememberedDescriptors.push({
+            httpBaseUrl,
+            ...Option.match(descriptor, {
+              onNone: () => ({}),
+              onSome: (value) => ({ environmentId: value.environmentId }),
+            }),
+          });
+        }),
+    }),
     layerClientPresentation,
     layerPairingHttp(calls, options),
     Layer.mock(Persistence.ConnectionTargetStore)({
@@ -239,10 +263,12 @@ describe("connection onboarding", () => {
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const remembered: Array<{ readonly httpBaseUrl: string; readonly environmentId?: string }> =
+        [];
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
-      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
+      }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls, undefined, remembered)));
 
       expect(registration).toMatchObject({
         _tag: "BearerConnectionRegistration",
@@ -265,6 +291,10 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
         "https://remote.example.test/oauth/token",
+      ]);
+      // The first connect reuses this read instead of fetching the descriptor again.
+      expect(remembered).toEqual([
+        { httpBaseUrl: "https://remote.example.test/", environmentId: "environment-paired" },
       ]);
 
       const tokenRequest = calls.find((call) => call.url.endsWith("/oauth/token"));
@@ -574,6 +604,24 @@ describe("connection onboarding", () => {
       expect(error.message).toContain("different machine");
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
+      ]);
+    }),
+  );
+
+  it.effect("redeems a code minted for the expected machine while its descriptor is read", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        ...PAIRING_INPUT,
+        expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+        codeIsForExpectedEnvironment: true,
+      }).pipe(
+        Effect.provide(layerPairingOnboarding({ descriptorAnswersAfterExchange: true }, calls)),
+      );
+      expect(registration.credential).toMatchObject({ token: "bearer-token" });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+        "https://remote.example.test/oauth/token",
       ]);
     }),
   );
