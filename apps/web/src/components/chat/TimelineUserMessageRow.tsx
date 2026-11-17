@@ -1,6 +1,10 @@
+import { copySnapshot as copySnapshotToClipboard } from "./copySnapshot";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
-import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+} from "@t3tools/shared/markdownPipeline";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
@@ -99,7 +103,7 @@ const MEDIA_EDGE_CLASS_NAME =
   "relative after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-[inherit] after:ring-1 after:ring-inset after:ring-black/9 dark:after:ring-white/12";
 
 const BUBBLE_CHIP_CLASS_NAME =
-  "[&_[data-slot=context-chip]]:[--context-chip-ink:var(--context-chip-message,var(--context-chip-accent))]";
+  "[&_[data-slot=context-chip]]:[--context-chip-message-ink:var(--context-chip-message)]";
 
 function UserFileCard({
   file,
@@ -310,6 +314,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           BUBBLE_CHIP_CLASS_NAME,
           expanded && "w-full",
         )}
+        data-user-message-bubble=""
       >
         <MessageAuthorHeading>Automation</MessageAuthorHeading>
         <FoldedMessageHeader
@@ -593,6 +598,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         });
   const copyText =
     resolvedContext.text || mediaCopyRecords.map(formatComposerContextReference).join("\n");
+  const copySnapshot = async (id: string) => {
+    const image = userImages.find((candidate) => candidate.id === id);
+    const record = resolvedContext.records
+      .map(asKnownContextRecord)
+      .find((candidate) => candidate?.kind === "image" && candidate.attachmentId === id);
+    if (!image?.previewUrl || record?.kind !== "image")
+      throw new Error("Snapshot is no longer available.");
+    const fragment = encodeComposerContextFragment({
+      version: 1,
+      source: { environmentId: ctx.activeThreadEnvironmentId, messageId: row.message.id },
+      records: [{ ...record, ...(image.source ? { source: image.source } : {}) }],
+    });
+    if (!fragment) throw new Error("The snapshot is too large to copy.");
+    await copySnapshotToClipboard(
+      image.previewUrl,
+      formatComposerContextReference(record),
+      fragment,
+    );
+  };
   const onBodyCopyCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (resolvedContext.records.length === 0 || !event.clipboardData) return;
     const selection = window.getSelection();
@@ -657,7 +681,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           annotationImage={annotationImage}
           attachment={attachment}
           onExpandImage={(image) => {
-            const preview = buildExpandedImagePreview(userImages, image.id);
+            const preview = buildExpandedImagePreview(userImages, image.id, copySnapshot);
             if (preview) onImageExpand(preview);
           }}
           onOpenFile={onFileOpen}
@@ -733,7 +757,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 className="block h-full w-full cursor-zoom-in"
                 aria-label={`Preview ${image.name}`}
                 onClick={() => {
-                  const preview = buildExpandedImagePreview(regularImages, image.id);
+                  const preview = buildExpandedImagePreview(regularImages, image.id, copySnapshot);
                   if (!preview) return;
                   ctx.onImageExpand(preview);
                 }}
@@ -768,7 +792,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             )}
             {image.previewUrl && image.source?.kind === "snap-shot" ? (
-              <SnapShotAttachmentDetails source={image.source} />
+              <SnapShotAttachmentDetails
+                source={image.source}
+                onCopySnapshot={() => copySnapshot(image.id)}
+              />
             ) : null}
           </div>
         ))}
@@ -885,6 +912,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
           folded && expanded && "w-full",
         )}
+        data-user-message-bubble=""
       >
         {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         {mediaAboveText ? null : (
@@ -1200,7 +1228,10 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   );
 });
 
-const USER_MESSAGE_REMARK_PLUGINS = [remarkEnableOrderedListNumbers];
+const USER_MESSAGE_REMARK_PLUGINS = [
+  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+];
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
