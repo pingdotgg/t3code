@@ -60,6 +60,10 @@ function acceptAttachmentUploads(): Disposable {
   const mint = answerRpc(WS_METHODS.attachmentsCreateUploadUrl, () =>
     Effect.succeed({ attachmentId: "upload-1", relativeUrl: "/upload", expiresAt: 0 }),
   );
+  // Sending verifies each ready upload still exists on the server.
+  const verify = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+    Effect.succeed({ relativeUrl: "/upload-1", expiresAt: 0 }),
+  );
   const status = vi.spyOn(XMLHttpRequest.prototype, "status", "get").mockReturnValue(200);
   const send = vi.spyOn(XMLHttpRequest.prototype, "send").mockImplementation(function (
     this: XMLHttpRequest,
@@ -71,6 +75,7 @@ function acceptAttachmentUploads(): Disposable {
       send.mockRestore();
       status.mockRestore();
       mint[Symbol.dispose]();
+      verify[Symbol.dispose]();
     },
   };
 }

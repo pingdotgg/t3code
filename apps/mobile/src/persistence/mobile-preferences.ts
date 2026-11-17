@@ -72,6 +72,17 @@ const WorkspaceSelections = Schema.Struct({
       key: Schema.optional(Schema.String),
     }),
   ),
+  issues: Schema.optional(
+    Schema.Struct({
+      environmentId: Schema.String,
+      projectId: Schema.String,
+      tracker: Schema.String,
+      host: Schema.optional(Schema.String),
+      scope: Schema.String,
+      issueKey: Schema.String,
+      key: Schema.optional(Schema.String),
+    }),
+  ),
   settings: Schema.optional(Schema.String),
   settingsKey: Schema.optional(Schema.String),
   /** A draft the threads tab showed after its last chat; only meaningful in its session. */
@@ -79,7 +90,14 @@ const WorkspaceSelections = Schema.Struct({
 });
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
+const PullRequestActivityVisibility = Schema.Struct({
+  bots: Schema.Boolean,
+  resolved: Schema.Boolean,
+});
+export type PullRequestActivityVisibility = typeof PullRequestActivityVisibility.Type;
+
 const isThreadListFilters = Schema.is(ThreadListFilters);
+const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
@@ -91,7 +109,11 @@ const isThreadProject = Schema.is(ThreadProject);
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
+  /** Whether pull requests or issues last held the tab bar slot they share. */
+  readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestHideTestFiles?: boolean;
+  /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
+  readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
@@ -180,7 +202,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
+    sharedSlotTab?: "pullRequests" | "issues";
     pullRequestHideTestFiles?: boolean;
+    pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
@@ -229,8 +253,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     );
   }
 
+  if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {
+    preferences.sharedSlotTab = parsed.sharedSlotTab;
+  }
+
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
+  }
+
+  if (isPullRequestActivityVisibility(parsed.pullRequestActivityVisibility)) {
+    preferences.pullRequestActivityVisibility = parsed.pullRequestActivityVisibility;
   }
 
   if (isPullRequestMergeMethod(parsed.pullRequestMergeMethod)) {

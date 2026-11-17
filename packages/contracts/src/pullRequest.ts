@@ -754,8 +754,8 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
-  oldPath: TrimmedNonEmptyString,
-  newPath: TrimmedNonEmptyString,
+  oldPath: Schema.NonEmptyString,
+  newPath: Schema.NonEmptyString,
 });
 export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContentsInput.Type;
 
@@ -946,18 +946,24 @@ export const PullRequestReactionInput = Schema.Struct({
 });
 export type PullRequestReactionInput = typeof PullRequestReactionInput.Type;
 
+/** The most labels or reviewers one write may change. */
+export const PULL_REQUEST_CHANGE_BATCH_LIMIT = 25;
+
 export const PullRequestReviewerRequestInput = Schema.Struct({
   ...PullRequestRef.fields,
   reviewers: Schema.Array(
     Schema.Struct({ id: TrimmedNonEmptyString, kind: PullRequestReviewerKind }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT)),
   requested: Schema.Boolean,
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
 export const PullRequestLabelChangeInput = Schema.Struct({
   ...PullRequestRef.fields,
-  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  labels: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT),
+  ),
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
@@ -970,6 +976,7 @@ export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
   "provider-unsupported",
+  "repository-without-project",
 ]);
 export type PullRequestUnavailableReason = typeof PullRequestUnavailableReason.Type;
 
@@ -999,6 +1006,13 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
      * shipped no such field, and for a host that names nothing.
      */
     requirement: Schema.optional(TrimmedNonEmptyString),
+    /** The repository no project has, for `repository-without-project`. */
+    repository: Schema.optional(TrimmedNonEmptyString),
+    /**
+     * For `repository-without-project` on a host read through any checkout on it: the host no
+     * project is on.
+     */
+    host: Schema.optional(TrimmedNonEmptyString),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 503 },
@@ -1015,6 +1029,11 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
         return this.requirement ?? "This host has no working credentials.";
       case "provider-unsupported":
         return "Change requests cannot be browsed for this project's host yet.";
+      case "repository-without-project":
+        if (this.host !== undefined) {
+          return `No project in T3 Code is on ${this.host}. Add any ${this.host} project to read its change requests.`;
+        }
+        return `${this.repository ?? "This repository"} is not a project in T3 Code. Add it as a project to read its change requests.`;
     }
   }
 }

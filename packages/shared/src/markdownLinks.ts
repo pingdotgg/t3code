@@ -30,7 +30,30 @@ const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
-const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
+const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
+
+// Inline code with spaces is a file only when it is absolute and every word is a plain name:
+// `/Users/me/Mobile Documents/a - b.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
+// A space only in the last segment reads as a command (`/usr/local/bin/node server.js`), so it
+// must sit under a user root, and nothing after a bin folder counts.
+const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/])/;
+const SPACED_PATH_BODY_PATTERN =
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-+\p{L})[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
+
+function isSpacedAbsoluteFilePath(text: string): boolean {
+  const root = SPACED_ABSOLUTE_PATH_ROOT_PATTERN.exec(text)?.[0];
+  if (root === undefined) return false;
+  const body = text.slice(root.length).replace(POSITION_SUFFIX_PATTERN, "");
+  if (!SPACED_PATH_BODY_PATTERN.test(body)) return false;
+  const firstSpace = body.indexOf(" ");
+  const foldersBeforeSpace = body.slice(0, firstSpace).split(PATH_SEPARATOR_PATTERN).slice(0, -1);
+  if (foldersBeforeSpace.some((folder) => folder === "bin" || folder === "sbin")) return false;
+  const spaceInFolder = PATH_SEPARATOR_PATTERN.test(body.slice(firstSpace));
+  if (!spaceInFolder && root === "/" && !/^(?:Users|home)[\\/]/.test(body)) return false;
+  if (PATH_SEPARATOR_PATTERN.test(body.at(-1) ?? "")) return true;
+  const basename = body.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";
+  return FILE_EXTENSION_PATTERN.test(basename) || EXTENSIONLESS_FILE_NAMES.has(basename);
+}
 
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 // Agents shorten long paths with a `...` or `…` segment, which no file chip can open.
@@ -177,7 +200,10 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
+  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
+    return null;
+  }
 
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
