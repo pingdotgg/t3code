@@ -6557,7 +6557,10 @@ body {
          (ScrollArea's scrollFade); its end fades before the control that
          overlaps the rim's tail. PaneTabs sets the overflow. At the pane's
          edge its start begins past the ear room the pane clips. */
-      --strip-fade-lead: calc(var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)));
+      --strip-fade-lead: calc(
+        var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)) *
+          var(--strip-overflowing-start, 0)
+      );
       --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
       --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
       --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
