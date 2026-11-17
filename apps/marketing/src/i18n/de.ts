@@ -27,6 +27,8 @@ export const de: Messages = {
     downloadForMac: "Für macOS herunterladen",
     downloadForWindows: "Für Windows herunterladen",
     downloadForLinux: "Für Linux herunterladen",
+    downloadForIos: "Für iOS herunterladen",
+    downloadForAndroid: "Für Android herunterladen",
     sourceLink: "Klau unseren Code (legal)",
     alsoOnPhone: "Auch auf deinem Handy:",
     screenshotAlt: "T3 Code führt Subagents von Claude, Codex, Muse und Gemini in einem Thread aus",

@@ -596,19 +596,19 @@ const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs:
  * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
  * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
  */
-const revalidateOnMount =
+export const revalidateOnMount =
   <V extends AsyncResult.AsyncResult<unknown, unknown>>(
     staleTimeMs: number,
-    isFinal: (value: V) => boolean,
-    builds: WeakMap<AtomRegistry.AtomRegistry, number>,
+    isFinal: (value: V) => boolean = () => false,
+    builds?: WeakMap<AtomRegistry.AtomRegistry, number>,
   ) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
-        const before = builds.get(get.registry) ?? 0;
+        const before = builds?.get(get.registry) ?? 0;
         const current = get(self);
-        const after = builds.get(get.registry) ?? 0;
+        const after = builds?.get(get.registry) ?? 0;
         if (
           Option.isNone(get.self()) &&
           before === after &&
@@ -624,7 +624,7 @@ const revalidateOnMount =
           get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
             if (
               active &&
-              (builds.get(get.registry) ?? 0) === after &&
+              (builds?.get(get.registry) ?? 0) === after &&
               !isFinal(get.once(self)) &&
               isStale(get.once(self), staleTimeMs)
             )
