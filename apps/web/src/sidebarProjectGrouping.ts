@@ -9,12 +9,14 @@ import {
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { msg } from "gt-react";
+
 import type { Project } from "./types";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
-  repository: "Group by repository",
-  repository_path: "Group by repository path",
-  separate: "Keep separate",
+  repository: msg("Group by repository"),
+  repository_path: msg("Group by repository path"),
+  separate: msg("Keep separate"),
 };
 
 export function withProjectGroupingOverride(
