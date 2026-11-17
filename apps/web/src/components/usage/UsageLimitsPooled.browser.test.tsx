@@ -53,6 +53,7 @@ function isolatedLayoutStorage() {
 }
 
 async function dragHandle(source: HTMLElement | SVGElement, target: HTMLElement | SVGElement) {
+  await userEvent.hover(source.closest<HTMLElement>(".group\\/limit-row")!);
   await userEvent.hover(source);
   const from = source.getBoundingClientRect();
   const to = target.getBoundingClientRect();
@@ -146,16 +147,14 @@ describe("UsageLimitsPooled", () => {
     );
     expect(screen.getByRole("button", { name: "Customize limits" }).elements()).toHaveLength(0);
     const collapse = screen.getByRole("button", { name: "Collapse Codex limits" });
-    const collapseIndicator = collapse
-      .element()
-      .querySelector<SVGSVGElement>(".lucide-chevron-right")!;
+    const collapseIndicator = collapse.element().parentElement!;
     await expect.element(collapseIndicator).toHaveStyle({ opacity: "0" });
     collapse.element().focus();
     await expect.element(collapse).toHaveFocus();
     await expect.element(collapseIndicator).toHaveStyle({ opacity: "1" });
     collapse.element().blur();
     await expect.element(collapseIndicator).toHaveStyle({ opacity: "0" });
-    await collapse.hover();
+    await screen.getByRole("heading", { name: /Codex/ }).hover();
     await expect.element(collapseIndicator).toHaveStyle({ opacity: "1" });
     await screen.getByRole("button", { name: "Collapse Codex limits" }).click();
     await expect.element(screen.getByText("Session", { exact: true })).not.toBeInTheDocument();
@@ -181,6 +180,7 @@ describe("UsageLimitsPooled", () => {
     await commands.resetPointer();
     await expect.element(providerReorder).toHaveStyle({ opacity: "0" });
     await expect.element(screen.getByText("Session", { exact: true })).toBeVisible();
+    await screen.getByText("Weekly", { exact: true }).hover();
     await screen.getByRole("button", { name: "Hide Codex Weekly", exact: true }).click();
     await expect.element(screen.getByText("Weekly", { exact: true })).not.toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Show hidden limits" })).toHaveFocus();
@@ -190,6 +190,7 @@ describe("UsageLimitsPooled", () => {
     await expect
       .element(screen.getByRole("button", { name: "Collapse Codex limits" }))
       .toHaveFocus();
+    await screen.getByRole("heading", { name: /Antigravity/ }).hover();
     await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
     const providerHandle = screen.getByRole("button", { name: "Reorder Codex", exact: true });
     providerHandle.element().focus();
@@ -219,6 +220,7 @@ describe("UsageLimitsPooled", () => {
     await userEvent.keyboard("[ArrowDown]");
     await userEvent.keyboard("[Escape]");
     expect(JSON.parse(window.localStorage.getItem(USAGE_LIMIT_LAYOUT_KEY)!)).toEqual(saved);
+    await screen.getByRole("heading", { name: /Codex/ }).hover();
     await screen.getByRole("button", { name: "Collapse Codex limits" }).click();
     await screen.getByRole("button", { name: "Hide Codex", exact: true }).click();
     await expect.element(screen.getByRole("heading", { name: /Codex/ })).not.toBeInTheDocument();
@@ -249,6 +251,7 @@ describe("UsageLimitsPooled", () => {
     await expect
       .element(screen.getByRole("heading", { level: 2 }).first())
       .toHaveTextContent("Codex");
+    await screen.getByRole("heading", { name: /Antigravity/ }).hover();
     await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
     await dragHandle(
       screen.getByRole("button", { name: "Reorder Codex", exact: true }).element(),

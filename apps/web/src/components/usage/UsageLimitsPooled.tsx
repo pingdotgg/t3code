@@ -546,8 +546,8 @@ function PoolWindowCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group/limit-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3 rounded-lg border border-border/60 bg-background p-4 @xl/limits:grid-cols-[9rem_minmax(0,1fr)_auto] @xl/limits:items-center",
-        isDragging && "relative z-10 shadow-md",
+        "group/limit-row relative grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 bg-background p-4 md:grid-cols-[11rem_minmax(0,1fr)]",
+        isDragging && "z-10 shadow-md",
       )}
     >
       <div className="flex min-w-0 flex-col gap-1">
@@ -569,13 +569,13 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <div className="col-start-2 row-start-1 @xl/limits:col-start-3">{controls}</div>
-      <div className="col-span-2 min-w-0 @xl/limits:col-span-1 @xl/limits:col-start-2 @xl/limits:row-start-1">
+      <div className="min-w-0">
         <PoolBar pool={pool} color={color} now={now} />
       </div>
       {description ? (
-        <p className="col-span-full text-xs text-muted-foreground">{description}</p>
+        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
+      <div className="pointer-events-none absolute -top-3.5 right-3 z-10">{controls}</div>
     </div>
   );
 }
@@ -625,13 +625,13 @@ function PoolSection({
             transition: transition,
           }}
           className={cn(
-            "@container/limits flex flex-col gap-3",
+            "flex flex-col gap-3",
             isDragging && "relative z-10 rounded-lg bg-background shadow-md",
           )}
         />
       }
     >
-      <div className="group/limit-row flex items-center gap-2">
+      <div className="group/limit-row relative flex items-center">
         <h2
           className={cn(
             "flex min-w-0 flex-1 items-center gap-2 text-sm font-medium",
@@ -647,37 +647,36 @@ function PoolSection({
           />
           <span className="truncate">{label}</span>
         </h2>
-        <UsageLimitLayoutControls
-          label={label}
-          attributes={attributes}
-          listeners={listeners}
-          handleRef={setActivatorNodeRef}
-          isDragging={isDragging}
-          hidden={hidden}
-          onToggleVisibility={() =>
-            onChange((current) => ({
-              ...current,
-              hiddenProviders: hidden
-                ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
-                : [...current.hiddenProviders, pool.driver],
-            }))
-          }
-        />
-        <CollapsibleTrigger
-          disabled={hidden}
-          aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
-          render={
-            <button className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default" />
-          }
-        >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-4 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100",
-              !hidden && !collapsed && "rotate-90",
+        <div className="pointer-events-none absolute top-1/2 right-0 z-10 -translate-y-1/2">
+          <UsageLimitLayoutControls
+            label={label}
+            attributes={attributes}
+            listeners={listeners}
+            handleRef={setActivatorNodeRef}
+            isDragging={isDragging}
+            hidden={hidden}
+            pinned={collapsed}
+            onToggleVisibility={() =>
+              onChange((current) => ({
+                ...current,
+                hiddenProviders: hidden
+                  ? current.hiddenProviders.filter((driver) => driver !== pool.driver)
+                  : [...current.hiddenProviders, pool.driver],
+              }))
+            }
+          >
+            {hidden ? null : (
+              <CollapsibleTrigger
+                aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} limits`}
+                render={
+                  <button className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" />
+                }
+              >
+                <ChevronRightIcon aria-hidden className={cn("size-4", !collapsed && "rotate-90")} />
+              </CollapsibleTrigger>
             )}
-          />
-        </CollapsibleTrigger>
+          </UsageLimitLayoutControls>
+        </div>
       </div>
       <CollapsiblePanel animate={false}>
         <UsageLimitSortableList

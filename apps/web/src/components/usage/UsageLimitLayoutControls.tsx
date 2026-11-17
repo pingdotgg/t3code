@@ -77,7 +77,9 @@ export function UsageLimitLayoutControls({
   listeners,
   handleRef,
   isDragging,
+  pinned = false,
   onToggleVisibility,
+  children,
 }: {
   readonly label: string;
   readonly hidden: boolean;
@@ -85,14 +87,18 @@ export function UsageLimitLayoutControls({
   readonly listeners: ReturnType<typeof useSortable>["listeners"];
   readonly handleRef: ReturnType<typeof useSortable>["setActivatorNodeRef"];
   readonly isDragging: boolean;
+  readonly pinned?: boolean;
   readonly onToggleVisibility: () => void;
+  readonly children?: ReactNode;
 }) {
   const visibilityLabel = `${hidden ? "Show" : "Hide"} ${label}`;
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100",
-        (isDragging || hidden) && "opacity-100",
+        "flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-background p-0.5 shadow-xs",
+        isDragging || hidden || pinned
+          ? "pointer-events-auto opacity-100"
+          : "pointer-events-none opacity-0 group-focus-within/limit-row:pointer-events-auto group-focus-within/limit-row:opacity-100 group-hover/limit-row:pointer-events-auto group-hover/limit-row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
       )}
     >
       <button
@@ -101,7 +107,7 @@ export function UsageLimitLayoutControls({
         {...attributes}
         {...listeners}
         aria-label={`Reorder ${label}`}
-        className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
       >
         <GripVerticalIcon className="size-4" aria-hidden />
       </button>
@@ -114,6 +120,7 @@ export function UsageLimitLayoutControls({
       >
         {hidden ? "Show" : "Hide"}
       </Button>
+      {children}
     </div>
   );
 }
