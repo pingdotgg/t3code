@@ -1,6 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import {
   executeAtomQuery,
   settlePromise,
@@ -9,19 +8,21 @@ import {
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { use, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   canPerformPullRequestAction,
   openOnProviderLabel,
-  PR_ACTION_LABELS,
+  pullRequestActionLabel,
 } from "./pullRequestActions";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -31,8 +32,8 @@ export function usePullRequestListActions(
   ) => void,
 ) {
   const registry = use(RegistryContext);
-  const navigation = useNavigation();
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -57,6 +58,7 @@ export function usePullRequestListActions(
     action: PullRequestAction | "request-review",
   ) => {
     const { environmentId } = entry;
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
     if (pending.current) return;
     pending.current = true;
     setBusyKey(scopedPullRequestListKey(entry));
@@ -76,19 +78,21 @@ export function usePullRequestListActions(
           !pr.capabilities.reviewers.request ||
           !pr.viewerPermissions.requestReviewers
         )
-          throw new Error("Review requests aren't available for this pull request.");
-        if (Platform.OS === "android") {
-          selectAndroidWorkspace({ name: "PullRequest", params: params(entry) }, params(entry));
-        } else navigation.navigate("PullRequestReviewers", params(entry));
+          throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
+        openDetail(
+          { name: "PullRequest", params: params(entry) },
+          { name: "PullRequestReviewers", params: params(entry) },
+        );
         return;
       }
       if (
         !registry.get(composerPullRequests.runAction.permissionAtom(environmentId)) ||
         !canPerformPullRequestAction(pr, action)
       )
-        throw new Error("This action isn't available for this pull request.");
+        throw new Error(`This action isn't available for this ${terminology.singular}.`);
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value !== undefined) return;
       onChanged(
         entry,
         action === "close"
@@ -103,16 +107,14 @@ export function usePullRequestListActions(
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Couldn't update this pull request",
+        `Couldn't update this ${terminology.singular}`,
         cause instanceof Error ? cause.message : "Try again.",
       );
     }
   };
   const select = (entry: EnvironmentPullRequestListEntry, action: string) => {
     if (action === "open") {
-      if (Platform.OS === "android")
-        selectAndroidWorkspace({ name: "PullRequest", params: params(entry) });
-      else navigation.navigate("PullRequest", params(entry));
+      selectDetail({ name: "PullRequest", params: params(entry) });
       return;
     }
     if (action === "request-review") {
@@ -135,60 +137,67 @@ export function usePullRequestListActions(
       (value) => value === action,
     );
     if (!supported) return;
-    Dialog.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
+    const label = pullRequestActionLabel(
+      supported,
+      sourceControlClients.get(entry.provider).changeRequest,
+    );
+    Dialog.alert(`${label}?`, `#${entry.number} · ${entry.title}`, [
       { text: "Cancel", style: "cancel" },
       {
-        text: PR_ACTION_LABELS[supported],
+        text: label,
         style: supported === "close" ? "destructive" : "default",
         onPress: () => void perform(entry, supported),
       },
     ]);
   };
-  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
-    {
-      id: "open",
-      title: "Open pull request",
-      image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
-    },
-    ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
-      ? [
-          {
-            id: "request-review",
-            title: "Request review",
-            image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
-          },
-          {
-            id: entry.isDraft ? "ready" : "draft",
-            title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
-            image: Platform.OS === "ios" ? "pencil" : "edit",
-          },
-          {
-            id: "close",
-            title: "Close pull request",
-            image: Platform.OS === "ios" ? "xmark" : "close",
-            attributes: { destructive: true },
-          },
-        ]
-      : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+  const actions = (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => {
+    const terminology = sourceControlClients.get(entry.provider).changeRequest;
+    return [
+      {
+        id: "open",
+        title: `Open ${terminology.singular}`,
+        image: "arrow.up.right",
+      },
+      ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
-              id: "reopen",
-              title: "Reopen pull request",
-              image: Platform.OS === "ios" ? "arrow.clockwise" : "refresh",
+              id: "request-review",
+              title: "Request review",
+              image: "person.badge.plus",
+            },
+            {
+              id: entry.isDraft ? "ready" : "draft",
+              title: entry.isDraft ? "Mark ready for review" : "Convert to draft",
+              image: "pencil",
+            },
+            {
+              id: "close",
+              title: pullRequestActionLabel("close", terminology),
+              image: "xmark",
+              attributes: { destructive: true },
             },
           ]
-        : []),
-    {
-      id: "share",
-      title: "Share…",
-      image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
-    },
-    { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
-    {
-      id: "provider",
-      title: openOnProviderLabel(entry.provider),
-      image: Platform.OS === "ios" ? "safari" : "open_in_browser",
-    },
-  ];
+        : writableEnvironments.has(entry.environmentId) && entry.state === "closed"
+          ? [
+              {
+                id: "reopen",
+                title: pullRequestActionLabel("reopen", terminology),
+                image: "arrow.clockwise",
+              },
+            ]
+          : []),
+      {
+        id: "share",
+        title: "Share…",
+        image: "square.and.arrow.up",
+      },
+      { id: "copy", title: "Copy link", image: "link" },
+      {
+        id: "provider",
+        title: openOnProviderLabel(entry.provider),
+        image: "safari",
+      },
+    ];
+  };
   return { actions, select, busyKey };
 }

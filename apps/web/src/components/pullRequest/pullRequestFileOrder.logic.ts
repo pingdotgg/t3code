@@ -22,7 +22,8 @@ const GENERATED_DIRECTORIES = new Set([
   "vendor",
 ]);
 const TEST_DIRECTORIES = new Set(["__tests__", "tests", "test"]);
-const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+// `.mts` also ends in `.ts`, so longer extensions come first.
+const MODULE_EXTENSIONS = [".mts", ".cts", ".mjs", ".cjs", ".tsx", ".jsx", ".ts", ".js"];
 
 function diffFileTier(path: string): DiffFileTier {
   const segments = path.split("/");
@@ -56,6 +57,17 @@ function baseName(path: string): string {
   return stripExtension(path.split("/").at(-1) ?? "");
 }
 
+// Import specifiers omit module extensions but keep dotted names such as `b.logic`, so module-map
+// keys strip only the extensions an import could omit.
+function stripModuleExtension(path: string): string {
+  const extension = MODULE_EXTENSIONS.find((candidate) => path.endsWith(candidate));
+  return extension === undefined ? path : path.slice(0, -extension.length);
+}
+
+function moduleName(path: string): string {
+  return stripModuleExtension(path.split("/").at(-1) ?? "");
+}
+
 function resolveRelative(fromPath: string, specifier: string): string {
   const segments = fromPath.split("/").slice(0, -1);
   for (const part of specifier.split("/")) {
@@ -72,26 +84,22 @@ function importedPaths(
   path: string,
   lines: ReadonlyArray<string>,
   byModulePath: ReadonlyMap<string, string>,
-  byBaseName: ReadonlyMap<string, string>,
+  byModuleName: ReadonlyMap<string, string>,
 ): ReadonlySet<string> {
   const imported = new Set<string>();
   for (const line of lines) {
     IMPORT_SPECIFIER.lastIndex = 0;
     let match = IMPORT_SPECIFIER.exec(line);
     while (match !== null) {
-      const specifier = match[1] ?? "";
-      const withExtension = specifier.startsWith(".")
-        ? resolveRelative(path, specifier)
-        : specifier;
-      // A specifier may name the extension the module map dropped, and it need not be the one on
-      // disk: TypeScript's own imports point at the `.js` beside a `.ts`.
-      const extension = MODULE_EXTENSIONS.find((candidate) => withExtension.endsWith(candidate));
-      const resolved =
-        extension === undefined ? withExtension : withExtension.slice(0, -extension.length);
+      // Bundler queries such as `?worker` or `?url` name the same file.
+      const specifier = (match[1] ?? "").replace(/\?.*$/, "");
+      const resolved = stripModuleExtension(
+        specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier,
+      );
       const target =
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
-        byBaseName.get(baseName(resolved));
+        byModuleName.get(moduleName(resolved));
       if (target !== undefined && target !== path) imported.add(target);
       match = IMPORT_SPECIFIER.exec(line);
     }
@@ -118,8 +126,17 @@ function orderByImports(
   return ordered;
 }
 
-function testedBaseName(path: string): string {
-  return (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "").replace(/\.[^.]+$/, "");
+// `a.logic.test.ts` covers `a.logic.ts` while `a.browser.test.ts` covers `a.ts`, so the longest
+// dotted prefix that names a source file wins.
+function testedSourcePosition(path: string, sourcePositions: ReadonlyMap<string, number>): number {
+  let name = (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "");
+  while (true) {
+    const position = sourcePositions.get(name);
+    if (position !== undefined) return position;
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return Number.MAX_SAFE_INTEGER;
+    name = name.slice(0, dot);
+  }
 }
 
 export function orderDiffFiles(
@@ -132,22 +149,27 @@ export function orderDiffFiles(
 
   const sourcePaths = [...byPath.keys()].filter((path) => tiers.get(path) === "source");
   const byModulePath = new Map<string, string>();
-  const ambiguousBaseNames = new Set<string>();
-  const byBaseName = new Map<string, string>();
+  const ambiguousModuleNames = new Set<string>();
+  const byModuleName = new Map<string, string>();
   for (const path of sourcePaths) {
-    byModulePath.set(stripExtension(path), path);
-    const base = baseName(path);
-    if (byBaseName.has(base)) ambiguousBaseNames.add(base);
-    byBaseName.set(base, path);
+    byModulePath.set(stripModuleExtension(path), path);
+    const name = moduleName(path);
+    if (byModuleName.has(name)) ambiguousModuleNames.add(name);
+    byModuleName.set(name, path);
   }
-  for (const base of ambiguousBaseNames) byBaseName.delete(base);
+  for (const name of ambiguousModuleNames) byModuleName.delete(name);
 
   const imports = new Map<string, ReadonlySet<string>>();
   for (const path of sourcePaths) {
     const file = byPath.get(path)!;
     imports.set(
       path,
-      importedPaths(path, [...file.additionLines, ...file.deletionLines], byModulePath, byBaseName),
+      importedPaths(
+        path,
+        [...file.additionLines, ...file.deletionLines],
+        byModulePath,
+        byModuleName,
+      ),
     );
   }
   const orderedSource = orderByImports(sourcePaths, imports);
@@ -160,9 +182,10 @@ export function orderDiffFiles(
   const orderedTests = [...byPath.keys()]
     .filter((path) => tiers.get(path) === "test")
     .sort((left, right) => {
-      const leftPosition = sourcePositions.get(testedBaseName(left)) ?? Number.MAX_SAFE_INTEGER;
-      const rightPosition = sourcePositions.get(testedBaseName(right)) ?? Number.MAX_SAFE_INTEGER;
-      return leftPosition - rightPosition || left.localeCompare(right);
+      return (
+        testedSourcePosition(left, sourcePositions) -
+          testedSourcePosition(right, sourcePositions) || left.localeCompare(right)
+      );
     });
 
   const orderedGenerated = [...byPath.keys()]

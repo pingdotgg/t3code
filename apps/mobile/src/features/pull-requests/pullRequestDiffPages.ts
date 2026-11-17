@@ -1,9 +1,54 @@
+import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
-import { buildReviewParsedDiff, type ReviewParsedDiff } from "../review/reviewModel";
+import {
+  buildReviewParsedDiff,
+  type ReviewParsedDiff,
+  type ReviewRenderableFile,
+} from "../review/reviewModel";
 
 export interface PullRequestDiffPage {
   readonly cursor: string | null;
   readonly result: PullRequestDiffResult;
+}
+
+interface CachedPullRequestDiffPages {
+  readonly pages: readonly PullRequestDiffPage[];
+  readonly cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>;
+  readonly parsed: ReviewParsedDiff;
+}
+
+// Keep only the latest combination per scoped first page; query results own its lifetime.
+const parsedSnapshots = new WeakMap<
+  PullRequestDiffResult,
+  Map<string, CachedPullRequestDiffPages>
+>();
+
+export function getCachedPullRequestDiffPages(
+  pages: readonly PullRequestDiffPage[],
+  scope: string,
+  terminology: ChangeRequestTerminology,
+): ReviewParsedDiff {
+  const first = pages[0];
+  if (!first) return { kind: "empty" };
+  const key = JSON.stringify([scope, terminology.singular, first.cursor]);
+  let snapshots = parsedSnapshots.get(first.result);
+  if (!snapshots) {
+    snapshots = new Map();
+    parsedSnapshots.set(first.result, snapshots);
+  }
+  const previous = snapshots.get(key);
+  if (
+    previous?.pages.length === pages.length &&
+    pages.every((page, index) => {
+      const cached = previous.pages[index];
+      return cached?.cursor === page.cursor && cached.result === page.result;
+    })
+  )
+    return previous.parsed;
+  const cache = previous?.cache ?? new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
+  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology);
+  snapshots.set(key, { pages, cache, parsed });
+  return parsed;
 }
 
 /** A changed page invalidates later cursors, which belong to the previous patch. */
@@ -20,6 +65,7 @@ export function retainPullRequestDiffPage(
     (previous?.patch === result.patch &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
+      previous.withheldFilesReadable === result.withheldFilesReadable &&
       JSON.stringify(previous.omittedFileStats ?? []) ===
         JSON.stringify(result.omittedFileStats ?? []))
   )
@@ -31,6 +77,7 @@ export function combinePullRequestDiffPages(
   pages: readonly PullRequestDiffPage[],
   cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>,
   scope: string,
+  terminology: ChangeRequestTerminology,
 ): ReviewParsedDiff {
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
@@ -42,7 +89,13 @@ export function combinePullRequestDiffPages(
       );
       const files = value.files.map((file) => {
         const stat = omittedFileStats.get(file.path);
-        return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+        if (!stat) return file;
+        return {
+          ...file,
+          additions: stat.additions,
+          deletions: stat.deletions,
+          ...(file.rows.length === 0 ? { withheld: true } : {}),
+        };
       });
       value = {
         ...value,
@@ -63,8 +116,69 @@ export function combinePullRequestDiffPages(
     additions: files.reduce((total, file) => total + file.additions, 0),
     deletions: files.reduce((total, file) => total + file.deletions, 0),
     notice:
-      pages.some((page) => page.result.truncated) || parsed.some((page) => page.kind === "raw")
-        ? "Some file contents are unavailable. Open the pull request on its provider to see the full changes."
+      pages.some((page) => page.result.truncated) ||
+      parsed.some((page) => page.kind === "raw" || (page.kind === "files" && page.notice !== null))
+        ? `Some file contents are unavailable. Open the ${terminology.singular} on its provider to see the full changes.`
         : null,
+  };
+}
+
+export type WithheldFileLoad =
+  | { readonly status: "loading" | "error" }
+  | { readonly status: "loaded"; readonly result: PullRequestDiffResult };
+
+const withheldFileParses = new WeakMap<PullRequestDiffResult, ReviewRenderableFile | null>();
+
+function parseWithheldFile(result: PullRequestDiffResult, scope: string) {
+  if (withheldFileParses.has(result)) return withheldFileParses.get(result) ?? null;
+  const parsed = buildReviewParsedDiff(result.patch, scope);
+  const file =
+    parsed.kind === "files" ? (parsed.files.find((entry) => entry.rows.length > 0) ?? null) : null;
+  withheldFileParses.set(result, file);
+  return file;
+}
+
+function withheldFileNotice(load: WithheldFileLoad | undefined, canLoad: boolean): string {
+  if (load === undefined) {
+    return canLoad
+      ? "Diff too large to display. Tap to load it."
+      : "Diff too large to display here.";
+  }
+  if (load.status === "loading") return "Loading diff…";
+  if (load.status === "error") return "Couldn't load this diff. Tap to try again.";
+  return "No text diff for this file.";
+}
+
+/**
+ * Puts each loaded withheld file in place of its empty one, under the same id so folds and
+ * targets hold, and gives the rest a notice saying what a tap does.
+ */
+export function withWithheldFiles(
+  parsed: ReviewParsedDiff,
+  loads: ReadonlyMap<string, WithheldFileLoad>,
+  canLoad: boolean,
+  scope: string,
+): ReviewParsedDiff {
+  if (parsed.kind !== "files" || !parsed.files.some((file) => file.withheld)) return parsed;
+  const files = parsed.files.map((file): ReviewRenderableFile => {
+    if (!file.withheld) return file;
+    const load = loads.get(file.path);
+    const loaded =
+      load?.status === "loaded"
+        ? parseWithheldFile(load.result, `${scope}:withheld:${file.path}`)
+        : null;
+    if (loaded !== null) return { ...loaded, id: file.id };
+    return {
+      ...file,
+      notice: withheldFileNotice(load, canLoad),
+      noticeTone: "warning",
+      noticeActionable: canLoad && (load === undefined || load.status === "error"),
+    };
+  });
+  return {
+    ...parsed,
+    files,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
   };
 }

@@ -12,11 +12,17 @@ import {
   OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
+import { AsyncResult } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
@@ -29,7 +35,7 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { fetchEnvironmentSessionState } from "./session.ts";
+import { fetchEnvironmentSessionState, sessionDeniesScope } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -38,7 +44,6 @@ import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
-const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
 
@@ -143,6 +148,8 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
           },
         };
       }),
+    rememberCheckedDescriptor: () => Effect.void,
+    renewDpopBeforeExpiry: () => Effect.die("HTTP requests must not renew a socket's token."),
   });
   const signer = ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("test-thumbprint"),
@@ -168,6 +175,14 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
     },
     httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
+}
+
+// Resolves "settled" instead of hanging when the load finishes without sending another request.
+function nextRequestOrSettled(requests: Queue.Queue<number>, load: Fiber.Fiber<unknown, unknown>) {
+  return Effect.raceFirst(
+    Queue.take(requests).pipe(Effect.as("sent" as const)),
+    Fiber.await(load).pipe(Effect.as("settled" as const)),
+  );
 }
 
 type HttpInput = ReturnType<typeof makeHarness>["input"];
@@ -210,20 +225,12 @@ const LOADERS: ReadonlyArray<{
     expected: SHELL,
     load: (input: HttpInput) =>
       fetchEnvironmentShellSnapshot(input).pipe(
-        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+        Effect.map((answer) => {
+          if ("resumable" in answer) return answer;
+          const { loadPullRequests: _links, ...snapshot } = answer;
+          return snapshot;
+        }),
       ),
-  },
-  {
-    name: "thread snapshot",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}`,
-    response: encodeThreadSnapshot(THREAD),
-    expected: THREAD,
-    load: (input: HttpInput) =>
-      ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
-        ...input,
-        threadId: THREAD.projection.thread.id,
-      }),
   },
   {
     name: "thread transcript",
@@ -328,12 +335,6 @@ describe("authenticated environment HTTP requests", () => {
       response: encodeThreadTranscript(TRANSCRIPT),
       load: (input: HttpInput) =>
         fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
-    },
-    {
-      name: "thread snapshot",
-      response: encodeThreadSnapshot(THREAD),
-      load: (input: HttpInput) =>
-        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
     },
     {
       name: "bounded thread snapshot",
@@ -521,6 +522,69 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 
+  it.effect(
+    "waits longer for session permissions after the environment is too slow to answer",
+    () =>
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<number>();
+        let answer: () => void = () => {};
+        const answered = new Promise<void>((resolve) => {
+          answer = resolve;
+        });
+        const harness = makeHarness((requestNumber) => {
+          Queue.offerUnsafe(requests, requestNumber);
+          return requestNumber === 1
+            ? new Promise<Response>(() => {})
+            : answered.then(() => Response.json(SESSION));
+        });
+        const load = yield* fetchEnvironmentSessionState({
+          prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+          signer: Option.none(),
+          timeoutMs: 1_000,
+        }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+
+        yield* Queue.take(requests);
+        yield* TestClock.adjust("1 second");
+        expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+        yield* TestClock.adjust("1500 millis");
+        answer();
+
+        expect(yield* Fiber.await(load)).toStrictEqual(Exit.succeed(SESSION));
+        expect(harness.calls).toHaveLength(2);
+      }),
+  );
+
+  it.effect("gives up on session permissions once a 60 second wait also times out", () =>
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<number>();
+      const harness = makeHarness((requestNumber) => {
+        Queue.offerUnsafe(requests, requestNumber);
+        return new Promise<Response>(() => {});
+      });
+      const load = yield* fetchEnvironmentSessionState({
+        prepared: { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } },
+        signer: Option.none(),
+        timeoutMs: 15_000,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+
+      yield* Queue.take(requests);
+      yield* TestClock.adjust("15 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* nextRequestOrSettled(requests, load)).toBe("sent");
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(load);
+
+      expect(exit).toMatchObject({
+        _tag: "Failure",
+        cause: {
+          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: 60_000 } }],
+        },
+      });
+      expect(harness.calls).toHaveLength(3);
+    }),
+  );
+
   it.effect("reports persistent session rejection instead of showing missing permissions", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(UNAUTHENTICATED_SESSION));
@@ -534,6 +598,8 @@ describe("authenticated environment HTTP requests", () => {
         message: "The environment rejected the renewed session authorization.",
       });
       expect(harness.calls).toHaveLength(2);
+      const rejectedLookup = AsyncResult.failure<AuthSessionState, typeof error>(Cause.fail(error));
+      expect(sessionDeniesScope(rejectedLookup, "orchestration:read")).toBe(true);
     }),
   );
 

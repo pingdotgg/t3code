@@ -27,7 +27,10 @@ const fixture = (
 ) => {
   let finalized = 0;
   const requests: string[] = [];
+  const screenshots: Array<Parameters<DeviceService.DeviceService["Service"]["screenshot"]>[0]> =
+    [];
   const headers: Array<Readonly<Record<string, string>>> = [];
+  const unexpectedOperation = Effect.die("Unexpected device operation");
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
@@ -45,7 +48,7 @@ const fixture = (
   const { handler, dispose } = HttpRouter.toWebHandler(
     DeviceHubProxy.layer.pipe(
       Layer.provideMerge(
-        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
           authenticateWebSocketUpgrade: () =>
             authError
               ? Effect.fail(authError)
@@ -55,24 +58,50 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
-        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        }),
       ),
       Layer.provideMerge(
-        Layer.succeed(DeviceService.DeviceService, {
-          currentReadiness: () =>
+        Layer.mock(DeviceService.DeviceService)({
+          currentReadiness: (hostId) =>
             Effect.succeed({
-              hostId: LOCAL_DEVICE_HOST_ID,
+              hostId: hostId ?? LOCAL_DEVICE_HOST_ID,
+              nodePath: "node",
               hub: { origin: "http://hub.test" },
+              devices: {
+                list: unexpectedOperation,
+                boot: () => unexpectedOperation,
+                attach: () => unexpectedOperation,
+                shutdown: () => unexpectedOperation,
+                screenshot: () => unexpectedOperation,
+              },
+              run: () => unexpectedOperation,
+              helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
-        } as DeviceService.DeviceService["Service"]),
+          screenshot: (input) =>
+            Effect.sync(() => {
+              screenshots.push(input);
+              return {
+                device: {
+                  hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+                  id: input.deviceId,
+                  platform: "ios",
+                  name: "Phone",
+                  version: "27.0",
+                  booted: true,
+                  physical: false,
+                },
+                png: new Uint8Array([137, 80, 78, 71]),
+              };
+            }),
+        }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
     ),
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, headers, finalized: () => finalized };
+  return { handler, requests, screenshots, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -169,6 +198,32 @@ describe("device hub proxy", () => {
     expect(headers[0]?.["content-type"]).toBe("application/json");
   });
 
+  it("lets a viewer read Android stream capabilities and signal WebRTC with read scope", async () => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const hub = "http://t3.test/api/device-hub/vendor/serve-emu";
+    const api = await handler(new Request(`${hub}/api?device=session-1`));
+    expect(api.status).toBe(200);
+    await api.text();
+    for (const action of ["offer", "close"]) {
+      const signal = await handler(
+        new Request(`${hub}/webrtc/${action}?device=session-1`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: '{"sessionId":"viewer"}',
+        }),
+      );
+      expect(signal.status).toBe(200);
+      await signal.text();
+    }
+    expect(requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/offer?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/close?device=session-1",
+    ]);
+    expect((await handler(new Request(`${hub}/api`, { method: "POST" }))).status).toBe(405);
+    expect((await handler(new Request(`${hub}/webrtc/offer`))).status).toBe(405);
+  });
+
   it("sends requests a host routes itself to its upstream with its credentials", async () => {
     const { handler, requests, headers } = fixture(
       [AuthOrchestrationReadScope],
@@ -213,6 +268,33 @@ describe("device hub proxy", () => {
     ).toBe(404);
     expect(requests).toEqual([]);
   });
+
+  it.each(["serve-sim", "serve-emu"])(
+    "captures %s screenshots through hosts with their own stream routing",
+    async (vendor) => {
+      const { handler, requests, screenshots } = fixture(
+        [AuthOrchestrationReadScope],
+        false,
+        undefined,
+        () => Effect.succeed(null),
+      );
+      const response = await handler(
+        new Request(
+          `http://t3.test/api/device-hub/vendor/${vendor}/api/screenshot?device=udid-1&hostId=pool`,
+          {
+            method: "POST",
+          },
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        new Uint8Array([137, 80, 78, 71]),
+      );
+      expect(requests).toEqual([]);
+      expect(screenshots).toEqual([{ hostId: "pool", deviceId: "udid-1" }]);
+    },
+  );
 });
 
 it.each([

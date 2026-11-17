@@ -1,6 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { usagePriceCell, usagePriceTableChanges, type UsagePriceDraft } from "./usagePriceTable";
+import {
+  usagePriceCell,
+  usagePriceTableChanges,
+  usagePriceTableErrors,
+  type UsagePriceDraft,
+} from "./usagePriceTable";
 import type { UsagePriceTarget } from "./usagePriceTargets";
 
 const price = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
@@ -114,5 +119,67 @@ describe("price table edits", () => {
         "model:example",
       ),
     ).toBe("Map to a different model.");
+  });
+
+  it("requires clearing a mapping before a price edit can apply to every environment", () => {
+    const mapped = target("mapped", {}, { example: "example-model" });
+    const priced = target("priced", { example: price });
+    const edit = draft({ inputCostPerMillionTokens: "3", outputCostPerMillionTokens: "8" });
+    expect(usagePriceTableErrors([mapped, priced], [edit]).get(edit.id)).toBe(
+      'mapped maps this model. Remove it from "Apply to" or clear its mapping first.',
+    );
+    expect(usagePriceTableChanges(mapped, [edit]).changes).toEqual([]);
+
+    const cleared = { ...edit, alias: "" };
+    expect(usagePriceTableErrors([mapped, priced], [cleared]).size).toBe(0);
+    expect(usagePriceTableChanges(mapped, [cleared]).changes).toEqual([
+      { model: "example", alias: null },
+      { model: "example", price: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 8 } },
+    ]);
+    expect(usagePriceTableChanges(priced, [cleared]).changes).toEqual([
+      { model: "example", price: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 8 } },
+    ]);
+  });
+});
+
+describe("model mapping validation", () => {
+  const mapping = (model: string, alias: string): UsagePriceDraft => ({
+    id: `model:${model}`,
+    model,
+    alias,
+    isNew: false,
+    values: {},
+  });
+
+  it("rejects a cycle created by several mappings in one save", () => {
+    const edits = [mapping("a", "b"), mapping("b", "c"), mapping("c", "a")];
+    const result = usagePriceTableChanges(target("local", {}), edits);
+    expect([...result.errors.keys()]).toEqual(["model:a", "model:b", "model:c"]);
+  });
+
+  it("checks each environment's saved chain when an edited mapping closes it", () => {
+    const edits = [mapping("c", "a")];
+    const acyclic = target("one", {}, { a: "b" });
+    const cyclic = target("two", {}, { a: "b", b: "c" });
+    expect(usagePriceTableChanges(acyclic, edits).errors.size).toBe(0);
+    expect(usagePriceTableErrors([acyclic, cyclic], edits).get("model:c")).toBe(
+      "Model mappings cannot form a cycle on two.",
+    );
+  });
+
+  it("validates the final batch so a mapping can be reversed in either row order", () => {
+    const environment = target("local", {}, { constructor: "__proto__" });
+    const clear = mapping("constructor", "");
+    const reverse = mapping("__proto__", "constructor");
+    for (const edits of [
+      [reverse, clear],
+      [clear, reverse],
+    ]) {
+      const result = usagePriceTableChanges(environment, edits);
+      expect(result.errors.size).toBe(0);
+      expect(result.changes).toEqual(
+        edits.map(({ model, alias }) => ({ model, alias: alias || null })),
+      );
+    }
   });
 });

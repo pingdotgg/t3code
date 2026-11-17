@@ -1,3 +1,4 @@
+import { cutLineNote } from "@t3tools/shared/diffCutLines";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const ENTRY = "diff --git ";
@@ -8,7 +9,7 @@ interface Entry {
   newPath: string | null;
   deleted: boolean;
   revision: string | null;
-  /** Past the first hunk header every line is content, and content can start like a header. */
+  /** After the first hunk, content can resemble file headers. */
   inBody: boolean;
 }
 
@@ -24,11 +25,7 @@ function quotedEnd(rest: string): number {
   return -1;
 }
 
-/**
- * Git ends the name with a tab when it holds a space, and a name with a tab of its own
- * arrives quoted with that tab escaped, so the first literal tab is never part of what the
- * file is called.
- */
+/** Git terminates names with a literal tab and escapes tabs within names. */
 function sidePath(rest: string, prefix: string): string | null {
   const tab = rest.indexOf("\t");
   const token = tab === -1 ? rest : rest.slice(0, tab);
@@ -42,11 +39,7 @@ function headerSide(token: string, prefix: string): string | null {
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
-/**
- * `a/one two b/one two` can split in more than one place, so the split leaving both sides
- * equal wins; a rename (the only case where sides differ) states its names on separate lines
- * instead.
- */
+/** Match equal sides for ambiguous unquoted paths; renames state paths separately. */
 function headerPaths(rest: string): readonly [string | null, string | null] {
   if (rest.startsWith(QUOTE)) {
     const end = quotedEnd(rest);
@@ -117,12 +110,7 @@ function parseEntries(patch: string): ReadonlyArray<Omit<Entry, "inBody">> {
   return entries;
 }
 
-/**
- * What the head has of each file, as the blob ids from a unified patch's `index <before>..<after>`
- * line: Bitbucket exposes no blob id for a file anywhere else. Keyed by the head's name, except
- * for a deletion where only the old name exists. An entry with no `index` line (most often one
- * Bitbucket excluded by pattern) is left out.
- */
+/** Head blob IDs by head path (old path for deletions); omit files without index lines. */
 export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
   const revisions = new Map<string, string>();
   for (const entry of parseEntries(patch)) {
@@ -134,14 +122,44 @@ export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, strin
   return revisions;
 }
 
-/**
- * The files a unified patch changes, as the name each side has. A side with no file (`/dev/null`
- * for an added or a deleted file) is null; a rename is the only entry whose two names differ.
- */
 export function parseDiffFilePaths(
   patch: string,
 ): ReadonlyArray<{ readonly oldPath: string | null; readonly newPath: string | null }> {
   return parseEntries(patch).flatMap(({ oldPath, newPath }) =>
     (oldPath ?? newPath) === null ? [] : [{ oldPath, newPath }],
   );
+}
+
+function nextEntry(patch: string, from: number): number {
+  const at = patch.indexOf(`\n${ENTRY}`, from);
+  return at === -1 ? -1 : at + 1;
+}
+
+/** The one file's section of a multi-file patch, or null when no section names `path`. */
+export function diffFileSection(patch: string, path: string): string | null {
+  let start = patch.startsWith(ENTRY) ? 0 : nextEntry(patch, 0);
+  while (start !== -1) {
+    const end = nextEntry(patch, start);
+    const section = end === -1 ? patch.slice(start) : patch.slice(start, end);
+    // Only the header names the file; hunks can be megabytes.
+    const hunk = section.indexOf("\n@@");
+    const [entry] = parseEntries(hunk === -1 ? section : section.slice(0, hunk));
+    if (entry !== undefined && (entry.newPath ?? entry.oldPath) === path) return section;
+    start = end;
+  }
+  return null;
+}
+
+/** Cuts hunk lines past `maxLength` and says how much was cut; headers stay whole. */
+export function truncateLongDiffLines(patch: string, maxLength: number): string {
+  let inBody = false;
+  return patch
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith(ENTRY)) inBody = false;
+      else if (line.startsWith("@@")) inBody = true;
+      if (!inBody || line.length <= maxLength + 1) return line;
+      return `${line.slice(0, maxLength + 1)}${cutLineNote(line.length - 1 - maxLength)}`;
+    })
+    .join("\n");
 }

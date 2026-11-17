@@ -31,10 +31,7 @@ export function isExplicitRelativePath(value: string): boolean {
 }
 
 function isRootPath(value: string): boolean {
-  // The drive separator is required: a bare `C:` is not the drive root (it
-  // means "current directory on C:"), and treating it as already-canonical
-  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
-  // so the same location would fail project identity/dedup comparisons.
+  // Bare C: means the current directory on C, not its root; require the drive separator.
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
 }
 
@@ -66,10 +63,19 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
-export function newProjectFolderName(name: string): string {
-  const slug = name
+/** Folds accented Latin letters to ASCII ("tìm" -> "tim"); other scripts pass through. */
+export function foldLatinDiacritics(text: string): string {
+  return text
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d") // d-with-stroke and sharp s have no Unicode decomposition
+    .replace(/Đ/g, "D")
+    .replace(/ß/g, "ss")
+    .replace(/ẞ/g, "SS");
+}
+
+export function newProjectFolderName(name: string): string {
+  const slug = foldLatinDiacritics(name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
@@ -98,11 +104,17 @@ export function workspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
+  const caseInsensitive =
+    isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot)) ||
+    (isNetworkPath(workspaceRoot) && isUncPath(path));
+  const normalizedPath = caseInsensitive
+    ? stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"))
+    : path;
+  const normalizedRoot = (
+    caseInsensitive
+      ? stripSlashPrefixedWindowsDrive(workspaceRoot.replaceAll("\\", "/"))
+      : workspaceRoot
   ).replace(/\/+$/, "");
-  const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
@@ -125,6 +137,35 @@ export function isAbsolutePath(value: string): boolean {
 /** Home-relative host paths are expanded by the destination server. */
 export function isHostPath(value: string): boolean {
   return isAbsolutePath(value) || value.startsWith("~/");
+}
+
+// Finder and Explorer copy a path ready for a shell: `'/a b'`, `/a\'s\ b`, or `"C:\a b"`.
+const QUOTED_PATH_AT_END = /(?:'((?:[^']|'\\'')+)'|"([^"]+)")\s*$/;
+const SHELL_ESCAPE = /\\([\s'"\\()[\]{}<>|&;$`!*?#~^=])/g;
+
+/**
+ * What a folder box holds after a change. A full path pasted into it replaces the box, even after
+ * the text already there, because `~/'/a b'` would create that nested folder.
+ */
+export function resolvePastedPath(previous: string, next: string): string {
+  const isTyping = next.startsWith(previous)
+    ? next.length === previous.length + 1
+    : previous.startsWith(next);
+  if (isTyping) return next;
+
+  const match = QUOTED_PATH_AT_END.exec(next);
+  // Text before the quote that wasn't in the box is a search, not a folder to paste after.
+  if (match && previous.startsWith(next.slice(0, match.index).trimEnd())) {
+    const quoted = match[1]?.replaceAll("'\\''", "'") ?? match[2] ?? "";
+    if (isHostPath(quoted)) return quoted;
+  }
+
+  // Without a trailing separator, `/a` then `/a/b` is a longer path, not one pasted after a folder.
+  const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);
+  const path = afterFolder ? next.slice(previous.length) : next;
+  if (!isHostPath(path)) return next;
+  // `\` separates folders in Windows paths, so it only escapes in `/` and `~/` paths.
+  return isWindowsAbsolutePath(path) ? path : path.replace(SHELL_ESCAPE, "$1");
 }
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {

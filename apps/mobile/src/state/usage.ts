@@ -6,10 +6,9 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
+import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
@@ -26,13 +25,8 @@ export interface EnvironmentUsageStatus {
   readonly canReadDiagnostics: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
-  readonly needsCursorKeychainAccess: boolean;
 }
 
-/**
- * Keyed by the serialised window so switching ranges does not thrash the atom cache, and so
- * each environment's query is shared with any other reader of the same window.
- */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
@@ -43,7 +37,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
-        session: Option.getOrNull(AsyncResult.value(sessionResult)),
+        session: AsyncResult.getOrElse(sessionResult, () => null),
         hasSessionError: sessionResult._tag === "Failure",
       });
       if (!access.canReadDiagnostics) {
@@ -53,12 +47,19 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           isConnected: presentation.connection.phase === "connected",
           ...access,
           summary: null,
-          needsCursorKeychainAccess: false,
         });
         continue;
       }
-      const result = get(serverEnvironment.usageSummary({ environmentId, input }));
-      const summary = Option.getOrNull(AsyncResult.value(result));
+      const result = get(
+        serverEnvironment.usageSummary({
+          environmentId,
+          input: usageSummaryInput(
+            input,
+            get(serverEnvironment.usageModelFilterAtom(environmentId)),
+          ),
+        }),
+      );
+      const summary = AsyncResult.getOrElse(result, () => null);
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
@@ -67,15 +68,24 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         canReadDiagnostics: true,
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary,
-        needsCursorKeychainAccess: needsCursorKeychainAccess(
-          summary,
-          get(serverEnvironment.providersValueAtom(environmentId)),
-        ),
       });
     }
     return statuses;
   }).pipe(Atom.withLabel(`mobile-usage:window:${windowKey}`)),
 );
+
+/** Every environment usage can come from, without asking any of them for usage. */
+const usageEnvironmentsAtom = Atom.make((get): readonly EnvironmentUsageStatus[] =>
+  [...get(environmentPresentations.presentationsAtom)].map(([environmentId, presentation]) => ({
+    environmentId,
+    label: presentation.entry.target.label,
+    isPending: true,
+    isConnected: presentation.connection.phase === "connected",
+    canReadDiagnostics: false,
+    error: null,
+    summary: null,
+  })),
+).pipe(Atom.withLabel("mobile-usage:environments"));
 
 export interface UsageView {
   readonly merged: MergedUsage;
@@ -91,6 +101,8 @@ export interface UsageView {
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  /** Off, it lists the environments without loading their usage. */
+  load = true,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -111,8 +123,7 @@ export function useUsage(
       input.untilTime,
     ],
   );
-  const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const environments = useAtomValue(load ? usageByWindowAtom(windowKey) : usageEnvironmentsAtom);
   const selectedEnvironments = useMemo(
     () =>
       selectedEnvironmentIds === null

@@ -20,7 +20,7 @@ as a module-level const:
 
 ```typescript
 // alchemy.run.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 
 export const Website = Fly.Website.StaticSite("Website", {
   build: { command: "hugo --minify", output: "public" },

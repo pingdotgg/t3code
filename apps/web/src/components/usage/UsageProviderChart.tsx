@@ -175,8 +175,7 @@ function chartScale(
   columns: readonly DayColumn[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
 ) {
-  // Not the sum: layered series each measure from zero, so a combined peak
-  // would leave the plot permanently half empty.
+  // Layered series each start at zero; summing peaks would waste plot height.
   const peak = columns.reduce(
     (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
     0,
@@ -186,8 +185,6 @@ function chartScale(
     : { ...niceScale(peak, TICK_COUNT), labeled: true };
 }
 
-// Leave room above the top gridline so the constant-width stroke is not
-// clipped when a series reaches the peak.
 function valueToY(value: number, max: number) {
   return max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 }
@@ -291,7 +288,6 @@ function UsageChartPlot({
   loadingProviders,
   format,
   formatTooltipPeriod,
-  ariaLabel,
   children,
 }: {
   readonly periods: readonly string[];
@@ -301,7 +297,6 @@ function UsageChartPlot({
   readonly loadingProviders: ReadonlySet<UsageProviderKind>;
   readonly format: (value: number) => string;
   readonly formatTooltipPeriod: (period: string) => string;
-  readonly ariaLabel: string;
   readonly children: React.ReactNode;
 }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -334,6 +329,7 @@ function UsageChartPlot({
     plot.style.setProperty("--usage-tooltip-top", `${top}px`);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the hover tooltip through plot CSS variables before paint and on ResizeObserver
   useLayoutEffect(() => {
     if (hoverIndex === null) return;
     positionTooltip();
@@ -375,8 +371,7 @@ function UsageChartPlot({
         className="h-full w-full"
         viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
         preserveAspectRatio="none"
-        role="img"
-        aria-label={ariaLabel}
+        aria-hidden
       >
         {children}
         {hoverIndex === null ? null : (
@@ -447,7 +442,7 @@ export function UsageProviderChart({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-2">
-        <div className="relative h-56 w-14 shrink-0">
+        <div aria-hidden className="relative h-56 w-14 shrink-0">
           {scale.labeled
             ? scale.ticks.map((tick) => (
                 <span
@@ -469,7 +464,6 @@ export function UsageProviderChart({
           loadingProviders={loadingProviders}
           format={format}
           formatTooltipPeriod={formatTooltipPeriod}
-          ariaLabel={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
         >
           {scale.ticks.map((tick) => {
             const y = toY(tick);
@@ -511,7 +505,10 @@ export function UsageProviderChart({
         </UsageChartPlot>
       </div>
 
-      <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
+      <div
+        aria-hidden
+        className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase"
+      >
         <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
         <span>
           {periods[Math.floor(periods.length / 2)] === undefined
@@ -524,6 +521,40 @@ export function UsageProviderChart({
             : formatPeriod(periods[periods.length - 1] ?? "")}
         </span>
       </div>
+
+      {/* The plot and its axes are hover-only; this carries the same figures for screen readers. */}
+      <table className="sr-only">
+        <caption>
+          {`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">{resolution === "hour" ? "Hour" : "Day"}</th>
+            {providers.map((provider) => (
+              <th key={provider} scope="col">
+                {PROVIDER_PRESENTATION[provider].label}
+              </th>
+            ))}
+            {providers.length > 1 ? <th scope="col">Total</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {periods.map((period, index) => {
+            const column = columns[index];
+            return (
+              <tr key={period}>
+                <th scope="row">{formatTooltipPeriod(period)}</th>
+                {providers.map((provider) => (
+                  <td key={provider}>
+                    {format(column?.bands.find((band) => band.provider === provider)?.value ?? 0)}
+                  </td>
+                ))}
+                {providers.length > 1 ? <td>{format(column?.total ?? 0)}</td> : null}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

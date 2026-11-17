@@ -21,35 +21,35 @@ import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
 import { openZipArchive } from "../zipArchive.ts";
 
-// To bump the pin, pick a version from
-// https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json,
-// download each platform's chrome-headless-shell zip, and replace the version and every byte count
-// and SHA-256 below.
-const VERSION = "154.0.8037.92";
+// Update the version, sizes and hashes from each chrome-headless-shell zip listed at
+// https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
+// Never pin below 156.0.8078.70: the shell has no CRLSet and older SPKI blocklists trust
+// compromised eMudhra intermediates (crrev.com/c/8627687).
+const VERSION = "157.0.8103.78";
 const ARCHIVES = {
   linux64: {
-    bytes: 120_477_194,
-    sha256: "636aa5c79f2693632e9921b8bbb050038ba11672e02346c06c20f991aed096f9",
+    bytes: 127_965_683,
+    sha256: "f90329720fb61e5a76da9b6b509b6ad12a484c9c5df0359403e935177c6d153a",
   },
   "linux-arm64": {
-    bytes: 121_182_296,
-    sha256: "0ed0e47d9e9f639197f508d62ada09e5c6b4c4c60edab3160a9312a733091df6",
+    bytes: 128_047_138,
+    sha256: "912fbf877e53de34d7b3cca5104f3b95607d41bd35412ccc6cd2a599ff0c0dbf",
   },
   "mac-arm64": {
-    bytes: 99_221_129,
-    sha256: "77da14e75d7f2568e6f7898d3df7cdc6faac74b15e903b2c9d486ebb6ca9b929",
+    bytes: 104_822_985,
+    sha256: "17bf66d53c1b1104dcb641c5b331cd4ac5d200c778f5feed0934a0b92deaf8d6",
   },
   "mac-x64": {
-    bytes: 104_748_425,
-    sha256: "a54292aaacbb77f76f6ef47558e7c51ab884044e0adacca315567f83c060bcc4",
+    bytes: 110_132_547,
+    sha256: "f1a6a9561eaf1f409849538de663695d36d72fbf1ebca4d42e47c7b5f2a157f3",
   },
   win32: {
-    bytes: 114_295_943,
-    sha256: "56b30d2d6c35775ebf8dc3618680f6529e1c38c87f7feb28a16e9904273d51f7",
+    bytes: 120_403_126,
+    sha256: "d9829c59dcc79d9e6e920f8ab841f2a9a055dcf54229d756ac0b42dfec303910",
   },
   win64: {
-    bytes: 120_822_223,
-    sha256: "3ac2561f02d9d87aadc0399d00b9002d718a4c365624fa67db9e7bfaf6b1a568",
+    bytes: 126_047_001,
+    sha256: "2138c1583d25d6f3abec5269943b2f430207d87a539895aa9e90cc4697ec0e1f",
   },
 } as const;
 
@@ -126,11 +126,7 @@ export class PreviewBrowserUnsupportedError extends Schema.TaggedError<PreviewBr
 export class PreviewBrowser extends Context.Service<
   PreviewBrowser,
   {
-    /**
-     * Path to the installed headless shell. The first call starts the
-     * install; callers wait for it up to a bound and then get its progress
-     * instead, while the install keeps running.
-     */
+    /** Starts installation on first call; returns progress after a bounded wait while installation continues. */
     readonly executable: Effect.Effect<
       string,
       PreviewBrowserInstallError | PreviewBrowserInstallingError | PreviewBrowserUnsupportedError
@@ -325,12 +321,14 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         yield* fs.remove(destination, { recursive: true, force: true });
         yield* fs.rename(unpacked, destination);
       }).pipe(Effect.scoped);
-      // Two servers can share a home, so a staging directory touched within the
-      // last hour may be another server's install in progress and stays.
+      // Shared homes may still use the newest other version or staging directories touched within the last hour.
       const entries = yield* fs.readDirectory(installRoot);
+      const previous = entries
+        .filter((name) => name !== release.version && !name.startsWith("."))
+        .toSorted((left, right) => right.localeCompare(left, "en", { numeric: true }))[0];
       const now = yield* Clock.currentTimeMillis;
       yield* Effect.forEach(
-        entries.filter((name) => name !== release.version),
+        entries.filter((name) => name !== release.version && name !== previous),
         (name) =>
           Effect.gen(function* () {
             const target = path.join(installRoot, name);

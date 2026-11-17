@@ -7,11 +7,13 @@ import {
   type ReactNode,
 } from "react";
 import { View } from "react-native";
+
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 
 type ThreadScreenContent =
   | { readonly props: ThreadDetailScreenProps }
-  | { readonly fallback: ReactNode };
+  | { readonly fallback: ReactNode; readonly header?: ReactNode };
 
 function createThreadScreenStore() {
   let current: ThreadScreenContent | null = null;
@@ -36,13 +38,12 @@ function ThreadScreenOutlet() {
   const store = useContext(ThreadScreenContext)!;
   const content = useSyncExternalStore(store.subscribe, store.getSnapshot);
   if (content === null) return null;
-  return "props" in content ? (
+  const body = "props" in content ? <ThreadDetailScreen {...content.props} /> : content.fallback;
+  return (
     <>
-      {content.props.header}
-      <ThreadDetailScreen {...content.props} />
+      {"props" in content ? content.props.header : content.header}
+      <ScreenContent surface="canvas">{body}</ScreenContent>
     </>
-  ) : (
-    content.fallback
   );
 }
 
@@ -53,7 +54,7 @@ export function ThreadScreenHost({ children }: { readonly children: ReactNode })
   return (
     <ThreadScreenContext.Provider value={store}>
       {children}
-      <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
+      <View className="flex-1 bg-screen android:bg-header">
         <ThreadScreenOutlet />
       </View>
     </ThreadScreenContext.Provider>
@@ -62,16 +63,24 @@ export function ThreadScreenHost({ children }: { readonly children: ReactNode })
 
 export function ThreadScreenBinding(props: ThreadDetailScreenProps) {
   const store = useContext(ThreadScreenContext)!;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the route's thread screen props to the external store the outlet reads
   useLayoutEffect(() => {
     store.publish({ props });
   });
   return null;
 }
 
-export function ThreadScreenFallback({ children }: { readonly children: ReactNode }) {
+export function ThreadScreenFallback({
+  children,
+  header,
+}: {
+  readonly children: ReactNode;
+  readonly header?: ReactNode;
+}) {
   const store = useContext(ThreadScreenContext)!;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the fallback content and header to the external store the outlet reads
   useLayoutEffect(() => {
-    store.publish({ fallback: children });
+    store.publish({ fallback: children, header });
   });
   return null;
 }

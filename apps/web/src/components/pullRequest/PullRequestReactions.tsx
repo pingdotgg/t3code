@@ -16,22 +16,19 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   applyPendingPullRequestReactions,
+  type PendingPullRequestReaction,
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
-} from "./pullRequestReactions.logic";
+  pullRequestReactionsSignature,
+} from "@t3tools/client-runtime/pull-request-reactions";
 
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
-const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
-
-function reactionsSignature(reactions: ReadonlyArray<PullRequestReaction>): string {
-  return reactions
-    .map((reaction) => `${reaction.content}:${reaction.count}:${reaction.viewerHasReacted ? 1 : 0}`)
-    .join(" ");
-}
+const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction> =
+  new Map();
 
 export function PullRequestReactionBar({
   reactions,
@@ -44,7 +41,7 @@ export function PullRequestReactionBar({
 }: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
-  /** Absent reacts to the change request itself, which is where its description's reactions live. */
+  /** Omit to react to the pull request description. */
   readonly subjectId?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
@@ -54,18 +51,19 @@ export function PullRequestReactionBar({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
-    readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
+    readonly values: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction>;
   }>({ signature: "", values: EMPTY_PENDING });
   const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
     reportFailure: false,
   });
 
-  const signature = reactionsSignature(reactions);
+  const signature = pullRequestReactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
   const shown = applyPendingPullRequestReactions(reactions, values);
 
   const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
-    setPending({ signature, values: new Map([...values, [content, reacted]]) });
+    const entry: PendingPullRequestReaction = { reacted };
+    setPending({ signature, values: new Map([...values, [content, entry]]) });
     const result = await setReaction({
       environmentId,
       input: {
@@ -77,6 +75,7 @@ export function PullRequestReactionBar({
     });
     if (result._tag === "Failure") {
       setPending((current) => {
+        if (current.values.get(content) !== entry) return current;
         const next = new Map(current.values);
         next.delete(content);
         return { signature: current.signature, values: next };

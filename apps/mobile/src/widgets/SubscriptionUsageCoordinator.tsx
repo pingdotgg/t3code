@@ -7,7 +7,6 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
-import { useSubscriptionUsage } from "./useSubscriptionUsage";
 import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 import { createWidgetTheme } from "./widgetTheme";
 
@@ -29,8 +28,8 @@ export function SubscriptionUsageCoordinator() {
   } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const snapshot = useAtomValue(snapshotAtom);
-  useSubscriptionUsage(catalog.isReady);
   const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes subscription usage and theme to the native home screen widget
   useEffect(() => {
     if (!catalog.isReady || !appearanceReady) return;
     void Promise.resolve()

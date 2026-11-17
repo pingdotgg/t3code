@@ -1,0 +1,10 @@
+{
+  "name": "@voidzero-dev/vite-plus-remote-cache-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "jose": "catalog:"
+  }
+}

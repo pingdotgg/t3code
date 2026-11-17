@@ -1,13 +1,15 @@
 import type { ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 import type { EnvironmentThreadShell } from "./models.ts";
-import * as Arr from "effect/Array";
-import * as Order from "effect/Order";
+
+export { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 
 export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  readonly latestUserAuthoredMessageAt?: string | null;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -29,7 +31,12 @@ export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInpu
   if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
     return thread.settledAt;
   }
+  return resolveThreadActivityTimestamp(thread);
+}
 
+export function resolveThreadActivityTimestamp(
+  thread: Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestRun" | "updatedAt">,
+): string | null {
   let latest: string | null = null;
   let latestMs = Number.NEGATIVE_INFINITY;
   for (const candidate of [
@@ -58,7 +65,9 @@ export function sortSettledThreads<T extends SettledThreadTimestampInput & { rea
     })
     .sort(
       (left, right) =>
-        right.timestampMs - left.timestampMs || left.thread.id.localeCompare(right.thread.id),
+        right.timestampMs - left.timestampMs ||
+        // Plain order, as the server pages ties (ids mix upper and lower case).
+        (left.thread.id < right.thread.id ? -1 : left.thread.id > right.thread.id ? 1 : 0),
     )
     .map(({ thread }) => thread);
 }
@@ -75,6 +84,18 @@ function getFirstSortableTimestamp(...values: Array<string | null | undefined>):
 }
 
 function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
+  // Agents also post in the user role; only what the user wrote counts. A thread
+  // the user never wrote in counts from its creation; older servers omit the field.
+  if (thread.latestUserAuthoredMessageAt !== undefined) {
+    return (
+      getFirstSortableTimestamp(
+        thread.latestUserAuthoredMessageAt,
+        thread.createdAt,
+        thread.updatedAt,
+      ) ?? Number.NEGATIVE_INFINITY
+    );
+  }
+
   if (thread.latestUserMessageAt) {
     const latestUserMessageTimestamp = toSortableTimestamp(thread.latestUserMessageAt);
     if (latestUserMessageTimestamp !== null) {
@@ -160,71 +181,6 @@ export function getLatestThreadForProject<
     }
   }
   return latest;
-}
-
-const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
-
-function isValidPinOrderKey(key: string): boolean {
-  if (key.length === 0) return false;
-  for (const char of key) {
-    if (!PIN_ORDER_DIGITS.includes(char)) return false;
-  }
-  // A trailing minimum digit would leave no room to sort a key immediately
-  // before this one; generators never produce it, so treat it as corrupt.
-  return key.at(-1) !== PIN_ORDER_DIGITS[0];
-}
-
-/** Midpoint of two digit strings interpreted as fractions in (0, 1).
-    "" stands for the open bound on either side. Requires a < b. */
-function pinOrderMidpoint(a: string, b: string): string {
-  if (b !== "" && a >= b) throw new Error("pinOrderMidpoint: bounds out of order");
-  if (b !== "") {
-    let n = 0;
-    while ((a.charAt(n) || PIN_ORDER_DIGITS[0]) === b.charAt(n)) n += 1;
-    if (n > 0) return b.slice(0, n) + pinOrderMidpoint(a.slice(n), b.slice(n));
-  }
-  const digitA = a === "" ? 0 : PIN_ORDER_DIGITS.indexOf(a.charAt(0));
-  const digitB = b === "" ? PIN_ORDER_DIGITS.length : PIN_ORDER_DIGITS.indexOf(b.charAt(0));
-  if (digitB - digitA > 1) {
-    return PIN_ORDER_DIGITS.charAt(Math.round((digitA + digitB) / 2));
-  }
-  if (b.length > 1) return b.charAt(0);
-  return PIN_ORDER_DIGITS.charAt(digitA) + pinOrderMidpoint(a.slice(1), "");
-}
-
-/** Key that sorts strictly between two neighbors; null bounds mean "top of
-    the pinned block" / "bottom of the keyed run". Returns null instead of
-    throwing when existing keys are corrupt or out of order — callers fall
-    back to rewriting the section. */
-export function pinOrderKeyBetween(before: string | null, after: string | null): string | null {
-  const a = before ?? "";
-  const b = after ?? "";
-  if (a !== "" && !isValidPinOrderKey(a)) return null;
-  if (b !== "" && !isValidPinOrderKey(b)) return null;
-  if (b !== "" && a >= b) return null;
-  return pinOrderMidpoint(a, b);
-}
-
-export function generateSpreadPinOrderKeys(count: number): string[] {
-  let width = 2;
-  let space = PIN_ORDER_DIGITS.length ** width;
-  while (space <= (count + 1) * 2) {
-    width += 1;
-    space *= PIN_ORDER_DIGITS.length;
-  }
-  const step = space / (count + 1);
-  const keys: string[] = [];
-  for (let i = 0; i < count; i += 1) {
-    let value = Math.round(step * (i + 1));
-    if (value % PIN_ORDER_DIGITS.length === 0) value += 1;
-    let key = "";
-    for (let digit = 0; digit < width; digit += 1) {
-      key = PIN_ORDER_DIGITS.charAt(value % PIN_ORDER_DIGITS.length) + key;
-      value = Math.floor(value / PIN_ORDER_DIGITS.length);
-    }
-    keys.push(key);
-  }
-  return keys;
 }
 
 export function planPinnedReorder(input: {
@@ -328,21 +284,4 @@ export function sortActiveThreadsByOrderKey<
       (left.environmentId ?? "").localeCompare(right.environmentId ?? "")
     );
   });
-}
-
-export function planPinnedMove(input: {
-  readonly orderedIds: readonly string[];
-  readonly keysById: ReadonlyMap<string, string | null | undefined>;
-  readonly movedId: string;
-  readonly direction: "up" | "down";
-}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> | null {
-  const { orderedIds, keysById, movedId, direction } = input;
-  const from = orderedIds.indexOf(movedId);
-  if (from === -1) return null;
-  const to = direction === "up" ? from - 1 : from + 1;
-  if (to < 0 || to >= orderedIds.length) return null;
-  const newOrder = [...orderedIds];
-  newOrder.splice(from, 1);
-  newOrder.splice(to, 0, movedId);
-  return planPinnedReorder({ orderedIds: newOrder, keysById, movedId });
 }

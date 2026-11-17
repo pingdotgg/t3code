@@ -1,7 +1,12 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import {
+  displayFontFamily,
+  isMonospaceFamily,
+  queryInstalledFontFamilies,
+} from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
@@ -34,6 +39,7 @@ let enumerationState: FontEnumerationState = supportsFontEnumeration()
 const enumerationListeners = new Set<() => void>();
 
 function subscribeToEnumeration(listener: () => void): () => void {
+  probeAlreadyGrantedPermission();
   enumerationListeners.add(listener);
   return () => enumerationListeners.delete(listener);
 }
@@ -59,11 +65,7 @@ export function discoverInstalledFonts(): void {
 
 let grantedProbeStarted = false;
 
-/**
- * Electron's default permission handler approves silently (it has no prompt
- * UI), and a browser that granted once reports "granted" on later visits — in
- * both, no user gesture is needed.
- */
+/** Electron and previously granted browsers need no user gesture to enumerate fonts. */
 function probeAlreadyGrantedPermission(): void {
   if (grantedProbeStarted || enumerationState.status !== "unknown") return;
   grantedProbeStarted = true;
@@ -78,7 +80,6 @@ function probeAlreadyGrantedPermission(): void {
 }
 
 export function useFontEnumeration(): FontEnumerationState {
-  useEffect(probeAlreadyGrantedPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
 }
 
@@ -99,16 +100,21 @@ export function FontFamilyPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Open after mount rather than mounting open: a popup that first renders in
-  // its open state never receives Base UI's entrance style baseline, so the
-  // exit transition on close has no style delta, never fires transitionend,
-  // and the popup lingers on screen forever.
+  // Base UI needs an initial closed commit; mounting open loses exit transitionend and leaves the popup
+  // stuck.
   const [openAfterMount] = useState(initialOpen);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the Base UI popup after its first closed commit so the entrance transition is recorded
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Base UI needs one closed commit first to record the popup's entrance style.
     if (openAfterMount) setOpen(true);
   }, [openAfterMount]);
   const listRef = useRef<LegendListRef | null>(null);
+  const [listHeight, setListHeight] = useState(288);
+  const handleMetricsChange = () => {
+    const metrics = listRef.current?.getState();
+    if (metrics) setListHeight(Math.min(metrics.contentLength, 288));
+  };
+  const scrollRef = useLegendListRef(listRef, handleMetricsChange);
   const enumeration = useFontEnumeration();
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -153,7 +159,7 @@ export function FontFamilyPicker({
     return (
       <ComboboxItem hideIndicator index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 truncate" style={{ fontFamily: family }}>
+          <span className="min-w-0 truncate" style={{ fontFamily: displayFontFamily(family) }}>
             {family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
@@ -166,6 +172,8 @@ export function FontFamilyPicker({
       </ComboboxItem>
     );
   };
+
+  const extraData = { items, selectedValue, defaultFamily };
 
   return (
     <Combobox
@@ -195,20 +203,26 @@ export function FontFamilyPicker({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No fonts found.</ComboboxEmpty>
-          <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
-            <ComboboxListVirtualized>
+          {/* Short windows cap the popup; every level down to the list must shrink or rows are clipped unreachably. */}
+          <div className="relative flex min-h-0 max-h-72 w-full flex-1 flex-col overflow-hidden">
+            <ComboboxListVirtualized className="flex min-h-0 flex-col">
               <LegendList<string>
-                ref={listRef}
+                ref={scrollRef}
                 data={items}
-                // Rows are memoized by item, but Base UI highlights and selects
-                // virtualized rows by index. Re-render them when filtering moves
-                // a surviving item to a new index.
-                extraData={items}
+                dataKey={query}
+                initialScrollOffset={0}
+                // Base UI selects virtualized rows by index; rerender surviving items when filtering changes
+                // their indices.
+                extraData={extraData}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}
                 drawDistance={360}
-                style={{ height: Math.min(items.length * 30, 288) }}
+                onScroll={handleMetricsChange}
+                onLayout={handleMetricsChange}
+                onReady={handleMetricsChange}
+                className="min-h-0"
+                style={{ height: listHeight }}
               />
             </ComboboxListVirtualized>
           </div>

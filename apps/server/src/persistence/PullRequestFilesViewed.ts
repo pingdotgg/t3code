@@ -25,12 +25,7 @@ export type PullRequestFilesViewedScope = typeof PullRequestFilesViewedScope.Typ
 
 export const PullRequestFileViewedMark = Schema.Struct({
   path: Schema.String,
-  /**
-   * Empty where the host said it had none to give, which is an answer rather than a gap: a file
-   * with no version at the head is one the change request deletes. Null where the host could
-   * not say at all, which is no baseline rather than an empty one, and such a mark stays
-   * cleared until a press replaces it.
-   */
+  /** Empty means the host confirms deletion; null means no baseline, so the mark stays cleared until replaced. */
   revision: Schema.NullOr(Schema.String),
 });
 export type PullRequestFileViewedMark = typeof PullRequestFileViewedMark.Type;
@@ -89,18 +84,19 @@ const make = Effect.gen(function* () {
   });
 
   return PullRequestFilesViewedRepository.of({
-    list: (input) =>
-      listRows(input).pipe(
+    list: Effect.fn("PullRequestFilesViewedRepository.list")(function (input) {
+      return listRows(input).pipe(
         NodeSqliteClient.readOnly,
         Effect.map((rows) => ({
           files: rows.slice(0, MAX_FILES_VIEWED_ROWS),
           truncated: rows.length > MAX_FILES_VIEWED_ROWS,
         })),
         Effect.mapError(toSqlOrDecodeError("listPullRequestFilesViewed", "PullRequestFileViewed")),
-      ),
+      );
+    }),
 
-    set: (input) =>
-      sql
+    set: Effect.fn("PullRequestFilesViewedRepository.set")(function (input) {
+      return sql
         .withTransaction(
           Effect.forEach(
             input.files,
@@ -146,7 +142,8 @@ const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) => new PersistenceSqlError({ operation: "setPullRequestFilesViewed", cause }),
           ),
-        ),
+        );
+    }),
   });
 });
 

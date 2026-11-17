@@ -88,7 +88,7 @@ export interface AssistantCitationRequest {
   key: string;
 }
 
-/** Navigation owns the ref so virtual row remounts cannot replay an activation. */
+/** Navigation owns activation state across virtual row remounts. */
 export interface AssistantCitationTarget extends AssistantCitationRequest {
   activationRef: RefObject<{
     scrolled: boolean;
@@ -99,7 +99,7 @@ export interface AssistantCitationTarget extends AssistantCitationRequest {
   onComplete: () => void;
 }
 
-export function observeAssistantCitationSource({
+function observeAssistantCitationSource({
   root,
   itemKey,
   request,
@@ -204,6 +204,14 @@ export function observeAssistantCitationSource({
       if (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom) return;
       activation.scrolled = true;
       request.onComplete();
+      // Screen readers follow focus, not scroll; leave someone already typing alone.
+      const active = root.ownerDocument.activeElement;
+      if (
+        !(active instanceof HTMLElement) ||
+        !(active.isContentEditable || active.matches("input, textarea, select"))
+      ) {
+        root.focus({ preventScroll: true });
+      }
       if (!range) {
         toastManager.add({
           type: "warning",
@@ -307,7 +315,7 @@ export function observeAssistantCitationSource({
     if (scrolling) {
       scrolling = false;
       void list.scrollToOffset({
-        // Legend may defer this call too. Read the user's position when it executes.
+        // Legend may defer reading the offset until after the user scrolls.
         get offset() {
           return scrollNode.scrollTop;
         },
@@ -348,6 +356,7 @@ export function AssistantCitationSource({
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes this message's DOM for a citation reveal request and scrolls the LegendList to it
   useEffect(() => {
     const root = rootRef.current;
     const list = listRef.current;
@@ -358,6 +367,8 @@ export function AssistantCitationSource({
   return (
     <div
       ref={rootRef}
+      tabIndex={-1}
+      className="outline-none"
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}

@@ -26,13 +26,7 @@ const WINDOWS: Readonly<
   seven_day: { kind: "weekly", label: "Weekly", windowDurationMins: WEEK_MINS },
 };
 
-/**
- * The streamed event names the overage-included bucket by type
- * (`seven_day_overage_included`), while `get_usage` names it by the model's
- * `display_name`. Which model that is changes over time, so the probe records
- * the name it saw and the event mapper reuses it; the mid-turn update then
- * lands on the row the probe drew instead of opening a second one.
- */
+/** Reuse probed display names for streamed bucket types so mid-turn updates target the same row. */
 const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
 
 // The SDK does not yet type the spend budget returned by `get_usage`.
@@ -53,8 +47,20 @@ export const makeClaudeScopedLimitNames = Ref.make<ClaudeScopedLimitNames>({
   overageIncluded: undefined,
 });
 
+const SCOPED_WINDOW_PREFIX = "seven_day_";
+const scopeToken = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+
 function scopedWindowId(displayName: string): string {
-  return `seven_day_${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+  return `${SCOPED_WINDOW_PREFIX}${scopeToken(displayName)}`;
+}
+
+/** A model-scoped weekly allowance blocks only its own model; an unknown model is not blocked. */
+export function windowLimitsModel(
+  window: Pick<ServerProviderUsageWindow, "id">,
+  model: string | null,
+): boolean {
+  if (!window.id.startsWith(SCOPED_WINDOW_PREFIX)) return true;
+  return model !== null && scopeToken(model).includes(window.id.slice(SCOPED_WINDOW_PREFIX.length));
 }
 
 function scopedWindow(
@@ -157,11 +163,7 @@ function makeWindow(
   };
 }
 
-/**
- * Utilization is a 0–1 fraction on the streamed event. An overage-included
- * event before any probe has named the bucket is dropped: guessing a name
- * would draw a row the next probe cannot reconcile.
- */
+/** Stream utilization is 0-1. Drop unnamed overage buckets until probed to avoid unreconcilable rows. */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
@@ -181,9 +183,7 @@ export function claudeRateLimitEventToUpdate(
   return undefined;
 }
 
-/**
- * Percentages on the `get_usage` response are already 0–100.
- */
+/** get_usage percentages are already 0-100. */
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly checkedAt: string;
@@ -204,8 +204,7 @@ export function claudeUsageResponseToLimits(input: {
     if (!window || typeof window.utilization !== "number") continue;
     windows.push(makeWindow(id, window.utilization, isoFromString(window.resets_at)));
   }
-  // The CLI filters `model_scoped` to the overage-included allowlist, which
-  // today holds one model; the first entry is the one the event refers to.
+  // The CLI's overage allowlist currently has one model; events refer to its first entry.
   let overageIncluded: string | undefined;
   for (const entry of readModelScoped(response.rate_limits)) {
     if (typeof entry.utilization !== "number") continue;
@@ -215,6 +214,7 @@ export function claudeUsageResponseToLimits(input: {
     overageIncluded ??= entry.display_name;
   }
   const spendPercent = readSpendPercent(response.rate_limits);
+  const extra = response.rate_limits.extra_usage;
   if (spendPercent !== undefined) {
     windows.push({
       id: "monthly_spend",
@@ -224,7 +224,10 @@ export function claudeUsageResponseToLimits(input: {
     });
   }
   return {
-    limits: makeUsageLimits({ checkedAt, windows }),
+    limits: {
+      ...makeUsageLimits({ checkedAt, windows }),
+      ...(extra?.is_enabled && extra.monthly_limit === 0 ? { zeroSpendCap: true } : {}),
+    },
     names: { overageIncluded },
   };
 }

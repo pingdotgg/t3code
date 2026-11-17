@@ -24,7 +24,10 @@ export const BINDING_IMAGES_LOOPBACK = "LOOPBACK";
  * Variant URLs returned by the hosted-image CRUD surface point here; an entry
  * middleware routes the prefix to the images service.
  */
-export const PATH_IMAGE_DELIVERY = "/cdn-cgi/mf/imagedelivery";
+export const PATH_IMAGE_DELIVERY = "/__cf_local/imagedelivery";
+
+/** Miniflare's former image delivery prefix, still served for older URLs. */
+export const PATH_IMAGE_DELIVERY_LEGACY = "/cdn-cgi/mf/imagedelivery";
 
 /**
  * Loopback path the images worker queries to resolve the runtime entry URL

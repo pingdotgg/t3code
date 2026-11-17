@@ -1,6 +1,6 @@
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
-/** Saved native membership is enough for navigation, but never supplies action head SHAs. */
+/** Saved membership supports navigation, never action head SHAs. */
 export function savedPullRequestStack(
   links: ReadonlyArray<ThreadPullRequestLink>,
   reference: PullRequestRef,
@@ -59,7 +59,8 @@ export function pullRequestStackView(
   const data = query.isSuccess ? query.data : (query.data ?? saved);
   return {
     data,
-    isFresh: query.isSuccess,
+    // A settled read: one still out may be showing an answer restored from the device.
+    isFresh: query.isSuccess && !query.isPending,
     notice:
       data === null
         ? null

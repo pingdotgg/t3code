@@ -13,9 +13,7 @@ import {
 const CHILD_TASK_ID = "a5d7d869cbb05c754";
 const GRANDCHILD_TASK_ID = "a412f30077dfd84dd";
 
-// The grandchild ends while the root is idle, but Claude reports that end to
-// the child that started it. Only the child's end wakes the root, so it alone
-// opens run 2 and names the wake.
+// Grandchild completion notifies its owning child; only that child's completion wakes the root.
 export function assertClaudeNestedBackgroundSubagentWakeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
