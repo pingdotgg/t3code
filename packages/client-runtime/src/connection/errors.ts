@@ -26,6 +26,16 @@ export function credentialMissingError(connectionId: string): ConnectionBlockedE
   });
 }
 
+/** The host itself answered and refused this device's credential, which pairing again fixes. */
+export function isHostCredentialRefusal(error: ConnectionAttemptError): boolean {
+  return (
+    error._tag === "ConnectionBlockedError" &&
+    error.hop === "server" &&
+    (error.reason === "authentication" || error.reason === "permission") &&
+    error.failureCause !== "clock_skew"
+  );
+}
+
 export function environmentMismatchError(input: {
   readonly expected: EnvironmentId;
   readonly actual: EnvironmentId;
@@ -234,6 +244,15 @@ export function mapRemoteEnvironmentError(
         detail: `${error.message}${networkHint}`,
         hop: unreachableHop,
         via,
+      });
+    case "EnvironmentConnectApprovalPendingError":
+      return new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "This device is waiting for approval on the host.",
+        traceId: error.traceId,
+        hop: "server",
+        via,
+        failureCause: "approval_pending",
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({

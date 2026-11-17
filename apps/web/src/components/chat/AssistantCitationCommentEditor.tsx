@@ -113,18 +113,12 @@ export function AssistantCitationCommentEditor({
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        <div
-          className={
-            speech.state.phase === "idle"
-              ? "contents"
-              : "flex basis-full flex-wrap gap-2 *:min-w-0 *:grow **:data-[slot=voice-input-pill]:w-full"
-          }
-        >
-          <TextFieldSpeechControls speech={speech} />
-        </div>
+        <TextFieldSpeechControls speech={speech} />
         <Button
           variant="outline"
           size="xs"
+          // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
+          tabIndex={-1}
           onPointerDown={(event) => event.preventDefault()}
           onClick={onCancel}
         >

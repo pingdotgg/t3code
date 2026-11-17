@@ -6,6 +6,7 @@ import {
   type AttachmentDeleteInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
@@ -59,79 +60,87 @@ const uploadInput: AttachmentCreateUploadUrlInput = {
 };
 
 describe("runAttachmentUploadCycle", () => {
-  it("deletes the fresh mint when the caller cancels at onMinted", async () => {
-    removeCalls.length = 0;
-    const result = await runAttachmentUploadCycle({
-      registry,
-      createUploadUrl: makeCreateUploadUrl("pending-cancelled"),
-      remove,
-      environmentId,
-      upload: uploadInput,
-      resolveUploadUrl: () => "https://environment.test/upload",
-      transport: () => {
-        throw new Error("transport must not run after cancel");
-      },
-      onMinted: () => "cancel",
-    });
+  it.effect("aborts the transfer and deletes the fresh mint when interrupted", () =>
+    Effect.gen(function* () {
+      removeCalls.length = 0;
+      const transferStarted = Promise.withResolvers<void>();
+      let aborted = false;
+      const cycle = yield* Effect.forkChild(
+        runAttachmentUploadCycle({
+          registry,
+          createUploadUrl: makeCreateUploadUrl("pending-cancelled"),
+          remove,
+          environmentId,
+          upload: uploadInput,
+          resolveUploadUrl: () => "https://environment.test/upload",
+          transport: () =>
+            Effect.callback<void>(() => {
+              transferStarted.resolve();
+              return Effect.sync(() => {
+                aborted = true;
+              });
+            }),
+        }),
+      );
+      yield* Effect.promise(() => transferStarted.promise);
+      yield* Fiber.interrupt(cycle);
 
-    expect(result).toEqual({ status: "cancelled", attachmentId: "pending-cancelled" });
-    expect(removeCalls).toEqual(["pending-cancelled"]);
-  });
+      expect(aborted).toBe(true);
+      expect(removeCalls).toEqual(["pending-cancelled"]);
+    }),
+  );
 
-  it("keeps the minted id on transfer failure so the caller can retry or release", async () => {
-    removeCalls.length = 0;
-    const result = await runAttachmentUploadCycle({
-      registry,
-      createUploadUrl: makeCreateUploadUrl("pending-failed"),
-      remove,
-      environmentId,
-      upload: uploadInput,
-      resolveUploadUrl: () => "https://environment.test/upload",
-      transport: () => ({
-        done: Promise.reject(new Error("Upload rejected (413)")),
-        abort: () => {},
-      }),
-    });
+  it.effect("keeps the minted id on transfer failure so the caller can retry or release", () =>
+    Effect.gen(function* () {
+      removeCalls.length = 0;
+      const result = yield* runAttachmentUploadCycle({
+        registry,
+        createUploadUrl: makeCreateUploadUrl("pending-failed"),
+        remove,
+        environmentId,
+        upload: uploadInput,
+        resolveUploadUrl: () => "https://environment.test/upload",
+        transport: () => Effect.fail({ _tag: "UploadRejected", status: 413 } as const),
+      });
 
-    expect(result).toMatchObject({
-      status: "failed",
-      step: "transfer",
-      attachmentId: "pending-failed",
-    });
-    expect(removeCalls).toEqual([]);
-  });
+      expect(result).toMatchObject({
+        status: "failed",
+        step: "transfer",
+        attachmentId: "pending-failed",
+      });
+      expect(removeCalls).toEqual([]);
+    }),
+  );
 });
 
 describe("verifyPersistedAttachmentUpload", () => {
-  it("hits the server on every verification instead of reusing a cached failure", async () => {
-    let lookups = 0;
-    const assetUrlAtom = Atom.make(
-      Effect.promise(() => Promise.resolve()).pipe(
-        Effect.flatMap(() => {
-          lookups += 1;
-          return lookups === 1
-            ? Effect.fail({ _tag: "TransportError" } as const)
-            : Effect.succeed({ url: "/api/assets/pending-1" });
-        }),
-      ),
-    ).pipe(Atom.swr({ staleTime: 60_000 }), Atom.keepAlive);
-    const liveRegistry = AtomRegistry.make();
+  it.effect("hits the server on every verification instead of reusing a cached failure", () =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      const assetUrlAtom = Atom.make(
+        Effect.promise(() => Promise.resolve()).pipe(
+          Effect.flatMap(() => {
+            lookups += 1;
+            return lookups === 1
+              ? Effect.fail({ _tag: "TransportError" } as const)
+              : Effect.succeed({ url: "/api/assets/pending-1" });
+          }),
+        ),
+      ).pipe(Atom.swr({ staleTime: 60_000 }), Atom.keepAlive);
+      const liveRegistry = AtomRegistry.make();
 
-    const verify = () =>
-      verifyPersistedAttachmentUpload({
+      const verify = verifyPersistedAttachmentUpload({
         registry: liveRegistry,
         createAssetUrl: () => assetUrlAtom,
         environmentId,
         attachmentId: "pending-1",
       });
 
-    const first = await verify();
-    expect(first).toMatchObject({ status: "failed" });
-
-    const second = await verify();
-    expect(second).toEqual({ status: "verified" });
-    expect(lookups).toBe(2);
-  });
+      expect(yield* verify).toMatchObject({ status: "failed" });
+      expect(yield* verify).toEqual({ status: "verified" });
+      expect(lookups).toBe(2);
+    }),
+  );
 });
 
 describe("formatAttachmentSize", () => {
