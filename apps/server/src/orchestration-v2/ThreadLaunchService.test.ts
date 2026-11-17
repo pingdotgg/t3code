@@ -1236,7 +1236,12 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
 
 it.effect("persists member base commits on the run and passes them to worktree creation", () => {
   const memberBaseCommits = { api: "a".repeat(40), web: "b".repeat(40) };
-  const harness = makeHarness({ multiRepo: { members: () => Effect.succeed(["api", "web"]) } });
+  const harness = makeHarness({
+    multiRepo: {
+      members: () => Effect.succeed(["api", "web"]),
+      listLocalBranchNames: () => Effect.succeed(["main"]),
+    },
+  });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
     const launched = yield* launches.launch(
@@ -3352,6 +3357,7 @@ it.effect(
       const harness = makeHarness({
         multiRepo: {
           members: () => Effect.succeed(["api", "web"]),
+          listLocalBranchNames: () => Effect.succeed(["main"]),
           fetchMembers: (cwd, members) =>
             Effect.sync(() => {
               fetched.push(...members.map((member) => `${cwd}/${member}`));

@@ -712,14 +712,23 @@ const make = Effect.gen(function* () {
         }
         if (branch !== null && (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))) {
           const parts = branch.split("/");
+          // A group root is no repository; the branch is created in every member.
+          const memberBranches =
+            members !== null && Option.isSome(multiRepo)
+              ? new Set(
+                  yield* multiRepo.value
+                    .listLocalBranchNames(project.workspaceRoot, members)
+                    .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))),
+                )
+              : null;
           for (let depth = 1; depth < parts.length; depth++) {
+            const prefix = parts.slice(0, depth).join("/");
             if (
-              yield* git
-                .hasCommit({
-                  cwd: project.workspaceRoot,
-                  refName: `refs/heads/${parts.slice(0, depth).join("/")}`,
-                })
-                .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
+              memberBranches !== null
+                ? memberBranches.has(prefix)
+                : yield* git
+                    .hasCommit({ cwd: project.workspaceRoot, refName: `refs/heads/${prefix}` })
+                    .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
             ) {
               branch = generatedTemporaryBranch
                 ? branch.replaceAll("/", "-")
