@@ -106,12 +106,21 @@ export function issueTrackerSummary(
   bindings: IssueTrackerConnectionList["bindings"],
   resolve: MFunctionType = mFallback,
 ): string {
-  if (!tracker.connected)
+  if (!tracker.connected) {
+    // Mid-sentence case, keeping an acronym: "personal API key", "API token".
+    const credential = tracker.credential.label
+      .split(" ")
+      .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
+      .join(" ");
     return knownTrackerSentence(
-      `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`,
-      [msg("Not connected. Add a personal api key to list its issues.")],
+      `Not connected. Add your ${credential} to list its issues.`,
+      [
+        msg("Not connected. Add your personal API key to list its issues."),
+        msg("Not connected. Add your API token to list its issues."),
+      ],
       resolve,
     );
+  }
   if (tracker.account === null)
     return tracker.detail ?? resolve(msg("The saved credential was rejected."));
   const linked = Object.values(bindings).filter((binding) =>

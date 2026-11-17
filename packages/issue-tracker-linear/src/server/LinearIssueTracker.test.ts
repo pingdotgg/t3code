@@ -121,7 +121,12 @@ function fakeLinear(
   const host = Layer.succeed(
     IssueTrackerHost.IssueTrackerHost,
     IssueTrackerHost.IssueTrackerHost.of({
-      credentials: { get: () => Effect.succeed(Option.fromNullishOr(stored)) },
+      credentials: {
+        get: () =>
+          Effect.succeed(
+            Option.map(Option.fromNullishOr(stored), (token) => ({ token, fields: {} })),
+          ),
+      },
     }),
   );
   // Every optional write is implemented here; the type says so for the calls below.

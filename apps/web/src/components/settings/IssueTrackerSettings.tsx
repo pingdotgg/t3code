@@ -23,13 +23,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { JiraIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { CheckboxMark } from "../ui/checkbox";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
@@ -40,6 +41,7 @@ type TrackerIcon = ElementType<{ className?: string }>;
 
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
+  jira: JiraIcon,
   linear: LinearIcon,
 };
 
@@ -90,7 +92,11 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
       {trackers.flatMap((tracker) => {
         const added = accounts.filter((account) => account.tracker === tracker.tracker);
         // Another account is added from the first one's row, which stays while any is connected.
-        const canAddAccount = canAddAccounts && (tracker.connected || added.length > 0);
+        // Another account only asks for a key, so a tracker that needs more fields keeps one.
+        const canAddAccount =
+          canAddAccounts &&
+          (tracker.credential.fields ?? []).length === 0 &&
+          (tracker.connected || added.length > 0);
         return [tracker, ...added].map((account) => (
           <TrackerRow
             // Drafts belong to one environment; switching must not carry them over.
@@ -133,15 +139,31 @@ function TrackerRow({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const fields = tracker.credential.fields ?? [];
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
   const submit = async (token: string | null, addAccount = false) => {
+    const missing = fields.find((field) => !drafts[field.key]?.trim());
+    if (token !== null && missing !== undefined) {
+      setFailure(`Enter the ${missing.label.toLowerCase()} first.`);
+      return;
+    }
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: addAccount
-        ? { tracker: tracker.tracker, token, addAccount }
-        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
+      input: {
+        tracker: tracker.tracker,
+        token,
+        ...(addAccount ? { addAccount } : { accountId: tracker.accountId }),
+        ...(token === null || fields.length === 0
+          ? {}
+          : {
+              fields: Object.fromEntries(
+                fields.map((field) => [field.key, drafts[field.key]!.trim()]),
+              ),
+            }),
+      },
     });
     setBusy(false);
     if (result._tag === "Success") return true;
@@ -201,6 +223,27 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
+              {fields.map((field) => (
+                <SettingsRow
+                  key={field.key}
+                  title={<label htmlFor={`${inputId}-${field.key}`}>{field.label}</label>}
+                  control={
+                    <div className="w-full min-w-0 @min-[32rem]/settings-row:w-56">
+                      <Input
+                        id={`${inputId}-${field.key}`}
+                        size="sm"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={field.placeholder ?? undefined}
+                        value={drafts[field.key] ?? ""}
+                        onChange={(event) =>
+                          setDrafts({ ...drafts, [field.key]: event.target.value })
+                        }
+                      />
+                    </div>
+                  }
+                />
+              ))}
               <SettingsRow
                 title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
                 description={
