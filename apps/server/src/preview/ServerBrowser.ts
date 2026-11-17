@@ -185,17 +185,22 @@ const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
   )
     return null;
   if (element.options.length > optionLimit) return null;
-  const state = { select: element, pressed: false };
+  const state = { select: element, pressed: false, cancelled: false };
   let settled = false;
   const settle = (event) => {
     if (settled || !event.composedPath().includes(element)) return;
     settled = true;
     state.pressed = !event.defaultPrevented;
-    event.preventDefault();
+    Event.prototype.preventDefault.call(event);
     if (state.pressed) element.focus({ preventScroll: true });
   };
-  // A page that stops the press keeps it from the bubbling guard, so stopping it settles it.
+  // A page that stops the press keeps it from the bubbling guard, so stopping it settles it;
+  // the page may still cancel it afterwards, which cancelled records.
   const watch = (event) => {
+    event.preventDefault = function () {
+      if (this.composedPath().includes(element)) state.cancelled = true;
+      return Event.prototype.preventDefault.call(this);
+    };
     for (const name of ["stopPropagation", "stopImmediatePropagation"]) {
       const stop = event[name];
       event[name] = function () {
@@ -216,7 +221,7 @@ const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
 const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
   const select = this.select;
   // Page handlers ran in between: they may have added options or removed the select.
-  if (!this.pressed || !select.isConnected || !select.ownerDocument.defaultView) return null;
+  if (!this.pressed || this.cancelled || !select.isConnected || !select.ownerDocument.defaultView) return null;
   if (select.options.length > optionLimit) return null;
   const { left, top, width, height } = select.getBoundingClientRect();
   const view = select.ownerDocument.defaultView;

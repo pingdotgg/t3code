@@ -2718,6 +2718,14 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
           onmousedown="event.preventDefault(); event.stopPropagation()">
           <option>One</option>
         </select>
+        <select id="stoppedThenCancelled" style="top: 560px"
+          onmousedown="event.stopPropagation(); event.preventDefault()">
+          <option>One</option>
+        </select>
+        <select id="stoppedImmediatelyThenCancelled" style="top: 620px"
+          onmousedown="event.stopImmediatePropagation(); event.preventDefault()">
+          <option>One</option>
+        </select>
         <iframe srcdoc="<select style='position: absolute; left: 0; top: 0; width: 200px; height: 30px'><option>One</option></select>"></iframe>
         <script>
           for (const select of document.querySelectorAll("select"))
@@ -2790,6 +2798,14 @@ it.live("a relayed select press reaches page handlers, and a page can keep its o
 
       yield* click(140, 515);
       expect(yield* output("selectMenu"), "a press cancelled before it stops").toEqual([]);
+
+      yield* click(140, 575);
+      expect(yield* output("selectMenu"), "a press cancelled after it stops").toEqual([]);
+
+      yield* click(140, 635);
+      expect(yield* output("selectMenu"), "a press cancelled after it stops immediately").toEqual(
+        [],
+      );
 
       yield* click(340, 35);
       expect(yield* output("selectMenu"), "a select in a frame keeps the real press").toEqual([]);
