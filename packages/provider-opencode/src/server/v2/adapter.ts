@@ -452,7 +452,7 @@ const policyRules = (policy: RulesPolicy): ReadonlyArray<Rule> =>
 const agentLimits = (policy: RulesPolicy, agentRules: ReadonlyArray<Rule>): ReadonlyArray<Rule> => {
   const start = agentRules.findIndex((entry) => entry.effect === "deny");
   if (start === -1) return [];
-  const base = policyRules(policy);
+  const caps = policyRules(policy).filter((own) => own.effect !== "allow");
   return agentRules
     .slice(start)
     .flatMap((entry) =>
@@ -460,9 +460,23 @@ const agentLimits = (policy: RulesPolicy, agentRules: ReadonlyArray<Rule>): Read
         ? [entry]
         : policy.runtimeMode === "full-access"
           ? [{ ...entry, effect: "allow" as const }]
-          : [entry, ...base.filter((own) => entry.action === "*" || own.action === entry.action)],
+          : [
+              entry,
+              ...caps
+                .filter((own) => actionPattern(entry.action).test(own.action))
+                .map((own) => ({ ...own, resource: entry.resource })),
+            ],
     );
 };
+
+// OpenCode matches rule actions as globs: `*` is any run, `?` one character.
+const actionPattern = (pattern: string) =>
+  new RegExp(
+    `^${pattern
+      .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replaceAll("*", ".*")
+      .replaceAll("?", ".")}$`,
+  );
 
 const sessionRules = (
   policy: RulesPolicy,

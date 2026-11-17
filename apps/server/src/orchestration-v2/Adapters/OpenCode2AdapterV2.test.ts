@@ -284,6 +284,19 @@ const agentList = {
       hidden: false,
       permissions: [{ action: "*", resource: "*", effect: "allow" }, ...buildPaths],
     },
+    {
+      id: "reader",
+      name: "Reader",
+      request: { settings: {}, headers: {}, body: {} },
+      description: "Reads anything, edits only src.",
+      mode: "subagent",
+      hidden: false,
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "e*", resource: "src/**", effect: "allow" },
+      ],
+    },
   ],
 };
 const listAgents = [out("agent.list", "<any>"), reply("agent.list", agentList)];
@@ -1543,6 +1556,47 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ]);
       const watch = yield* watchBackgroundTurn(runtime);
       yield* runtime.startTurn(withLineage(thread));
+      yield* watch.attached;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      assert.equal((yield* watch.terminal)?.status, "interrupted");
+    }),
+  );
+
+  it.effect("keeps a subagent's own agent denies and T3's asks under Supervised rules", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD, {
+            ...childCreated(CHILD),
+            agent: "reader",
+            permissions: supervisedRules,
+          }),
+          out("session.update", {
+            sessionID: CHILD,
+            permissions: [
+              ...supervisedRules.slice(0, 3),
+              { action: "*", resource: "*", effect: "deny" },
+              { action: "e*", resource: "src/**", effect: "allow" },
+              { action: "edit", resource: "src/**", effect: "ask" },
+              { action: "external_directory", resource: "src/**", effect: "ask" },
+              ...mcpRules,
+            ],
+          }),
+          reply("session.update", null),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+        ],
+        { supervised: true },
+      );
+      const watch = yield* watchBackgroundTurn(runtime);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runtimePolicy: policy("approval-required"),
+      });
       yield* watch.attached;
       yield* runtime.interruptTurn({
         providerThread: thread,
