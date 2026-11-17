@@ -197,7 +197,7 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
-  it.effect("keeps system events after the first hundred notes in the issue timeline", () =>
+  it.effect("keeps system and label events after the first hundred in the issue timeline", () =>
     Effect.gen(function* () {
       const firstPage = Array.from({ length: 100 }, (_, index) => ({
         id: index + 1000,
@@ -205,8 +205,19 @@ describe("GitLabIssueTracker", () => {
         author: { username: "julius" },
         created_at: "2026-07-02T00:00:00Z",
       }));
+      const labelEvents = Array.from({ length: 101 }, (_, index) => ({
+        id: index + 1,
+        action: "add",
+        created_at: "2026-07-01T01:00:00Z",
+        user: { username: "theo" },
+        label: { name: index === 100 ? "second-page-label" : "bug" },
+      }));
       const api = yield* tracker((args) => {
         const path = args[1]!;
+        if (path.includes("/resource_label_events?")) {
+          const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+          return encode(labelEvents.slice((page - 1) * 100, page * 100));
+        }
         if (path.includes("/notes?")) {
           const page = new URLSearchParams(path.split("?")[1]).get("page");
           if (page === "1") return encode(firstPage);
@@ -233,6 +244,9 @@ describe("GitLabIssueTracker", () => {
       }
       expect(issue.events).toContainEqual(
         expect.objectContaining({ id: "note-1100", kind: "closed" }),
+      );
+      expect(issue.events).toContainEqual(
+        expect.objectContaining({ id: "label-101", detail: "second-page-label" }),
       );
     }),
   );
