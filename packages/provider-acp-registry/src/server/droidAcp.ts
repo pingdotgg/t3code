@@ -1,5 +1,6 @@
 import { type OrchestrationV2UserInputQuestion, TrimmedNonEmptyString } from "@t3tools/contracts";
 import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -26,9 +27,9 @@ const isDroidCompanion = Schema.is(Schema.Struct({ type: Schema.Literal("string"
 
 // Droid pairs each choice with an optional *_other field. The client already
 // offers custom answers, so hide the companion and restore it in the response.
-export const extractDroidElicitationForm: NonNullable<
-  AcpAdapterV2Flavor["extractElicitationForm"]
-> = (request) => {
+const extractDroidElicitationForm: NonNullable<AcpAdapterV2Flavor["extractElicitationForm"]> = (
+  request,
+) => {
   if (request.mode !== "form" || !isDroidForm(request.requestedSchema)) return undefined;
   const { properties, required } = request.requestedSchema;
   const questions: Array<OrchestrationV2UserInputQuestion> = [];
@@ -82,3 +83,24 @@ export const extractDroidElicitationForm: NonNullable<
     },
   };
 };
+
+// Droid's session modes are its autonomy levels, and a new session can start at
+// `auto-high`, which runs every action without asking. `normal` asks before each
+// change, so T3's runtime policy answers; only unrestricted full access skips asking.
+function droidSessionModeForPolicy(
+  policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): "auto-high" | "normal" {
+  return policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined
+    ? "auto-high"
+    : "normal";
+}
+
+export const droidAcpFlavor = {
+  extractElicitationForm: extractDroidElicitationForm,
+  // The composer's Autonomy Level choice would outrank the thread's runtime mode.
+  ownedModelOptionIds: ["autonomy_level"],
+  lockSessionModeToPolicy: true,
+  sessionModeForPolicy: droidSessionModeForPolicy,
+} satisfies Partial<AcpAdapterV2Flavor>;
