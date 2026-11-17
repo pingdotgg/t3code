@@ -52,12 +52,15 @@ export interface AgentTemplate {
   readonly id: string;
   readonly digest: string;
   readonly updatedAt: string;
+  /** The app version that shipped it. */
+  readonly version: string;
 }
 
 /** What a copy records once it takes `template`. */
 export const agentTemplateRecord = (template: AgentTemplate): AgentTemplateRecord => ({
   id: template.id,
   digest: template.digest,
+  version: template.version,
   syncedAt: template.updatedAt,
 });
 
@@ -115,6 +118,7 @@ const presetSkillDigest = (skill: AgentPresetSkill) => cachedDigest(skill, agent
 export function withAgentTemplates(
   presets: ReadonlyArray<AgentPreset>,
   builtIns: ReadonlyArray<AgentPreset>,
+  version: string,
   dates: AgentTemplateDates = AGENT_TEMPLATE_UPDATED_AT,
 ): ReadonlyArray<AgentPreset> {
   const builtInSkills = new Map(
@@ -127,7 +131,7 @@ export function withAgentTemplates(
     return {
       ...preset,
       ...(builtIn && updatedAt && presetDigest(builtIn) === digest
-        ? { template: { id: preset.id, digest, updatedAt } }
+        ? { template: { id: preset.id, digest, updatedAt, version } }
         : {}),
       skills: preset.skills.map((skill) => {
         const match = builtInSkills.get(skillNameKey(skill.name));
@@ -136,7 +140,7 @@ export function withAgentTemplates(
         return match && skillUpdatedAt && presetSkillDigest(match) === skillDigest
           ? {
               ...skill,
-              template: { id: match.name, digest: skillDigest, updatedAt: skillUpdatedAt },
+              template: { id: match.name, digest: skillDigest, updatedAt: skillUpdatedAt, version },
             }
           : skill;
       }),
@@ -386,6 +390,7 @@ const isNewAgentLibrary = (library: AgentLibraryState) =>
 export function defaultAgentSkills(
   library: AgentLibraryState,
   skillFiles: Readonly<Record<string, string>>,
+  version: string,
 ): ReadonlyArray<AgentSkill> {
   if (!isNewAgentLibrary(library)) return [];
   return DEFAULT_AGENT_SKILL_NAMES.map((name): AgentSkill => {
@@ -400,6 +405,7 @@ export function defaultAgentSkills(
       template: {
         id: skill.name,
         digest: agentSkillDigest(skill),
+        version,
         ...(updatedAt && { syncedAt: updatedAt }),
       },
       revision: 1,

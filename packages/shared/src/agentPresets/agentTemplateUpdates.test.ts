@@ -2,9 +2,16 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { toAgentSkillStub, agentSkillDigest, type McpGatewayProfile } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { addPresetSkills, decodeAgentPresets, withAgentTemplates } from "./agentPresets.ts";
+import {
+  addPresetSkills,
+  decodeAgentPresets,
+  defaultAgentSkills,
+  withAgentTemplates,
+} from "./agentPresets.ts";
+import { readAgentPresetSkillFiles } from "./agentPresetSkillFiles.ts";
 import { AGENT_TEMPLATES_SHIPPED_AT } from "./agentTemplateDates.ts";
 import {
   agentTemplateUpdates,
@@ -28,7 +35,7 @@ const builtIns = (updatedAt: string, edit: (files: Record<string, string>) => vo
   const copy = { ...files };
   edit(copy);
   const presets = decodeAgentPresets(copy);
-  return withAgentTemplates(presets, presets, {
+  return withAgentTemplates(presets, presets, "1.0.0", {
     presets: { reviewer: updatedAt },
     skills: { "review-checklist": updatedAt },
   });
@@ -160,5 +167,45 @@ describe("agentTemplateUpdates", () => {
     expect(statuses({ agentSkills: [{ ...seeded, revision: 2 }], mcpGatewayProfiles: [] })).toEqual(
       [["skill", true]],
     );
+  });
+
+  it("writes records that builds from before syncedAt still decode", () => {
+    const olderRecord = Schema.decodeUnknownSync(
+      Schema.Struct({
+        id: Schema.NonEmptyString,
+        digest: Schema.NonEmptyString,
+        version: Schema.NonEmptyString,
+        mergingFrom: Schema.optional(Schema.NonEmptyString),
+      }),
+    );
+    const library = installed(older);
+    let applied: Library = library;
+    let merged: Library = saved(library, AFTER_LATER);
+    for (const update of agentTemplateUpdates(library, current)) {
+      applied = applyAgentTemplateUpdate(applied, update, { now: AFTER_LATER, makeId: () => "x" });
+    }
+    for (const update of agentTemplateUpdates(merged, current)) {
+      merged = markAgentTemplateMerged(merged, update, AFTER_LATER);
+    }
+    const seeded = defaultAgentSkills(
+      {
+        agentSkills: [],
+        agentSkillDeletedAt: {},
+        mcpGatewayProfiles: [],
+        mcpGatewayProfileDeletedAt: {},
+      },
+      readAgentPresetSkillFiles(),
+      "1.0.0",
+    );
+    const records = [
+      library,
+      applied,
+      merged,
+      { agentSkills: seeded, mcpGatewayProfiles: [] },
+    ].flatMap((item) =>
+      [...item.agentSkills, ...item.mcpGatewayProfiles].map((copy) => copy.template),
+    );
+    expect(records).toHaveLength(8);
+    for (const record of records) expect(() => olderRecord(record)).not.toThrow();
   });
 });

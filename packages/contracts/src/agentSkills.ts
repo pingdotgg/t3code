@@ -89,6 +89,8 @@ export const AgentSkillResources = Schema.Array(AgentSkillResource).check(
 export const AgentTemplateRecord = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   digest: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  // Unused by the date rule, but builds before `syncedAt` require it to decode the shared library.
+  version: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
   syncedAt: Schema.optional(TrimmedNonEmptyString),
   mergingFrom: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });

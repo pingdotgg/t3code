@@ -253,7 +253,7 @@ describe("defaultAgentSkills", () => {
   };
 
   it("seeds a new library with stable ids that a preset install then reuses", () => {
-    const seeded = defaultAgentSkills(empty, skillFiles);
+    const seeded = defaultAgentSkills(empty, skillFiles, "1.0.0");
     expect(seeded.map((skill) => [skill.skillId, skill.name])).toEqual(
       DEFAULT_AGENT_SKILL_NAMES.map((name) => [`t3-default-${name}`, name]),
     );
@@ -266,7 +266,7 @@ describe("defaultAgentSkills", () => {
   });
 
   it("seeds copies older than any edit or deletion, so another machine's library wins a merge", () => {
-    const [seeded] = defaultAgentSkills(empty, skillFiles);
+    const [seeded] = defaultAgentSkills(empty, skillFiles, "1.0.0");
     const edited = { ...seeded!, content: "mine", revision: 2, updatedAt: now };
     expect(
       mergeAgentLibraries([
@@ -285,13 +285,13 @@ describe("defaultAgentSkills", () => {
   it.each([
     [
       "an edited default",
-      { agentSkills: [{ ...defaultAgentSkills(empty, skillFiles)[0]!, content: "mine" }] },
+      { agentSkills: [{ ...defaultAgentSkills(empty, skillFiles, "1.0.0")[0]!, content: "mine" }] },
     ],
     ["a deleted default", { agentSkillDeletedAt: { "t3-default-t3-agents": now } }],
     ["an agent", { mcpGatewayProfiles: [{}] }],
     ["a deleted agent", { mcpGatewayProfileDeletedAt: { agent: now } }],
   ])("leaves a library holding %s alone", (_label, library) => {
-    expect(defaultAgentSkills({ ...empty, ...library }, skillFiles)).toEqual([]);
+    expect(defaultAgentSkills({ ...empty, ...library }, skillFiles, "1.0.0")).toEqual([]);
   });
 });
 
@@ -300,7 +300,7 @@ describe("built-in template dates", () => {
     const root = import.meta.dirname;
     const skillFiles = readAgentPresetSkillFiles();
     const decoded = decodeAgentPresets({ ...readTree(root, "presets"), ...skillFiles });
-    const presets = withAgentTemplates(decoded, decoded);
+    const presets = withAgentTemplates(decoded, decoded, "1.0.0");
     const empty = {
       agentSkills: [],
       agentSkillDeletedAt: {},
@@ -328,7 +328,7 @@ describe("built-in template dates", () => {
               dates(skill.template?.digest, skill.template?.updatedAt),
             ] as const,
         ),
-      ...defaultAgentSkills(empty, skillFiles).map(
+      ...defaultAgentSkills(empty, skillFiles, "1.0.0").map(
         (skill) =>
           [
             `skills/${skill.name}`,

@@ -2,6 +2,7 @@ import { defaultAgentSkills } from "@t3tools/shared/agentPresets";
 import { readAgentPresetSkillFiles } from "@t3tools/shared/agentPresetSkillFiles";
 import * as Effect from "effect/Effect";
 
+import { serverBuildVersion } from "./buildVersion.ts";
 import * as ServerSettings from "./serverSettings.ts";
 
 /** Inlined by the server build, which has no skills pool on disk. */
@@ -17,6 +18,7 @@ export const seed = Effect.fn("DefaultAgentSkills.seed")(
       typeof __T3CODE_AGENT_PRESET_SKILL_FILES__ === "undefined"
         ? readAgentPresetSkillFiles()
         : __T3CODE_AGENT_PRESET_SKILL_FILES__,
+      serverBuildVersion,
     );
     if (agentSkills.length === 0) return;
     // Merged as a replica, so a library that gained an item meanwhile keeps every edit and deletion.
