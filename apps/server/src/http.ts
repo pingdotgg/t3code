@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
@@ -166,7 +167,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly fileName?: string;
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
-    readonly renderIntent?: "mcp-app";
+    readonly renderIntent?: "mcp-app" | "file-preview";
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
@@ -192,6 +193,24 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     return method === "HEAD"
       ? HttpServerResponse.empty({ status: 200, headers })
       : HttpServerResponse.uint8Array(body, { headers });
+  }
+  if (
+    asset.renderIntent === "file-preview" &&
+    !asset.download &&
+    headers["Content-Type"] === "text/html; charset=utf-8"
+  ) {
+    const bytes = yield* readMcpAppHtml(asset.path);
+    // A page too large to buffer is served as is, without scroll restoration.
+    if (bytes !== null) {
+      const script = new TextEncoder().encode(FILE_PREVIEW_SCROLL_SCRIPT);
+      const body = new Uint8Array(bytes.byteLength + script.byteLength);
+      body.set(bytes);
+      body.set(script, bytes.byteLength);
+      headers["Content-Length"] = String(body.byteLength);
+      return method === "HEAD"
+        ? HttpServerResponse.empty({ status: 200, headers })
+        : HttpServerResponse.uint8Array(body, { headers });
+    }
   }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
