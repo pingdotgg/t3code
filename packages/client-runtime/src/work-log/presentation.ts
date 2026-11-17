@@ -397,6 +397,9 @@ function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
 }
 
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  if (entry.toolLifecycleStatus === "failed" || entry.toolLifecycleStatus === "declined") {
+    return null;
+  }
   const viewedImagePath = entry.viewedImagePath?.trim();
   if (
     viewedImagePath !== undefined &&
