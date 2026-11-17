@@ -24,6 +24,7 @@ import {
   writeLocalStorageValue,
 } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
+import { useSidebarSwipe } from "./sidebarSwipe";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
 
@@ -40,6 +41,7 @@ type SidebarContextProps = {
   openMobile: boolean;
   mobileSheetMounted: boolean;
   setMobileSheetMounted: (mounted: boolean) => void;
+  mobileSheetRef: React.RefObject<HTMLDivElement | null>;
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
@@ -212,6 +214,13 @@ function SidebarProvider({
   if (!isMobile && !openMobile && mobileSheetMounted) {
     setMobileSheetMounted(false);
   }
+  const mobileSheetRef = React.useRef<HTMLDivElement | null>(null);
+  useSidebarSwipe({
+    enabled: isMobile,
+    open: openMobile,
+    setOpen: store.setOpenMobile,
+    sheetRef: mobileSheetRef,
+  });
 
   const state = resolveSidebarState({ isMobile, open, openMobile });
 
@@ -221,6 +230,7 @@ function SidebarProvider({
     openMobile,
     mobileSheetMounted,
     setMobileSheetMounted,
+    mobileSheetRef,
     setOpen: store.setOpen,
     setOpenMobile: store.setOpenMobile,
     state,
@@ -292,7 +302,8 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, setMobileSheetMounted } = useSidebar();
+  const { isMobile, state, openMobile, setOpenMobile, setMobileSheetMounted, mobileSheetRef } =
+    useSidebar();
   // Not usePanelAnimationSettings: its navigation suppression would snap the sheet shut mid-exit when an item navigates.
   const panelAnimationDurationMs = useClientSettings(
     (settings) => settings.panelAnimationDurationMs,
@@ -334,6 +345,7 @@ function Sidebar({
           {/* Children stay mounted while closed so their window shortcuts, like thread jumps, keep working. */}
           <SheetPopup
             keepMounted
+            ref={mobileSheetRef}
             {...(panelAnimationsActive ? {} : { transitionDurationMs: 0 })}
             className={cn(
               "w-(--sidebar-width) max-w-none bg-sidebar surface-grain p-0 text-sidebar-foreground",
