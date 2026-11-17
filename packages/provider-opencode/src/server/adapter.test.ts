@@ -161,6 +161,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     readonly exitCode?: Effect.Effect<number>;
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
     readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
+    readonly attachments?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
   } = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -251,7 +252,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         creationSource: continuation === undefined ? "web" : "provider",
         messageId: MessageId.make(`message-opencode-${turnKey}`),
         text,
-        attachments: [],
+        attachments: turnSettings.attachments ?? [],
       },
       modelSelection: { ...modelSelection, model: continuation?.model ?? modelSelection.model },
       runtimePolicy: turnPolicy,
@@ -3293,40 +3294,62 @@ describe("OpenCodeAdapterV2", () => {
         command: string;
         arguments: string;
         model: string;
+        parts: ReadonlyArray<{ type: string; filename: string }>;
       }>();
       let promptCalls = 0;
       const sessionId = "native-command";
-      const harness = yield* makeOpenCodeRuntimeHarness("native-command", sessionId, {
-        event: {
-          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
-            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
-            return { stream: nativeEvents.stream };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "native-command",
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          command: { list: async () => ({ data: [{ name: "git/review" }] }) },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            command: async (input: {
+              messageID: string;
+              command: string;
+              arguments: string;
+              model: string;
+              parts: ReadonlyArray<{ type: string; filename: string }>;
+            }) => {
+              Queue.offerUnsafe(calls, input);
+              await release.promise;
+              return { data: true };
+            },
+            promptAsync: async () => {
+              promptCalls++;
+              return { data: true };
+            },
           },
         },
-        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
-        session: {
-          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
-          command: async (input: {
-            messageID: string;
-            command: string;
-            arguments: string;
-            model: string;
-          }) => {
-            Queue.offerUnsafe(calls, input);
-            await release.promise;
-            return { data: true };
-          },
-          promptAsync: async () => {
-            promptCalls++;
-            return { data: true };
-          },
+        { resolveAttachmentPath: () => "/workspace/review-notes.txt" },
+        {
+          attachments: [
+            {
+              type: "file",
+              id: "notes",
+              name: "review-notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 24,
+            },
+          ],
         },
-      });
+      );
       const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
       assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
+      assert.deepEqual(
+        call.parts.map((part) => part.filename),
+        ["review-notes.txt"],
+      );
       yield* Effect.promise(() =>
         nativeEvents.push({
           type: "message.updated",
@@ -4975,9 +4998,15 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(childRules, "task"), "deny");
 
     const approvalRequiredPolicy = runtimePolicy("approval-required");
-    const parentRules = openCodePermissionRules(approvalRequiredPolicy);
+    const initialChildRules = openCodePermissionRules(approvalRequiredPolicy).filter(
+      (rule) => rule.permission === "external_directory" || rule.action === "deny",
+    );
+    assert.equal(permissionAction(initialChildRules, "bash"), "deny");
+    assert.equal(permissionAction(initialChildRules, "edit"), "deny");
+    assert.equal(permissionAction(initialChildRules, "unknown_plugin_tool"), "deny");
+
     const childApprovalRules = openCodeChildPermissionRules(approvalRequiredPolicy, [
-      ...parentRules.filter((rule) => rule.action === "deny"),
+      ...initialChildRules,
       { permission: "task", pattern: "*", action: "deny" },
     ]);
     assert.equal(permissionAction(childApprovalRules, "bash"), "ask");
