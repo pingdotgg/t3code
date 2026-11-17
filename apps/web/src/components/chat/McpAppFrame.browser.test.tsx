@@ -6,14 +6,15 @@ import { userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, fakeTimers, render } from "../../../test/render";
 
-// Collapses to zero height and asks to close twice when told to, and answers only
-// the first teardown, so the second one is left to finish on the host's timeout.
+// Collapses to zero height when told to, asks to close twice when told to, and answers
+// only the first teardown, so the second one is left to finish on the host's timeout.
 const APP_HTML = `<script>
 let answered = false;
 addEventListener("message", (event) => {
   const message = event.data;
-  if (message === "close") {
+  if (message === "collapse") {
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: 0 } }, "*");
+  } else if (message === "close") {
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" }, "*");
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" }, "*");
   } else if (message?.method === "ui/resource-teardown" && !answered) {
@@ -64,13 +65,17 @@ describe("McpAppFrame", () => {
       />,
     );
     const firstApp = await firstInitialized;
-    using _timers = fakeTimers();
+    const rowHeight = () =>
+      screen.getByTitle("Demo app").element().parentElement?.parentElement?.style.height;
 
+    (firstApp as Window).postMessage("collapse", "*");
+    await expect.poll(rowHeight).toBe("0px");
+
+    using _timers = fakeTimers();
     (firstApp as Window).postMessage("close", "*");
     await userEvent.click(screen.getByRole("button", { name: "Show app" }));
     await expect.element(screen.getByTitle("Demo app")).toBeInTheDocument();
-    const row = screen.getByTitle("Demo app").element().parentElement?.parentElement;
-    expect(row?.style.height).toBe(`${MCP_APP_DEFAULT_HEIGHT}px`);
+    expect(rowHeight()).toBe(`${MCP_APP_DEFAULT_HEIGHT}px`);
 
     await act(() => vi.advanceTimersByTimeAsync(2_000));
     expect(screen.getByRole("button", { name: "Show app" }).query()).toBeNull();
