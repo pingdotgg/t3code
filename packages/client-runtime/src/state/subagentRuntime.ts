@@ -325,7 +325,9 @@ export function deriveWorkflowGroups(
 }
 
 // Workflow scripts open with their `meta` export, after any leading comments.
-const WORKFLOW_SCRIPT_START = /^\s*(?:(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*export\s+const\s+meta\b/;
+// Each comment has one way to match, so a prompt of `////` divider lines cannot backtrack.
+const WORKFLOW_SCRIPT_START =
+  /^\s*(?:(?:\/\/[^\n]*(?:\n|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)*export\s+const\s+meta\b/;
 
 /**
  * Whether a user message is the script a provider-native workflow runs. Servers mark every

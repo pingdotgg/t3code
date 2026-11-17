@@ -316,5 +316,17 @@ describe("resolveWorkflowOpening", () => {
       false,
     );
     expect(isWorkflowScriptMessage({ role: "assistant", text: SCRIPT })).toBe(false);
+    expect(isWorkflowScriptMessage({ role: "user", text: `// a\n/* b\n * c */\n${SCRIPT}` })).toBe(
+      true,
+    );
+    expect(isWorkflowScriptMessage({ role: "user", text: "// export const meta = {}" })).toBe(
+      false,
+    );
+    // Divider comments ahead of ordinary code once took exponential time to reject.
+    const dividers = `${"/".repeat(40)}\n`.repeat(40);
+    expect(isWorkflowScriptMessage({ role: "user", text: `${dividers}const x = 1;` })).toBe(false);
+    expect(
+      isWorkflowScriptMessage({ role: "user", text: `${"/**/".repeat(200)}const x = 1;` }),
+    ).toBe(false);
   });
 });
