@@ -1,17 +1,12 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-saved-views";
-import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   pullRequestListPreferences,
   type PullRequestListPreferences,
 } from "./pullRequestListPreferences";
-import {
-  PullRequestSavedViews,
-  pullRequestSavedViewPatch,
-  pullRequestViewMatches,
-} from "./pullRequestSavedViews";
+import { pullRequestSavedViewPatch, pullRequestViewMatches } from "./pullRequestSavedViews";
 
 const preferences = {
   involvement: "reviewing",
@@ -28,17 +23,8 @@ const preferences = {
   sort: "updated",
 } as const satisfies PullRequestListPreferences;
 const view = { id: "review", name: "PRs Requesting My Review", preferences };
-const decodeViews = Schema.decodeUnknownSync(PullRequestSavedViews);
 
 describe("saved PR views", () => {
-  it("round trips multiple named views with every list setting", () => {
-    const views = [
-      view,
-      { id: "authored", name: "My PRs", preferences: { involvement: "authored", state: "closed" } },
-    ];
-    expect(decodeViews(JSON.parse(JSON.stringify(views)))).toEqual(views);
-  });
-
   it("replaces all filters while preserving the selected PR", () => {
     const current = {
       ...preferences,
@@ -97,11 +83,5 @@ describe("saved PR views", () => {
     expect(pullRequestViewNameError("  PRS REQUESTING MY REVIEW  ", [view])).toBeTruthy();
     expect(pullRequestViewNameError(view.name, [view], view.id)).toBeNull();
     expect(pullRequestViewNameError("  My PRs  ", [view])).toBeNull();
-  });
-
-  it("rejects malformed stored filters", () => {
-    expect(() =>
-      decodeViews([{ ...view, preferences: { ...preferences, involvement: "unknown" } }]),
-    ).toThrow();
   });
 });

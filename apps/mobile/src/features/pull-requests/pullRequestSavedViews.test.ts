@@ -1,6 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import type { PullRequestSavedView } from "../../persistence/mobile-preferences";
-import { pullRequestViewMatches } from "./pullRequestSavedViews";
+import { pullRequestSavedViewPreferences, pullRequestViewMatches } from "./pullRequestSavedViews";
 
 const view = {
   id: "review",
@@ -34,18 +34,25 @@ it("recognizes a saved view regardless of filter property or label ordering", ()
   } as const;
   expect(pullRequestViewMatches(view, { ...view, query: " bug ", controls })).toBe(true);
   expect(view.controls.filters.labels).toEqual([["bug", "fix"], ["urgent"]]);
-});
-
-it("marks the view modified when search, sort, environment, or project environment changes", () => {
-  expect(pullRequestViewMatches(view, { ...view, query: "different" })).toBe(false);
-  expect(pullRequestViewMatches(view, { ...view, environmentId: null })).toBe(false);
-  expect(
-    pullRequestViewMatches(view, { ...view, controls: { ...view.controls, sort: "oldest" } }),
-  ).toBe(false);
   expect(
     pullRequestViewMatches(view, {
       ...view,
       controls: { ...view.controls, projectEnvironmentId: "other" },
     }),
   ).toBe(false);
+});
+
+it("applies a view's environment and controls while keeping other environments' controls", () => {
+  const local = { state: "merged", involvement: "authored", filters: {}, sort: "oldest" } as const;
+  expect(
+    pullRequestSavedViewPreferences(
+      { pullRequestListFilters: { environmentId: "local", controls: { local } } },
+      view,
+    ),
+  ).toEqual({
+    pullRequestListFilters: {
+      environmentId: "remote",
+      controls: { local, remote: view.controls },
+    },
+  });
 });

@@ -6,7 +6,7 @@ import { prompt as showTextInputDialog } from "../../components/ui/Dialog";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { uuidv4 } from "../../lib/uuid";
 import type { PullRequestSavedView } from "../../persistence/mobile-preferences";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { pullRequestViewMatches, type PullRequestSavedViewScope } from "./pullRequestSavedViews";
 import { usePullRequestSavedViews } from "./usePullRequestListControls";
 

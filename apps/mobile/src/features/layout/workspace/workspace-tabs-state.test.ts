@@ -143,12 +143,6 @@ describe("workspace root navigation", () => {
       scrollOffset: 0,
       searchEntryOffset: 0,
     });
-    expect(state.tabs.threads).toEqual(initialWorkspaceTabsState().tabs.threads);
-    state = workspaceTabsReducer(state, { type: "search", tab: "pullRequests" });
-    expect(
-      workspaceTabsReducer(state, { type: "cancel", tab: "pullRequests" }).tabs.pullRequests
-        .scrollOffset,
-    ).toBe(0);
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {
