@@ -443,6 +443,16 @@ it("keeps the report when a run queued behind it ends without assistant text", (
     const progress = delegatedTaskProgress(child);
     assert.equal(progress.state, "result_available");
     assert.equal(subagentResultForRun(child, progress.resultRun!).text, "REPORT-OK");
+    // Another task's run, or one that did not complete, keeps its own outcome.
+    for (const other of [
+      { ...queued, delegatedTaskId: NodeId.make("follow-up") },
+      { ...queued, status: "interrupted" as const },
+    ]) {
+      assert.notInclude(
+        subagentResultForRun({ ...child, runs: [run, other] }, other).text,
+        "REPORT-OK",
+      );
+    }
   }
 });
 
