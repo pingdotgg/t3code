@@ -2375,7 +2375,10 @@ it.effect.each([
   }),
 );
 
-it.effect("refuses Azure cross-organization reads and writes without its checkout", () =>
+it.effect.each([
+  { case: "another organization", repository: "org-b/project/_git/web" },
+  { case: "a sibling repository", repository: "org-a/project/_git/web-e2e" },
+])("refuses Azure reads and writes in $case without its checkout", ({ repository }) =>
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
@@ -2399,15 +2402,48 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     const reference = {
       projectId: "org-a" as ProjectId,
       host: "dev.azure.com",
-      repository: "org-b/project/_git/web",
+      repository,
       number: 7,
     };
     const readError = yield* Effect.flip(
       service.summary(reference, { recoverTransientFailure: false }),
     );
     const writeError = yield* Effect.flip(service.runAction({ ...reference, action: "close" }));
-    assert.strictEqual(readError._tag, "PullRequestUnavailableError");
-    assert.strictEqual(writeError._tag, "PullRequestUnavailableError");
+    for (const error of [readError, writeError]) {
+      expect(error).toMatchObject({
+        _tag: "PullRequestUnavailableError",
+        reason: "repository-without-project",
+        message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
+      });
+    }
+  }),
+);
+
+// regression: #37633 any checkout on the host routes the read, so name the host, not the repository
+it.effect("names the host when no project has a checkout on it for a host-routed read", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "wrapper", title: "Wrapper", workspaceRoot: "/work" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: () => Effect.die("no checkout to read through"),
+        }),
+      ],
+    });
+    const error = yield* Effect.flip(
+      service.summary(
+        {
+          projectId: "wrapper" as ProjectId,
+          host: "gitlab.com",
+          repository: "acme/web",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    expect(error.message).not.toContain("acme/web is not a project");
+    expect(error.message).toContain("gitlab.com");
   }),
 );
 
