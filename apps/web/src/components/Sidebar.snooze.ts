@@ -1,6 +1,6 @@
 import { i18n } from "../i18nCore";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { SnoozePresetSetting, TimestampFormat } from "@t3tools/contracts/settings";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
   resolveSnoozePresets as resolveSharedSnoozePresets,
@@ -11,6 +11,7 @@ import {
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
+import { translatedSnoozeLabel } from "./settings/SnoozePresetsSettings.logic";
 import { toastManager } from "./ui/toast";
 
 export { snoozeWakeLabel, type SnoozePreset };
@@ -54,5 +55,7 @@ function snoozeOptions(timestampFormat: TimestampFormat, environmentId: Environm
   return {
     ...(presets ? { presets } : {}),
     formatTime: (date: Date) => formatShortTimestamp(date.toISOString(), timestampFormat),
+    formatLabel: (setting: SnoozePresetSetting, daysAhead: number) =>
+      translatedSnoozeLabel(setting, daysAhead, i18n.getFixedT(null, "settings")),
   };
 }

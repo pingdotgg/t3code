@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { type TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
   DEFAULT_SNOOZE_PRESETS,
@@ -18,7 +17,11 @@ import * as Schema from "effect/Schema";
 import { PlusIcon, XIcon } from "lucide-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.logic";
+import {
+  reconcileSnoozeDraft,
+  sortSnoozeRows,
+  translatedSnoozeLabel,
+} from "./SnoozePresetsSettings.logic";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -64,59 +67,6 @@ const WHEN_LABELS = {
   sunday: "snoozePresets.sunday",
 } as const satisfies Record<"after" | SnoozePresetDay, string>;
 const WHEN_VALUES = ["after", ...SnoozePresetDay.literals] as const;
-
-type Translate = TFunction<"settings", undefined>;
-
-// Localizes the labels that client-runtime computes in English; the day grammar mirrors
-// threadSettled's snoozePresetLabel so the wake-time suffix stays consistent.
-function translatedSnoozeLabel(
-  setting: SnoozePresetSetting,
-  daysAhead: number,
-  t: Translate,
-): { label: string; namesDay: boolean } {
-  if (setting.kind === "after") {
-    let amount = setting.minutes;
-    let unitKey:
-      | "snoozePresets.day"
-      | "snoozePresets.days"
-      | "snoozePresets.hour"
-      | "snoozePresets.hours"
-      | "snoozePresets.minute"
-      | "snoozePresets.minutes";
-    if (amount % (24 * 60) === 0) {
-      amount /= 24 * 60;
-      unitKey = amount === 1 ? "snoozePresets.day" : "snoozePresets.days";
-    } else if (amount % 60 === 0) {
-      amount /= 60;
-      unitKey = amount === 1 ? "snoozePresets.hour" : "snoozePresets.hours";
-    } else {
-      unitKey = amount === 1 ? "snoozePresets.minute" : "snoozePresets.minutes";
-    }
-    return { label: `${t("snoozePresets.in")} ${amount} ${t(unitKey)}`, namesDay: false };
-  }
-  if (daysAhead === 0) {
-    const hour = Number(setting.time.slice(0, 2));
-    return {
-      label: t(
-        hour < 12
-          ? "snoozePresets.thisMorning"
-          : hour < 17
-            ? "snoozePresets.thisAfternoon"
-            : "snoozePresets.thisEvening",
-      ),
-      namesDay: true,
-    };
-  }
-  if (daysAhead === 1) return { label: t("snoozePresets.tomorrow"), namesDay: true };
-  if (setting.day === "monday") return { label: t("snoozePresets.nextWeek"), namesDay: false };
-  if (daysAhead === 7) {
-    return {
-      label: t("snoozePresets.nextWeekday", { day: t(`snoozePresets.${setting.day}`) }),
-      namesDay: true,
-    };
-  }
-  return { label: t(`snoozePresets.${setting.day}`), namesDay: true };
-}
 
 // Offered in order when adding, skipping any already in the list.
 const ADD_CANDIDATES: ReadonlyArray<SnoozePresetSetting> = [
