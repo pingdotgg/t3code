@@ -8,6 +8,7 @@ import {
   FEEDBACK_OFF_MESSAGE,
   FeedbackInput,
   FeedbackReport,
+  FeedbackSubmitResult,
 } from "../feedback/FeedbackReport.ts";
 import { projectLocationFlags } from "./config.ts";
 import {
@@ -47,6 +48,12 @@ const feedbackListCommand = Command.make("list", { ...projectLocationFlags, json
           yield* Console.log(`  expected: ${report.expected}`);
           yield* Console.log(`  actual: ${report.actual}`);
           if (report.workaround) yield* Console.log(`  workaround: ${report.workaround}`);
+          if (report.trace) {
+            const { turns, textTurns, entries } = report.trace;
+            yield* Console.log(
+              `  trace: outline of ${turns} turns (${entries.length} entries), text of ${textTurns}`,
+            );
+          }
         }
       }),
     ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
@@ -71,22 +78,27 @@ export const feedbackCommand = Command.make("feedback", {
     Flag.withDescription("The user asked for this report."),
     Flag.withDefault(false),
   ),
+  includeTurns: Flag.Int("include-turns").pipe(
+    Flag.withDescription("Attach the redacted messages of this many recent turns of its thread."),
+    Flag.withDefault(0),
+  ),
 }).pipe(
   Command.withDescription(
     "Send feedback about T3 Code to the T3 team. Agent feedback must be on in Settings > Labs.",
   ),
-  Command.withHandler(({ baseDir, kind, subject, expected, actual, workaround, userRequested }) =>
-    withThreadTools(
-      { baseDir, json: true, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
-      Effect.fn("cli.feedback.submit")(function* (tools) {
-        const report = yield* tools.call(
-          "t3_feedback",
-          { kind, subject, expected, actual, workaround, userRequested },
-          FeedbackReport,
-        );
-        yield* printJson(report);
-      }),
-    ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
+  Command.withHandler(
+    ({ baseDir, kind, subject, expected, actual, workaround, userRequested, includeTurns }) =>
+      withThreadTools(
+        { baseDir, json: true, clientLabel: FEEDBACK_CLI_CLIENT_LABEL },
+        Effect.fn("cli.feedback.submit")(function* (tools) {
+          const report = yield* tools.call(
+            "t3_feedback",
+            { kind, subject, expected, actual, workaround, userRequested, includeTurns },
+            FeedbackSubmitResult,
+          );
+          yield* printJson(report);
+        }),
+      ).pipe(Effect.catchTags({ ThreadToolMissingError: feedbackOff }), reportThreadErrors),
   ),
   Command.withSubcommands([feedbackListCommand]),
 );

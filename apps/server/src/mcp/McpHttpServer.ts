@@ -247,9 +247,9 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const settingsFlags = serverSettings.getSettings.pipe(
     Effect.map((settings) => ({
       linkedEnvironments: settings.linkedEnvironmentsEnabled,
-      agentFeedback: settings.agentFeedback.enabled,
+      agentFeedback: settings.agentFeedback.mode,
     })),
-    Effect.orElseSucceed(() => ({ linkedEnvironments: false, agentFeedback: false })),
+    Effect.orElseSucceed(() => ({ linkedEnvironments: false, agentFeedback: "off" as const })),
   );
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,

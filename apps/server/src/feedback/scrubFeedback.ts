@@ -73,12 +73,16 @@ const redactAll = (text: string, patterns: ReadonlyArray<RegExp>) => {
 /**
  * Removes anything shaped like a secret, email address, or URL with credentials,
  * values the server knows are private to this caller, then file paths, and caps
- * the result at FEEDBACK_TEXT_MAX_CHARS characters.
+ * the result at `maxChars` characters.
  */
-export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): string {
+export function scrubFeedback(
+  text: string,
+  sensitive: ReadonlyArray<string>,
+  maxChars = FEEDBACK_TEXT_MAX_CHARS,
+): string {
   // Bounds the scrubbing cost; the margin keeps a secret that crosses the cap whole.
   let scrubbed = Array.from(text)
-    .slice(0, FEEDBACK_TEXT_MAX_CHARS * 4)
+    .slice(0, maxChars * 4)
     .join("");
   const known = [...new Set(sensitive.map((value) => value.trim()))]
     .filter((value) => value.length >= 3)
@@ -90,5 +94,5 @@ export function scrubFeedback(text: string, sensitive: ReadonlyArray<string>): s
     .replaceAll(LONG_RUN, (run) =>
       run.length >= 32 && (run.includes(REDACTED) || looksRandom(run)) ? REDACTED : run,
     );
-  return Array.from(scrubbed).slice(0, FEEDBACK_TEXT_MAX_CHARS).join("");
+  return Array.from(scrubbed).slice(0, maxChars).join("");
 }

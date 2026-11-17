@@ -155,7 +155,15 @@ describe("scrubFeedback", () => {
       workaround: "",
     });
     const actual = scrubFeedback(input.actual, ["bob"]);
-    const report = { ...input, actual, id: "r", threadId: null, createdAt: "", source: "mcp" };
+    const report = {
+      ...input,
+      actual,
+      id: "r",
+      threadId: null,
+      createdAt: "",
+      source: "mcp",
+      trace: null,
+    };
     expect(decodeReport({ ...report, sent: true }).actual).toBe(actual);
     expect(Array.from(actual)).toHaveLength(265);
   });

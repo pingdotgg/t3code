@@ -1,10 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 // Code points, as the scrubber caps them, so a valid input stays a valid report after redaction.
 const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 
-export const FeedbackInput = Schema.Struct({
+/** Turns the outline of a requested report covers, and the most `includeTurns` can name. */
+export const FEEDBACK_TRACE_TURNS = 5;
+
+const reportFields = {
   kind: Schema.Literals(["bug", "confusing", "missing_capability", "wrong_docs", "other"]),
   subject: Schema.String.annotate({ description: "T3 tool name, `t3` command, or `general`." }),
   expected: FeedbackText,
@@ -13,15 +17,58 @@ export const FeedbackInput = Schema.Struct({
   userRequested: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))).annotate(
     { description: "The user asked for this report." },
   ),
+};
+
+export const FeedbackInput = Schema.Struct({
+  ...reportFields,
+  includeTurns: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: FEEDBACK_TRACE_TURNS }))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0)))
+    .annotate({
+      description:
+        "Sends the user's messages from this many recent turns. 0 unless the user explicitly asks to include the conversation.",
+    }),
 });
 
-export const FeedbackReport = Schema.Struct({
-  ...FeedbackInput.fields,
+/** Built by the server from the thread's stored items; the agent never writes it. */
+export const FeedbackTrace = Schema.Struct({
+  turns: Schema.Int,
+  textTurns: Schema.Int,
+  /** An entry or a message text was dropped to fit the caps. */
+  truncated: Schema.Boolean,
+  entries: Schema.Array(
+    Schema.Struct({
+      turn: Schema.Int,
+      type: Schema.Literals(["user", "assistant", "tool"]),
+      tool: Schema.optionalKey(Schema.String),
+      outcome: Schema.optionalKey(Schema.Literals(["ok", "error", "unfinished"])),
+      durationMs: Schema.optionalKey(Schema.Int),
+      /** A message's length in characters. */
+      length: Schema.optionalKey(Schema.Int),
+      text: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type FeedbackTrace = typeof FeedbackTrace.Type;
+
+const storedFields = {
   id: Schema.String,
   threadId: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   source: Schema.Literals(["mcp", "cli"]),
   sent: Schema.Boolean,
+};
+
+export const FeedbackReport = Schema.Struct({
+  ...reportFields,
+  ...storedFields,
+  trace: Schema.NullOr(FeedbackTrace),
+});
+
+/** What `t3_feedback` answers: the report, with only the size of what its trace attached. */
+export const FeedbackSubmitResult = Schema.Struct({
+  ...reportFields,
+  ...storedFields,
+  trace: Schema.NullOr(FeedbackTrace.mapFields(Struct.omit(["entries"]))),
 });
 
 export const FEEDBACK_OFF_MESSAGE =

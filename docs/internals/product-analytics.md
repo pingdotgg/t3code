@@ -149,12 +149,15 @@ exception is `agent.feedback`, sent only while the user has turned on agent
 feedback: its `expected`, `actual`, and `workaround` fields are agent-written text,
 which [FeedbackService](../../apps/server/src/feedback/FeedbackService.ts) scrubs of
 file paths, values the server knows are private to the caller, and secret-shaped
-strings, and caps at 300 characters each. The server attaches no prompts,
-authentication material, raw provider payloads, user-assigned device names, or
-conversation identifiers to any event. The feedback text itself is the agent's; the
-tool only tells it not to quote the user's messages or code. Client metadata is
-best effort; invalid values must not reject a connection. PostHog person profiles
-remain disabled.
+strings, and caps at 300 characters each. A report the user asked for also carries
+`trace`, which the server builds from the thread: an outline of recent turns with
+no text, plus scrubbed message text only for the turns the user asked to include,
+capped at 1,000 characters per message and 16 KB per trace so a telemetry batch stays
+small. Tool inputs and outputs never go in it, and tools from other MCP servers go
+by one generic name. The server attaches no other prompts, authentication material,
+raw provider payloads, user-assigned device names, or conversation identifiers to
+any event. Client metadata is best effort; invalid values must not reject a
+connection. PostHog person profiles remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set

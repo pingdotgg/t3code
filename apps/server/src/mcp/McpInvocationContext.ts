@@ -1,4 +1,5 @@
 import {
+  type AgentFeedbackMode,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -142,8 +143,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
-  /** True while Agent feedback is on here; `/mcp` reads it per request. */
-  readonly agentFeedback?: boolean;
+  /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
+  readonly agentFeedback?: AgentFeedbackMode;
   /**
    * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
@@ -205,7 +206,7 @@ export const hiddenWhileLinksOff = (): boolean => {
 export const hiddenWhileFeedbackOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.agentFeedback === true;
+  return scope?.agentFeedback !== undefined && scope.agentFeedback !== "off";
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

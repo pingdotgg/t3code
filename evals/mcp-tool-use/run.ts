@@ -59,9 +59,14 @@ import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.t
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
 import {
   FEEDBACK_SUBJECT_MESSAGE,
+  FEEDBACK_TRACE_TURNS,
   FeedbackInput,
   resolveFeedbackSubject,
 } from "../../apps/server/src/feedback/FeedbackReport.ts";
+import {
+  FeedbackNotRequestedError,
+  FeedbackTurnsError,
+} from "../../apps/server/src/feedback/FeedbackService.ts";
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -286,8 +291,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
-    /** Agent feedback is on: T3 lists its tools and its text tells agents to report. */
-    agentFeedbackEnabled: Schema.optional(Schema.Boolean),
+    /** The Agent feedback mode; absent is off. On, T3 lists its tools and its text has the mode's line. */
+    agentFeedback: Schema.optional(Contracts.AgentFeedbackMode),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -534,12 +539,12 @@ const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedb
 const visibleT3Tools = (options: {
   readonly subagent?: boolean;
   readonly links?: boolean;
-  readonly agentFeedbackEnabled?: boolean;
+  readonly agentFeedback?: Contracts.AgentFeedbackMode;
 }) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
-      (options.agentFeedbackEnabled === true || !hiddenWhileFeedbackOff.has(tool.name)) &&
+      ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -552,7 +557,7 @@ const claudeQueryOptions = (
   model: Model,
   device = true,
   browser = true,
-  agentFeedbackEnabled = false,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
 ) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
@@ -564,7 +569,7 @@ const claudeQueryOptions = (
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
-    agentFeedbackEnabled,
+    agentFeedback,
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
   };
@@ -576,9 +581,9 @@ export const t3SystemAppend = (
   model: Model,
   device = true,
   browser = true,
-  agentFeedbackEnabled = false,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
 ) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedbackEnabled);
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedback);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -667,8 +672,8 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-    /** true: agent feedback is on, so T3 lists its tools and its text includes the feedback line. */
-    readonly agentFeedbackEnabled?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -694,12 +699,7 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(
-        model,
-        options.deviceAccess,
-        options.browserAccess,
-        options.agentFeedbackEnabled,
-      );
+    : t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -768,8 +768,8 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-    /** true: agent feedback is on, so T3 lists its tools and its text includes the feedback line. */
-    readonly agentFeedbackEnabled?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -807,7 +807,7 @@ const buildCodexBase = (
     {
       model: options.model,
       reasoningEffort: effort,
-      agentFeedbackEnabled: options.agentFeedbackEnabled ?? false,
+      agentFeedback: options.agentFeedback ?? "off",
     },
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
@@ -1743,15 +1743,27 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
     const decoded = decodeFeedbackInput(input);
     if (Result.isFailure(decoded)) return failed(decoded.failure.message);
-    const report = decoded.success;
+    const { includeTurns, ...report } = decoded.success;
+    // The same refusals as FeedbackService, in its order.
+    if (sample.testCase.setup.world?.agentFeedback === "on-request" && !report.userRequested)
+      return failed(new FeedbackNotRequestedError({}).message);
+    if (includeTurns > 0 && !report.userRequested)
+      return failed(new FeedbackTurnsError({ reason: "not_requested" }).message);
     const subject = resolveFeedbackSubject(
       report.subject,
       t3SourceTools.map((tool) => tool.name),
     );
     if (subject === undefined) return failed(FEEDBACK_SUBJECT_MESSAGE);
+    const turns = Math.min(
+      FEEDBACK_TRACE_TURNS,
+      (sample.testCase.setup.priorTurns ?? []).filter((turn) => turn.role === "user").length + 1,
+    );
     return toolResult(call.id, {
       ...report,
       subject,
+      trace: report.userRequested
+        ? { turns, textTurns: Math.min(includeTurns, turns), truncated: false }
+        : null,
       expected: scrubFeedback(report.expected, []),
       actual: scrubFeedback(report.actual, []),
       workaround: scrubFeedback(report.workaround, []),
@@ -2638,7 +2650,7 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
-    agentFeedbackEnabled = false,
+    agentFeedback: Contracts.AgentFeedbackMode = "off",
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2651,7 +2663,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
-              agentFeedbackEnabled,
+              agentFeedback,
             }),
           ),
         )
@@ -2665,7 +2677,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
-              agentFeedbackEnabled,
+              agentFeedback,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -2676,9 +2688,9 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.world?.agentFeedbackEnabled === true}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.world?.agentFeedback ?? "off"}`;
   const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false:false", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:off", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
@@ -2696,7 +2708,7 @@ const main = Effect.gen(function* () {
         device === "true",
         browser === "true",
         links === "true",
-        feedback === "true",
+        feedback as Contracts.AgentFeedbackMode,
       ),
     );
   }

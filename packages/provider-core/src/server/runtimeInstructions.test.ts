@@ -53,17 +53,19 @@ describe("buildRuntimeInstructions", () => {
     assert.include(instructions, "call unwatch_pull_request");
   });
 
-  it("tells agents to report T3 Code problems only when agent feedback is on", () => {
+  it("carries the feedback line of the agent feedback mode, and none while it is off", () => {
     assert.notInclude(buildRuntimeInstructions({ harness: "Codex" }), "t3_feedback");
-    for (const pullRequestLinking of [true, false]) {
-      assert.include(
-        buildRuntimeInstructions({
-          harness: "Codex",
-          agentFeedbackEnabled: true,
-          pullRequestLinking,
-        }),
-        AGENT_FEEDBACK_INSTRUCTIONS,
-      );
+    assert.notInclude(
+      buildRuntimeInstructions({ harness: "Codex", agentFeedback: "off" }),
+      "t3_feedback",
+    );
+    for (const agentFeedback of ["on-request", "auto"] as const) {
+      for (const pullRequestLinking of [true, false]) {
+        assert.include(
+          buildRuntimeInstructions({ harness: "Codex", agentFeedback, pullRequestLinking }),
+          AGENT_FEEDBACK_INSTRUCTIONS[agentFeedback],
+        );
+      }
     }
   });
 });

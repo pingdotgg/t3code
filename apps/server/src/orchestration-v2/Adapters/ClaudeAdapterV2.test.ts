@@ -869,7 +869,7 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
   const options = (input: {
     readonly mcp: boolean;
     readonly deviceToolsAvailable: boolean;
-    readonly agentFeedbackEnabled?: boolean;
+    readonly agentFeedback?: "off" | "on-request" | "auto";
   }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
@@ -883,7 +883,7 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
-      agentFeedbackEnabled: input.agentFeedbackEnabled ?? false,
+      agentFeedback: input.agentFeedback ?? "off",
       environment: {},
     });
   const append = (input: Parameters<typeof options>[0]) =>
@@ -901,13 +901,14 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
   });
 
   it("gives the agent feedback line only to a session with T3 tools", () => {
-    const feedback = (mcp: boolean, agentFeedbackEnabled: boolean) =>
-      append({ mcp, deviceToolsAvailable: false, agentFeedbackEnabled }).includes(
-        AGENT_FEEDBACK_INSTRUCTIONS,
-      );
-    assert.isTrue(feedback(true, true));
-    assert.isFalse(feedback(true, false));
-    assert.isFalse(feedback(false, true));
+    const feedback = (mcp: boolean, agentFeedback: "off" | "auto") =>
+      append({ mcp, deviceToolsAvailable: false, agentFeedback }).includes("t3_feedback");
+    assert.include(
+      append({ mcp: true, deviceToolsAvailable: false, agentFeedback: "auto" }),
+      AGENT_FEEDBACK_INSTRUCTIONS.auto,
+    );
+    assert.isFalse(feedback(true, "off"));
+    assert.isFalse(feedback(false, "auto"));
   });
 
   it("gives native subagents the device block only in a session with device access", async () => {
@@ -947,7 +948,7 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
         await subagentContext({
           mcp: true,
           deviceToolsAvailable: true,
-          agentFeedbackEnabled: true,
+          agentFeedback: "auto",
         }),
       ),
       "t3_feedback",

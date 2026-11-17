@@ -20,10 +20,13 @@ import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
   FEEDBACK_OFF_MESSAGE,
   FEEDBACK_SUBJECT_MESSAGE,
+  FEEDBACK_TRACE_TURNS,
   type FeedbackInput,
   type FeedbackReport,
+  FeedbackTrace,
   resolveFeedbackSubject,
 } from "./FeedbackReport.ts";
+import { buildFeedbackTrace, FEEDBACK_TRACE_ITEM_TYPES } from "./FeedbackTrace.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
 const MAX_REPORTS_PER_RUN = 3;
@@ -57,6 +60,26 @@ export class FeedbackSubjectError extends Schema.TaggedError<FeedbackSubjectErro
   }
 }
 
+export class FeedbackNotRequestedError extends Schema.TaggedError<FeedbackNotRequestedError>()(
+  "FeedbackNotRequestedError",
+  {},
+) {
+  override get message() {
+    return "Agent feedback is set to When I ask: send a report only when the user asks for one.";
+  }
+}
+
+export class FeedbackTurnsError extends Schema.TaggedError<FeedbackTurnsError>()(
+  "FeedbackTurnsError",
+  { reason: Schema.Literals(["not_requested", "no_thread"]) },
+) {
+  override get message() {
+    return this.reason === "not_requested"
+      ? "Conversation text goes only on a report the user asked for (userRequested)."
+      : "This report comes from no thread, so it has no turns to include.";
+  }
+}
+
 export class FeedbackStorageError extends Schema.TaggedError<FeedbackStorageError>()(
   "FeedbackStorageError",
   { cause: Schema.Defect() },
@@ -79,7 +102,12 @@ export class FeedbackService extends Context.Service<
       caller: FeedbackCaller,
     ) => Effect.Effect<
       FeedbackReport,
-      FeedbackOffError | FeedbackSubjectError | FeedbackLimitError | FeedbackStorageError
+      | FeedbackOffError
+      | FeedbackNotRequestedError
+      | FeedbackTurnsError
+      | FeedbackSubjectError
+      | FeedbackLimitError
+      | FeedbackStorageError
     >;
     /** Newest first. */
     readonly list: Effect.Effect<
@@ -90,6 +118,9 @@ export class FeedbackService extends Context.Service<
 >()("t3/feedback/FeedbackService") {}
 
 const storageError = (cause: unknown) => new FeedbackStorageError({ cause });
+const TraceJson = Schema.NullOr(Schema.fromJsonString(FeedbackTrace));
+const decodeTrace = Schema.decodeUnknownEffect(TraceJson);
+const encodeTrace = Schema.encodeEffect(TraceJson);
 
 /** `mcpToolNames` is read per report: the MCP server registers tools after this service starts. */
 const make = Effect.fn("FeedbackService.make")(function* (
@@ -106,8 +137,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
   const lock = yield* Semaphore.make(1);
   const requireOn = settings.getSettings.pipe(
     Effect.mapError(storageError),
-    Effect.flatMap((current) =>
-      current.agentFeedback.enabled ? Effect.void : Effect.fail(new FeedbackOffError({})),
+    Effect.flatMap(({ agentFeedback: { mode } }) =>
+      mode === "off" ? Effect.fail(new FeedbackOffError({})) : Effect.succeed(mode),
     ),
   );
 
@@ -115,9 +146,18 @@ const make = Effect.fn("FeedbackService.make")(function* (
     input: FeedbackInput,
     caller: FeedbackCaller,
   ) {
-    yield* requireOn;
+    const mode = yield* requireOn;
+    if (mode === "on-request" && !input.userRequested) {
+      return yield* new FeedbackNotRequestedError({});
+    }
+    if (input.includeTurns > 0 && !input.userRequested) {
+      return yield* new FeedbackTurnsError({ reason: "not_requested" });
+    }
     const subject = resolveFeedbackSubject(input.subject, mcpToolNames());
     if (subject === undefined) return yield* new FeedbackSubjectError({});
+    if (input.includeTurns > 0 && caller.threadId === undefined) {
+      return yield* new FeedbackTurnsError({ reason: "no_thread" });
+    }
 
     const thread =
       caller.threadId === undefined
@@ -149,10 +189,36 @@ const make = Effect.fn("FeedbackService.make")(function* (
         ? `${repository.owner}/${repository.name}`
         : "",
     ];
+    const providerList = yield* providers.getProviders;
     const dimensions =
       caller.source === "mcp" && thread !== undefined
-        ? providerDimensions(yield* providers.getProviders, thread.modelSelection)
+        ? providerDimensions(providerList, thread.modelSelection)
         : {};
+    // Only a report the user asked for carries a trace, and only from its own thread.
+    const trace =
+      input.userRequested && caller.threadId !== undefined
+        ? yield* Effect.gen(function* () {
+            const threadId = caller.threadId!;
+            const { runs } = yield* threads.getThreadRecords(threadId, ["runs"], {
+              // Queued runs have not started; the extra rows leave room to skip them.
+              latestRunLimit: FEEDBACK_TRACE_TURNS + 3,
+            });
+            const { turnItems } = yield* threads.getThreadRecords(threadId, ["turnItems"], {
+              turnItemRunIds: runs.map((run) => run.id),
+              turnItemTypes: FEEDBACK_TRACE_ITEM_TYPES,
+            });
+            return buildFeedbackTrace({
+              runs,
+              items: turnItems,
+              includeTurns: input.includeTurns,
+              sensitive,
+              t3Tools: mcpToolNames(),
+              driverOf: (run) =>
+                providerList.find((provider) => provider.instanceId === run.providerInstanceId)
+                  ?.driver,
+            });
+          }).pipe(Effect.mapError(storageError))
+        : null;
     const properties = {
       kind: input.kind,
       subject,
@@ -160,6 +226,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
       actual: scrubFeedback(input.actual, sensitive),
       workaround: scrubFeedback(input.workaround, sensitive),
       userRequested: input.userRequested,
+      trace,
       source: caller.source,
       ...dimensions,
     };
@@ -170,12 +237,14 @@ const make = Effect.fn("FeedbackService.make")(function* (
       actual: properties.actual,
       workaround: properties.workaround,
       userRequested: properties.userRequested,
+      trace,
       source: properties.source,
       id: yield* random.uuidV7(),
       threadId: caller.threadId ?? null,
       createdAt: DateTime.formatIso(yield* DateTime.now),
     };
     const runId = thread?.activeRunId ?? null;
+    const traceJson = yield* encodeTrace(trace).pipe(Effect.mapError(storageError));
 
     yield* lock.withPermit(
       sql
@@ -203,6 +272,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
               actual: report.actual,
               workaround: report.workaround,
               user_requested: report.userRequested ? 1 : 0,
+              trace: traceJson,
               source: report.source,
               sent: 0,
             })}`;
@@ -225,22 +295,32 @@ const make = Effect.fn("FeedbackService.make")(function* (
   });
 
   const list = requireOn.pipe(
-    Effect.andThen(() =>
-      sql<
-        Omit<FeedbackReport, "sent" | "userRequested"> & {
-          readonly sent: number;
-          readonly userRequested: number;
-        }
-      >`
+    Effect.andThen(
+      () =>
+        sql<
+          Omit<FeedbackReport, "sent" | "userRequested" | "trace"> & {
+            readonly sent: number;
+            readonly userRequested: number;
+            readonly trace: string | null;
+          }
+        >`
       SELECT id, thread_id AS "threadId", created_at AS "createdAt", kind, subject,
-        expected, actual, workaround, user_requested AS "userRequested", source, sent
-      FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`.pipe(
-        Effect.mapError(storageError),
+        expected, actual, workaround, user_requested AS "userRequested", trace, source, sent
+      FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`,
+    ),
+    Effect.flatMap((rows) =>
+      Effect.forEach(rows, (row) =>
+        decodeTrace(row.trace).pipe(
+          Effect.map((trace) => ({
+            ...row,
+            trace,
+            userRequested: row.userRequested === 1,
+            sent: row.sent === 1,
+          })),
+        ),
       ),
     ),
-    Effect.map((rows) =>
-      rows.map((row) => ({ ...row, userRequested: row.userRequested === 1, sent: row.sent === 1 })),
-    ),
+    Effect.mapError((error) => (error._tag === "FeedbackOffError" ? error : storageError(error))),
   );
 
   return FeedbackService.of({ submit, list });

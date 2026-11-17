@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import {
+  type AgentFeedbackMode,
   AuthSettingsWriteScope,
   isManagedSettingPath,
   type ServerSettingsPatch,
@@ -20,6 +21,7 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -57,13 +59,7 @@ export function SettingsLabsRouteScreen() {
           setting="fastWorktreeCheckout"
           description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
         />
-        <MachineBetaSection
-          title="Agent feedback"
-          icon="bubble.left"
-          capability="agentFeedback"
-          setting="agentFeedback"
-          description="Let agents send short reports about T3 Code problems they hit to the T3 team."
-        />
+        <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
   );
@@ -245,14 +241,82 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout" | "agentFeedback";
+type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
 
-const machineBetaPatch = (setting: MachineBetaSetting, value: boolean): ServerSettingsPatch =>
-  setting === "agentFeedback"
-    ? { agentFeedback: { enabled: value } }
-    : setting === "linkedEnvironmentsEnabled"
-      ? { linkedEnvironmentsEnabled: value }
-      : { fastWorktreeCheckout: value };
+const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
+  readonly mode: AgentFeedbackMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { mode: "off", label: "Off", description: "Agents send no feedback to the T3 team." },
+  {
+    mode: "on-request",
+    label: "When I ask",
+    description: "A short report about T3 Code when you ask, with an outline of recent turns.",
+  },
+  {
+    mode: "auto",
+    label: "Automatic",
+    description: "Agents also report T3 Code problems they hit on their own.",
+  },
+];
+
+/** One choice list per connected machine that offers it, since each machine's own setting decides. */
+function AgentFeedbackSection() {
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.agentFeedback === true,
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "agentFeedback beta update",
+    reportFailure: true,
+  });
+  if (supported.length === 0) return null;
+  return (
+    <View className="gap-3">
+      {supported.map((environment) => {
+        const policy = environment.serverConfig?.managedPolicy;
+        const managed = isManagedSettingPath(policy, "agentFeedback");
+        const mode = environment.serverConfig?.settings.agentFeedback.mode;
+        return (
+          <SettingsSection
+            key={environment.environmentId}
+            title={
+              supported.length === 1
+                ? "Beta: Agent feedback"
+                : `Beta: Agent feedback · ${environment.label}`
+            }
+            {...(managed ? { footer: `Managed by ${policy?.organization}.` } : {})}
+          >
+            {AGENT_FEEDBACK_CHOICES.map((choice, index) => (
+              <SettingsChoiceRow
+                key={choice.mode}
+                label={choice.label}
+                description={choice.description}
+                selected={mode === choice.mode}
+                separated={index > 0}
+                disabled={managed || !writable.has(environment.environmentId)}
+                onPress={() =>
+                  void updateSettings({
+                    environmentId: environment.environmentId,
+                    input: { patch: { agentFeedback: { mode: choice.mode } } },
+                  })
+                }
+              />
+            ))}
+          </SettingsSection>
+        );
+      })}
+      <Text className="px-2 text-sm text-foreground-muted">
+        Reports go to the T3 team. A report you ask for carries an outline of recent turns, and
+        their messages only if you ask for that too.
+      </Text>
+    </View>
+  );
+}
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
@@ -264,7 +328,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout" | "agentFeedback";
+  readonly capability: "peerLinks" | "fastWorktreeCheckout";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -286,23 +350,23 @@ function MachineBetaSection({
         {supported.map((environment) => {
           const policy = environment.serverConfig?.managedPolicy;
           const managed = isManagedSettingPath(policy, setting);
-          const settings = environment.serverConfig?.settings;
           return (
             <SettingsSwitchRow
               key={environment.environmentId}
               icon={icon}
               label={environment.label}
               {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
-              value={
-                setting === "agentFeedback"
-                  ? settings?.agentFeedback.enabled === true
-                  : settings?.[setting] === true
-              }
+              value={environment.serverConfig?.settings[setting] === true}
               disabled={managed || !writable.has(environment.environmentId)}
               onValueChange={(value) =>
                 void updateSettings({
                   environmentId: environment.environmentId,
-                  input: { patch: machineBetaPatch(setting, value) },
+                  input: {
+                    patch:
+                      setting === "linkedEnvironmentsEnabled"
+                        ? { linkedEnvironmentsEnabled: value }
+                        : { fastWorktreeCheckout: value },
+                  },
                 })
               }
             />

@@ -1,15 +1,20 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
-import { managedCapabilityDenial } from "@t3tools/contracts";
+import { AgentFeedbackMode, managedCapabilityDenial } from "@t3tools/contracts";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
@@ -265,10 +270,24 @@ function FastWorktreeCheckoutRow() {
 }
 
 /** Shows only when every machine in scope honors it; older servers drop the setting. */
+const AGENT_FEEDBACK_MODES = AgentFeedbackMode.literals;
+const AGENT_FEEDBACK_MODE_LABELS: Record<AgentFeedbackMode, string> = {
+  off: "Off",
+  "on-request": "When I ask",
+  auto: "Automatic",
+};
+const AGENT_FEEDBACK_MODE_DESCRIPTIONS: Record<AgentFeedbackMode, string> = {
+  off: "Agents send no feedback to the T3 team.",
+  "on-request":
+    "Agents send the T3 team a short report about T3 Code when you ask, with an outline of recent turns.",
+  auto: "Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.",
+};
+
 function AgentFeedbackRow() {
   const { scope, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["agentFeedback"]);
   if (
     scope.kind === "project" ||
     scope.kind === "checkout" ||
@@ -283,16 +302,33 @@ function AgentFeedbackRow() {
       serverScoped
       {...searchableSetting("agent-feedback")}
       settingKeys={["agentFeedback"]}
-      description="Let agents send short reports about T3 Code problems they hit to the T3 team."
+      description={
+        mixed
+          ? "The selected machines use different agent feedback modes."
+          : AGENT_FEEDBACK_MODE_DESCRIPTIONS[settings.agentFeedback.mode]
+      }
       control={
-        <ScopedSwitch
-          settingKeys={["agentFeedback"]}
-          checked={settings.agentFeedback.enabled}
-          onCheckedChange={(checked) =>
-            updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
-          }
-          aria-label="Agent feedback"
-        />
+        <Select
+          value={mixed ? null : settings.agentFeedback.mode}
+          onValueChange={(mode) => {
+            if (mode !== null) updateSettings({ agentFeedback: { mode } });
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Agent feedback">
+            <SelectValue>
+              {(mode: AgentFeedbackMode | null) =>
+                mode === null ? "Mixed" : AGENT_FEEDBACK_MODE_LABELS[mode]
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {AGENT_FEEDBACK_MODES.map((mode) => (
+              <SelectItem key={mode} hideIndicator value={mode}>
+                {AGENT_FEEDBACK_MODE_LABELS[mode]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
       }
     />
   );

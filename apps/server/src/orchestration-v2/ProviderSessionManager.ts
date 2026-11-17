@@ -450,11 +450,11 @@ export const layerWithOptions = (
             Effect.orElseSucceed(() => false),
           );
       // Read per turn, so the feedback instruction follows the setting without a restart.
-      const agentFeedbackEnabled = Option.isNone(serverSettings)
-        ? Effect.succeed(false)
+      const agentFeedbackMode = Option.isNone(serverSettings)
+        ? Effect.succeed("off" as const)
         : serverSettings.value.getSettings.pipe(
-            Effect.map((settings) => settings.agentFeedback.enabled),
-            Effect.orElseSucceed(() => false),
+            Effect.map((settings) => settings.agentFeedback.mode),
+            Effect.orElseSucceed(() => "off" as const),
           );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
@@ -2514,9 +2514,9 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    agentFeedbackEnabled.pipe(
-                      Effect.flatMap((enabled) =>
-                        runtime.startTurn({ ...input, agentFeedbackEnabled: enabled }),
+                    agentFeedbackMode.pipe(
+                      Effect.flatMap((agentFeedback) =>
+                        runtime.startTurn({ ...input, agentFeedback }),
                       ),
                       turnMetrics("send", input.modelSelection.model),
                     ),
