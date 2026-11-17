@@ -51,6 +51,7 @@ import * as Layer from "effect/Layer";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -72,12 +73,20 @@ type RecallComposer = {
   readonly text: string;
   readonly records: ReadonlyArray<ComposerContextRecord>;
 };
+
+export type RecallOutcome =
+  | { readonly _tag: "Attached"; readonly composer: RecallComposer }
+  | {
+      readonly _tag: "Skipped";
+      readonly reason: "slash" | "hand_attached" | "not_substantive" | "no_budget" | "no_match";
+    }
+  | { readonly _tag: "Omitted"; readonly reason: "timed_out" | "failed" };
 const RECALL_CONTEXT_ID = ComposerContextId.make("recall");
 /** Recall sends memory in a shorter form than knowledge someone attached by hand. */
 export const isRecalledMemory = (record: { readonly contextId: string }) =>
   record.contextId === RECALL_CONTEXT_ID;
-// Recall runs before every eligible turn, so it gives up on a slow store instead of waiting.
-const RECALL_TIMEOUT = "150 millis";
+// Recall runs before every eligible turn. A stalled lookup reports an omission and the turn starts.
+const RECALL_TIMEOUT = "1 second";
 // The most bytes recall adds to a turn. The envelope reserve covers the wrapper around the
 // facts, so the delivery's own budget check cannot refuse what recall accepted.
 const RECALL_MAX_BYTES = 4096;
@@ -142,8 +151,7 @@ export class ProjectKnowledge extends Context.Service<
     ) => Effect.Effect<ProjectKnowledgeSearchResult, ProjectKnowledgeError>;
     /**
      * Finds saved facts related to a user message that the thread's agent has not seen yet, and
-     * attaches them as a knowledge record for the turn's delivery to send. Returns null when
-     * nothing fits, when the lookup fails or is slow, or when the user attached knowledge by hand.
+     * attaches them as a knowledge record for the turn's delivery to send.
      */
     readonly recall: (input: {
       readonly projectId: ProjectId;
@@ -155,7 +163,7 @@ export class ProjectKnowledge extends Context.Service<
       readonly knowledgeAllowance: number;
       /** The message being sent and the native conversation it targets. */
       readonly turn?: Omit<DeliveryStateInput, "projectId" | "threadId" | "scope">;
-    }) => Effect.Effect<RecallComposer | null>;
+    }) => Effect.Effect<RecallOutcome>;
     readonly prepareContext: (
       input: ProjectKnowledgeContext,
     ) => Effect.Effect<ProjectKnowledgePreparedContext, ProjectKnowledgeError>;
@@ -913,7 +921,11 @@ const make = Effect.gen(function* () {
     // Recall keeps its best two matches after removing facts the thread has already seen.
     function* (
       request: ProjectKnowledgeSearchInput,
-      recallOptions?: { readonly skip: (fact: ProjectFact) => boolean },
+      recallOptions?: {
+        readonly skip: (fact: ProjectFact) => boolean;
+        readonly threadId: ThreadId;
+        readonly excludeFactIds: ReadonlyArray<ProjectFactId>;
+      },
     ): Effect.fn.Return<ProjectKnowledgeSearchResult, ProjectKnowledgeError> {
       const skip = recallOptions?.skip;
       const {
@@ -1009,15 +1021,23 @@ const make = Effect.gen(function* () {
       }
       let ranking = rootReceipt?.search?.ranking ?? null;
       if (ranking === null) {
-        const candidates = yield* store
-          .candidates(
-            input.projectId,
-            projectMemorySearchTokens(input.query),
-            entities,
-            minTrust,
-            input.includeSuperseded ?? false,
-          )
-          .pipe(Effect.mapError(storageError(input.projectId)));
+        const candidates = yield* (
+          recallOptions === undefined
+            ? store.candidates(
+                input.projectId,
+                projectMemorySearchTokens(input.query),
+                entities,
+                minTrust,
+                input.includeSuperseded ?? false,
+              )
+            : store.recallCandidates(
+                input.projectId,
+                projectMemorySearchTokens(input.query),
+                minTrust,
+                recallOptions.threadId,
+                recallOptions.excludeFactIds,
+              )
+        ).pipe(Effect.mapError(storageError(input.projectId)));
         const eligible = candidates.facts.filter(
           (fact): fact is typeof ActiveProjectFact.Type =>
             fact.status !== "forgotten" &&
@@ -1280,17 +1300,29 @@ const make = Effect.gen(function* () {
   });
   const recall: ProjectKnowledge["Service"]["recall"] = Effect.fn("ProjectKnowledge.recall")(
     function* (input) {
-      if (
-        input.composer.records.some((record) => record.kind === "project-knowledge") ||
-        input.query.trimStart().startsWith("/") ||
-        !isSubstantiveProjectMemoryQuery(input.query)
-      )
-        return null;
+      const note = (outcome: RecallOutcome) =>
+        Effect.annotateCurrentSpan(
+          "recall.outcome",
+          outcome._tag === "Attached" ? "attached" : outcome.reason,
+        ).pipe(Effect.as(outcome));
+      const omit = (reason: "timed_out" | "failed") =>
+        Effect.logWarning("Project memory recall failed", {
+          projectId: input.projectId,
+          threadId: input.threadId,
+          reason,
+        }).pipe(Effect.andThen(note({ _tag: "Omitted", reason })));
+      if (input.composer.records.some((record) => record.kind === "project-knowledge"))
+        return yield* note({ _tag: "Skipped", reason: "hand_attached" });
+      if (input.query.trimStart().startsWith("/"))
+        return yield* note({ _tag: "Skipped", reason: "slash" });
+      if (!isSubstantiveProjectMemoryQuery(input.query))
+        return yield* note({ _tag: "Skipped", reason: "not_substantive" });
       const factBytes = Math.min(
         RECALL_MAX_BYTES,
         Math.floor(input.knowledgeAllowance) - RECALL_ENVELOPE_BYTES,
       );
-      if (factBytes < RECALL_MIN_BYTES) return null;
+      if (factBytes < RECALL_MIN_BYTES)
+        return yield* note({ _tag: "Skipped", reason: "no_budget" });
       const lookup = Effect.gen(function* () {
         const seen = yield* store
           .seenFactIds(input.projectId, input.threadId, input.turn)
@@ -1303,9 +1335,13 @@ const make = Effect.gen(function* () {
             recordRetrieval: false,
             minTrust: 0.5,
           },
-          { skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId) },
+          {
+            skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId),
+            threadId: input.threadId,
+            excludeFactIds: [...seen],
+          },
         );
-        if (result.facts.state !== "available") return null;
+        if (result.facts.state !== "available") return yield* omit("failed");
         const selections = result.facts.matches.map(({ fact }) => ({
           kind: "fact" as const,
           factId: fact.id,
@@ -1332,22 +1368,20 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.option);
           if (Option.isSome(resolved))
             return {
-              text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
-              records: [...input.composer.records, record],
+              _tag: "Attached" as const,
+              composer: {
+                text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
+                records: [...input.composer.records, record],
+              },
             };
         }
-        return null;
-      });
+        return { _tag: "Skipped" as const, reason: "no_match" as const };
+      }).pipe(NodeSqliteClient.readOnly);
       return yield* lookup.pipe(
         Effect.timeoutOption(RECALL_TIMEOUT),
-        Effect.map(Option.getOrNull),
+        Effect.flatMap((value) => (Option.isNone(value) ? omit("timed_out") : note(value.value))),
         Effect.catchCause((cause) =>
-          Cause.hasInterrupts(cause)
-            ? Effect.interrupt
-            : Effect.logWarning("Project memory recall failed", {
-                projectId: input.projectId,
-                threadId: input.threadId,
-              }).pipe(Effect.as(null)),
+          Cause.hasInterrupts(cause) ? Effect.interrupt : omit("failed"),
         ),
       );
     },

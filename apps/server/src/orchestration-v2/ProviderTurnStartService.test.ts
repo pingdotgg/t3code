@@ -1306,7 +1306,9 @@ function makeLocalCommandHarness(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectKnowledge.ProjectKnowledge)({
-          recall: input.recallKnowledge ?? (() => Effect.succeed(null)),
+          recall:
+            input.recallKnowledge ??
+            (() => Effect.succeed({ _tag: "Skipped", reason: "no_match" })),
           recordViews: input.recordKnowledgeViews ?? (() => Effect.void),
           ...(input.resolveKnowledge ? { resolveForTurn: input.resolveKnowledge } : {}),
           readSentDeliveries: input.readSentDeliveries ?? (() => Effect.succeed([])),
@@ -2292,8 +2294,11 @@ effectIt.effect.each(["current", "stale", "stale-before-dispatch"] as const)(
       };
       const recall = vi.fn<ProjectKnowledge.ProjectKnowledge["Service"]["recall"]>((input) =>
         Effect.succeed({
-          text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
-          records: [...input.composer.records, record],
+          _tag: "Attached",
+          composer: {
+            text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
+            records: [...input.composer.records, record],
+          },
         }),
       );
       for (const [source, ordinal] of [
@@ -2629,7 +2634,7 @@ effectIt.effect.each([
             for (const id of factIds) viewed.add(id);
           }),
         recallKnowledge: (input) => {
-          if (viewed.has(factId)) return Effect.succeed(null);
+          if (viewed.has(factId)) return Effect.succeed({ _tag: "Skipped", reason: "no_match" });
           const record = {
             version: 1 as const,
             kind: "project-knowledge" as const,
@@ -2638,8 +2643,11 @@ effectIt.effect.each([
             knowledge: context,
           };
           return Effect.succeed({
-            text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
-            records: [...input.composer.records, record],
+            _tag: "Attached",
+            composer: {
+              text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
+              records: [...input.composer.records, record],
+            },
           });
         },
         resolveKnowledge: (context) =>
@@ -3556,8 +3564,11 @@ effectIt.effect.each([false, true, "with-recall"] as const)(
                   label: "Recalled project memory",
                 };
                 return Effect.succeed({
-                  text: `${input.composer.text}\n\n${formatComposerContextReference(recalled)}`,
-                  records: [...input.composer.records, recalled],
+                  _tag: "Attached",
+                  composer: {
+                    text: `${input.composer.text}\n\n${formatComposerContextReference(recalled)}`,
+                    records: [...input.composer.records, recalled],
+                  },
                 });
               },
             }
@@ -3691,8 +3702,11 @@ const knowledgeRetryHarness = (
             input: Parameters<ProjectKnowledge.ProjectKnowledge["Service"]["recall"]>[0],
           ) =>
             Effect.succeed({
-              text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
-              records: [...input.composer.records, record],
+              _tag: "Attached",
+              composer: {
+                text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
+                records: [...input.composer.records, record],
+              },
             }),
         }
       : {}),
@@ -4094,6 +4108,38 @@ effectIt.effect("records a delivery receipt when every attached knowledge record
         [{ contextId: record.contextId, label: record.label, reason: "not_referenced" }],
       ]),
     );
+
+    const timedOut = makeLocalCommandHarness({
+      text: "Review SQLite migrations for project memory.",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      recallKnowledge: () => Effect.succeed({ _tag: "Omitted", reason: "timed_out" }),
+    });
+    yield* timedOut.start;
+    const timedOutStart = timedOut.startRootRun.mock.calls[0]![0];
+    yield* timedOutStart.session.startTurn({
+      appThread: timedOutStart.appThread,
+      threadId: timedOutStart.appThread.id,
+      runId: timedOutStart.run.id,
+      runOrdinal: timedOutStart.run.ordinal,
+      providerTurnOrdinal: timedOutStart.providerTurnOrdinal,
+      attemptId: timedOutStart.attemptId,
+      rootNodeId: timedOutStart.rootNode.id,
+      providerThread: timedOutStart.providerThread,
+      message: timedOutStart.message,
+      modelSelection: timedOutStart.modelSelection,
+      runtimePolicy: timedOutStart.runtimePolicy,
+    });
+    expect(timedOut.nativeStart).toHaveBeenCalled();
+    expect(timedOut.knowledgeDeliveries.at(-1)).toMatchObject({
+      status: "sent",
+      omissions: [
+        {
+          contextId: ComposerContextId.make("recall"),
+          label: "Recalled project memory",
+          reason: "recall_failed",
+        },
+      ],
+    });
   }),
 );
 
@@ -4110,7 +4156,8 @@ effectIt.effect.each(["none", "overlap", "mixed"] as const)(
         text: "Continue on the new provider",
         previousTurn: { runStatus: "completed", turnStatus: "completed" },
         recallKnowledge: (input) => {
-          if (recallMode === "none" || recalled) return Effect.succeed(null);
+          if (recallMode === "none" || recalled)
+            return Effect.succeed({ _tag: "Skipped", reason: "no_match" });
           recalled = true;
           const record = {
             version: 1 as const,
@@ -4131,8 +4178,11 @@ effectIt.effect.each(["none", "overlap", "mixed"] as const)(
             },
           };
           return Effect.succeed({
-            text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
-            records: [...input.composer.records, record],
+            _tag: "Attached",
+            composer: {
+              text: `${input.composer.text}\n\n${formatComposerContextReference(record)}`,
+              records: [...input.composer.records, record],
+            },
           });
         },
         // The fact was edited after the earlier message was sent; the handoff must not re-hydrate.
