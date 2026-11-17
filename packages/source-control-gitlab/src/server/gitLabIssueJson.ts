@@ -273,11 +273,16 @@ export function decodeIssueNotesJson(raw: string): Result.Result<GitLabIssueNote
   });
 }
 
-export function decodeLabelEventsJson(
-  raw: string,
-): Result.Result<ReadonlyArray<IssueEvent>, DecodeFailure> {
-  return Result.map(decodeUnknownList(raw), (rows) =>
-    rows.flatMap((entry) => {
+export function decodeLabelEventsJson(raw: string): Result.Result<
+  {
+    readonly events: ReadonlyArray<IssueEvent>;
+    readonly rawCount: number;
+  },
+  DecodeFailure
+> {
+  return Result.map(decodeUnknownList(raw), (rows) => ({
+    rawCount: rows.length,
+    events: rows.flatMap((entry) => {
       const event = decodeLabelEventEntry(entry);
       if (Exit.isFailure(event)) return [];
       const action = event.value.action.trim().toLowerCase();
@@ -292,7 +297,7 @@ export function decodeLabelEventsJson(
         },
       ];
     }),
-  );
+  }));
 }
 
 function toPullRequestState(value: string | null | undefined): PullRequestState {

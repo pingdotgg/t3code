@@ -44,7 +44,7 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 
 const KIND = IssueTrackerKind.make("gitlab");
-/** How many pages of system notes the timeline reads before giving up on the rest. */
+/** How many pages of each timeline source (system notes, label events) the detail reads. */
 const MAX_ACTIVITY_PAGES = 20;
 
 const CAPABILITIES: IssueCapabilities = {
@@ -129,6 +129,16 @@ function splitPagedResponse(raw: string): {
     body,
     nextPage: next === null ? undefined : next[1] === undefined ? null : Number(next[1]),
   };
+}
+
+/** The page after `page`, from GitLab's header when it sent one, else from a full page. */
+function nextPageCursor(
+  page: number,
+  nextPage: number | null | undefined,
+  rawCount: number,
+): string | null {
+  const next = nextPage === undefined ? (rawCount < PAGE_SIZE ? null : page + 1) : nextPage;
+  return next === null ? null : String(next);
 }
 
 function query(params: ReadonlyArray<readonly [string, string]>): string {
@@ -345,36 +355,50 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
         includeHeaders: true,
         decode: (raw) => {
           const { body, nextPage } = splitPagedResponse(raw);
-          return Result.map(decodeIssueNotesJson(body), (notes) => {
-            const next =
-              nextPage === undefined
-                ? notes.rawCount < PAGE_SIZE
-                  ? null
-                  : input.page + 1
-                : nextPage;
-            return { ...notes, nextCursor: next === null ? null : String(next) };
-          });
+          return Result.map(decodeIssueNotesJson(body), (notes) => ({
+            ...notes,
+            nextCursor: nextPageCursor(input.page, nextPage, notes.rawCount),
+          }));
         },
       });
 
-    /** Every system note, wherever it falls among the comments, for the issue's timeline. */
-    const activity = Effect.fn("GitLabIssueTracker.activity")(function* (input: {
+    const labelEventsPage = (input: {
       readonly cwd: string;
       readonly host: string;
       readonly path: string;
-    }) {
+      readonly page: number;
+    }) =>
+      read({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getIssue",
+        path: paged(`${input.path}/resource_label_events`, input.page),
+        includeHeaders: true,
+        decode: (raw) => {
+          const { body, nextPage } = splitPagedResponse(raw);
+          return Result.map(decodeLabelEventsJson(body), (labels) => ({
+            events: labels.events,
+            nextCursor: nextPageCursor(input.page, nextPage, labels.rawCount),
+          }));
+        },
+      });
+
+    /** Every page of one timeline source, from page 1 until GitLab has no next page. */
+    const activity = Effect.fn("GitLabIssueTracker.activity")(function* (
+      readPage: (
+        page: number,
+      ) => Effect.Effect<
+        { readonly events: ReadonlyArray<IssueEvent>; readonly nextCursor: string | null },
+        IssueTrackerError
+      >,
+    ) {
       const events: Array<IssueEvent> = [];
       let page = 1;
       for (let count = 0; count < MAX_ACTIVITY_PAGES; count++) {
-        const notes = yield* notesPage({
-          ...input,
-          page,
-          operation: "getIssue",
-          onlyActivity: true,
-        });
-        events.push(...notes.events);
-        if (notes.nextCursor === null) break;
-        page = Number(notes.nextCursor);
+        const result = yield* readPage(page);
+        events.push(...result.events);
+        if (result.nextCursor === null) break;
+        page = Number(result.nextCursor);
       }
       return events;
     });
@@ -501,14 +525,20 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   page: 1,
                   operation: "getIssue",
                 }),
-                activity({ cwd: input.cwd, host: input.host, path }),
-                read({
-                  cwd: input.cwd,
-                  host: input.host,
-                  operation: "getIssue",
-                  path: paged(`${path}/resource_label_events`, 1),
-                  decode: decodeLabelEventsJson,
-                }),
+                // Every system note, wherever it falls among the comments.
+                activity((page) =>
+                  notesPage({
+                    cwd: input.cwd,
+                    host: input.host,
+                    path,
+                    page,
+                    operation: "getIssue",
+                    onlyActivity: true,
+                  }),
+                ),
+                activity((page) =>
+                  labelEventsPage({ cwd: input.cwd, host: input.host, path, page }),
+                ),
                 linked({ cwd: input.cwd, host: input.host, path, endpoint: "closed_by" }),
                 linked({
                   cwd: input.cwd,
