@@ -1292,7 +1292,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:diff",
       persistence: persistQuery(PullRequestDiffResult),
       staleTimeMs: 60_000,
-      execute: loadDiff,
+      // A guide tied to a commit must not reuse another push's cached pages.
+      execute: ({
+        cacheHeadSha: _cacheHeadSha,
+        ...input
+      }: PullRequestDiffInput & {
+        readonly cacheHeadSha?: string;
+      }) => loadDiff(input),
     }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",
