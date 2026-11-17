@@ -205,6 +205,7 @@ export function ComposerAttachmentMediaRow({
             <SnapShotAttachmentFrame
               key={image.id}
               data-chat-composer-expanded-image="true"
+              data-failed-attachment-id={upload?.status === "failed" ? image.id : undefined}
               aria-hidden={snapShotAnimationPending || undefined}
               inert={snapShotAnimationPending || undefined}
               arrival={snapShotArrival}
@@ -217,6 +218,7 @@ export function ComposerAttachmentMediaRow({
                   ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
                   : "relative h-16 w-16 overflow-hidden rounded-lg border border-border/80",
                 snapShotAnimationPending && "invisible",
+                upload?.status === "failed" && "composer-attachment-failure",
               )}
             >
               {!ready || ready.previewUrl ? (
@@ -359,7 +361,11 @@ export function ComposerAttachmentMediaRow({
         return (
           <div
             key={file.id}
-            className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
+            className={cn(
+              "relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black",
+              upload?.status === "failed" && "composer-attachment-failure",
+            )}
           >
             <button
               type="button"
@@ -467,7 +473,11 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
+            className={cn(
+              "flex min-w-0 items-center gap-2 rounded-sm py-1 text-sm text-foreground",
+              upload?.status === "failed" && "composer-attachment-failure",
+            )}
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <button

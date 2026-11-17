@@ -183,6 +183,19 @@ function attachmentTooltip(
   return lines.join("\n");
 }
 
+function AttachmentFailureHighlight(props: { id: string; failed: boolean; children: ReactNode }) {
+  if (!props.failed) return props.children;
+  return (
+    <span
+      className="composer-inline-attachment-failure composer-attachment-failure"
+      contentEditable={false}
+      data-failed-attachment-id={props.id}
+    >
+      {props.children}
+    </span>
+  );
+}
+
 function ImageContextChip(props: {
   record: ComposerImageAttachment;
   upload: AttachmentUploadState | undefined;
@@ -190,22 +203,31 @@ function ImageContextChip(props: {
   const actions = use(ComposerContextActionsContext);
   const suffix = useUploadStatusSuffix(props.record.id, props.upload);
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ImageChipButton
-            name={props.record.name}
-            previewUrl={props.record.previewUrl}
-            size={formatAttachmentSize(props.record.sizeBytes)}
-            suffix={suffix}
-            onClick={() => actions.expandImage(props.record.id)}
-          />
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {attachmentTooltip(props.record, props.upload)}
-      </TooltipPopup>
-    </Tooltip>
+    <AttachmentFailureHighlight id={props.record.id} failed={props.upload?.status === "failed"}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ImageChipButton
+              name={props.record.name}
+              previewUrl={props.record.previewUrl}
+              size={formatAttachmentSize(props.record.sizeBytes)}
+              suffix={suffix}
+              {...(props.upload?.status === "failed" ? { state: "invalid" as const } : {})}
+              aria-label={[
+                `Image attachment, ${props.record.name}, ${formatAttachmentSize(props.record.sizeBytes)}`,
+                suffix,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              onClick={() => actions.expandImage(props.record.id)}
+            />
+          }
+        />
+        <TooltipPopup side="top" className="whitespace-pre-wrap">
+          {attachmentTooltip(props.record, props.upload)}
+        </TooltipPopup>
+      </Tooltip>
+    </AttachmentFailureHighlight>
   );
 }
 
@@ -221,36 +243,41 @@ function FileContextChip(props: {
   const size = formatAttachmentSize(props.record.sizeBytes);
   const isVideo = videoMimeType(props.record) !== null;
   return (
-    <FileChip
-      name={props.record.name}
-      svgPreview={
-        isSvgAttachment(props.record)
-          ? {
-              file: props.record.file,
-              environmentId: props.record.uploadEnvironmentId,
-              attachmentId: props.record.uploadedAttachmentId,
-            }
-          : undefined
-      }
-      size={size}
-      isVideo={isVideo}
-      theme={resolvedTheme}
-      error={props.upload?.status === "failed"}
-      unresolved={needsReattach}
-      suffix={suffix}
-      accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
-      onOpen={
-        !needsReattach
-          ? () =>
-              isVideo ? actions.expandVideo(props.record.id) : actions.openFile(props.record.id)
-          : undefined
-      }
-      tooltip={
-        needsReattach
-          ? `${props.record.name} was not saved with this draft. Attach it again to send it.`
-          : attachmentTooltip(props.record, props.upload)
-      }
-    />
+    <AttachmentFailureHighlight
+      id={props.record.id}
+      failed={props.upload?.status === "failed" && !needsReattach}
+    >
+      <FileChip
+        name={props.record.name}
+        svgPreview={
+          isSvgAttachment(props.record)
+            ? {
+                file: props.record.file,
+                environmentId: props.record.uploadEnvironmentId,
+                attachmentId: props.record.uploadedAttachmentId,
+              }
+            : undefined
+        }
+        size={size}
+        isVideo={isVideo}
+        theme={resolvedTheme}
+        error={props.upload?.status === "failed"}
+        unresolved={needsReattach}
+        suffix={suffix}
+        accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
+        onOpen={
+          !needsReattach
+            ? () =>
+                isVideo ? actions.expandVideo(props.record.id) : actions.openFile(props.record.id)
+            : undefined
+        }
+        tooltip={
+          needsReattach
+            ? `${props.record.name} was not saved with this draft. Attach it again to send it.`
+            : attachmentTooltip(props.record, props.upload)
+        }
+      />
+    </AttachmentFailureHighlight>
   );
 }
 
