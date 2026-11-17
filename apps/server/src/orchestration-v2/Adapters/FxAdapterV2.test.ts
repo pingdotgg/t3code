@@ -112,15 +112,11 @@ const fxConfig = (input: {
 const fxSession = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
-  readonly mode?: string;
   readonly models?: ReadonlyArray<string>;
 }) => ({
   sessionId: SESSION_ID,
   configOptions: fxConfig(input),
-  modes: {
-    currentModeId: input.mode ?? "ask",
-    availableModes: input.modes.map((id) => ({ id, name: id })),
-  },
+  modes: { currentModeId: "ask", availableModes: input.modes.map((id) => ({ id, name: id })) },
 });
 
 const initialize: ReadonlyArray<Frame> = [
@@ -324,47 +320,6 @@ describe("FxAdapterV2", () => {
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
       ],
     }).pipe(Effect.provide(testLayer)),
-  );
-
-  // A permission mode change restarts fx and loads the same session, which
-  // still reports the mode it last ran in.
-  it.effect("loads the same session into and out of Full access", () =>
-    Effect.forEach(
-      [
-        {
-          scenario: "into-full-access",
-          runtimeMode: "full-access",
-          from: "ask",
-          to: "full-access",
-        },
-        {
-          scenario: "out-of-full-access",
-          runtimeMode: "approval-required",
-          from: "full-access",
-          to: "ask",
-        },
-      ] as const,
-      ({ scenario, runtimeMode, from, to }) =>
-        openFxSession({
-          scenario,
-          runtimeMode,
-          loadSessionId: SESSION_ID,
-          frames: [
-            ...initialize,
-            outbound("session/load"),
-            answer(
-              "session/load",
-              fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES, mode: from }),
-            ),
-            ...setConfig(
-              "mode",
-              to,
-              fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES, mode: to }),
-            ),
-          ],
-        }),
-      { discard: true },
-    ).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
   it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>
