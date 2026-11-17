@@ -144,7 +144,12 @@ export const makeDiscovery = Effect.gen(function* () {
       for (const candidate of candidates.slice(1)) {
         if (fj.status !== "available" || fj.auth.status === "authenticated") break;
         const next = yield* probeFj(candidate);
-        if (next.status === "available" && next.auth.status === "authenticated") {
+        // A login that could not be verified says more than one that was rejected.
+        if (
+          next.status === "available" &&
+          (next.auth.status === "authenticated" ||
+            (fj.auth.status === "unauthenticated" && next.auth.status === "unknown"))
+        ) {
           login = candidate;
           fj = next;
         }
