@@ -33,12 +33,14 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
   const tex = props.tex.trim();
   const source = props.display ? `\\[\n${tex}\n\\]` : `\\(${tex}\\)`;
   const fallback = <span className="whitespace-pre-wrap">{source}</span>;
+  // Inline formulas use inline-flex because it takes its baseline from the scrolling viewport;
+  // an inline-block would sit on the viewport's bottom edge instead.
   return (
     <span
       className={
         props.display
           ? "chat-markdown-math-display my-[0.65rem] block in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible"
-          : "inline-block max-w-full align-middle whitespace-nowrap wrap-normal break-normal in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible"
+          : "inline-flex max-w-full whitespace-nowrap wrap-normal break-normal in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible"
       }
       data-markdown-math={props.display ? "display" : "inline"}
       data-markdown-copy={props.display ? `${source}\n\n` : source}
@@ -53,7 +55,7 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
     >
       <span
         ref={viewportRef}
-        className="block max-w-full overflow-x-auto overflow-y-hidden in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible px-0.5 py-0.75 focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-border [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content"
+        className="block min-w-0 max-w-full overflow-x-auto overflow-y-hidden in-[.chat-markdown-table-container]:max-w-none in-[.chat-markdown-table-container]:overflow-visible px-0.5 py-0.75 focus-visible:outline-1 focus-visible:outline-solid focus-visible:-outline-offset-1 focus-visible:outline-border [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content"
         tabIndex={scrollable ? 0 : -1}
         aria-label={
           !scrollable
