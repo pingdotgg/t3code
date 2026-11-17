@@ -3,9 +3,9 @@ import type { Messages } from "./en";
 export const nl: Messages = {
   layout: {
     defaultTitle: "T3 Code",
-    defaultDescription: "T3 Code. De opensource-controlekamer voor codeeragents.",
+    defaultDescription: "T3 Code. Het opensource commandocentrum voor code agents.",
     socialImageAlt:
-      "T3 Code: de opensource-controlekamer voor codeeragents, met Claude Code, Codex, Cursor, OpenCode, Grok en Antigravity.",
+      "T3 Code: het opensource commandocentrum voor code agents, met Claude Code, Codex, Cursor, OpenCode, Grok en Antigravity.",
     homeLabel: "Startpagina van T3 Code",
     download: "Downloaden",
     starsLabel: "Geef T3 Code een ster op GitHub, {stars} sterren",
@@ -19,17 +19,17 @@ export const nl: Messages = {
     security: "Beveiliging",
   },
   home: {
-    title: "T3 Code | De opensource-controlekamer voor codeeragents",
-    description: "T3 Code. De opensource-controlekamer voor codeeragents.",
-    heroTitle: ["De opensource-", "controlekamer", "voor codeeragents."],
+    title: "T3 Code | Het opensource commandocentrum voor code agents",
+    description: "T3 Code. Het opensource commandocentrum voor code agents.",
+    heroTitle: ["Het opensource", "commandocentrum", "voor code agents."],
     heroSub:
-      "Stuur Claude Code, Codex, Antigravity, OpenCode, Cursor en Grok aan vanuit één plek. Gebruik je eigen abonnement. Fork het hele ding.",
+      "Stuur Claude Code, Codex, Antigravity, OpenCode, Cursor en Grok aan vanuit één plek. Gebruik je eigen abonnement. Fork het geheel.",
     downloadForMac: "Downloaden voor macOS",
     downloadForWindows: "Downloaden voor Windows",
     downloadForLinux: "Downloaden voor Linux",
     downloadForIos: "Downloaden voor iOS",
     downloadForAndroid: "Downloaden voor Android",
-    sourceLink: "Jat onze code (legaal)",
+    sourceLink: "Steel onze code (legaal)",
     alsoOnPhone: "Ook op je telefoon:",
     screenshotAlt: "T3 Code laat subagents van Claude, Codex, Muse en Gemini werken in één thread",
     endorsementsTitle: "Getolereerd door meer dan {users} devs",
