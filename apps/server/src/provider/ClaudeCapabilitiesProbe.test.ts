@@ -115,3 +115,51 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// Claude Code answers get_usage from its saved snapshot when /api/oauth/usage is rate limited.
+it.effect("dates usage Claude Code served from its saved snapshot by when it was fetched", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-17T10:09:49.142Z"));
+    const fetchedAtMs = Date.parse("2026-11-17T09:12:16.000Z");
+    const rateLimits = {
+      five_hour: { utilization: 2, resets_at: "2026-11-17T13:30:00.488Z" },
+      seven_day: { utilization: 36, resets_at: "2026-11-20T21:00:00.488Z" },
+    };
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
+            commands: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: true,
+            rate_limits: rateLimits,
+          }),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped();
+    yield* fileSystem.writeFileString(
+      `${configDir}/.claude.json`,
+      JSON.stringify({
+        cachedUsageUtilization: {
+          fetchedAtMs,
+          utilization: {
+            five_hour: { utilization: 2, resets_at: rateLimits.five_hour.resets_at },
+            seven_day: { utilization: 36, resets_at: rateLimits.seven_day.resets_at },
+          },
+        },
+      }),
+    );
+
+    const capabilities = yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+    );
+
+    assert.deepEqual(capabilities.usage?.rate_limits, rateLimits);
+    assert.equal(capabilities.usageCheckedAt, new Date(fetchedAtMs).toISOString());
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
