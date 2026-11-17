@@ -121,6 +121,8 @@ vi.mock("./uuid", () => ({
 
 import { convertPastedImagesToAttachments, persistComposerAttachmentFile } from "./composerImages";
 
+const STORED = "file:///documents/t3-composer-attachments/attachment-id";
+
 function oversizedPng(): string {
   const png = Buffer.alloc(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
@@ -149,10 +151,12 @@ describe("native pasted image cleanup", () => {
       expect.objectContaining({
         name: "pasted-image.jpeg",
         mimeType: "image/jpeg",
-        dataUrl: "data:image/jpeg;base64,aGVsbG8=",
-        previewUri: "data:image/jpeg;base64,aGVsbG8=",
+        fileUri: `${STORED}-pasted-image.jpeg`,
+        previewUri: `${STORED}-pasted-image.jpeg`,
       }),
     ]);
+    expect(attachments[0]).not.toHaveProperty("dataUrl");
+    expect(files.get(`${STORED}-pasted-image.jpeg`)?.base64).toBe("aGVsbG8=");
     expect(files.get(uri)?.deleted).toBe(false);
   });
 
@@ -170,10 +174,10 @@ describe("native pasted image cleanup", () => {
       expect.objectContaining({
         name: "pasted-image.jpeg",
         mimeType: "image/jpeg",
-        dataUrl: "data:image/jpeg;base64,cmVuZGVyZWQ=",
-        previewUri: "data:image/jpeg;base64,cmVuZGVyZWQ=",
+        fileUri: `${STORED}-pasted-image.jpeg`,
       }),
     ]);
+    expect(files.get(`${STORED}-pasted-image.jpeg`)?.base64).toBe("cmVuZGVyZWQ=");
     expect(files.get("file:///cache/rendered.jpeg")?.deleted).toBe(true);
     expect(files.get(uri)?.deleted).toBe(false);
   });
@@ -196,7 +200,7 @@ describe("native pasted image cleanup", () => {
     expect(files.get(uri)?.deleted).toBe(false);
   });
 
-  it("converts owned files to data-backed previews and deletes the source", async () => {
+  it("stores owned pastes in an attachment file and deletes the source", async () => {
     const uri =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
     const gif =
@@ -211,11 +215,12 @@ describe("native pasted image cleanup", () => {
 
     expect(attachments).toEqual([
       expect.objectContaining({
-        dataUrl: "data:image/png;base64,aGVsbG8=",
-        previewUri: "data:image/png;base64,aGVsbG8=",
+        fileUri: `${STORED}-pasted-image.png`,
+        previewUri: `${STORED}-pasted-image.png`,
       }),
       expect.objectContaining({ mimeType: "image/gif", dataUrl: "data:image/gif;base64,R0lGODlh" }),
     ]);
+    expect(files.get(`${STORED}-pasted-image.png`)?.base64).toBe("aGVsbG8=");
     expect(files.get(uri)?.deleted).toBe(true);
     expect(files.get(gif)?.deleted).toBe(true);
   });
@@ -266,7 +271,7 @@ describe("native pasted image cleanup", () => {
     const result = await convertPastedImagesToAttachments({ uris: [gone, kept], existingCount: 0 });
 
     expect(result.attachments).toEqual([
-      expect.objectContaining({ dataUrl: "data:image/png;base64,aGVsbG8=" }),
+      expect.objectContaining({ fileUri: `${STORED}-pasted-image.png` }),
     ]);
     expect(result.error).toBe("Could not read a pasted image.");
   });
