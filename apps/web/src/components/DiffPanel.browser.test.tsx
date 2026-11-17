@@ -347,10 +347,9 @@ it("says a turn diff cut off at the server's size limit is incomplete", async ()
     .toBeVisible();
 });
 
-// Paths as git's numstat reports them; the parsed patch trims the trailing space from its name.
 it.each([
   { path: " leading.ts", name: " leading.ts" },
-  { path: "src/trailing.ts ", name: "src/trailing.ts" },
+  { path: "src/trailing.ts ", name: "src/trailing.ts " },
 ])("reveals the turn file $path picked from the changed files", async ({ path, name }) => {
   using context = setup("origin/orphan");
   state.diffFilesCollapsed = true;
@@ -376,9 +375,10 @@ it.each([
       </div>
     </RegistryContext.Provider>,
   );
-  await expect
-    .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
-    .toHaveAttribute("aria-expanded", "true");
+  const toggle = screen.getByRole("button", { name: `Collapse ${name}`, exact: true });
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect.element(toggle).toHaveAttribute("aria-label", `Collapse ${path}`);
+  await expect.element(screen.getByText("revealed", { exact: true })).toBeVisible();
 });
 
 it("opens a file from a tool call's diff by the path its agent recorded", async () => {
