@@ -455,6 +455,24 @@ it("reports a provider's stop reason with and without assistant progress", () =>
     ).text,
     `${progress.message.text}\n\n${notice.message}`,
   );
+  const interruptResult = {
+    ...notice,
+    id: IdAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+    status: "interrupted",
+    title: "Interrupted",
+    type: "run_interrupt_result",
+  } satisfies OrchestrationV2TurnItem;
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...progress.message, runId: run.id }],
+        turnItems: [{ ...progress.turnItem, runId: run.id }, interruptResult],
+      },
+      { ...run, status: "interrupted" },
+    ).text,
+    `${progress.message.text}\n\n${notice.message}`,
+  );
 });
 
 it("keeps the final report of a run that failed after its turn ended", () => {

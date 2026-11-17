@@ -198,9 +198,15 @@ function withStopNotice(
   run: OrchestrationV2Run,
   text: string,
 ): string {
-  const id = derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL });
-  const notice = projection.turnItems.find((item) => item.id === id);
-  return notice?.type === "system_notice" ? `${text}\n\n${notice.message}` : text;
+  // Codex ends a hook-stopped turn as completed or interrupted, depending on its version.
+  const ids = [
+    derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL }),
+    derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+  ];
+  const notice = projection.turnItems.find((item) => ids.includes(item.id));
+  return notice?.type === "system_notice" || notice?.type === "run_interrupt_result"
+    ? `${text}\n\n${notice.message}`
+    : text;
 }
 
 export function subagentResultForRun(
@@ -254,13 +260,14 @@ export function subagentResultForRun(
         ? failure.failure.message
         : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
       : undefined) ??
-    (run.status === "completed"
-      ? withStopNotice(
-          projection,
-          run,
-          report ?? "Child task completed without an assistant result.",
-        )
-      : (report ?? `Child task ended with status ${run.status}.`));
+    withStopNotice(
+      projection,
+      run,
+      report ??
+        (run.status === "completed"
+          ? "Child task completed without an assistant result."
+          : `Child task ended with status ${run.status}.`),
+    );
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,
