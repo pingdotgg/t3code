@@ -1,3 +1,5 @@
+import * as NodeBuffer from "node:buffer";
+
 import type { DesktopDiscoveredSshHost } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
@@ -147,7 +149,9 @@ const expandGlob = Effect.fnUntraced(function* (
       }
     }
   }
-  return matchedPaths.toSorted();
+  return matchedPaths.toSorted((left, right) =>
+    NodeBuffer.Buffer.compare(NodeBuffer.Buffer.from(left), NodeBuffer.Buffer.from(right)),
+  );
 });
 
 type HostCondition = ReadonlyArray<string> | null;
