@@ -942,10 +942,10 @@ it.layer(
       });
       yield* manager.writeAsAgent({ ...target, data: "make\r" });
       // Renderer replies and focus reports are not the user taking a turn.
-      yield* manager.write({ ...target, data: "\x1b[3;1R\x1b[I" }, "user");
+      yield* manager.write({ ...target, data: "\x1b[3;1R\x1b[I" }, undefined, "user");
       expect((yield* controllers())["agent-1"]?.[0]).toBe("agent");
 
-      yield* manager.write({ ...target, data: "q" }, "user");
+      yield* manager.write({ ...target, data: "q" }, undefined, "user");
       expect((yield* controllers())["agent-1"]?.[0]).toBe("user");
       const refused = yield* manager
         .writeAsAgent({ ...target, data: "rm -rf build\r" })
