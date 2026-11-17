@@ -228,8 +228,8 @@ export function delegatedTaskRuns(
 }
 
 /**
- * A follow-up task's runs still owe a subagent they started its result, or the child still
- * awaits background work, as the original task waits on both.
+ * A follow-up task's runs still owe a subagent they started its result, or still await
+ * background work they started, as the original task waits on both.
  */
 export function delegatedTaskAwaitsWork(
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -246,7 +246,11 @@ export function delegatedTaskAwaitsWork(
   return (
     child.subagents.some((task) => runIds.has(task.runId) && subagentHoldsCompletion(task)) ||
     child.providerThreads.some((thread) =>
-      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
+      backgroundWorkHoldsCompletion(
+        (thread.pendingBackgroundTasks ?? []).filter(
+          (task) => task.runId !== undefined && runIds.has(task.runId),
+        ),
+      ),
     )
   );
 }

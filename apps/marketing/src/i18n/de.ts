@@ -25,6 +25,8 @@ export const de: Messages = {
     downloadForMac: "Für macOS herunterladen",
     downloadForWindows: "Für Windows herunterladen",
     downloadForLinux: "Für Linux herunterladen",
+    downloadForIos: "Für iOS herunterladen",
+    downloadForAndroid: "Für Android herunterladen",
     sourceLink: "Klau unseren Code (legal)",
     screenshotAlt: `${APP_NAME} führt Subagents von Claude, Codex, Muse und Gemini in einem Thread aus`,
     harnessTitle: "Bring dein eigenes Abo mit",

@@ -9,6 +9,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
+/** The launcher install.sh, `ada install`, and `ada update` write; exec by absolute path. */
+const launcherScript = (executable: string) =>
+  `#!/bin/sh\nexec '${executable.replaceAll("'", "'\\''")}' "$@"\n`;
+
 const nightlies = Array.from({ length: 100 }, (_, index) => ({
   tag_name: `v1.2.4-nightly.20261020.${200 - index}`,
 }));
@@ -42,10 +46,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
       await NodeFSP.writeFile(NodePath.join(target, "t3"), "#!/bin/sh\necho 't3 v1.2.3'\n", {
         mode: 0o755,
       });
-      const { status, stdout, stderr } = NodeChildProcess.spawnSync(
-        "sh",
-        [NodePath.resolve(import.meta.dirname, "install.sh")],
-        {
+      const install = () =>
+        NodeChildProcess.spawnSync("sh", [NodePath.resolve(import.meta.dirname, "install.sh")], {
           cwd: root,
           env: {
             ...process.env,
@@ -56,13 +58,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home
             T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:1",
           },
           encoding: "utf8",
-        },
-      );
+        });
+      // The second run replaces the launcher the first wrote, newlines in its path and all.
+      const first = install();
+      expect(first.status, first.stdout + first.stderr).toBe(0);
+      const { status, stdout, stderr } = install();
       expect(status, stdout + stderr).toBe(0);
       expect(stderr).toContain(`Installed Ada ${version}`);
-      expect(await NodeFSP.readlink(launcher)).toBe(NodePath.join(target, "t3"));
-      expect(await NodeFSP.readlink(NodePath.join(root, "bin/ada"))).toBe(
-        NodePath.join(target, "t3"),
+      expect(await NodeFSP.readFile(launcher, "utf8")).toBe(
+        launcherScript(NodePath.join(target, "t3")),
+      );
+      expect(await NodeFSP.readFile(NodePath.join(root, "bin/ada"), "utf8")).toBe(
+        launcherScript(NodePath.join(target, "t3")),
       );
       expect(
         NodeChildProcess.execFileSync(launcher, ["--version"], {
@@ -233,7 +240,7 @@ async function installOver(input: {
 }
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 command", () => {
-  it("replaces only this home's own links and prints a PATH command", async () => {
+  it("replaces only this home's own launchers and prints a PATH command", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-link-"));
     try {
       const home = NodePath.join(root, "home");
@@ -247,7 +254,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       const besideForeign = await installOver({ script: "install.sh", home, binDir });
       expect(besideForeign.code, besideForeign.output).toBe(0);
       expect(besideForeign.output).toContain(`Another t3 is already at ${link}, so it was left`);
-      expect(await NodeFSP.readlink(adaLink)).toBe(NodePath.join(besideForeign.target, "t3"));
+      expect(await NodeFSP.readFile(adaLink, "utf8")).toBe(
+        launcherScript(NodePath.join(besideForeign.target, "t3")),
+      );
       expect(await NodeFSP.readFile(link, "utf8")).toBe("#!/bin/sh\necho mine\n");
 
       // From here another program owns `ada`, so each case below turns on the t3 link alone.
@@ -296,8 +305,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(upgrade.code, upgrade.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(
-        NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(
+        launcherScript(NodePath.join(root, "alias/runtime/versions/1.2.3/t3")),
       );
       expect(upgrade.output).toContain(
         `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
@@ -338,6 +347,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(relative.code, relative.output).toBe(0);
       expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
 
+      // A launcher script someone edited is theirs now; `ada` alone is still written.
+      const edited = `${launcherScript(NodePath.join(home, "runtime/versions/1.2.3/t3"))}# mine\n`;
+      await NodeFSP.writeFile(link, edited);
+      const overEdited = await installOver({ script: "install.sh", home, binDir });
+      expect(overEdited.code, overEdited.output).toBe(0);
+      expect(overEdited.output).toContain(`Another t3 is already at ${link}, so it was left`);
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(edited);
+
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
       await NodeFSP.rm(adaLink);
@@ -348,9 +365,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         binDir: `${binDir}/`,
       });
       expect(overDesktop.code, overDesktop.output).toBe(0);
-      expect(await NodeFSP.readlink(link)).toBe(NodePath.join(home, "runtime/versions/1.2.3/t3"));
-      expect(await NodeFSP.readlink(adaLink)).toBe(
-        NodePath.join(home, "runtime/versions/1.2.3/t3"),
+      expect(await NodeFSP.readFile(link, "utf8")).toBe(
+        launcherScript(NodePath.join(home, "runtime/versions/1.2.3/t3")),
+      );
+      expect(await NodeFSP.readFile(adaLink, "utf8")).toBe(
+        launcherScript(NodePath.join(home, "runtime/versions/1.2.3/t3")),
       );
       expect(
         (await NodeFSP.readFile(NodePath.join(home, "runtime/launchers"), "utf8")).split("\n"),
@@ -489,6 +508,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
             "rm",
             "mv",
             "ln",
+            "chmod",
+            "sed",
             checksumTool,
           ]) {
             const executable = NodeChildProcess.execFileSync(

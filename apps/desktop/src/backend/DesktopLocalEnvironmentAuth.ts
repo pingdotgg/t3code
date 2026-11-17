@@ -18,7 +18,8 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import { APP_NAME } from "@t3tools/shared/branding";
 
-const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
+// Each /oauth/token attempt may take 10 s, so a backend busy after ready needs several attempts.
+const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(60);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
 

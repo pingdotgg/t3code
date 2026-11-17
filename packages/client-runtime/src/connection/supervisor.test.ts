@@ -154,6 +154,14 @@ function blocked(message = "Authentication required.") {
   });
 }
 
+function hostRefusal() {
+  return new ConnectionBlockedError({
+    reason: "authentication",
+    detail: "The environment credential is invalid.",
+    hop: "server",
+  });
+}
+
 function awaitState(
   state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
   predicate: (value: SupervisorConnectionState) => boolean,
@@ -263,7 +271,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 
     yield* reportProgress({ stage: "synchronizing", prepared });
     yield* session.ready;
-    return { prepared, session } satisfies ConnectionDriver.EnvironmentConnectionLease;
+    return { prepared, session } satisfies ConnectionDriver.RouteConnection;
   });
 
   const connect = Effect.fn("TestConnectionDriver.connect")(function* (
@@ -386,6 +394,66 @@ describe("EnvironmentSupervisor", () => {
         lastFailure: null,
       });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
+  it.effect("explicit retry connects while the network still reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: () => Effect.sleep("1 second").pipe(Effect.as(PREPARED_CONNECTION)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      // The loop wakes on the earlier signal and takes the retry's flag while
+      // RetryRequested is still queued, so that signal must not cancel the attempt.
+      yield* supervisor.connect;
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("1 second");
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled.phase).toBe("connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
+  );
+
+  it.effect.each([
+    { label: "cancels connection setup", retry: false, phase: "offline", sessions: 0 },
+    { label: "does not cancel an explicit retry", retry: true, phase: "connected", sessions: 1 },
+  ])("an offline report during setup $label", ({ retry, phase, sessions }) =>
+    Effect.gen(function* () {
+      const firstAttemptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: () =>
+          Deferred.succeed(firstAttemptStarted, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 second")),
+            Effect.as(PREPARED_CONNECTION),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstAttemptStarted);
+      if (retry) {
+        yield* supervisor.retryNow;
+      }
+      yield* harness.setNetworkStatus("offline");
+      yield* TestClock.adjust("1 second");
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled.phase).toBe(phase);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(sessions);
     }),
   );
 
@@ -1859,6 +1927,164 @@ describe("EnvironmentSupervisor routes", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
       expect(connectionRouteId(prepared.target)).toBe(REMOTE_TARGET.connectionId);
+    }),
+  );
+
+  it.effect("does not report a route that failed before reaching its host's sign-in", () =>
+    Effect.gen(function* () {
+      const failures = [
+        new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "Connection credential bearer:lan is unavailable.",
+          hop: "device",
+        }),
+        blocked(),
+      ];
+      for (const failure of failures) {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            !isRemote(target)
+              ? Effect.fail(failure)
+              : Effect.succeed(preparedFor(target)),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "connected");
+        expect(state.refusedRouteIds).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect("reports a preferred route whose host refuses sign-in once it answers again", () =>
+    Effect.gen(function* () {
+      const lanReachable = yield* Ref.make(false);
+      const lanRefuses = yield* Ref.make(true);
+      const checkRoute = (route: ConnectionRoute) =>
+        !isRemote(route.target)
+          ? Ref.get(lanReachable).pipe(
+              Effect.map((reachable): ConnectionDriver.RouteCheck =>
+                reachable ? "answered" : "silent",
+              ),
+            )
+          : Effect.succeed<ConnectionDriver.RouteCheck>("unchecked");
+      const harness = yield* makeHarness({
+        checkRoute,
+        preflight: (route) =>
+          ConnectionDriver.preflightRoute(
+            checkRoute(route),
+            Ref.get(lanRefuses).pipe(
+              Effect.flatMap((refuses) =>
+                refuses && !isRemote(route.target)
+                  ? Effect.fail(hostRefusal())
+                  : Effect.succeed(preparedFor(route.target)),
+              ),
+            ),
+          ),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.refusedRouteIds).toEqual([]);
+
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("network-changed");
+      const state = yield* awaitState(
+        supervisor.state,
+        (value) => value.refusedRouteIds.length > 0,
+      );
+      expect(state).toMatchObject({
+        phase: "connected",
+        generation: connected.generation,
+        refusedRouteIds: [LAN_TARGET.connectionId],
+      });
+      expect(yield* connectedRouteId(supervisor)).toBe(REMOTE_TARGET.connectionId);
+
+      yield* Ref.set(lanRefuses, false);
+      yield* harness.wake("network-changed");
+      const overLan = yield* awaitState(
+        supervisor.state,
+        (value) => value.phase === "connected" && value.generation > connected.generation,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(LAN_TARGET.connectionId);
+      expect(overLan.refusedRouteIds).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps reporting a refused route after moving to a better route", () =>
+    Effect.gen(function* () {
+      const loopbackTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:loopback",
+      });
+      const entry: ConnectionCatalogEntry = {
+        target: loopbackTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: loopbackTarget.connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "http://127.0.0.1:3773/",
+            wsBaseUrl: "ws://127.0.0.1:3773/",
+          }),
+        ),
+        alternateRoutes: [LAN_ROUTE, REMOTE_ROUTE],
+        enabled: true,
+      };
+      const lanReachable = yield* Ref.make(false);
+      const checkRoute = (route: ConnectionRoute) =>
+        connectionRouteId(route.target) === LAN_TARGET.connectionId
+          ? Ref.get(lanReachable).pipe(
+              Effect.map((reachable): ConnectionDriver.RouteCheck =>
+                reachable ? "answered" : "silent",
+              ),
+            )
+          : Effect.succeed<ConnectionDriver.RouteCheck>(
+              isRemote(route.target) ? "unchecked" : "answered",
+            );
+      const prepare = (target: ConnectionTarget) =>
+        connectionRouteId(target) === loopbackTarget.connectionId
+          ? Effect.fail(hostRefusal())
+          : Effect.succeed(preparedFor(target));
+      const harness = yield* makeHarness({
+        checkRoute,
+        preflight: (route) =>
+          ConnectionDriver.preflightRoute(checkRoute(route), prepare(route.target)),
+        prepare: (_attempt, target) => prepare(target),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const overRemote = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(yield* connectedRouteId(supervisor)).toBe(REMOTE_TARGET.connectionId);
+      expect(overRemote.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
+
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("network-changed");
+      const overLan = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(LAN_TARGET.connectionId);
+      expect(overLan.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
     }),
   );
 

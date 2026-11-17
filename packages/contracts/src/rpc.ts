@@ -618,6 +618,7 @@ export const WS_METHODS = {
   pushRegistrationsRegister: "pushRegistrations.register",
   pushRegistrationsUnregister: "pushRegistrations.unregister",
   subscribeTailnetDevices: "subscribeTailnetDevices",
+  serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverGetAgentSkills: "server.getAgentSkills",
   serverMutateAgentLibrary: "server.mutateAgentLibrary",
@@ -1080,6 +1081,13 @@ const WsSubscribeTailnetDevicesRpc = Rpc.make(WS_METHODS.subscribeTailnetDevices
   success: TailnetDevicesSnapshot,
   error: Schema.Union([TailnetDevicesError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+// No in-tree caller; installed Swift TestFlight builds still request it.
+const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
+  payload: Schema.Struct({}),
+  success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -2510,6 +2518,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
+  WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerGetAgentGatewayRpc,
   WsServerUpdateAgentGatewayRpc,

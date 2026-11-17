@@ -71,6 +71,12 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // A client's message goes through intake; only the server folds one into the creation.
+    initialMessage: {
+      messageId: MessageId.make("message:thread-management:forged"),
+      text: "Forged",
+      attachments: [],
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -83,6 +89,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("initialMessage");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
@@ -944,6 +951,8 @@ it.effect.each([
   { status: "completed" as const, followUp: "held-notification", settles: true },
   { status: "completed" as const, followUp: "user", settles: false },
   { status: "completed" as const, followUp: "steered-notification", settles: false },
+  // Send now cancels the queued run; its message joins the run that asked to settle.
+  { status: "completed" as const, followUp: "promoted-to-steer", settles: true },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -992,7 +1001,7 @@ it.effect.each([
                     { id: MessageId.make("original"), runId, role: "user" as const },
                     {
                       id: nextRun.userMessageId,
-                      runId: followUpId,
+                      runId: followUp === "promoted-to-steer" ? runId : followUpId,
                       role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
                       ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
@@ -1059,7 +1068,9 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : "completed";
+            : followUp === "promoted-to-steer"
+              ? "cancelled"
+              : "completed";
       yield* Queue.offer(events, {
         sequence: 1,
         event: { type: "run.updated", threadId, payload: nextRun },

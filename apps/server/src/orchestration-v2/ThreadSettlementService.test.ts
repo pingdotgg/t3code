@@ -704,7 +704,7 @@ it.effect("provider detachment requests a single-card sweep without settling a r
   ),
 );
 
-it.effect("keeps terminals when a settled card was re-engaged before the event was handled", () =>
+it.effect("keeps terminals of a card re-engaged or deleted before the event was handled", () =>
   Effect.scoped(
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
@@ -713,16 +713,22 @@ it.effect("keeps terminals when a settled card was re-engaged before the event w
         settledOverride: "active",
         unsettledAt: at(0),
       });
+      const deleted = shell({
+        id: ThreadId.make("deleted"),
+        settledOverride: "settled",
+        settledAt: at(0),
+        deletedAt: at(0),
+      });
       const marker = shell({
         id: ThreadId.make("marker"),
         settledOverride: "settled",
         settledAt: at(0),
       });
-      const fixture = yield* makeHarness({ threads: [resumed, marker] });
+      const fixture = yield* makeHarness({ threads: [resumed, deleted, marker] });
       yield* Effect.gen(function* () {
         const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* fixture.start(service);
-        for (const thread of [resumed, marker]) {
+        for (const thread of [resumed, deleted, marker]) {
           yield* Queue.offer(fixture.events, {
             type: "thread.settled",
             id: EventId.make(`settled:${thread.id}`),

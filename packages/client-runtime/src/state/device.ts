@@ -17,9 +17,9 @@ export function createDeviceEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { environmentId: string }) => environmentId,
   };
-  // An EAS Simulator start can take minutes; it must not hold up powering off
+  // Starting an Expo Simulator can take minutes; it must not hold up powering off
   // another device or turning device support off, so each device opens in its
-  // own lane. Every EAS start opens the same catalog device, so the thread is
+  // own lane. Every Expo start opens the same catalog device, so the thread is
   // part of the lane too.
   const openConcurrency = {
     mode: "serial" as const,

@@ -105,7 +105,7 @@ function baseThread(input: {
 function makeRun(input: {
   readonly id: RunId;
   readonly ordinal: number;
-  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed";
+  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed" | "failed";
   readonly instanceId?: ProviderInstanceId;
 }) {
   return {
@@ -125,6 +125,15 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  let pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"] = [
+    {
+      taskId: "task-subagent",
+      kind: "subagent",
+      parentTaskId: "task-parent",
+      providerInstanceId: parentInstanceId,
+      childThreadId,
+    },
+  ];
   const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
     host: "github.com",
     repository: "acme/web",
@@ -201,16 +210,9 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                   threadId === parentThreadId
                     ? ({
                         ...projection.thread,
+                        pinnedAt: now,
                         blockedOnThreadWait: true,
-                        pendingBackgroundTasks: [
-                          {
-                            taskId: "task-subagent",
-                            kind: "subagent",
-                            parentTaskId: "task-parent",
-                            providerInstanceId: parentInstanceId,
-                            childThreadId,
-                          },
-                        ],
+                        pendingBackgroundTasks,
                       } as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
@@ -243,6 +245,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.pinned).toBe(true);
     expect(result.thread.blockedOnThreadWait).toBe(true);
     expect(result.thread.pendingBackgroundTasks).toEqual([
       { taskId: "task-subagent", kind: "subagent", childThreadId },
@@ -262,6 +265,26 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
+    const awaiting = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(awaiting.thread.status).toBe("waiting");
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "failed" })],
+    });
+    const failed = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(failed.thread.status).toBe("failed");
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
+    // An unawaited command (a dev server) does not hold the thread once its turn ends.
+    pendingBackgroundTasks = [{ taskId: "dev-server", kind: "command" }];
+    const released = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(released.thread.status).toBe("completed");
 
     callerUnavailable = true;
     const denied = yield* service

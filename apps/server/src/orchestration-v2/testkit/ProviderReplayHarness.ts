@@ -557,6 +557,7 @@ export function layerWithRegistry<Error>(
         SettlementCascade.layer.pipe(
           Layer.provide(Layer.merge(layerStores, layerOrchestratorProvided)),
         ),
+        layerStores,
       ),
     ),
   );

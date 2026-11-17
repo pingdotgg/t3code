@@ -364,6 +364,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
           Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer, layerOrchestratorProvided),
         ),
       ),
+      ProjectionStore.layer,
     ),
   ),
 );

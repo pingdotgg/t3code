@@ -198,16 +198,16 @@ export const make = Effect.gen(function* () {
   // Close idle prompts and run the settle script only in an isolated worktree; live terminals stay open.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
     function* (threadId: ThreadId) {
-      // A thread re-engaged before this event ran keeps its shells.
+      // A thread re-engaged or deleted before this event ran keeps its shells.
       const settled = yield* projections.getThread(threadId);
-      if (settled.settledOverride !== "settled") return;
+      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
-      // Closing and the worktree check wait on I/O. A thread re-engaged
-      // meanwhile is working again, so its worktree is no place for cleanup.
+      // Closing and the worktree check wait on I/O. A thread re-engaged or deleted
+      // meanwhile is no place for cleanup.
       const thread = yield* projections.getThread(threadId);
-      if (thread.settledOverride !== "settled") return;
+      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
       const settledAtMs =
         thread.settledAt == null ? null : DateTime.toEpochMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;

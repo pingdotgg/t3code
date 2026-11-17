@@ -25,6 +25,8 @@ export const ptBR: Messages = {
     downloadForMac: "Baixar para macOS",
     downloadForWindows: "Baixar para Windows",
     downloadForLinux: "Baixar para Linux",
+    downloadForIos: "Baixar para iOS",
+    downloadForAndroid: "Baixar para Android",
     sourceLink: "Roube nosso código (legalmente)",
     screenshotAlt: `${APP_NAME} executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread`,
     harnessTitle: "Traga sua própria assinatura",

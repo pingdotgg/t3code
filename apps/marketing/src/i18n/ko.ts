@@ -25,6 +25,8 @@ export const ko: Messages = {
     downloadForMac: "macOS용 다운로드",
     downloadForWindows: "Windows용 다운로드",
     downloadForLinux: "Linux용 다운로드",
+    downloadForIos: "iOS용 다운로드",
+    downloadForAndroid: "Android용 다운로드",
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     screenshotAlt: `하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 ${APP_NAME}`,
     harnessTitle: "쓰던 구독 그대로",

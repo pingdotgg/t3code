@@ -109,7 +109,9 @@ later route, Ada checks earlier routes on a faster kind of network (LAN
 before Tailscale, Tailscale before a public address) when your network changes, when
 you return to the app, and every minute, and moves as soon as one works. It
 does not drop a working connection for an earlier route of the same kind, such
-as two Tailscale addresses; the order decides which is tried first next time.
+as two Tailscale addresses; the order decides which is tried first next time. A
+route whose machine refused this device's sign-in is marked **Sign-in
+refused**; pair that address again with **Add route** to use it.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,
@@ -144,6 +146,13 @@ Mobile keeps its manual environment selection.
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
 HTTPS** in **Settings → Environments**. Turn it off there to remove that route.
+
+Your tailnet needs MagicDNS and HTTPS certificates enabled; see
+[Tailscale's HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+On Linux, Ada also needs permission to manage Tailscale; see
+[operator permission](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission)
+for non-root users. If any of these is missing, Ada still starts but can't
+add the HTTPS route.
 
 A command-line server publishes itself on the tailnet with Tailscale HTTPS by
 default, and its startup log says so. To keep a server off the tailnet:

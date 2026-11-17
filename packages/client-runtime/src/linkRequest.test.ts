@@ -143,6 +143,7 @@ const presentation = (
               httpBaseUrl,
             })),
           } as unknown as ServerConfig),
+    refusedRouteIds: [],
   };
 };
 

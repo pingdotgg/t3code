@@ -653,7 +653,13 @@ const BootServiceProblem = Schema.Literals([
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
-export function formatBootServiceProblem(problem: BootServiceProblem): string {
+export function formatBootServiceProblem(
+  problem: BootServiceProblem,
+  commands: { readonly install: string; readonly restart: string } = {
+    install: `${CLI_COMMAND} service install`,
+    restart: `${CLI_COMMAND} service restart`,
+  },
+): string {
   switch (problem) {
     case "user-manager-unavailable":
       return `Cannot reach the systemd user manager. Run \`systemctl --user status\` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run ${APP_NAME} with sudo.`;
@@ -662,11 +668,11 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "linger-disabled":
       return `Lingering is disabled. ${APP_NAME} will stop when your last login session ends and will not start at boot. Run \`sudo loginctl enable-linger "$(id -un)"\` on this machine, then retry the service command as your normal user.`;
     case "service-disabled":
-      return `The service is not enabled to start automatically. Run \`${CLI_COMMAND} service install\` to repair it.`;
+      return `The service is not enabled to start automatically. Run \`${commands.install}\` to repair it.`;
     case "service-stopped":
-      return `The service is not running. Check the service log (on Linux, also \`systemctl --user status t3code.service\`), then run \`${CLI_COMMAND} service install\`.`;
+      return `The service is not running. Check the service log (on Linux, also \`systemctl --user status t3code.service\`), then run \`${commands.install}\`.`;
     case "restart-pending":
-      return `A newer version is installed but the service is still running the previous one. Run \`${CLI_COMMAND} service restart\` to switch.`;
+      return `A newer version is installed but the service is still running the previous one. Run \`${commands.restart}\` to switch.`;
   }
 }
 

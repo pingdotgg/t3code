@@ -25,6 +25,8 @@ export const ja: Messages = {
     downloadForMac: "macOS 版をダウンロード",
     downloadForWindows: "Windows 版をダウンロード",
     downloadForLinux: "Linux 版をダウンロード",
+    downloadForIos: "iOS 版をダウンロード",
+    downloadForAndroid: "Android 版をダウンロード",
     sourceLink: "コードを盗もう（合法的に）",
     screenshotAlt: `ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす ${APP_NAME}`,
     harnessTitle: "サブスクは持ち込みで",

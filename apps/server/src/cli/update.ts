@@ -24,18 +24,25 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../service/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  findPosixLauncher,
   launcherOwnsVersionsDir,
-  pinnedRuntimeCommand,
   isUnpublishedRelease,
-  PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  PinnedRuntimePreflightBlockedError,
   pinnedRuntimeVersionsDir,
   prunePinnedRuntimes,
+  readPosixLauncherTarget,
   recordPinnedRuntimeLauncher,
   resolveLauncherPath,
   windowsShimTarget,
+  writePosixLauncher,
 } from "../service/pinnedRuntime.ts";
-import { compareExactServiceVersions, isExactServiceVersion } from "../service/serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "../service/serviceProtocol.ts";
+import { runStagedServicePreflight } from "../service/servicePreflight.ts";
 import { findNewestReleaseVersion } from "../service/npmRelease.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
@@ -47,6 +54,7 @@ import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return this.reason;
@@ -106,6 +114,17 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
   return version;
 });
 
+/** What a legacy symlink or a launcher script on macOS and Linux runs. */
+const posixLauncherTarget = (launcher: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const link = yield* fs.readLink(launcher).pipe(Effect.option);
+    return Option.isSome(link)
+      ? path.resolve(path.dirname(launcher), link.value)
+      : yield* readPosixLauncherTarget(launcher).pipe(Effect.orElseSucceed(() => undefined));
+  });
+
 /**
  * The launcher this process ran through and its `ada`/`t3` sibling, each kept only when it already
  * points into this home's `runtime/versions` tree. A plain copy of the executable, or a launcher
@@ -130,12 +149,13 @@ const ownedLaunchers = Effect.fn("cli.update.owned_launchers")(function* (input:
           }),
           Effect.orElseSucceed(() => false),
         )
-      : fs.readLink(launcher).pipe(
-          Effect.map((target) => ownsTarget(path.resolve(path.dirname(launcher), target))),
-          Effect.orElseSucceed(() => false),
+      : posixLauncherTarget(launcher).pipe(
+          Effect.map((target) => target !== undefined && ownsTarget(target)),
         );
   const launcher =
-    platform === "win32" ? yield* findWindowsShim(input.launchedAs) : input.launchedAs;
+    platform === "win32"
+      ? yield* findWindowsShim(input.launchedAs)
+      : yield* findPosixLauncher({ launchedAs: input.launchedAs, versionsDir });
   if (launcher === undefined || !(yield* owned(launcher))) return [];
   const result = [launcher];
   for (const sibling of launcherSiblings(path, launcher)) {
@@ -167,10 +187,7 @@ export const ownedCommandOnPath = Effect.fn("cli.update.owned_command_on_path")(
           Effect.map(windowsShimTarget),
           Effect.orElseSucceed(() => undefined),
         )
-      : fs.readLink(launcher).pipe(
-          Effect.map((target) => path.resolve(path.dirname(launcher), target)),
-          Effect.orElseSucceed(() => undefined),
-        );
+      : posixLauncherTarget(launcher);
   const cwd = yield* HostProcess.WorkingDirectory;
   // POSIX shells search an empty entry (`:dir`, `dir::`) as the working directory.
   const directories = (environment["PATH"] ?? environment["Path"] ?? "")
@@ -250,10 +267,17 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
                     new CliUpdateError({ reason: `Could not rewrite the launcher at ${file}.` }),
                 ),
               )
-          : fs.symlink(input.targetEntryPath, `${file}.${process.pid}.tmp`).pipe(
-              Effect.andThen(fs.rename(`${file}.${process.pid}.tmp`, file)),
+          : writePosixLauncher({
+              launcher: file,
+              executable: input.targetEntryPath,
+              exclusive: false,
+            }).pipe(
               Effect.mapError(
-                () => new CliUpdateError({ reason: `Could not repoint the launcher at ${file}.` }),
+                (cause) =>
+                  new CliUpdateError({
+                    reason: `Could not repoint the launcher at ${file}.`,
+                    cause,
+                  }),
               ),
             ),
       ),
@@ -344,6 +368,7 @@ export const updateCommand = Command.make("update", {
       return yield* runUpdate({
         baseDir: config.baseDir,
         logsDir: config.logsDir,
+        databasePath: config.dbPath,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
         requestedVersion: Option.getOrUndefined(flags.version),
@@ -409,6 +434,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
+  readonly databasePath: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
   readonly requestedVersion: string | undefined;
@@ -570,31 +596,37 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     arch,
     releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
     requirePublishedRelease: mirror !== undefined,
-    validate: (paths) =>
-      runner
-        .run({
-          command: pinnedRuntimeCommand(paths).command,
-          args: [...pinnedRuntimeCommand(paths).args, "--version"],
-          timeout: Duration.seconds(30),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PinnedRuntimeInstallError({ step: "verifying the downloaded t3", cause }),
-          ),
-          Effect.flatMap((result) =>
-            result.code === 0 && /\bv(\S+)\s*$/.exec(result.stdout)?.[1] === targetVersion
-              ? Effect.void
-              : Effect.fail(
-                  new PinnedRuntimeInstallError({
-                    step: "verifying the downloaded t3",
-                    exitCode: Number(result.code),
+    validate: (runtime) =>
+      runStagedServicePreflight({
+        runner,
+        runtime,
+        targetVersion,
+        databasePath: input.databasePath,
+        // The target then runs under its own launcher, so only its database check matters. Older
+        // builds may predate protocol 4; every stable release since 0.0.43 accepts 3.
+        launcherProtocol:
+          compareExactServiceVersions(targetVersion, currentVersion) < 0
+            ? 3
+            : SERVICE_LAUNCHER_PROTOCOL,
+      }).pipe(
+        Effect.catchTags({
+          PinnedRuntimeInstallError: (error) =>
+            Effect.fail(
+              error.exitCode === undefined
+                ? error
+                : new PinnedRuntimePreflightBlockedError({
+                    version: targetVersion,
+                    reason: `t3@${targetVersion} could not confirm it supports this database (its check exited with code ${error.exitCode}), so ${APP_NAME} did not switch to it.`,
                   }),
-                ),
-          ),
-        ),
+            ),
+        }),
+      ),
   }).pipe(
     Effect.ensuring(Effect.sync(progress.finish)),
+    Effect.catchTags({
+      PinnedRuntimePreflightBlockedError: (error) =>
+        Effect.fail(new CliUpdateError({ reason: error.reason })),
+    }),
     Effect.catchIf(isUnpublishedRelease, () =>
       Effect.fail(
         new CliUpdateError({

@@ -10,7 +10,7 @@
 #                            preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
 #   T3CODE_HOME              T3 home directory (default: ~/.t3)
-#   T3CODE_INSTALL_BIN_DIR   where the `ada` and `t3` symlinks go (default: ~/.local/bin)
+#   T3CODE_INSTALL_BIN_DIR   where the `ada` and `t3` commands go (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
@@ -269,22 +269,49 @@ fi
 
 step "Setting up the ada and t3 commands..."
 mkdir -p "$bin_dir"
-# Replace only this home's own links: into its versions, or the desktop app's launcher.
-# Anything that is not a symlink (a script, a copied binary) belongs to someone else.
+# Exec by absolute path: through a symlink, argv0 is the link, and the Cursor SDK looks for its
+# helpers beside it. ada update and ada install write the same script.
+nl='
+'
+launcher_head="#!/bin/sh${nl}exec '"
+launcher_tail="' \"\$@\"${nl}"
+# The x keeps a trailing newline in the path through command substitution.
+launcher_script() {
+  quoted="$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"
+  printf '%s%s%s' "$launcher_head" "${quoted%x}" "$launcher_tail"
+}
+# The executable an unedited launcher script at $1 runs; a user's own wrapper prints nothing.
+script_t3() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -c < "$1")" -le 4096 ] || return 0
+  contents="$(cat "$1"; printf x)"
+  contents="${contents%x}"
+  case "$contents" in "$launcher_head"*"$launcher_tail") ;; *) return 0 ;; esac
+  quoted="${contents#"$launcher_head"}"
+  unquoted="$(printf '%sx' "${quoted%"$launcher_tail"}" | sed "s/'\\\\''/'/g")"
+  unquoted="${unquoted%x}"
+  [ -n "$unquoted" ] && [ "$(launcher_script "$unquoted"; printf x)" = "${contents}x" ] && printf '%s' "$unquoted"
+  return 0
+}
+# Replace only this home's own launchers: into its versions, or the desktop app's launcher.
+# Anything else (a user's script, a copied binary) belongs to someone else.
 # Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
 version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
   case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
 }
-# Whether ${bin_dir}/$1, which exists, is one of this home's own links.
-owned_link() {
-  [ -L "${bin_dir}/$1" ] || return 1
-  existing="$(readlink "${bin_dir}/$1" 2>/dev/null || true)"
-  case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+# Whether ${bin_dir}/$1, which exists, is one of this home's own launchers or legacy links.
+owned_launcher() {
+  if [ -L "${bin_dir}/$1" ]; then
+    existing="$(readlink "${bin_dir}/$1" 2>/dev/null || true)"
+    case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  else
+    existing="$(script_t3 "${bin_dir}/$1")"
+  fi
+  [ -n "$existing" ] || return 1
   real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
-  # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
+  # Through a symlinked T3 home the path names the alias; resolve its folder to compare.
   existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
-  # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
+  # The text alone counts only without . or .. segments (a pruned version leaves a dangling path).
   case "$existing" in
     */./* | */../* | */. | */..) ;;
     *)
@@ -294,23 +321,41 @@ owned_link() {
   esac
   [ -n "$existing_dir" ] && version_t3 "${existing_dir}/${existing##*/}" "$real_versions_dir"
 }
-# Links ${bin_dir}/$1 to this version's t3. Fails, changing nothing, when another program has it.
+# Writes ${bin_dir}/$1 to run this version's t3. Fails, changing nothing, when another program has it.
 link_command() {
+  slot_empty=true
   if [ -e "${bin_dir}/$1" ] || [ -L "${bin_dir}/$1" ]; then
-    owned_link "$1" || return 1
-    # Known race, accepted: a file written here after the ownership check above is overwritten.
-    ln -sfn "${target_dir}/t3" "${bin_dir}/$1" || fail "could not link ${bin_dir}/$1."
-  else
-    # An empty spot is linked without -f, so a file that appears after the check above is kept.
-    ln -s "${target_dir}/t3" "${bin_dir}/$1" 2>/dev/null || return 1
+    owned_launcher "$1" || return 1
+    slot_empty=false
   fi
+  # Called as an if condition, so set -e does not stop on failures here.
+  launcher_tmp="$(mktemp "${bin_dir}/.t3.XXXXXX")" || fail "could not write to ${bin_dir}."
+  { launcher_script "${target_dir}/t3" > "$launcher_tmp" && chmod 755 "$launcher_tmp"; } ||
+    fail "could not write ${bin_dir}/$1."
+  if "$slot_empty"; then
+    # An empty spot is hard-linked without -f, so a file that appears after the check above is kept.
+    if ! ln "$launcher_tmp" "${bin_dir}/$1" 2>/dev/null; then
+      rm -f "$launcher_tmp"
+      launcher_tmp=
+      return 1
+    fi
+  else
+    # Known race, accepted: a file written here after the ownership check above is overwritten.
+    # mv replaces a legacy symlink rather than writing through it.
+    mv -f "$launcher_tmp" "${bin_dir}/$1" || fail "could not write ${bin_dir}/$1."
+  fi
+  rm -f "$launcher_tmp"
+  launcher_tmp=
   # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
   launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/$1"
   launchers="${t3_home}/runtime/launchers"
   grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 }
 # `ada` is the command's name; `t3` keeps existing scripts and habits working. Either one is enough.
-command_name= kept=
+command_name= kept= launcher_tmp=
+trap '[ -z "$launcher_tmp" ] || rm -f "$launcher_tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for name in ada t3; do
   if link_command "$name"; then
     [ -n "$command_name" ] || command_name="$name"
@@ -318,6 +363,7 @@ for name in ada t3; do
     kept="${kept}${kept:+ }${name}"
   fi
 done
+trap - EXIT
 [ -n "$command_name" ] || fail "another ada and t3 are already at ${bin_dir}/ada and ${bin_dir}/t3. Remove one and run this again, or run ${target_dir}/t3 directly."
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled Ada %s%s\n\n' "$green" "$version" "$reset" >&2

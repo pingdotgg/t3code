@@ -62,9 +62,10 @@ Run `ada help` or `ada --help` for the full reference. To start in a new working
 directory, use an explicit path such as `ada ./my-project`. A bare directory name
 is accepted only if it already exists.
 
-If `ada` or `ada start` reports an already running server, connect to that server
-instead. Stop it before starting a replacement, or use a different `--base-dir`
-for an independent server.
+If `ada` or `ada start` reports an already running server, run the `ada pair`
+command it names and open the pairing URL to connect to that server. Stop it
+before starting a replacement, or use a different `--base-dir` for an
+independent server.
 
 ### Intel Macs
 

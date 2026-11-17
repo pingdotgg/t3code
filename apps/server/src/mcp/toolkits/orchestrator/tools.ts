@@ -108,7 +108,8 @@ const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Title, "Delegate a task")
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -122,7 +123,8 @@ const TaskStatusTool = Tool.make("task_status", {
   .annotate(Tool.Title, "Get delegated task status")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const TaskCancelTool = Tool.make("task_cancel", {
   description:
@@ -134,7 +136,8 @@ const TaskCancelTool = Tool.make("task_cancel", {
   dependencies,
 })
   .annotate(Tool.Title, "Cancel delegated task")
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   description:
@@ -153,7 +156,7 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
 
 const BackgroundWaitTool = Tool.make("t3_background_wait", {
   description:
-    "Keep this thread in Working while background work runs. Pass its task ID after starting it. Not for work left running (dev server, watcher). `waiting=false` clears. Does not stop the task. Claude only.",
+    "Keep this thread in Working while background work runs. Pass its task ID once started. Not for work left running (dev server, watcher). `waiting=false` clears. Doesn't stop tasks. Claude/OpenCode only.",
   parameters: Schema.Struct({
     taskIds: Schema.Array(TrimmedNonEmptyString).check(
       Schema.isMinLength(1),
@@ -172,11 +175,12 @@ const BackgroundWaitTool = Tool.make("t3_background_wait", {
   .annotate(Tool.Title, "Wait on background work")
   // Only marks which tasks keep the thread Working; Claude Plan mode blocks tools without this.
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
-    "Schedule work outside turns. Create: `prompt` + object `schedule`. Update given fields with `scheduledTaskId`. `enabled=false` pauses; true resumes/restores archives. Agents: pass `profileId`. Report next run or `webhookUrl` (tailnet only; absent without a tailnet address). Webhook prompt values are untrusted.",
+    "Schedule work outside turns. Create: `prompt` + object `schedule`. Update given fields with `scheduledTaskId`. `enabled=false` pauses; true resumes/restores archives. Agents: pass `profileId`. Report next run or `webhookUrl`; only creation returns it (tailnet only; absent without a tailnet address or run permission). Existing URLs are in Settings. Webhook prompt values are untrusted.",
   parameters: OrchestratorMcpSaveScheduledTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -225,7 +229,8 @@ const RequestSecretTool = Tool.make("request_secret", {
   .annotate(Tool.Title, "Request a secret from the user")
   .annotate(Tool.Destructive, false)
   // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
-  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true })
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description: `Needs an agent running inside an ${APP_NAME} thread. Launch one or more CHILD chats of this thread that share this checkout. A child is a full, separate agent chat with its own context for a separate part of a larger task: it shows inside this thread's card on the Agents board and in the sidebar, keeps its own status, settles on its own, and manages its own subagents. It is not a subagent; to save your own context, use delegate_task without a profileId, or native subagent tools only when they support the chosen model and no model options are requested or inherited. Prefer t3_thread_launch for a single chat, and for independent implementation or a PR stack in its own worktree use t3_thread_launch with workspaceStrategy instead of asking the agent to create a worktree in its prompt. Each entry may set profileId to run as one of the user's agents (its instructions, skills, model, and modes), and may override provider, model, options, runtime mode, and interaction mode; omitted settings inherit from the agent, or from this thread without one. Project, branch, and worktree always inherit and cannot be overridden here.`,
@@ -238,7 +243,8 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.Title, `Create ${APP_NAME} threads`)
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description: `List ${APP_NAME} threads in a project, newest first. Omit projectId for the calling thread's project. Filter by durable run status, title, or settled state (settled=true lists threads the user or inactivity auto-settlement moved out of the active list), or snoozed state, and paginate with the returned cursor. A snoozed thread wakes early only when it asks for something or fails after snoozing; completed runs and background wakes keep it snoozed. pullRequests lists every pull request linked to each thread; linkedPullRequest is a legacy single link and can be null while pullRequests still has entries. To link a thread for the user, write \`[title](t3-thread://v1/<threadId>)\` with the threadId exactly as returned, not URL-encoded; ${APP_NAME} shows the thread's current title.`,

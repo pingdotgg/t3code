@@ -562,7 +562,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs an ${APP_NAME} version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`, self.environmentId);
+    const issued = yield* signIn(primary, input, `${APP_NAME} · ${self.label}`, self.environmentId);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -710,8 +710,8 @@ const make = Effect.gen(function* () {
         });
       }
       // The token goes only to an address that still answers as this peer,
-      // so one that now answers as another machine never receives it.
-      // Every address is asked at once, so one that is asleep does not hold back one that answers.
+      // so one that now answers as another machine never receives it. The
+      // addresses race, so a silent one never delays one that answers.
       const answered =
         link.urls.length === 0
           ? Option.none()
@@ -729,17 +729,18 @@ const make = Effect.gen(function* () {
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
         });
       }
+      const { url, peer } = answered.value;
       // A link made before the peer had to fence linked work, or a peer moved
       // back to such a version, would carry work past those limits.
-      if (!linkLimitsHold(answered.value.peer)) {
+      if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs an ${APP_NAME} version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
       return {
-        link: yield* withLabel(link, answered.value.peer.label),
-        url: answered.value.url,
+        link: yield* withLabel(link, peer.label),
+        url,
         token: new TextDecoder().decode(stored.value),
       };
     },

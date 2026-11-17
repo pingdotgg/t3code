@@ -56,7 +56,24 @@ const planLan = (
   ask: Option.isNone(flags.lan),
 });
 
-const formatSetup = (setup: Setup) => {
+/** The commands hints name, run with the caller's --base-dir and launcher. */
+const resolveHints = Effect.fn("cli.up.resolve_hints")(function* (baseDir: Option.Option<string>) {
+  const baseDirArgs = Option.match(baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const command = (subcommand: string, args: ReadonlyArray<string> = []) =>
+    Effect.map(resolveHostCliCommand(subcommand, [...baseDirArgs, ...args]), (r) => r.command);
+  return {
+    run: yield* command(""),
+    pair: yield* command("pair"),
+    up: yield* command("up"),
+    upNoLan: yield* command("up", ["--no-lan"]),
+  };
+});
+type Hints = Effect.Success<ReturnType<typeof resolveHints>>;
+
+const formatSetup = (setup: Setup, hints: Hints) => {
   const { service } = setup;
   // This home's access settings reach no service, so only the service is shown.
   if (service.otherBaseDir !== undefined) {
@@ -91,7 +108,7 @@ const formatSetup = (setup: Setup) => {
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
     ...(setup.lanFromOldDefault
-      ? [`Older installs keep LAN access on. Turn it off: \`${CLI_COMMAND} up --no-lan\`.`]
+      ? [`Older installs keep LAN access on. Turn it off: \`${hints.upNoLan}\`.`]
       : []),
   ];
   return [
@@ -100,12 +117,12 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (lan: boolean, serviceInstalled: boolean, pairCommand: string) =>
+const formatNextSteps = (lan: boolean, serviceInstalled: boolean, hints: Hints) =>
   lan
-    ? `Run \`${pairCommand}\`. Use the code on your other device.`
+    ? `Run \`${hints.pair}\`. Use the code on your other device.`
     : serviceInstalled
       ? `Remote access is off. ${APP_NAME} still runs here in the background.`
-      : `Remote access is off. Run \`${CLI_COMMAND}\` to use ${APP_NAME} here.`;
+      : `Remote access is off. Run \`${hints.run}\` to use ${APP_NAME} here.`;
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -120,7 +137,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     onNone: () => [],
     onSome: (dir) => ["--base-dir", dir],
   });
-  const { command: pairCommand } = yield* resolveHostCliCommand("pair", baseDirArgs);
+  const hints = yield* resolveHints(flags.baseDir);
   const before = yield* readSetup();
   // Before any question or write: install would refuse only after both.
   if (before.service.otherBaseDir !== undefined) {
@@ -133,7 +150,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const interactive = !flags.yes && interactiveTerminal();
   let lan = plan.lan;
   if (plan.ask && interactive) {
-    if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
+    if (before.service.installed)
+      yield* Console.log(`Current setup\n${formatSetup(before, hints)}\n`);
     const picked = yield* Prompt.run(
       Prompt.Confirm({
         message: "Allow LAN and tailnet connections? A pairing code is the only lock.",
@@ -157,7 +175,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   // Nothing to run in the background, but local network access left on still gets turned off.
   if (!before.service.installed && !lan) {
     if (before.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(false, false, pairCommand));
+    return yield* Console.log(formatNextSteps(false, false, hints));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -241,9 +259,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     if ("failed" in result && before.service.installed) {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
-      const { command } = yield* resolveHostCliCommand("up", baseDirArgs);
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`${command}\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${hints.up}\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -268,10 +285,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const after = yield* readSetup();
   yield* Console.log(
     // From what took effect: a failed service step can undo a choice.
-    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
+    `\nThis machine\n${formatSetup(after, hints)}\n\n${formatNextSteps(
       after.lan,
       after.service.installed,
-      pairCommand,
+      hints,
     )}`,
   );
 });
@@ -361,12 +378,12 @@ export const statusCommand = Command.make("status", {
           CliService.layer(config).pipe(Layer.provideMerge(ServerConfig.layer(config))),
         ),
       );
+      if (flags.json) return yield* Console.log(setupJson(setup));
+      const hints = yield* resolveHints(flags.baseDir);
       yield* Console.log(
-        flags.json
-          ? setupJson(setup)
-          : setup.service.otherBaseDir !== undefined
-            ? `This machine\n${formatSetup(setup)}`
-            : `This machine\n${formatSetup(setup)}\n\nChange access: \`${CLI_COMMAND} up\`.`,
+        setup.service.otherBaseDir !== undefined
+          ? `This machine\n${formatSetup(setup, hints)}`
+          : `This machine\n${formatSetup(setup, hints)}\n\nChange access: \`${hints.up}\`.`,
       );
     }),
   ),

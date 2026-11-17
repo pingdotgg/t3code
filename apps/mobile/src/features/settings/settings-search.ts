@@ -40,7 +40,6 @@ const SETTINGS_SEARCH_TERMS = {
     "zen",
     "final answers only",
   ],
-  SettingsLanguage: ["language", "locale", "translation", "english"],
   SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
   SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],
   SettingsVoice: [
@@ -60,6 +59,10 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],
   SettingsProjectOverview: ["project", "overview", "checkouts", "delete project"],
   SettingsOrganization: [
+    "language",
+    "locale",
+    "translation",
+    "english",
     "project grouping",
     "group projects",
     "organization",
