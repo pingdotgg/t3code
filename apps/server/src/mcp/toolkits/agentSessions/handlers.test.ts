@@ -1,4 +1,6 @@
 import { expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -15,10 +17,19 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { HttpServerRequest } from "effect/http";
+import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
+import * as McpOAuth from "../../../auth/McpOAuth.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../../../policy/ManagedPolicy.ts";
 import * as AgentSessionImporter from "../../../project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "../../../project/AgentSessionScanner.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as AgentSessionsHandlers from "./handlers.ts";
@@ -207,6 +218,73 @@ it.effect.each([
     });
   }).pipe(Effect.scoped, Effect.provide(layerToolkit)),
 );
+
+it.effect("stops later import candidates when the admitted OAuth session is revoked", () => {
+  const layerAuth = EnvironmentAuth.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(scope.environmentId),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-import-revocation-" })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+  return Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const authenticator = yield* McpHttpServer.McpClientAuthenticator;
+    const issued = yield* auth.issueMcpClientSession({
+      label: "Import client",
+      access: "full-access",
+      peerLink: false,
+      client: { deviceType: "bot" },
+    });
+    const admitted = yield* authenticator.authenticate(
+      HttpServerRequest.fromWeb(
+        new Request("http://localhost/mcp", {
+          headers: { authorization: `Bearer ${issued.token}` },
+        }),
+      ),
+    );
+    expect(admitted).toBeDefined();
+    const importedCandidates: string[] = [];
+    const toolkit = yield* AgentSessionsToolkit;
+    const imported = yield* toolkit.handle("t3_agent_sessions_import", { projectId }).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.provideService(McpInvocationContext.McpInvocationContext, admitted!),
+      Effect.provideService(
+        AgentSessionImporter.AgentSessionImporter,
+        AgentSessionImporter.AgentSessionImporter.of({
+          importRecentAgentThreads: (_input, check = Effect.void) =>
+            Effect.gen(function* () {
+              yield* check;
+              importedCandidates.push("first");
+              yield* auth.revokeSession(issued.sessionId).pipe(Effect.orDie);
+              yield* check;
+              importedCandidates.push("second");
+              return { importedCount: importedCandidates.length, skippedCount: 0 };
+            }),
+          importNativeHistory: () => Effect.die("Native history is not used"),
+        }),
+      ),
+    );
+    expect(imported.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+    expect(importedCandidates).toEqual(["first"]);
+    expect(JSON.stringify(imported.at(-1)?.result)).not.toContain(issued.token);
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        layerToolkit,
+        McpOAuth.layerMcpClientAuthenticator.pipe(Layer.provideMerge(layerAuth)),
+      ),
+    ),
+    Effect.scoped,
+  );
+});
 
 it.effect("does not disclose internal scan or import failures", () =>
   Effect.gen(function* () {

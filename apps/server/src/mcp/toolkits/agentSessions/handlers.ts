@@ -18,7 +18,10 @@ export const layer = McpToolAccess.toLayer(AgentSessionsToolkit, {
     Effect.gen(function* () {
       const importer = yield* AgentSessionImporter.AgentSessionImporter;
       return yield* importer
-        .importRecentAgentThreads(input, check)
+        .importRecentAgentThreads(
+          input,
+          check.pipe(Effect.tap((caller) => caller.scope.client?.checkActive ?? Effect.void)),
+        )
         .pipe(
           Effect.mapError((error) =>
             error._tag === "OrchestratorMcpFailure"

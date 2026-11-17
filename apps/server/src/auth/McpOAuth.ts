@@ -14,6 +14,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   MCP_PEER_LINK_SOFTWARE_ID,
+  OrchestratorMcpFailure,
   mcpClientScopes,
   parseMcpApprovalCode,
   type RuntimeMode,
@@ -628,6 +629,25 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     sessionId: client.sessionId,
                     label: client.label,
                     access: client.access,
+                    checkActive: environmentAuth.authenticateMcpClient(request).pipe(
+                      Effect.map(
+                        (current) =>
+                          current.sessionId === client.sessionId &&
+                          current.access === client.access &&
+                          current.peerLink === client.peerLink,
+                      ),
+                      Effect.orElseSucceed(() => false),
+                      Effect.flatMap((active) =>
+                        active
+                          ? Effect.void
+                          : Effect.fail(
+                              new OrchestratorMcpFailure({
+                                code: "capability_denied",
+                                message: "The MCP client session is no longer authorized.",
+                              }),
+                            ),
+                      ),
+                    ),
                     linked: client.peerLink,
                     ...(client.peerLink ? {} : { hostedAppUrl }),
                   },

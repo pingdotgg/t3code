@@ -36,6 +36,7 @@ export interface McpClientCaller {
   readonly sessionId: string;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
+  readonly checkActive?: Effect.Effect<void, OrchestratorMcpFailure>;
   /**
    * Another T3 Code environment's peer link. What it starts here carries its
    * session as `linkOrigin`, and it changes only that work (`linkOrigin.ts`).
