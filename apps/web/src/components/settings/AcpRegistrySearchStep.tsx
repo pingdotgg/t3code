@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import {
   ACP_REGISTRY_MAX_AGENTS,
   ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
+  resolveOfficialAcpRegistryIconUrl,
   AuthProvidersManageScope,
 } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -279,7 +280,7 @@ function AcpRegistryAgentRow({
             driverKind={ProviderDriverKind.make("acpRegistry")}
             displayName={agent.name}
             acpRegistryAgentId={agent.id}
-            acpRegistryIconUrl={agent.icon ?? undefined}
+            acpRegistryIconUrl={resolveOfficialAcpRegistryIconUrl(agent.icon) ?? undefined}
             iconClassName="size-6 rounded-md text-muted-foreground"
           />
           <div className="min-w-0 flex-1">
