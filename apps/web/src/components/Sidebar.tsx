@@ -997,6 +997,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeTarget?.kind === "draft" ? store.getPromotedDraftRedirect(routeTarget.draftId) : null,
   );
   const environmentMachineById = useEnvironmentMachines();
+  const hasProjects = projectGroups.length > 0;
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
@@ -2905,6 +2906,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (command === "projectFilter.toggle") {
         event.preventDefault();
         event.stopPropagation();
+        if (!hasProjects) {
+          if (projectScopeMenuState.open) {
+            dispatchProjectScopeMenu({ type: "open-changed", open: false });
+          }
+          return;
+        }
         const nextOpen = !projectScopeMenuState.open;
         if (nextOpen) {
           setProjectScopeMenuAnchor(
@@ -2950,6 +2957,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    hasProjects,
     keybindings,
     isMobile,
     navigateToThread,
@@ -2962,6 +2970,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     sidebarState,
     threadByKey,
   ]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the filter unmounts without projects, so a stale open state must not reopen it later
+  useEffect(() => {
+    if (hasProjects || !projectScopeMenuState.open) return;
+    dispatchProjectScopeMenu({ type: "open-changed", open: false });
+  }, [hasProjects, projectScopeMenuState.open]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records pointer coordinates for shortcut-opened popovers
   useEffect(() => {
@@ -3013,7 +3027,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
-              hasProjects={projectGroups.length > 0}
+              hasProjects={hasProjects}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
