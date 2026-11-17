@@ -95,7 +95,12 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
   );
 }
 
-// One UTF-8 byte per token is a pessimistic estimate, not a guarantee for custom models.
+// Stored history is mostly prose and tool output, about four UTF-8 bytes per token.
+export function estimateTextTokens(text: string): number {
+  return Math.ceil(Buffer.byteLength(text) / 4);
+}
+
+// One UTF-8 byte per token keeps the new turn and imported history pessimistic.
 export function handoffBudget(input: {
   readonly tokenCap: number;
   readonly userText: string;
@@ -113,13 +118,15 @@ export function handoffBudget(input: {
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
   const current =
     Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+  // Small windows would otherwise reserve all of themselves for work.
+  const workReserve = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   return Math.max(
     0,
     Math.min(
       input.tokenCap,
       // Cap imported history only; adapters own attachment transport limits.
       HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      window - native - current - workReserve,
     ),
   );
 }
@@ -147,7 +154,7 @@ export function historicalMessage(
       text = item.message;
       break;
     case "file_change":
-      text = `File change: ${item.changes?.map((change) => change.path).join(", ") ?? item.fileName}`;
+      text = `File change: ${item.changes?.length ? item.changes.map((change) => change.path).join(", ") : item.fileName}`;
       break;
     case "proposed_plan":
       text = item.markdown;

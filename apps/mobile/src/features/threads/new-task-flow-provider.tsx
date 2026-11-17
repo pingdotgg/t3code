@@ -2,7 +2,7 @@ import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -19,6 +19,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
+import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -88,7 +89,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { isSameRepository, resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -102,6 +103,7 @@ import {
   stampedEnvironmentProjectsLoading,
   updateNewTaskFlowState,
 } from "./new-task-flow-state";
+import { usePrepareTriage } from "../triage/usePrepareTriage";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
@@ -302,11 +304,23 @@ export function NewTaskFlowProvider(
   // binding outlives the draft's project stamp (submit clears it).
   const updateFlow = (patch: Partial<NewTaskFlowState>) =>
     updateNewTaskFlowState(flowKey, { ...readFlow(), ...patch });
+  // A draft's project stamp is the selection: picking a project writes it, and uploads and
+  // the send read it, so the screen cannot show one project while the draft holds another.
+  const draftStamp = useComposerDraft(activeDraftKey).project;
+  const stampedProject =
+    draftStamp === undefined
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === draftStamp.environmentId &&
+            project.id === draftStamp.projectId,
+        );
   const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
+    stampedProject?.environmentId ??
+    (selectedEnvironmentIdOverride !== null &&
     projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+      : (projects[0]?.environmentId ?? null));
   const projectsForEnvironment = pipe(
     projects,
     Arr.filter((project) => project.environmentId === selectedEnvironmentId),
@@ -317,7 +331,8 @@ export function NewTaskFlowProvider(
   const selectedProject =
     routeDraftResolution.kind === "pending"
       ? null
-      : (projectsForEnvironment.find(
+      : (stampedProject ??
+        projectsForEnvironment.find(
           (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
         ) ??
         projectsForEnvironment[0] ??
@@ -331,25 +346,6 @@ export function NewTaskFlowProvider(
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
-  useEffect(() => {
-    // A route that names a draft binds that draft, or returns to the picker.
-    if (
-      props.active === false ||
-      props.routeDraftId !== undefined ||
-      activeDraftKey !== null ||
-      selectedProject === null
-    ) {
-      return;
-    }
-    // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
-    updateNewTaskFlowState(flowKey, {
-      draftKey: createNewTaskDraft({
-        environmentId: selectedProject.environmentId,
-        projectId: selectedProject.id,
-      }),
-    });
-  }, [activeDraftKey, flowKey, selectedProject, props.active, props.routeDraftId]);
   const activePendingKey =
     props.active === false
       ? null
@@ -558,11 +554,14 @@ export function NewTaskFlowProvider(
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   };
 
-  const carryDraftContentTo = (project: EnvironmentProject): string => {
+  const carryDraftContentTo = (
+    project: EnvironmentProject,
+    options?: Parameters<typeof retargetNewTaskDraft>[2],
+  ): string => {
     const target = { environmentId: project.environmentId, projectId: project.id };
     const current = readFlow().draftKey;
     if (current !== null && isNewTaskDraftKey(current)) {
-      retargetNewTaskDraft(current, target);
+      retargetNewTaskDraft(current, target, options);
       return current;
     }
     return createNewTaskDraft(target);
@@ -582,13 +581,19 @@ export function NewTaskFlowProvider(
       selectedProject,
     );
     updateFlow({
-      draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
+      // A name or title match may be another repository, which must not receive the PR checkout.
+      draftKey: match
+        ? carryDraftContentTo(match, {
+            keepPullRequestWorkspace: isSameRepository(match, selectedProject),
+          })
+        : readFlow().draftKey,
       environmentId,
       projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
     });
   };
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
+  const prepareTriage = usePrepareTriage();
   const [switchingToEnvironmentId, setSwitchingToEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
@@ -606,11 +611,27 @@ export function NewTaskFlowProvider(
     const request = {};
     latestSwitchRef.current = request;
     setSwitchingToEnvironmentId(environmentId);
-    const result = await openScratch({ environmentId, input: {} });
+    // A triage draft takes its session along: the playbook and context files
+    // exist only on the machine that prepared them.
+    const { draftKey, projectKey } = readFlow();
+    const triage =
+      draftKey !== null && isTriagePrompt(getComposerDraftSnapshot(draftKey).text)
+        ? await prepareTriage(environmentId)
+        : null;
+    const result =
+      triage?._tag === "Failure" ? triage : await openScratch({ environmentId, input: {} });
     if (latestSwitchRef.current !== request) return false;
     latestSwitchRef.current = null;
     setSwitchingToEnvironmentId(null);
+    // A project picked while this waited stands.
+    if (readFlow().projectKey !== projectKey) return false;
     if (result._tag === "Success") {
+      if (triage?._tag === "Success" && draftKey !== null && readFlow().draftKey === draftKey) {
+        // Read now, so text typed while the machine prepared the session is kept.
+        const text = getComposerDraftSnapshot(draftKey).text;
+        const nextText = replaceTriagePlaybookLink(text, triage.value.prompt);
+        if (nextText !== text) setComposerDraftText(draftKey, nextText);
+      }
       setProject(result.value);
       return true;
     }
@@ -620,7 +641,9 @@ export function NewTaskFlowProvider(
         "Could not switch machine",
         error instanceof Error
           ? error.message
-          : "The folder for threads without a project could not be created.",
+          : triage?._tag === "Failure"
+            ? "The server could not prepare triage."
+            : "The folder for threads without a project could not be created.",
       );
     }
     return false;
@@ -884,7 +907,14 @@ export function NewTaskFlowProvider(
     appendAttachments,
     removeAttachment,
     clearAttachments,
-    setSubmitting: (value: boolean) => updateFlow({ submitting: value }),
+    setSubmitting: (value: boolean) => {
+      // A send takes the draft as it is, so a machine switch still waiting is dropped.
+      if (value) {
+        latestSwitchRef.current = null;
+        setSwitchingToEnvironmentId(null);
+      }
+      updateFlow({ submitting: value });
+    },
     loadBranches,
     setRuntimeMode,
     setSelectedModelOptions,

@@ -14,6 +14,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { readBrowserClientSettings } from "../../clientPersistenceStorage";
 import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
 import {
   useEnvironmentSpeechInput,
@@ -121,7 +122,7 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
       modelId: "both",
       model: "Bilingual",
       size: 100,
-      supportsStreaming: false,
+      supportsStreaming: true,
       supportsTranslation: false,
       acceleration: "auto",
       modelUnloadTimeout: "never",
@@ -171,6 +172,10 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         prepared,
       }),
       async () => {
+        const previous = getClientSettings();
+        using cleanup = new DisposableStack();
+        cleanup.defer(() => __setClientSettingsForTests(previous));
+        __setClientSettingsForTests({ ...previous, speechStreaming: true });
         const panel = () => (
           <SettingsScopeProvider search={{}} onChange={() => {}}>
             <VoiceSettingsPanel />
@@ -178,6 +183,13 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         );
         await using screen = await render(panel());
         await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
+        const streaming = screen.getByRole("switch", { name: "Streaming transcription" });
+        await expect.element(streaming).toBeEnabled();
+        await expect.element(streaming).toBeChecked();
+        streaming.element().focus();
+        await userEvent.keyboard(" ");
+        await vi.waitFor(() => expect(readBrowserClientSettings()?.speechStreaming).toBe(false));
         prepared = remote;
         await screen.rerender(panel());
         await remoteRequested.promise;
@@ -185,15 +197,28 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         remoteStatus.resolve(
           Response.json({
             ...status,
+            supportsStreaming: false,
             benchmarkTier: "accelerated",
             gpuDevices: [{ id: "gpu", name: "Remote GPU" }],
           }),
         );
         await expect.element(screen.getByText(gpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
+        await expect.element(streaming).toBeDisabled();
+        await expect.element(streaming).not.toBeChecked();
+        await expect
+          .element(screen.getByText("This model doesn’t support native streaming."))
+          .toBeVisible();
         prepared = local;
         await screen.rerender(panel());
         await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await userEvent.click(screen.getByRole("button", { name: "Advanced", exact: true }));
         await expect.element(screen.getByText(gpuBenchmark)).not.toBeInTheDocument();
+        await expect.element(streaming).toBeEnabled();
+        await expect.element(streaming).not.toBeChecked();
+        streaming.element().focus();
+        await userEvent.keyboard(" ");
+        await vi.waitFor(() => expect(readBrowserClientSettings()?.speechStreaming).toBe(true));
       },
     );
   },
@@ -303,6 +328,7 @@ it("tests the selected model after download and preserves its transcript across 
           state: { phase: "idle", error: null, errorAction: null },
           preview: null,
           level: 0,
+          recordingStartedAt: null,
           preparing: false,
           blocksSubmission: false,
           freezesEditor: false,
@@ -517,6 +543,7 @@ it("recovers from a failed download progress poll without notifying, but reports
 it.each([
   ["speech-models", "voice-transcription-destination"],
   ["speech-hardware", "voice-transcription-destination"],
+  ["speech-streaming", "voice-transcription-destination"],
   ["transcription-test", "voice-transcription-destination"],
   ["speech-correction-word", "speech-post-processing"],
   ["speech-post-processing-model", "speech-post-processing"],
@@ -597,6 +624,33 @@ it("keeps punctuation in a saved dictionary term and its alias", async () => {
   expect(getClientSettings().speechCustomWords).toEqual([
     { term: "O'Reilly", aliases: ['"Oh Really"'] },
   ]);
+});
+
+it("keeps a dictionary term and alias draft on the Enter that confirms an IME candidate", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({
+    ...previous,
+    speechCustomWords: [{ term: "日本語", aliases: [] }],
+  });
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  const composingEnter = () =>
+    new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
+  const term = screen.getByRole("textbox", { name: "Add a word or phrase to the dictionary" });
+  await userEvent.fill(term, "にほん");
+  term.element().dispatchEvent(composingEnter());
+  await expect.element(term).toHaveValue("にほん");
+  await userEvent.click(screen.getByRole("button", { name: "Add an alias for 日本語" }));
+  const alias = screen.getByRole("textbox", { name: "Alias for 日本語" });
+  await userEvent.fill(alias, "にほん");
+  alias.element().dispatchEvent(composingEnter());
+  expect(getClientSettings().speechCustomWords).toEqual([{ term: "日本語", aliases: [] }]);
+  await expect.element(alias).toHaveValue("にほん");
 });
 
 it("records from the first connected microphone in the saved order", async () => {

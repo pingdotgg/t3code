@@ -152,6 +152,35 @@ describe("mobile connection storage", () => {
     expect(fallback.updatedAt).toEqual(expect.any(Number));
   });
 
+  it("discards malformed saved PR views without discarding other preferences", async () => {
+    const validView = {
+      id: "reviewing",
+      name: "Review queue",
+      environmentId: null,
+      query: "bug",
+      controls: { state: "open", involvement: "reviewing", filters: {}, sort: "updated" },
+    } as const;
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        baseFontSize: 17,
+        pullRequestSavedViews: [
+          validView,
+          {
+            ...validView,
+            id: "invalid",
+            name: "Broken",
+            controls: { ...validView.controls, sort: "unknown" },
+          },
+        ],
+      }),
+      10,
+    );
+    expect(await loadPreferences()).toEqual({
+      baseFontSize: 17,
+      pullRequestSavedViews: [validView],
+    });
+  });
+
   it("reconciles fallback preferences after SQLite recovers", async () => {
     mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 15 }), 10);
     await mocks.setItemAsync(
