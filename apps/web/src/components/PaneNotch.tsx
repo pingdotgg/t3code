@@ -23,7 +23,7 @@ export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
 export const PANE_INACTIVE_TAB_TITLE_CLASS =
   "max-w-[var(--pane-inactive-tab-title-max,10rem)] truncate";
 /** A ghost tab's title (`LayoutTab.ghostOf`): italic until the tab is kept, as preview tabs are. */
-export const PANE_GHOST_TAB_TITLE_CLASS = "italic";
+export const PANE_GHOST_TAB_TITLE_CLASS = "italic pe-0.5 -me-0.5";
 
 /** The thread tab opens its action menu while keeping the notch's tab geometry. */
 export function PaneTabButton({ className, render, ...props }: useRender.ComponentProps<"button">) {

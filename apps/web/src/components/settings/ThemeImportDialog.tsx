@@ -47,6 +47,10 @@ function describeOversizedThemeFile(bytes: number): string | null {
   return `That file is ${formatBytes(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatBytes(MAX_THEME_FILE_BYTES)}).`;
 }
 
+function isThemeIdTaken(themeId: string): boolean {
+  return getCustomThemes().some((existing) => existing.id === themeId);
+}
+
 function escapeJsonHtml(value: string): string {
   return value.replace(
     /[&<>"']/g,
@@ -176,32 +180,27 @@ async function stageThemeFile(file: ImportableThemeFile): Promise<StagedThemeFil
   }
 }
 
-const isInstalledTheme = (theme: ThemeDefinition) =>
-  getCustomThemes().some((existing) => existing.id === theme.id);
+const isInstalledTheme = (theme: ThemeDefinition) => isThemeIdTaken(theme.id);
 
 function versionedCopy(theme: ThemeDefinition, preferredName?: string | null): ThemeDefinition {
-  if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-    const candidate = parseThemeFile({
+  // The collection stays behind: updating a collection replaces every theme in it.
+  const copyNamed = (name: string) =>
+    parseThemeFile({
       version: THEME_FILE_VERSION,
-      name: preferredName.slice(0, 48),
+      name,
       appearance: theme.appearance,
       colors: theme.colors,
       ...(theme.variants ? { variants: theme.variants } : {}),
       ...(theme.managed ? { managed: true } : {}),
+      ...(theme.css ? { css: theme.css } : {}),
     });
-    if (!isInstalledTheme(candidate)) return candidate;
+  if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
+    const candidate = copyNamed(preferredName.slice(0, 48));
+    if (!isThemeIdTaken(candidate.id)) return candidate;
   }
   for (let copy = 1; copy < 100; copy += 1) {
-    const candidate = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-      appearance: theme.appearance,
-      colors: theme.colors,
-      ...(theme.variants ? { variants: theme.variants } : {}),
-      ...(theme.managed ? { managed: true } : {}),
-    });
-    if (isInstalledTheme(candidate)) continue;
-    return candidate;
+    const candidate = copyNamed(`${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`);
+    if (!isThemeIdTaken(candidate.id)) return candidate;
   }
   throw new Error(`Too many copies of "${theme.label}".`);
 }
