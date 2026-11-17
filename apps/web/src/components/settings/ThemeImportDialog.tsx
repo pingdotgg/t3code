@@ -1,7 +1,7 @@
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import {
@@ -165,6 +165,20 @@ export function ThemeImportDialog({
     session.controller.abort();
     onOpenChange(false);
   };
+  // Leaving the page ends the session as closing does. The abort waits a microtask
+  // so StrictMode's replayed cleanup, undone by its replayed setup, keeps it alive.
+  const { controller } = session;
+  const mountedController = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- unmounting must abort in-flight Open VSX installs
+  useEffect(() => {
+    mountedController.current = controller;
+    return () => {
+      mountedController.current = null;
+      queueMicrotask(() => {
+        if (mountedController.current !== controller) controller.abort();
+      });
+    };
+  }, [controller]);
 
   return (
     <Dialog
