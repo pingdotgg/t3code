@@ -6815,7 +6815,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    // A steer re-sent after its run failed joins the queue that failure held, in send order.
+    const heldSteerSourceRun =
+      activeRun === undefined &&
+      command.steerFollowUpOfRunId !== undefined &&
+      projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        ? projection.runs.find((run) => run.id === command.steerFollowUpOfRunId)
+        : undefined;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? heldSteerSourceRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||

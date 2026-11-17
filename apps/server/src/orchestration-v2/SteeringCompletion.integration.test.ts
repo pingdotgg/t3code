@@ -2484,6 +2484,18 @@ it.effect.each([
           Stream.runDrain,
           Effect.forkScoped,
         );
+        const queuedMessageId = MessageId.make("message:queued-before-steer");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued-before-steer"),
+          threadId,
+          messageId: queuedMessageId,
+          text: "queued first",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("steer-into-failed"),
@@ -2530,17 +2542,15 @@ it.effect.each([
           Stream.runDrain,
           Effect.forkScoped,
         );
-        // Queued behind the still-running turn, the steer is held with the queue the failure
-        // holds; once the run has failed and the thread is idle it starts as the next turn.
+        // The failure holds the queue; the re-sent steer joins it behind the message sent first.
         const resent = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>
               (event.type === "run.created" || event.type === "run.updated") &&
               event.payload.userMessageId === messageId &&
               event.payload.id !== first.runId &&
-              (offered
-                ? event.payload.status === "starting"
-                : event.payload.status === "queued" && event.payload.queueHeld === true),
+              event.payload.status === "queued" &&
+              event.payload.queueHeld === true,
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -2578,9 +2588,16 @@ it.effect.each([
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
-          projection.runs.filter((run) => run.userMessageId === messageId).length,
-          1,
+          projection.runs
+            .filter((run) => run.id !== first.runId)
+            .toSorted((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0))
+            .map((run) => [run.userMessageId, run.status, run.queueHeld]),
+          [
+            [queuedMessageId, "queued", true],
+            [messageId, "queued", true],
+          ],
         );
+        assert.equal(started.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   ),
