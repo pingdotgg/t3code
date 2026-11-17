@@ -947,7 +947,7 @@ describe("CursorAdapterV2", () => {
       );
       assert.deepEqual(
         yield* send(false, true),
-        told(false, true),
+        told(true, true),
         "the rewound conversation may have dropped instructions a later turn carried",
       );
 

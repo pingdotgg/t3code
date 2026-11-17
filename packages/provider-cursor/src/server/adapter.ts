@@ -3259,11 +3259,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               }
               const threadId = rollbackInput.providerThread.appThreadId ?? input.threadId;
               const { target } = rollbackInput;
-              const forgetConversation = Effect.all([
-                Ref.set(told, null),
-                Ref.set(interruptedPrompt, null),
-                Ref.set(resumedAgent, null),
-              ]);
+              // The kept turns may predate a compaction, so the instructions are sent again.
+              const forgetConversation = (agent: string) =>
+                Effect.all([
+                  Ref.set(told, { agent, orchestration: false, device: false }),
+                  Ref.set(interruptedPrompt, null),
+                  Ref.set(resumedAgent, null),
+                ]);
               const now = yield* DateTime.now;
               if (target.type === "provider_turn") {
                 const keptRunId = target.providerTurn.nativeTurnRef?.nativeId;
@@ -3288,7 +3290,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   });
                 }
                 yield* agent.session.rewindAfterRun(keptRunId);
-                yield* forgetConversation;
+                yield* forgetConversation(agent.nativeThreadId);
                 yield* agent.session.close.pipe(Effect.ignore);
                 yield* Ref.set(liveAgent, null);
                 return {
@@ -3310,7 +3312,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
               });
-              yield* forgetConversation;
+              yield* forgetConversation(opened.nativeThreadId);
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
