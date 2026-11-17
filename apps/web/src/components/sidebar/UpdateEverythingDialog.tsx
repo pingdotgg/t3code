@@ -225,7 +225,9 @@ function UpdateEverythingDialogContent({
             <Collapsible>
               <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground data-panel-open:[&_svg]:rotate-90">
                 <ChevronRightIcon className="size-3.5 transition-transform" aria-hidden />
-                {gt("{count} skipped", { count: skipped.length })}
+                {gt("{count, plural, one {{count} skipped} other {{count} skipped}}", {
+                  count: skipped.length,
+                })}
               </CollapsibleTrigger>
               <CollapsiblePanel>
                 <div className="grid grid-cols-[minmax(0,max-content)_1fr] gap-x-3 gap-y-0.5 pt-1.5 ps-4.5 text-muted-foreground text-xs">
@@ -263,7 +265,10 @@ function UpdateEverythingDialogContent({
                 : `${gt(
                     "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
                     { count: running },
-                  )} ${gt("{count} can resume after the restart.", { count: continuing })}`}
+                  )} ${gt(
+                    "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
+                    { count: continuing },
+                  )}`}
           </p>
         ) : null}
         <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
@@ -281,6 +286,8 @@ function RunningThreads({ environmentId }: { readonly environmentId: Environment
   const count = useAtomValue(runningThreadCountAtom(environmentId));
   const gt = useGT();
   return count > 0 ? (
-    <span className="whitespace-nowrap text-warning">{gt("{count} running", { count })}</span>
+    <span className="whitespace-nowrap text-warning">
+      {gt("{count, plural, one {{count} running} other {{count} running}}", { count })}
+    </span>
   ) : null;
 }

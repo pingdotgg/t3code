@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { msg } from "gt-react";
 import {
@@ -179,7 +180,7 @@ function failureCause<A>(result: AsyncResult.AsyncResult<A, unknown>): unknown {
 
 function errorMessage(cause: unknown, resolve: MessageResolver): string | null {
   if (cause === null) return null;
-  return cause instanceof Error ? cause.message : resolve(msg("Workspace query failed."));
+  return errorDisplayMessage(cause, resolve) ?? resolve(msg("Workspace query failed."));
 }
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
@@ -219,6 +220,7 @@ export function useProjectFilePickerQuery(
   query: string,
   limit: number,
   options?: { readonly imageOnly?: boolean },
+  resolve: MessageResolver = m,
 ) {
   const search = useProjectPathSearch(
     {
@@ -230,6 +232,7 @@ export function useProjectFilePickerQuery(
     },
     limit,
     { allowEmptyQuery: true },
+    resolve,
   );
 
   return {

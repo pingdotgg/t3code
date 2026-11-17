@@ -1,5 +1,6 @@
-import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { errorDisplayMessage, findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
+  connectionErrorText,
   type ConnectionTarget,
   type EnvironmentConnectionPresentation,
   RelayConnectionRegistration,
@@ -182,7 +183,7 @@ export function CloudEnvironmentConnectRows({
     }
     const cause = squashAtomCommandFailure(result);
     const message =
-      cause instanceof Error ? cause.message : gt("Could not connect the T3 Connect environment.");
+      errorDisplayMessage(cause, m) ?? gt("Could not connect the T3 Connect environment.");
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
     toastManager.add({
@@ -300,7 +301,7 @@ export function CloudEnvironmentConnectRows({
   if (standalone && visibleEnvironments.length === 0) {
     const discoveryProblem = environmentsState.offline
       ? gt("You appear to be offline.")
-      : (Option.getOrNull(environmentsState.error)?.message ?? null);
+      : errorDisplayMessage(Option.getOrNull(environmentsState.error), m);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
         <div className={ITEM_ROW_CLASSNAME}>
@@ -328,7 +329,8 @@ export function CloudEnvironmentConnectRows({
     const unsupported =
       compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
     const unsupportedDetail =
-      compatibilityError?.message ?? savedEnvironment?.connection.error ?? null;
+      (compatibilityError === null ? null : errorDisplayMessage(compatibilityError, m)) ??
+      (savedEnvironment ? connectionErrorText(savedEnvironment.connection, m) : null);
     const savedConnection = unsupported
       ? presentSavedCloudEnvironmentConnection(
           {
@@ -382,7 +384,7 @@ export function CloudEnvironmentConnectRows({
                 ? `T3 Connect · ${notAdded} · ${gt("Relay offline")}`
                 : availability === "checking"
                   ? `T3 Connect · ${notAdded} · ${gt("Checking relay status…")}`
-                  : (Option.getOrNull(error)?.message ??
+                  : (errorDisplayMessage(Option.getOrNull(error), m) ??
                     `T3 Connect · ${notAdded} · ${gt("Relay status unavailable")}`);
     if (selection) {
       return (
@@ -465,7 +467,8 @@ export function CloudEnvironmentConnectRows({
                             ? gt("Relay offline")
                             : availability === "checking"
                               ? gt("Checking relay status")
-                              : (Option.getOrNull(error)?.message ?? gt("Relay status unavailable"))
+                              : (errorDisplayMessage(Option.getOrNull(error), m) ??
+                                gt("Relay status unavailable"))
                 }
               />
               <EnvironmentMachineIcon

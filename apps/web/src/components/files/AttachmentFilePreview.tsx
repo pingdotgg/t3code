@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -188,9 +189,7 @@ export function AttachmentFilePreview(props: {
       })
       .catch((cause: unknown) => {
         if (!cancelled)
-          setError(
-            cause instanceof Error ? cause.message : m(msg("The attachment is unavailable.")),
-          );
+          setError(errorDisplayMessage(cause, m) ?? m(msg("The attachment is unavailable.")));
       });
     return () => {
       cancelled = true;
@@ -236,9 +235,7 @@ export function AttachmentFilePreview(props: {
       if (!controller.signal.aborted) setContent(result);
     })().catch((cause: unknown) => {
       if (!controller.signal.aborted)
-        setContentError(
-          cause instanceof Error ? cause.message : m(msg("Could not load this file.")),
-        );
+        setContentError(errorDisplayMessage(cause, m) ?? m(msg("Could not load this file.")));
     });
     return () => controller.abort();
   }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
@@ -278,7 +275,7 @@ export function AttachmentFilePreview(props: {
         toastManager.add({
           type: "error",
           title: gt("Could not save file"),
-          description: cause instanceof Error ? cause.message : gt("Please try again."),
+          description: errorDisplayMessage(cause, m) ?? gt("Please try again."),
         });
       }
       setSaving(false);
@@ -478,7 +475,7 @@ export function AttachmentFilePreview(props: {
                   toastManager.add({
                     type: "error",
                     title: gt("Could not copy file"),
-                    description: cause instanceof Error ? cause.message : gt("Try again."),
+                    description: errorDisplayMessage(cause, m) ?? gt("Try again."),
                   }),
                 );
             }}

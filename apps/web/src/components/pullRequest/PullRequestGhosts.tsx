@@ -241,7 +241,7 @@ export function PullRequestDetailGhost({
               updated={
                 seed ? (
                   <span>
-                    <T>
+                    <T context="followed by a relative time such as 5m ago or just now">
                       updated{" "}
                       <Var>
                         <RelativeTime timestamp={seed.updatedAt} />

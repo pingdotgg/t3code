@@ -1113,7 +1113,9 @@ export function PullRequestSummaryTab({
               >
                 <ListFilterIcon aria-hidden className="size-3" />
                 {filteredOutCount > 0
-                  ? gt("{count} hidden", { count: filteredOutCount })
+                  ? gt("{count, plural, one {{count} hidden} other {{count} hidden}}", {
+                      count: filteredOutCount,
+                    })
                   : gt("Filter", { $context: "noun, filter menu" })}
               </MenuTrigger>
               <MenuPopup align="end">
@@ -1183,9 +1185,12 @@ export function PullRequestSummaryTab({
               <p className="py-2 text-xs text-muted-foreground">
                 {filteredOutCount === 1
                   ? gt("The only comment is hidden by the filter.")
-                  : gt("All {count} comments are hidden by the filter.", {
-                      count: filteredOutCount,
-                    })}
+                  : gt(
+                      "{count, plural, one {All {count} comments are hidden by the filter.} other {All {count} comments are hidden by the filter.}}",
+                      {
+                        count: filteredOutCount,
+                      },
+                    )}
               </p>
             ) : (
               <div className="space-y-3">

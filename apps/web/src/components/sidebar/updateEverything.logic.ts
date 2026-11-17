@@ -1,9 +1,11 @@
+import {
+  managedNightlyDeniedMessage,
+  managedUpdatesDenial,
+} from "@t3tools/client-runtime/contract-labels";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import {
   type DesktopUpdateChannel,
   type EnvironmentId,
-  managedNightlyDeniedMessage,
-  managedUpdatesDenial,
   type ServerConfig,
   type ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
@@ -101,6 +103,7 @@ export function collectServerUpdateTargets(
     const managedDenial = managedMachineUpdateDenial(
       config,
       selfUpdate === "desktop-managed" ? undefined : targetVersion,
+      resolve,
     );
     if (managedDenial !== undefined) {
       skip(managedDenial);
@@ -166,35 +169,82 @@ export const channelSwitchLabel = (channel: DesktopUpdateChannel, resolve: Messa
 const crossesTrack = (fromVersion: string, release: ChannelSwitchRelease) =>
   desktopUpdateChannelOf(fromVersion) !== release.channel;
 
+type ChannelSwitchBlock = "server-predates-checks" | "release-predates-checks" | "unsupported";
+
+function channelSwitchBlock(
+  fromVersion: string,
+  release: ChannelSwitchRelease,
+  currentMigration: number | undefined,
+): ChannelSwitchBlock | null {
+  if (!crossesTrack(fromVersion, release)) return null;
+  // Servers and releases from before this check report no migration number.
+  if (currentMigration === undefined) return "server-predates-checks";
+  if (release.databaseMigration === undefined) return "release-predates-checks";
+  return currentMigration > release.databaseMigration ? "unsupported" : null;
+}
+
 function channelSwitchBlockReason(
   fromVersion: string,
   release: ChannelSwitchRelease,
   currentMigration: number | undefined,
   resolve: MessageResolver,
 ): string | null {
-  if (!crossesTrack(fromVersion, release)) return null;
+  const block = channelSwitchBlock(fromVersion, release, currentMigration);
+  if (block === null) return null;
   const from = channelSwitchLabel(desktopUpdateChannelOf(fromVersion), resolve);
   const to = channelSwitchLabel(release.channel, resolve);
-  // Servers and releases from before this check report no migration number.
-  if (currentMigration === undefined) {
-    return resolve(msg("its server predates database checks; update it on {from} first", { from }));
-  }
-  if (release.databaseMigration === undefined) {
-    return resolve(
-      msg("{version} predates database checks; wait for a newer {to} release", {
-        version: release.version,
-        to,
-      }),
-    );
-  }
-  return currentMigration > release.databaseMigration
-    ? resolve(
+  const version = release.version;
+  switch (block) {
+    case "server-predates-checks":
+      return resolve(
+        msg("its server predates database checks; update it on {from} first", { from }),
+      );
+    case "release-predates-checks":
+      return resolve(
+        msg("{version} predates database checks; wait for a newer {to} release", { version, to }),
+      );
+    case "unsupported":
+      return resolve(
         msg(
           "its database has changes {version} does not support yet; stay on {from} until {to} has them",
-          { version: release.version, from, to },
+          { version, from, to },
         ),
-      )
-    : null;
+      );
+  }
+}
+
+function localChannelSwitchBlockReason(
+  fromVersion: string,
+  release: ChannelSwitchRelease,
+  block: ChannelSwitchBlock,
+  resolve: MessageResolver,
+): string {
+  const from = channelSwitchLabel(desktopUpdateChannelOf(fromVersion), resolve);
+  const to = channelSwitchLabel(release.channel, resolve);
+  const version = release.version;
+  switch (block) {
+    case "server-predates-checks":
+      return resolve(
+        msg(
+          "This app cannot switch: its server predates database checks; update it on {from} first.",
+          { from },
+        ),
+      );
+    case "release-predates-checks":
+      return resolve(
+        msg(
+          "This app cannot switch: {version} predates database checks; wait for a newer {to} release.",
+          { version, to },
+        ),
+      );
+    case "unsupported":
+      return resolve(
+        msg(
+          "This app cannot switch: its database has changes {version} does not support yet; stay on {from} until {to} has them.",
+          { version, from, to },
+        ),
+      );
+  }
 }
 
 /** This app's reinstall restarts every server it hosts, so each of their databases must allow the
@@ -218,15 +268,18 @@ export function localSwitchBlockReason(
     hosted.length < backendCount ||
     hosted.some((server) => !server.connected)
   ) {
-    return resolve(msg("its server is not connected, so its database cannot be checked"));
+    return resolve(
+      msg(
+        "This app cannot switch: its server is not connected, so its database cannot be checked.",
+      ),
+    );
   }
-  return (
-    hosted
-      .map((server) =>
-        channelSwitchBlockReason(appVersion, release, server.databaseMigration, resolve),
-      )
-      .find((reason) => reason !== null) ?? null
-  );
+  const block = hosted
+    .map((server) => channelSwitchBlock(appVersion, release, server.databaseMigration))
+    .find((reason): reason is ChannelSwitchBlock => reason !== null);
+  return block === undefined
+    ? null
+    : localChannelSwitchBlockReason(appVersion, release, block, resolve);
 }
 
 /**
@@ -236,15 +289,16 @@ export function localSwitchBlockReason(
 function managedMachineUpdateDenial(
   config: NonNullable<UpdateEverythingMachine["serverConfig"]>,
   targetVersion: string | undefined,
+  resolve: MessageResolver,
 ): string | undefined {
   const policy = config.managedPolicy;
   return (
-    managedUpdatesDenial(policy) ??
+    managedUpdatesDenial(policy, resolve) ??
     (policy !== undefined &&
     policy.limits?.updates?.allowNightly === false &&
     targetVersion !== undefined &&
     cliReleaseChannelOf(targetVersion) !== "stable"
-      ? managedNightlyDeniedMessage(policy.organization)
+      ? managedNightlyDeniedMessage(policy.organization, resolve)
       : undefined)
   );
 }
@@ -290,7 +344,7 @@ export function collectChannelSwitchTargets(
         !("skip" in move) &&
         move.selfUpdate === "desktop-managed" &&
         unavailableReason(machine, resolve) === null &&
-        managedMachineUpdateDenial(config, release.version) === undefined
+        managedMachineUpdateDenial(config, release.version, resolve) === undefined
       ) {
         targets.push({ ...target(move.selfUpdate, serverVersion), trackOnly: true });
       }
@@ -301,7 +355,7 @@ export function collectChannelSwitchTargets(
       skip(unavailable ?? resolve(msg("not connected")));
       continue;
     }
-    const managedDenial = managedMachineUpdateDenial(config, release.version);
+    const managedDenial = managedMachineUpdateDenial(config, release.version, resolve);
     if (managedDenial !== undefined) {
       skip(managedDenial);
       continue;
@@ -552,7 +606,11 @@ export function describeUpdateCapsule(
       label:
         failed.length === 1
           ? resolve(msg("{machine} failed", { machine: failed[0]!.machine.label }))
-          : resolve(msg("{count} failed", { count: failed.length })),
+          : resolve(
+              msg("{count, plural, one {{count} failed} other {{count} failed}}", {
+                count: failed.length,
+              }),
+            ),
       action:
         !run.trackSwitch && failed.some(({ machine }) => machine.server !== null)
           ? "retry"

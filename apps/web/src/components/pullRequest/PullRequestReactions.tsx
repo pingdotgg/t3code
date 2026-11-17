@@ -5,7 +5,7 @@ import type {
   PullRequestReactionContent,
   PullRequestRef,
 } from "@t3tools/contracts";
-import { msg, useGT } from "gt-react";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { SmilePlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -51,6 +51,8 @@ export function PullRequestReactionBar({
   readonly className?: string | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
@@ -100,7 +102,11 @@ export function PullRequestReactionBar({
               <button
                 type="button"
                 aria-pressed={reaction.viewerHasReacted}
-                aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
+                aria-label={gt("{reaction}, {count}", {
+                  reaction: pullRequestReactionName(reaction.content, messages),
+                  count: reaction.count,
+                  $context: "reaction button: reaction name and how many people used it",
+                })}
                 disabled={!canReact}
                 className={cn(
                   PILL_CLASS,
@@ -116,7 +122,9 @@ export function PullRequestReactionBar({
             <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
             <span className="tabular-nums">{reaction.count}</span>
           </TooltipTrigger>
-          <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
+          <TooltipPopup side="top">
+            {pullRequestReactionTooltip(reaction, messages, locale)}
+          </TooltipPopup>
         </Tooltip>
       ))}
 
@@ -146,7 +154,7 @@ export function PullRequestReactionBar({
                     key={content}
                     type="button"
                     aria-pressed={reacted}
-                    aria-label={pullRequestReactionName(content)}
+                    aria-label={pullRequestReactionName(content, messages)}
                     className={cn(
                       "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       reacted && "bg-primary/10",

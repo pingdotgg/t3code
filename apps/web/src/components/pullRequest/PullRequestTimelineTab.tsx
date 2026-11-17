@@ -23,7 +23,7 @@ import {
   MessageSquareIcon,
   MessageSquarePlusIcon,
 } from "lucide-react";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 
 import { m } from "~/i18n/messages";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
@@ -292,8 +292,26 @@ function ConversationCard({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-              <ActorName actor={event.actor} />
-              <span className="text-muted-foreground">{event.title}</span>
+              {event.kind === "review" ? (
+                <T>
+                  <Var>
+                    <ActorName actor={event.actor} />
+                  </Var>{" "}
+                  <span className="text-muted-foreground">reviewed</span>
+                </T>
+              ) : event.kind === "comment" ? (
+                <T>
+                  <Var>
+                    <ActorName actor={event.actor} />
+                  </Var>{" "}
+                  <span className="text-muted-foreground">commented</span>
+                </T>
+              ) : (
+                <>
+                  <ActorName actor={event.actor} />
+                  <span className="text-muted-foreground">{event.title}</span>
+                </>
+              )}
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
             </div>
             <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
@@ -692,6 +710,20 @@ function LifecycleEvent({
   );
 }
 
+function staleReviewOutcomeLabel(
+  outcome: PullRequestReviewOutcome,
+  gt: ReturnType<typeof useGT>,
+): string {
+  switch (outcome) {
+    case "approved":
+      return gt("Approved, before the latest commits");
+    case "changes-requested":
+      return gt("Changes requested, before the latest commits");
+    case "dismissed":
+      return gt("Review dismissed, before the latest commits");
+  }
+}
+
 function ReviewVerdictEvent({
   event,
   outcome,
@@ -734,10 +766,14 @@ function ReviewVerdictEvent({
                   />
                 }
               >
-                {pullRequestReviewOutcomeLabel(outcome, resolve)}
                 {stale ? (
-                  <span className="sr-only">{gt(", before the latest commits")}</span>
-                ) : null}
+                  <>
+                    <span aria-hidden>{pullRequestReviewOutcomeLabel(outcome, resolve)}</span>
+                    <span className="sr-only">{staleReviewOutcomeLabel(outcome, gt)}</span>
+                  </>
+                ) : (
+                  pullRequestReviewOutcomeLabel(outcome, resolve)
+                )}
               </TooltipTrigger>
               <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome, resolve)}</TooltipPopup>
             </Tooltip>

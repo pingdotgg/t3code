@@ -1,5 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { parseThreadLinkPrompt, withoutPromptLinkParams } from "@t3tools/shared/promptLinks";
+import { withoutPromptLinkParams } from "@t3tools/shared/promptLinks";
+import { parseThreadLinkPrompt } from "@t3tools/shared/promptLinksCopy";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { msg } from "gt-react";
 import { useEffect } from "react";
@@ -29,7 +30,7 @@ export function ThreadLinkPrompt({ threadRef }: { readonly threadRef: ScopedThre
     if (!new URLSearchParams(location.search).has("prompt")) return;
     if (!handledLinkKeys.has(location.key)) {
       handledLinkKeys.add(location.key);
-      const parsed = parseThreadLinkPrompt(location.search);
+      const parsed = parseThreadLinkPrompt(location.search, m);
       if (!parsed.ok) {
         toastManager.add(
           stackedThreadToast({

@@ -328,7 +328,9 @@ export function pullRequestChecksState(
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: msg("Approved", { $context: "review outcome" }),
-    staleLabel: msg("Approved earlier changes"),
+    staleLabel: msg("Approved earlier changes", {
+      $context: "tooltip: this approval was given before the latest commits were pushed",
+    }),
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
@@ -339,7 +341,10 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   "changes-requested": {
     label: msg("Changes requested"),
-    staleLabel: msg("Changes requested earlier changes"),
+    staleLabel: msg("Changes requested earlier changes", {
+      $context:
+        "tooltip: the reviewer requested changes on an older version, before the latest commits",
+    }),
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
@@ -349,7 +354,9 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   dismissed: {
     label: msg("Review dismissed"),
-    staleLabel: msg("Review dismissed earlier changes"),
+    staleLabel: msg("Review dismissed earlier changes", {
+      $context: "tooltip: a review of an older version, before the latest commits, was dismissed",
+    }),
     Icon: CircleDashedIcon,
     toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",

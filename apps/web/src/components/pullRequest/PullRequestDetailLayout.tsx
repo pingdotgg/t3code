@@ -41,7 +41,10 @@ export function PullRequestDetailHeaderBody({
         <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
           {base}
           <ArrowLeftIcon
-            aria-label={gt("receives changes from")}
+            aria-label={gt("receives changes from", {
+              $context:
+                "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+            })}
             className="size-3.5 shrink-0 opacity-60"
           />
           {head}

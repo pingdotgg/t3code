@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   pullRequestLinkProject,
@@ -106,9 +107,7 @@ function LinkPullRequestDialog({
     setPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      setSubmitError(
-        error instanceof Error ? error.message : m(msg("Could not link the pull request.")),
-      );
+      setSubmitError(errorDisplayMessage(error, m) ?? m(msg("Could not link the pull request.")));
       return;
     }
     onOpenChange(false);

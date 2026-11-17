@@ -219,6 +219,7 @@ export function serveWorker<M extends Methods>(handlers: {
           id: request.id,
           ok: false,
           superseded: false,
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- internal worker RPC error, never shown
           message: `Unknown method ${request.method}`,
         });
         continue;
@@ -285,6 +286,7 @@ export function serveWorker<M extends Methods>(handlers: {
       const [old] = queue.splice(replaced, 1);
 
       if (old)
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- superseded calls are dropped, never shown
         reply({ id: old.id, ok: false, superseded: true, message: "Replaced by a newer call" });
     }
 

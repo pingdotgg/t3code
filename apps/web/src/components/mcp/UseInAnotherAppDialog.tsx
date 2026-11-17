@@ -1,5 +1,10 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
+import {
+  managedCapabilityDenial,
+  managedRuntimeModeDenial,
+} from "@t3tools/client-runtime/contract-labels";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
@@ -7,8 +12,6 @@ import {
   AuthRelayReadScope,
   type EnvironmentConnectReachability,
   type EnvironmentId,
-  managedCapabilityDenial,
-  managedRuntimeModeDenial,
   mcpClientScopes,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -227,8 +230,9 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
   const canMint = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const policy = useManagedPolicy(environmentId);
   const gt = useGT();
+  const messages = useMessages();
   // The server refuses codes for any level when its policy keeps remote clients out.
-  const remoteDenial = managedCapabilityDenial(policy, "remoteClients");
+  const remoteDenial = managedCapabilityDenial(policy, "remoteClients", messages);
   return new Map(
     AuthMcpClientAccess.literals.flatMap((level) => {
       const reason =
@@ -244,7 +248,7 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
               })
             : level === "read-only"
               ? undefined
-              : managedRuntimeModeDenial(policy, level));
+              : managedRuntimeModeDenial(policy, level, messages));
       return reason === undefined ? [] : [[level, reason] as const];
     }),
   );
@@ -693,7 +697,7 @@ function openLink(url: string) {
       toastManager.add({
         type: "error",
         title: m(msg("Could not open the link")),
-        description: error instanceof Error ? error.message : url,
+        description: errorDisplayMessage(error, m) ?? url,
       }),
     );
 }

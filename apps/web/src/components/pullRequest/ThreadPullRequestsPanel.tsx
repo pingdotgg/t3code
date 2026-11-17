@@ -409,6 +409,7 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 }
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const gt = useGT();
   const thread = useThreadShell(threadRef);
   const projects = useProjects();
   const environmentProjects = projects
@@ -553,13 +554,14 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         />
         <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
           <span>
-            <T>
-              <Var>{openCount}</Var> open · <Var>{linkCount}</Var> linked
-            </T>
+            {gt(
+              "{openCount, plural, one {{openCount} open} other {{openCount} open}} · {linkCount, plural, one {{linkCount} linked} other {{linkCount} linked}}",
+              { openCount, linkCount },
+            )}
             {lastSynced ? (
               <>
                 {" · "}
-                <T>
+                <T context="followed by a relative time such as 5m ago or just now">
                   synced{" "}
                   <Var>
                     <RelativeTime timestamp={lastSynced} />

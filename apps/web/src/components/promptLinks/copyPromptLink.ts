@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import {
@@ -80,7 +81,7 @@ export async function copyPromptLink(link: string): Promise<void> {
       stackedThreadToast({
         type: "error",
         title: m(msg("Could not copy the prompt link")),
-        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
       }),
     );
   }

@@ -5,9 +5,9 @@ import {
   AuthMcpClientAccess,
   AuthMcpAuthorizationRequest,
   isRuntimeModeAbove,
-  managedRuntimeModeCeilingMessage,
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
+import { managedRuntimeModeCeilingMessage } from "@t3tools/client-runtime/contract-labels";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";
@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useEffect, useState } from "react";
 
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
@@ -281,7 +281,7 @@ export function McpConsent({
             <T>
               This agent wants to use the threads in every project on{" "}
               <span className="font-medium text-foreground">
-                <Var>{details.environmentHost}</Var>
+                <Var>{environmentLabel ?? details.environmentHost}</Var>
               </span>
               .
             </T>
@@ -293,26 +293,31 @@ export function McpConsent({
           <T context="the app requesting access">App</T>
         </dt>
         <dd className="min-w-0 break-words">
-          {details.clientName}{" "}
-          <span className="text-muted-foreground">
-            <T>· name set by the app</T>
-          </span>
+          <T>
+            <Var>{details.clientName}</Var>{" "}
+            <span className="text-muted-foreground">· name set by the app</span>
+          </T>
         </dd>
         <dt className="text-muted-foreground">
           <T>Access goes to</T>
         </dt>
         <dd className="min-w-0 break-words font-medium">
-          {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
-            <span className="font-normal text-muted-foreground">
-              {" "}
-              <T>on the computer that opened this page</T>
-            </span>
+            <T>
+              <Var>{details.redirectHost}</Var>
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                on the computer that opened this page
+              </span>
+            </T>
           ) : (
-            <span className="font-normal text-muted-foreground">
-              {" "}
-              <T>· whoever runs it gets this access</T>
-            </span>
+            <T>
+              <Var>{details.redirectHost}</Var>
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                · whoever runs it gets this access
+              </span>
+            </T>
           )}
         </dd>
       </dl>
@@ -375,7 +380,7 @@ export function McpConsent({
                   key={option}
                   access={option}
                   selected={option === access}
-                  disabledReason={ceilingReason(details, option)}
+                  disabledReason={ceilingReason(details, option, messages)}
                 />
               ))}
             </RadioGroup>
@@ -431,13 +436,17 @@ function ConnectAgentHeading({
 }
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
-function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
+function ceilingReason(
+  details: AuthMcpApprovalDetails,
+  access: AuthMcpClientAccess,
+  resolve: MessageResolver,
+) {
   const ceiling = details.runtimeModeCeiling;
   return ceiling === undefined ||
     access === "read-only" ||
     !isRuntimeModeAbove(access, ceiling.maxRuntimeMode)
     ? undefined
-    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode);
+    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode, resolve);
 }
 
 /** One access level in a radio group; `description` replaces the level's own, null hides it. */

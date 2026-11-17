@@ -1721,7 +1721,10 @@ export function PullRequestDetailPanel({
                       iconClassName="size-3"
                     />
                     <ArrowLeftIcon
-                      aria-label={gt("receives changes from")}
+                      aria-label={gt("receives changes from", {
+                        $context:
+                          "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+                      })}
                       className="size-3 shrink-0 opacity-60"
                     />
                     <Tooltip>
@@ -1798,7 +1801,7 @@ export function PullRequestDetailPanel({
                 }
                 updated={
                   <span>
-                    <T>
+                    <T context="followed by a relative time such as 5m ago or just now">
                       updated{" "}
                       <Var>
                         <RelativeTime timestamp={detail.updatedAt} />
@@ -1959,11 +1962,12 @@ export function PullRequestDetailPanel({
                       )}
                     >
                       <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
-                      {approvalCount.toLocaleString()}
+                      <span aria-hidden>{approvalCount.toLocaleString()}</span>
                       <span className="sr-only">
-                        {gt("{count, plural, =1 {approval} other {approvals}}", {
-                          count: approvalCount,
-                        })}
+                        {gt(
+                          "{count, plural, one {{formatted} approval} other {{formatted} approvals}}",
+                          { count: approvalCount, formatted: approvalCount.toLocaleString() },
+                        )}
                       </span>
                     </span>
                   ) : null}

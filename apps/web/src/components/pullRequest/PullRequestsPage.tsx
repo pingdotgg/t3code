@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -1519,7 +1520,7 @@ export function PullRequestsPage() {
             term: changeRequestTermKind(terminology),
           }),
         ),
-        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
       });
     });
   });

@@ -247,6 +247,7 @@ function ExcerptDiff({
     const comment = buildDiffReviewComment({
       id: `pull-request-guide:${excerpt.path}:${draft.range.start}:${draft.range.end}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
       sectionTitle: "Review guide",
       filePath: excerpt.path,
       fileDiff: file,
@@ -343,14 +344,20 @@ function ExcerptDiff({
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="tabular-nums">
               {excerpt.side === "old"
-                ? gt("removed code, showing {shown} of {total} diff lines", {
-                    shown: slice.shown,
-                    total: slice.total,
-                  })
-                : gt("showing {shown} of {total} diff lines", {
-                    shown: slice.shown,
-                    total: slice.total,
-                  })}
+                ? gt(
+                    "{total, plural, one {removed code, showing {shown} of {total} diff lines} other {removed code, showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )
+                : gt(
+                    "{total, plural, one {showing {shown} of {total} diff lines} other {showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )}
             </span>
             <Button
               size="icon-xs"

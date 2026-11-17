@@ -1,5 +1,5 @@
 import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { CheckIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -45,9 +45,10 @@ export function GuideRail({
   return (
     <nav aria-label={gt("Review tour")} className="flex min-h-0 flex-col gap-4">
       <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-        <T>
-          <Var>{reviewed}</Var> of <Var>{stops.length}</Var> read
-        </T>
+        {gt(
+          "{total, plural, one {{reviewed} of {total} read} other {{reviewed} of {total} read}}",
+          { reviewed, total: stops.length },
+        )}
       </p>
       <div className="flex flex-col gap-4">
         <ol className="flex flex-col gap-0.5">{stops.map(renderStop)}</ol>

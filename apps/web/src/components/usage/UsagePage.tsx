@@ -690,7 +690,10 @@ function UsageOverview({
             <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
-                  {gt("{count} sessions", { count: formatCount(merged.sessions) })}
+                  {gt("{count, plural, one {{formatted} sessions} other {{formatted} sessions}}", {
+                    count: merged.sessions,
+                    formatted: formatCount(merged.sessions),
+                  })}
                 </span>
                 {metric === "cost" && ` · ${gt("API estimate")}`}
               </span>
@@ -1201,7 +1204,9 @@ function UsageEnvironmentFilter({
     ? gt("All environments")
     : selectedEnvironments.length === 1
       ? selectedEnvironments[0]!.label
-      : gt("{count} environments", { count: selectedEnvironments.length });
+      : gt("{count, plural, one {{count} environments} other {{count} environments}}", {
+          count: selectedEnvironments.length,
+        });
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
@@ -1327,7 +1332,9 @@ function UsageProviderFilter({
         ? gt("No providers")
         : visible.length === 1
           ? PROVIDER_PRESENTATION[visible[0]!].label
-          : gt("{count} providers", { count: visible.length });
+          : gt("{count, plural, one {{count} providers} other {{count} providers}}", {
+              count: visible.length,
+            });
 
   return (
     <Menu>

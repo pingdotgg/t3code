@@ -1,10 +1,9 @@
 import {
   type LinkedPrompt,
-  parseNewThreadLink,
-  parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
 } from "@t3tools/shared/promptLinks";
+import { parseNewThreadLink, parseThreadLinkPrompt } from "@t3tools/shared/promptLinksCopy";
 import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -42,7 +41,7 @@ function summarize(
   };
   const url = new URL(appPath, window.location.origin);
   if (url.pathname !== "/new") {
-    const prompt = parseThreadLinkPrompt(url.search);
+    const prompt = parseThreadLinkPrompt(url.search, resolve);
     if (!prompt.ok) return prompt;
     return {
       ok: true,
@@ -63,7 +62,7 @@ function summarize(
             },
     };
   }
-  const link = parseNewThreadLink(url.search);
+  const link = parseNewThreadLink(url.search, resolve);
   if (!link.ok) return link;
   if (link.value.kind === "pull-request") {
     const { owner, name, number } = link.value.pullRequest;

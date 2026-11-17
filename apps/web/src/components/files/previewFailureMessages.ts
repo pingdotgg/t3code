@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -112,6 +113,28 @@ const PREVIEW_FAILURE_MESSAGES = {
   "office-engine-stopped": msg("The Office engine stopped"),
   "office-engine-unreadable": msg("The Office engine sent an unreadable reply"),
   "presentation-no-worker-fonts": msg("This browser has no fonts in workers"),
+  "tiff-metadata-invalid": msg("Invalid TIFF metadata."),
+  "tiff-metadata-truncated": msg("This TIFF has too much or truncated metadata."),
+  "tiff-metadata-type": msg("Unsupported TIFF metadata type."),
+  "tiff-metadata-pointer": msg("Invalid TIFF metadata pointer."),
+  "image-too-large": msg("Image previews are limited to 32 megapixels and 16,384 pixels per side."),
+  "image-metadata-too-large": msg("This image has too much metadata."),
+  "heif-metadata-invalid": msg("Invalid HEIF metadata."),
+  "heif-dimensions-invalid": msg("Invalid HEIF dimensions."),
+  "heif-no-dimensions": msg("This HEIF image has no readable dimensions."),
+  "tiff-strip-invalid-or-oversized": msg("Invalid or oversized TIFF strip."),
+  "tiff-lzw-invalid": msg("Invalid TIFF LZW dictionary."),
+  "tiff-strip-truncated": msg("Truncated TIFF strip."),
+  "tiff-strip-layout": msg("Unsupported TIFF strip layout."),
+  "tiff-strip-invalid": msg("Invalid TIFF strip."),
+  "tiff-strip-oversized": msg("Oversized TIFF strip."),
+  "tiff-compression": msg("This TIFF compression is not supported."),
+  "tiff-data-too-large": msg("This TIFF has too much image data."),
+  "tiff-no-image": msg("This TIFF has no readable image."),
+  "tiff-orientation": msg("This TIFF orientation is not supported."),
+  "tiff-color-format": msg("This TIFF color format is not supported."),
+  "image-decoding-unavailable": msg("Image decoding is unavailable."),
+  "image-decode-failed": msg("Could not decode this image."),
 } as const;
 
 export type PreviewFailureCode = keyof typeof PREVIEW_FAILURE_MESSAGES;
@@ -122,5 +145,5 @@ export function previewFailureText(failure: PreviewFailure, resolve: MessageReso
 
 export function previewErrorText(cause: unknown, fallback: string): string {
   if (isPreviewError(cause)) return m(PREVIEW_FAILURE_MESSAGES[cause.code]);
-  return cause instanceof Error ? cause.message : fallback;
+  return errorDisplayMessage(cause, m) ?? fallback;
 }

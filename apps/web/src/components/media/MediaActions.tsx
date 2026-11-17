@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   formatFilePathForClipboard,
   type MediaActionId,
@@ -222,7 +223,7 @@ export function MediaActions({
       const toast = stackedThreadToast({
         type: "error",
         title: failureTitle,
-        description: error instanceof Error ? error.message : m(msg("The media action failed.")),
+        description: errorDisplayMessage(error, m) ?? m(msg("The media action failed.")),
       });
       if (progressToast) toastManager.update(progressToast, toast);
       else toastManager.add(toast);

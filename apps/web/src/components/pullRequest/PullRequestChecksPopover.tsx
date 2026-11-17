@@ -208,9 +208,9 @@ export function PullRequestChecksPopover({
               </span>
             ) : failedCount > 0 ? (
               <span className="min-w-0 truncate tabular-nums">
-                <T>
-                  <Var>{failedCount}</Var> failed
-                </T>
+                {gt("{count, plural, one {{count} failed} other {{count} failed}}", {
+                  count: failedCount,
+                })}
               </span>
             ) : null}
           </>

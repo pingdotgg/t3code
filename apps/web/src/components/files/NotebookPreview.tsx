@@ -1,6 +1,6 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -182,9 +182,10 @@ export default function NotebookPreview(props: {
           ) : null}
           {visible < props.notebook.cells.length ? (
             <Button variant="outline" size="sm" onClick={() => setVisible((count) => count + 20)}>
-              <T>
-                Show more cells (<Var>{props.notebook.cells.length - visible}</Var> remaining)
-              </T>
+              {gt(
+                "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
+                { count: props.notebook.cells.length - visible },
+              )}
             </Button>
           ) : null}
         </div>

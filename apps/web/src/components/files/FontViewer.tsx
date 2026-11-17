@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
@@ -61,9 +62,7 @@ export default function FontViewer(props: { readonly src: string; readonly name:
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
-          setError(
-            cause instanceof Error ? cause.message : m(msg("The font is damaged or unsupported.")),
-          );
+          setError(errorDisplayMessage(cause, m) ?? m(msg("The font is damaged or unsupported.")));
       })
       .finally(() => clearTimeout(timeout));
     return () => {

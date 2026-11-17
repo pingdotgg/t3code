@@ -1,6 +1,7 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import type { MessageResolver } from "~/i18n/messages";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -1453,7 +1454,7 @@ export default function FilePreviewPanel({
         stackedThreadToast({
           type: "error",
           title: gt("Unable to open file in browser"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     })();
@@ -1578,10 +1579,10 @@ export default function FilePreviewPanel({
       file.data?.truncated &&
       (draft || isMarkdown || isMermaid || isHtml) ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
-          <T>
-            Preview limited to the first 1 MB of a{" "}
-            <Var>{file.data.byteLength.toLocaleString()}</Var> byte file.
-          </T>
+          {gt(
+            "{count, plural, one {Preview limited to the first 1 MB of a {formatted} byte file.} other {Preview limited to the first 1 MB of a {formatted} byte file.}}",
+            { count: file.data.byteLength, formatted: file.data.byteLength.toLocaleString() },
+          )}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1848,7 +1849,7 @@ export function WorkspaceLargeTextPreview(props: {
     toastManager.add({
       type: "error",
       title: gt("Could not read file"),
-      description: cause instanceof Error ? cause.message : gt("Try again."),
+      description: errorDisplayMessage(cause, m) ?? gt("Try again."),
     });
   };
   // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.

@@ -487,7 +487,9 @@ function PullRequestLabelFilter({
         <span className="text-xs text-muted-foreground">
           {value.length === 0
             ? gt("Any", { $context: "no label filter" })
-            : gt("{count} selected", { count: value.length })}
+            : gt("{count, plural, one {{count} selected} other {{count} selected}}", {
+                count: value.length,
+              })}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
