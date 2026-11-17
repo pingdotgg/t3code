@@ -265,15 +265,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) {
-        yield* Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+        yield* Effect.logWarning("codex mcp list failed", {
           reason: "exit",
           exitCode,
         });
-        return [];
+        return undefined;
       }
       const servers = yield* decodeCodexMcpServers(stdout).pipe(
         Effect.tapError(() =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+          Effect.logWarning("codex mcp list failed", {
             reason: "decode",
           }),
         ),
@@ -285,13 +285,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Effect.flatMap(
       Option.match({
         onNone: () =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+          Effect.logWarning("codex mcp list failed", {
             reason: "timeout",
-          }).pipe(Effect.as<ReadonlyArray<string>>([])),
+          }).pipe(Effect.as<ReadonlyArray<string> | undefined>(undefined)),
         onSome: (names) => Effect.succeed(names),
       }),
     ),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    Effect.orElseSucceed(() => undefined),
   );
 
   const evaluationConfiguration = Effect.fn("CodexTextGeneration.evaluationConfiguration")(
@@ -527,7 +527,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           detail:
             "Codex blind evaluation requires file-backed login or a model API. Keyring login cannot be isolated.",
         });
-      const enabledMcpServers =
+      const discoveredMcpServers =
         judgeConfiguration && !sharedHome
           ? []
           : yield* listEnabledMcpServers({
@@ -536,6 +536,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               env,
               launchArgs: codexMcpListLaunchArgs(launchArgs),
             });
+      if (sharedHome && discoveredMcpServers === undefined)
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Codex MCP discovery failed; cannot disable tools for the standing check.",
+        });
+      const enabledMcpServers = discoveredMcpServers ?? [];
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
       const execLaunchArgs =
         judgeConfiguration && !sharedHome

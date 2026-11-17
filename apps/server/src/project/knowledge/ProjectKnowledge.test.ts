@@ -3336,9 +3336,23 @@ it.effect("summarizes memory health by status, trust, feedback and lost sources"
       message(threadId, messageId, "user", "Pin Node to 24.", { minute: 3 }),
     );
 
+    const sql = yield* SqlClient.SqlClient;
+    for (const [verdict, trust] of [
+      ["standing", 0.5],
+      ["task", 0.5],
+      ["code", 0.2],
+    ] as const) {
+      const fact = yield* knowledge.mutate(createFact(projectId, `health-${verdict}`), {
+        kind: "user",
+      });
+      yield* sql`UPDATE project_knowledge_facts
+        SET verdict = ${verdict}, verdict_by = 'check', verdict_at = ${fact.createdAt}, trust = ${trust}
+        WHERE id = ${fact.id}`;
+    }
+
     const status = yield* knowledge.status({ projectId });
-    assert.deepEqual(status.counts, { saved: 4, superseded: 1, forgotten: 1 });
-    assert.deepEqual(status.trustBands, { low: 1, guarded: 0, steady: 3, high: 0 });
+    assert.deepEqual(status.counts, { saved: 7, superseded: 1, forgotten: 1 });
+    assert.deepEqual(status.trustBands, { low: 1, guarded: 0, steady: 4, high: 0 });
     assert.equal(status.belowRecallThreshold, 1);
     assert.deepEqual(status.feedback, { helpful: 1, unhelpful: 3 });
     assert.equal(status.unavailableSources, 1);

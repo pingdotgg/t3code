@@ -529,12 +529,12 @@ export const makeStore = Effect.gen(function* () {
       readonly retrievals: number;
     }>`
       WITH recallable AS (
-        SELECT trust FROM project_knowledge_facts
-        WHERE project_id = ${projectId} AND status = 'saved'
-          AND superseded_by_id IS NULL
+        SELECT f.trust FROM project_knowledge_facts f
+        WHERE f.project_id = ${projectId} AND ${recallable}
       )
       SELECT
-        (SELECT COUNT(*) FROM recallable) AS saved,
+        (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
+          AND status = 'saved' AND superseded_by_id IS NULL) AS saved,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}
           AND status != 'forgotten' AND superseded_by_id IS NOT NULL) AS superseded,
         (SELECT COUNT(*) FROM project_knowledge_facts WHERE project_id = ${projectId}

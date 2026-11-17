@@ -187,8 +187,8 @@ Failed and stopped runs can supply evidence. Change this setting under **Memory
 health** in Project memory or in **Settings → Labs → Zack**. Project memory
 shows the last outcome and the **Automatic** filter lists automatically saved facts.
 
-A second call then reads only the proposed facts, without the conversation or your
-repository, and asks whether a new agent on unrelated work would need each one.
+A second call reads the proposed facts without the conversation and asks whether
+a new agent on unrelated work would need each one.
 A fact that only applies to one task, or that describes how code behaves, is
 saved as set aside: it is never recalled, but search finds it and the **Set
 aside** filter lists it. The fact's details say what the check decided. When

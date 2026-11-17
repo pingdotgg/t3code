@@ -107,6 +107,9 @@ it.effect("rejects a judge response whose evidence reference is not in the blind
         ),
       { supportsInvestigation: false, supportsBlindEvaluation: true },
     );
+    expect(runtime.supportedOperations).toContain("generateModelEvaluation");
+    expect(runtime.supportedOperations).toContain("checkFactStanding");
+    expect(runtime.supportedOperations).not.toContain("generateReviewGuide");
     const error = yield* runtime
       .generateModelEvaluation({
         cwd: "/isolated",

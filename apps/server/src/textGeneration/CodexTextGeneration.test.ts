@@ -585,64 +585,56 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     }),
   );
 
-  it.effect.each(["file login", "tool activity", "keyring login"] as const)(
-    "checks fact standing blind (%s)",
-    (state) => {
-      const keyring = state === "keyring login";
-      const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
-      return withFakeCodexEnv(
-        {
-          output: JSON.stringify(answer),
-          configToml: `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
-          ...(keyring
-            ? {
-                launchArgs: "--config 'developer_instructions=\"Do not inherit\"'",
-                mcpServers: [{ name: "augmenter", enabled: true }],
-                requireMcpServersOff: ["augmenter"],
-                forbidInstructions: "Do not inherit",
-              }
-            : { requireIsolatedHome: true }),
-          requireArg: "--config project_doc_max_bytes=0",
-          disabledFeatures: [
-            "plugins",
-            "apps",
-            "shell_tool",
-            "unified_exec",
-            "hooks",
-            "view_image",
-          ],
-          events: [
-            {
-              type: "item.completed",
-              item:
-                state === "tool activity"
-                  ? { type: "command_execution", command: "cat /secret" }
-                  : { type: "agent_message", text: JSON.stringify(answer) },
-            },
-          ],
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const exit = yield* textGeneration
-              .checkFactStanding({
-                cwd: process.cwd(),
-                modelSelection: createModelSelection(
-                  ProviderInstanceId.make("codex"),
-                  "gpt-6-luna",
-                ),
-                statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
-              })
-              .pipe(Effect.exit);
-            if (state === "tool activity")
-              expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
-                "tool activity",
-              );
-            else
-              expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual({ verdicts: ["standing"] });
-          }),
-      );
-    },
-  );
+  it.effect.each([
+    "file login",
+    "tool activity",
+    "keyring login",
+    "keyring MCP discovery unavailable",
+  ] as const)("checks fact standing blind (%s)", (state) => {
+    const keyring = state.startsWith("keyring");
+    const discoveryUnavailable = state === "keyring MCP discovery unavailable";
+    const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
+    return withFakeCodexEnv(
+      {
+        output: JSON.stringify(answer),
+        configToml: `${keyring ? 'cli_auth_credentials_store = "keyring"\n' : ""}profile = "private"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+        ...(keyring
+          ? {
+              launchArgs: "--config 'developer_instructions=\"Do not inherit\"'",
+              mcpServers: discoveryUnavailable ? 2 : [{ name: "augmenter", enabled: true }],
+              requireMcpServersOff: discoveryUnavailable ? [] : ["augmenter"],
+              forbidInstructions: "Do not inherit",
+            }
+          : { requireIsolatedHome: true }),
+        requireArg: "--config project_doc_max_bytes=0",
+        disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "hooks", "view_image"],
+        events: [
+          {
+            type: "item.completed",
+            item:
+              state === "tool activity"
+                ? { type: "command_execution", command: "cat /secret" }
+                : { type: "agent_message", text: JSON.stringify(answer) },
+          },
+        ],
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const exit = yield* textGeneration
+            .checkFactStanding({
+              cwd: process.cwd(),
+              modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
+              statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+            })
+            .pipe(Effect.exit);
+          if (state === "tool activity" || discoveryUnavailable)
+            expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+              discoveryUnavailable ? "MCP" : "tool activity",
+            );
+          else expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual({ verdicts: ["standing"] });
+        }),
+    );
+  });
 
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
