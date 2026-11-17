@@ -15,7 +15,7 @@ import type {
   IssueSummary,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Linking, Platform, Pressable, Share, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
@@ -38,7 +38,7 @@ import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { issueEnvironment } from "../../state/issues";
+import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
@@ -437,10 +437,15 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     const failure = issueCommandError(await command());
     setBusy(null);
     setError(failure);
+    // The list beside this issue shows its state and comment count, and reads only when asked.
+    if (failure === null) refreshIssueLists(target.environmentId);
     return failure === null;
   };
+  // Counts refreshes, so a page asked for before one is not laid over the read that follows it.
+  const refreshes = useRef(0);
   const loadOlder = async () => {
     if (!detail || nextCursor === null || busy !== null) return;
+    const asked = refreshes.current;
     setBusy("older");
     setError(null);
     const result = await loadComments({
@@ -448,6 +453,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
       input: { ...target.input, cursor: nextCursor },
     });
     setBusy(null);
+    if (asked !== refreshes.current) return;
     if (AsyncResult.isFailure(result)) {
       setError("Older comments could not be read.");
       return;
@@ -558,7 +564,12 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
           refreshControl={
             <RefreshControl
               refreshing={pullRefresh.refreshing}
-              onRefresh={() => pullRefresh.onRefresh()}
+              onRefresh={() => {
+                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
+                refreshes.current += 1;
+                setOlder(null);
+                pullRefresh.onRefresh();
+              }}
             />
           }
           contentContainerStyle={{

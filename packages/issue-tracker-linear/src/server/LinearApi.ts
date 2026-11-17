@@ -21,7 +21,6 @@ import * as Headers from "effect/http/Headers";
 import { IssueTrackerKind } from "@t3tools/contracts";
 import { IssueTrackerError } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
-import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import type {
   CommentCreateInput,
@@ -110,6 +109,7 @@ export class LinearApi extends Context.Service<
       readonly filter: IssueFilter;
       readonly first: number;
       readonly after?: string | undefined;
+      readonly orderBy: "updatedAt" | "createdAt";
     }) => Effect.Effect<
       { readonly nodes: ReadonlyArray<LinearIssue>; readonly nextCursor: string | null },
       IssueTrackerError
@@ -146,7 +146,14 @@ export class LinearApi extends Context.Service<
     readonly listReactions: (input: {
       readonly issueId?: string | undefined;
       readonly commentId?: string | undefined;
-    }) => Effect.Effect<ReadonlyArray<LinearReaction>, IssueTrackerError>;
+    }) => Effect.Effect<
+      {
+        /** The issue the reactions hang off: the one asked for, or the comment's own. */
+        readonly issueId: string | null;
+        readonly reactions: ReadonlyArray<LinearReaction>;
+      },
+      IssueTrackerError
+    >;
   }
 >()("@t3tools/issue-tracker-linear/server/LinearApi") {}
 
@@ -179,6 +186,12 @@ const fail = (
 const hasCode = (errors: ReadonlyArray<GraphQLClientError.GraphQLError>, code: string) =>
   errors.some((error) => error.extensions?.["code"] === code);
 
+/** Linear's reset headers are UTC epoch milliseconds, not the seconds-from-now of `Retry-After`. */
+function resetAtFromHeader(value: string | undefined, now: number): number | undefined {
+  const resetAt = /^\d+$/u.test(value?.trim() ?? "") ? Number(value) : Number.NaN;
+  return Number.isSafeInteger(resetAt) && resetAt > now ? resetAt : undefined;
+}
+
 /** Linear's answer as the tracker's error. Linear writes its messages for people. */
 const toTrackerError = (
   operation: string,
@@ -192,7 +205,7 @@ const toTrackerError = (
   const errors = reason._tag === "ResponseError" ? reason.errors : [];
   const headers = reason.headers ?? Headers.empty;
   if (reason.status === 429 || hasCode(errors, "RATELIMITED")) {
-    const retryAt = retryAtFromHeader(
+    const retryAt = resetAtFromHeader(
       headers["x-ratelimit-requests-reset"] ?? headers["x-ratelimit-complexity-reset"],
       now,
     );
@@ -287,7 +300,12 @@ export const make = Effect.gen(function* () {
 
   const listIssues: LinearApi["Service"]["listIssues"] = (input) =>
     call("listIssues", (linear) =>
-      linear.T3Issues({ first: input.first, after: input.after ?? null, filter: input.filter }),
+      linear.T3Issues({
+        first: input.first,
+        after: input.after ?? null,
+        filter: input.filter,
+        orderBy: input.orderBy,
+      }),
     ).pipe(
       Effect.map((data) => ({
         nodes: data.issues.nodes,
@@ -385,10 +403,20 @@ export const make = Effect.gen(function* () {
     input.commentId === undefined
       ? call("listReactions", (linear) =>
           linear.T3IssueReactions({ id: input.issueId ?? "" }),
-        ).pipe(Effect.map((data) => data.issue.reactions))
+        ).pipe(
+          Effect.map((data) => ({
+            issueId: input.issueId ?? null,
+            reactions: data.issue.reactions,
+          })),
+        )
       : call("listReactions", (linear) =>
           linear.T3CommentReactions({ id: input.commentId ?? "" }),
-        ).pipe(Effect.map((data) => data.comment.reactions));
+        ).pipe(
+          Effect.map((data) => ({
+            issueId: data.comment.issue?.id ?? null,
+            reactions: data.comment.reactions,
+          })),
+        );
 
   return LinearApi.of({
     viewer,

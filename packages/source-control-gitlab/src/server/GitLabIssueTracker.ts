@@ -20,6 +20,7 @@ import {
 import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
+  decodeUserIdsJson,
   decodeIssueDetailJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
@@ -96,6 +97,22 @@ function parsePage(cursor: string | undefined): number | null {
   return /^[1-9]\d{0,6}$/.test(cursor) ? Number(cursor) : null;
 }
 
+/**
+ * A comments cursor: the next REST page of notes and, after a colon, where GraphQL's awards for
+ * that page start. The two page alike, so a page of comments is joined with its own awards.
+ */
+function parseCommentsCursor(
+  cursor: string,
+): { readonly page: number; readonly awards: string | null } | null {
+  const match = /^([1-9]\d{0,6})(?::(.{1,512}))?$/.exec(cursor);
+  return match === null ? null : { page: Number(match[1]), awards: match[2] ?? null };
+}
+
+function commentsCursor(notesNext: string | null, awardsNext: string | null): string | null {
+  if (notesNext === null) return null;
+  return awardsNext === null ? notesNext : `${notesNext}:${awardsNext}`;
+}
+
 function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
@@ -103,12 +120,15 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
 function involvementParams(input: {
   readonly involvement: IssueInvolvement;
   readonly viewer: string;
+  readonly assignee?: string | undefined;
 }): ReadonlyArray<readonly [string, string]> {
   switch (input.involvement) {
     case "authored":
       return [["author_username", input.viewer]];
     case "assigned":
-      return [["assignee_username", input.viewer]];
+      // A named assignee takes the one assignee parameter GitLab reads; `listIssues` keeps the
+      // viewer by dropping rows.
+      return input.assignee === undefined ? [["assignee_username", input.viewer]] : [];
     // GitLab's `my_reaction_emoji` and `iteration` filters aside, nothing narrows to mentions, so
     // the listing stays as wide as `all` rather than guessing.
     case "mentioned":
@@ -165,6 +185,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     const api = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly operation: string;
       readonly path: string;
       readonly method?: string;
@@ -173,6 +194,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       gitlab
         .execute({
           cwd: input.cwd,
+          host: input.host,
           args: [
             "api",
             input.path,
@@ -192,6 +214,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     const read = <A>(input: {
       readonly cwd: string;
+      readonly host: string;
       readonly operation: string;
       readonly path: string;
       readonly method?: string;
@@ -209,6 +232,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     const write = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly operation: string;
       readonly path: string;
       readonly method: string;
@@ -218,10 +242,12 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
     /** The signed-in account; an answer naming nobody is a failure, since every comparison needs a login. */
     const viewer = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly operation: string;
     }): Effect.Effect<string, IssueTrackerError> =>
       read({
         cwd: input.cwd,
+        host: input.host,
         operation: input.operation,
         path: "user",
         decode: decodeViewerJson,
@@ -243,16 +269,32 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
         : Effect.succeed({ number, path: `projects/${projectPath(input.scope)}/issues/${number}` });
     };
 
-    /** GitLab names assignees by numeric id, which is what the candidates carry as `id`. */
+    /**
+     * GitLab writes assignees by numeric id, which is what the candidates carry as `id`. An issue
+     * names the people it already has by username, so a kept assignee is looked up.
+     */
     const assigneeIds = (
+      input: { readonly cwd: string; readonly host: string },
       operation: string,
       assignees: ReadonlyArray<string>,
-    ): Effect.Effect<ReadonlyArray<number>, IssueTrackerError> => {
-      const ids = assignees.map((id) => (/^[1-9]\d*$/.test(id) ? Number(id) : null));
-      return ids.every((id) => id !== null)
-        ? Effect.succeed(ids)
-        : Effect.fail(refused(operation, "GitLab assignees are named by their user id."));
-    };
+    ): Effect.Effect<ReadonlyArray<number>, IssueTrackerError> =>
+      Effect.forEach(assignees, (assignee) =>
+        /^[1-9]\d*$/.test(assignee)
+          ? Effect.succeed(Number(assignee))
+          : read({
+              cwd: input.cwd,
+              host: input.host,
+              operation,
+              path: `users?${query([["username", assignee]])}`,
+              decode: decodeUserIdsJson,
+            }).pipe(
+              Effect.flatMap(([id]) =>
+                id === undefined
+                  ? Effect.fail(refused(operation, `GitLab has no user named ${assignee}.`))
+                  : Effect.succeed(id),
+              ),
+            ),
+      );
 
     const paged = (path: string, page: number) =>
       `${path}?${query([
@@ -262,12 +304,14 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     const notesPage = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly path: string;
       readonly page: number;
       readonly operation: string;
     }) =>
       read({
         cwd: input.cwd,
+        host: input.host,
         operation: input.operation,
         path: `${input.path}/notes?${query([
           ["per_page", String(PAGE_SIZE)],
@@ -285,38 +329,49 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
 
     const awards = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly scope: string;
       readonly number: number;
       readonly operation: string;
+      readonly cursor?: string | undefined;
     }) =>
       read({
         cwd: input.cwd,
+        host: input.host,
         operation: input.operation,
         path: "graphql",
         method: "POST",
         body: {
           query: ISSUE_AWARD_EMOJI_GRAPHQL_QUERY,
-          variables: { fullPath: input.scope.trim(), iid: String(input.number) },
+          variables: {
+            fullPath: input.scope.trim(),
+            iid: String(input.number),
+            cursor: input.cursor ?? null,
+          },
         },
         decode: decodeAwardEmojiJson,
       });
 
     const linked = (input: {
       readonly cwd: string;
+      readonly host: string;
       readonly path: string;
       readonly endpoint: "closed_by" | "related_merge_requests";
     }) =>
       read({
         cwd: input.cwd,
+        host: input.host,
         operation: "getIssue",
         path: paged(`${input.path}/${input.endpoint}`, 1),
         decode: (raw) => decodeLinkedMergeRequestsJson(raw, input.endpoint === "closed_by"),
       });
 
     const template =
-      (input: { readonly cwd: string; readonly scope: string }) => (entry: GitLabTemplateEntry) =>
+      (input: { readonly cwd: string; readonly host: string; readonly scope: string }) =>
+      (entry: GitLabTemplateEntry) =>
         read({
           cwd: input.cwd,
+          host: input.host,
           operation: "listTemplates",
           path: `projects/${projectPath(input.scope)}/templates/issues/${encodeURIComponent(entry.key)}`,
           decode: (raw) => decodeTemplateJson(entry, raw),
@@ -326,17 +381,22 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       kind: KIND,
       capabilities: CAPABILITIES,
 
-      getViewer: (input) => viewer({ cwd: input.cwd, operation: "getViewer" }),
+      getViewer: (input) => viewer({ cwd: input.cwd, host: input.host, operation: "getViewer" }),
 
-      listIssues: (input) => {
+      listIssues: Effect.fn("GitLabIssueTracker.listIssues")(function* (input) {
         const page = parsePage(input.cursor);
         if (page === null) {
-          return Effect.fail(refused("listIssues", "The cursor was not one GitLab handed out."));
+          return yield* refused("listIssues", "The cursor was not one GitLab handed out.");
         }
         const perPage = Math.min(Math.max(input.limit, 1), PAGE_SIZE);
         const text = input.query?.trim() ?? "";
-        return read({
+        const alsoAssignedTo =
+          input.involvement === "assigned" && input.assignee !== undefined
+            ? input.viewer.toLowerCase()
+            : null;
+        return yield* read({
           cwd: input.cwd,
+          host: input.host,
           operation: "listIssues",
           path: `projects/${projectPath(input.scope)}/issues?${query([
             ["state", input.state === "open" ? "opened" : input.state],
@@ -344,7 +404,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
             // GitLab's own `search` matches title and description, URL-encoded like every other
             // value here, so no text in it can become a parameter of its own.
             ...(text.length === 0 ? [] : [["search", text] as const]),
-            ["order_by", "updated_at"],
+            ...(input.labels === undefined || input.labels.length === 0
+              ? []
+              : [["labels", input.labels.join(",")] as const]),
+            ...(input.assignee === undefined
+              ? []
+              : [["assignee_username", input.assignee] as const]),
+            ["order_by", input.sort === "created" ? "created_at" : "updated_at"],
             ["sort", "desc"],
             ["per_page", String(perPage)],
             ["page", String(page)],
@@ -352,11 +418,16 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           decode: decodeIssueListJson,
         }).pipe(
           Effect.map((list) => ({
-            items: list.items,
+            items:
+              alsoAssignedTo === null
+                ? list.items
+                : list.items.filter((issue) =>
+                    issue.assignees.some((actor) => actor.login.toLowerCase() === alsoAssignedTo),
+                  ),
             nextCursor: list.rawCount < perPage ? null : String(page + 1),
           })),
         );
-      },
+      }),
 
       getIssue: (input) =>
         issuePath(input, "getIssue").pipe(
@@ -365,21 +436,40 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               [
                 read({
                   cwd: input.cwd,
+                  host: input.host,
                   operation: "getIssue",
                   path,
                   decode: decodeIssueDetailJson,
                 }),
-                viewer({ cwd: input.cwd, operation: "getIssue" }),
-                notesPage({ cwd: input.cwd, path, page: 1, operation: "getIssue" }),
+                viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
+                notesPage({
+                  cwd: input.cwd,
+                  host: input.host,
+                  path,
+                  page: 1,
+                  operation: "getIssue",
+                }),
                 read({
                   cwd: input.cwd,
+                  host: input.host,
                   operation: "getIssue",
                   path: paged(`${path}/resource_label_events`, 1),
                   decode: decodeLabelEventsJson,
                 }),
-                linked({ cwd: input.cwd, path, endpoint: "closed_by" }),
-                linked({ cwd: input.cwd, path, endpoint: "related_merge_requests" }),
-                awards({ cwd: input.cwd, scope: input.scope, number, operation: "getIssue" }),
+                linked({ cwd: input.cwd, host: input.host, path, endpoint: "closed_by" }),
+                linked({
+                  cwd: input.cwd,
+                  host: input.host,
+                  path,
+                  endpoint: "related_merge_requests",
+                }),
+                awards({
+                  cwd: input.cwd,
+                  host: input.host,
+                  scope: input.scope,
+                  number,
+                  operation: "getIssue",
+                }),
               ],
               { concurrency: 4 },
             ),
@@ -395,7 +485,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 ...comment,
                 reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
               })),
-              commentsCursor: notes.nextCursor,
+              commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
               events: [...notes.events, ...labelEvents].sort((left, right) =>
                 left.createdAt.localeCompare(right.createdAt),
               ),
@@ -409,22 +499,51 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
         ),
 
       getComments: (input) => {
-        const page = parsePage(input.cursor);
-        return page === null
+        const cursor = parseCommentsCursor(input.cursor);
+        return cursor === null
           ? Effect.fail(refused("getComments", "The cursor was not one GitLab handed out."))
           : issuePath(input, "getComments").pipe(
-              Effect.flatMap(({ path }) =>
-                notesPage({ cwd: input.cwd, path, page, operation: "getComments" }),
+              Effect.flatMap(({ number, path }) =>
+                Effect.all(
+                  [
+                    notesPage({
+                      cwd: input.cwd,
+                      host: input.host,
+                      path,
+                      page: cursor.page,
+                      operation: "getComments",
+                    }),
+                    // Without its awards cursor a later page's awards cannot be found.
+                    cursor.awards === null && cursor.page > 1
+                      ? Effect.succeed(null)
+                      : awards({
+                          cwd: input.cwd,
+                          host: input.host,
+                          scope: input.scope,
+                          number,
+                          operation: "getComments",
+                          cursor: cursor.awards ?? undefined,
+                        }),
+                  ],
+                  { concurrency: 2 },
+                ),
               ),
-              Effect.map((notes) => ({ comments: notes.comments, nextCursor: notes.nextCursor })),
+              Effect.map(([notes, awardPage]) => ({
+                comments: notes.comments.map((comment) => ({
+                  ...comment,
+                  reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+                nextCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
+              })),
             );
       },
 
       create: (input) =>
-        assigneeIds("create", input.assignees).pipe(
+        assigneeIds(input, "create", input.assignees).pipe(
           Effect.flatMap((assignee_ids) =>
             read({
               cwd: input.cwd,
+              host: input.host,
               operation: "create",
               path: `projects/${projectPath(input.scope)}/issues`,
               method: "POST",
@@ -449,6 +568,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           Effect.flatMap(({ path }) =>
             write({
               cwd: input.cwd,
+              host: input.host,
               operation: "comment",
               path: `${path}/notes`,
               method: "POST",
@@ -460,11 +580,14 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       update: (input) =>
         Effect.all([
           issuePath(input, "update"),
-          input.assignees === undefined ? Effect.void : assigneeIds("update", input.assignees),
+          input.assignees === undefined
+            ? Effect.void
+            : assigneeIds(input, "update", input.assignees),
         ]).pipe(
           Effect.flatMap(([{ path }, assignee_ids]) =>
             write({
               cwd: input.cwd,
+              host: input.host,
               operation: "update",
               path,
               method: "PUT",
@@ -483,6 +606,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           Effect.flatMap(({ path }) =>
             write({
               cwd: input.cwd,
+              host: input.host,
               operation: "setState",
               path,
               method: "PUT",
@@ -491,53 +615,57 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           ),
         ),
 
-      setReaction: (input) =>
-        issuePath(input, "setReaction").pipe(
-          Effect.flatMap(({ path }) => {
-            if (input.subjectId !== undefined && !/^[1-9]\d*$/.test(input.subjectId)) {
-              return Effect.fail(refused("setReaction", "The comment id names no GitLab note."));
-            }
-            const subject =
-              input.subjectId === undefined
-                ? `${path}/award_emoji`
-                : `${path}/notes/${input.subjectId}/award_emoji`;
-            if (input.reacted) {
-              return write({
-                cwd: input.cwd,
-                operation: "setReaction",
-                path: `${subject}?${query([["name", gitLabAwardName(input.content)]])}`,
-                method: "POST",
-              });
-            }
-            // GitLab deletes an award by its id and takes no emoji name there, so the reader's own
-            // award of that name is looked up first. Nothing to delete is success.
-            return viewer({ cwd: input.cwd, operation: "setReaction" }).pipe(
-              Effect.flatMap((login) =>
-                read({
-                  cwd: input.cwd,
-                  operation: "setReaction",
-                  path: paged(subject, 1),
-                  decode: (raw) =>
-                    decodeOwnAwardIdJson(raw, { content: input.content, viewer: login }),
-                }),
-              ),
-              Effect.flatMap((own) =>
-                own === null
-                  ? Effect.void
-                  : write({
-                      cwd: input.cwd,
-                      operation: "setReaction",
-                      path: `${subject}/${own}`,
-                      method: "DELETE",
-                    }),
-              ),
-            );
-          }),
-        ),
+      setReaction: Effect.fn("GitLabIssueTracker.setReaction")(function* (input) {
+        const { path } = yield* issuePath(input, "setReaction");
+        if (input.subjectId !== undefined && !/^[1-9]\d*$/.test(input.subjectId)) {
+          return yield* refused("setReaction", "The comment id names no GitLab note.");
+        }
+        const subject =
+          input.subjectId === undefined
+            ? `${path}/award_emoji`
+            : `${path}/notes/${input.subjectId}/award_emoji`;
+        if (input.reacted) {
+          return yield* write({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "setReaction",
+            path: `${subject}?${query([["name", gitLabAwardName(input.content)]])}`,
+            method: "POST",
+          });
+        }
+        // GitLab deletes an award by its id and takes no emoji name there, so the reader's own
+        // award of that name is looked up first. Nothing to delete is success.
+        const login = yield* viewer({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "setReaction",
+        });
+        for (let page = 1; ; page++) {
+          const own = yield* read({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "setReaction",
+            path: paged(subject, page),
+            decode: (raw) => decodeOwnAwardIdJson(raw, { content: input.content, viewer: login }),
+          });
+          if (own.id !== null) {
+            return yield* write({
+              cwd: input.cwd,
+              host: input.host,
+              operation: "setReaction",
+              path: `${subject}/${own.id}`,
+              method: "DELETE",
+            });
+          }
+          // An empty raw page establishes exhaustion even when the host caps page size.
+          if (own.empty) return;
+        }
+      }),
 
       listTemplates: (input) =>
         read({
           cwd: input.cwd,
+          host: input.host,
           operation: "listTemplates",
           path: `projects/${projectPath(input.scope)}/templates/issues`,
           decode: decodeTemplateEntriesJson,
@@ -554,12 +682,14 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           [
             read({
               cwd: input.cwd,
+              host: input.host,
               operation: "listCandidates",
               path: paged(`projects/${projectPath(input.scope)}/labels`, 1),
               decode: decodeProjectLabelsJson,
             }),
             read({
               cwd: input.cwd,
+              host: input.host,
               operation: "listCandidates",
               path: paged(`projects/${projectPath(input.scope)}/members/all`, 1),
               decode: decodeProjectMembersJson,

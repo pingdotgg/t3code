@@ -342,6 +342,23 @@ const decodeCreatedIssue = decodeJsonResult(
   Schema.Struct({ number: Schema.Int, html_url: TrimmedNonEmptyString }),
 );
 
+const decodeIssueMetadata = decodeJsonResult(
+  Schema.Struct({
+    labels: Schema.Array(Schema.Union([Schema.String, Schema.Struct({ name: Schema.String })])),
+    assignees: Schema.Array(Schema.Struct({ login: Schema.String })),
+  }),
+);
+
+/** The labels and assignees a REST issue answer reports, lower case for comparison. */
+export function decodeIssueMetadataJson(raw: string) {
+  return Result.map(decodeIssueMetadata(raw), (issue) => ({
+    labels: issue.labels.map((label) =>
+      (typeof label === "string" ? label : label.name).trim().toLowerCase(),
+    ),
+    assignees: issue.assignees.map((assignee) => assignee.login.trim().toLowerCase()),
+  }));
+}
+
 export function decodeCreatedIssueJson(raw: string) {
   return Result.map(decodeCreatedIssue(raw), (issue) => ({
     number: issue.number,

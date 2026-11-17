@@ -269,6 +269,11 @@ describe("GitHubIssueTracker", () => {
           }
           if (request.url.endsWith("/issues")) {
             response = { number: 42, html_url: "https://github.com/acme/web/issues/42" };
+          } else if (request.method === "PATCH" && body["title"] === "Dropped") {
+            // What GitHub answers a caller without triage access: success, metadata untouched.
+            response = { labels: [{ name: "Bug" }], assignees: [] };
+          } else if (request.method === "PATCH") {
+            response = { labels: [], assignees: [] };
           }
         }
         return Effect.succeed(
@@ -297,6 +302,10 @@ describe("GitHubIssueTracker", () => {
       });
       yield* api.comment({ ...target, body: "Comment" });
       yield* api.update({ ...target, title: "Updated", body: "Edited", labels: [], assignees: [] });
+      expect(
+        yield* Effect.flip(api.update({ ...target, title: "Dropped", labels: ["bug", "p1"] })),
+      ).toMatchObject({ operation: "update", reason: "failed" });
+      yield* api.update({ ...target, title: "Dropped", labels: ["bug"], assignees: [] });
       yield* api.setState({ ...target, state: "closed", closeReason: "not-planned" });
       // GitHub ignores a new reason on a closed issue, so it is refused instead of sent.
       expect(
@@ -347,12 +356,47 @@ describe("GitHubIssueTracker", () => {
         [
           "PATCH",
           "https://api.github.com/repos/acme/web/issues/42",
+          { title: "Dropped", labels: ["bug", "p1"] },
+        ],
+        [
+          "PATCH",
+          "https://api.github.com/repos/acme/web/issues/42",
+          { title: "Dropped", labels: ["bug"], assignees: [] },
+        ],
+        [
+          "PATCH",
+          "https://api.github.com/repos/acme/web/issues/42",
           { state: "closed", state_reason: "not_planned" },
         ],
         ["PATCH", "https://api.github.com/repos/acme/web/issues/42", { state: "open" }],
         "AddReaction",
         "RemoveReaction",
       ]);
+    }),
+  );
+
+  it.effect("asks search for the labels, assignee and order a listing names", () =>
+    Effect.gen(function* () {
+      const seen: unknown[] = [];
+      const api = yield* tracker((variables) => seen.push(variables));
+      // The canned answer is not a search result; only the query sent matters here.
+      yield* api
+        .listIssues({
+          cwd: "/w",
+          host: "github.com",
+          scope: "acme/web",
+          state: "open",
+          involvement: "all",
+          viewer: "julius",
+          labels: ['needs "repro"'],
+          assignee: "theo",
+          sort: "created",
+          limit: 10,
+        })
+        .pipe(Effect.exit);
+      expect(seen[0]).toMatchObject({
+        q: 'is:issue repo:acme/web is:open label:"needs \\"repro\\"" assignee:"theo" sort:created-desc',
+      });
     }),
   );
 

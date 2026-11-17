@@ -4,6 +4,7 @@ import {
   nativePullRequestDestination,
   pullRequestCandidateForIssueLink,
 } from "../lib/pullRequestNavigation";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
@@ -60,6 +61,8 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
           else navigation.dispatch(StackActions.push("PullRequest", params));
           return true;
         }
+        // A dropped connection says nothing about what the link names; the browser knows.
+        if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
       }
       const issueParams = {
         environmentId,

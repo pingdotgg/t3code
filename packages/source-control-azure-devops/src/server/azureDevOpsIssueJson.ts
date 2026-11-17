@@ -86,7 +86,9 @@ const WorkItem = Schema.Struct({
 });
 
 const decodeWorkItemEntry = Schema.decodeUnknownExit(WorkItem);
-const decodeUnknownList = decodeJsonResult(Schema.NullOr(Schema.Array(Schema.Unknown)));
+const decodeWorkItemList = decodeJsonResult(
+  Schema.Struct({ value: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))) }),
+);
 const decodeWorkItem = decodeJsonResult(WorkItem);
 
 type DecodeFailure =
@@ -107,8 +109,18 @@ function browserUrl(
   project: string | null,
 ): string | null {
   if (apiUrl === null || apiUrl === undefined || project === null) return null;
-  const match = /^(https?:\/\/[^/]+\/[^/]+)\/(?:[^/]+\/)?_apis\/wit\/workItems\//i.exec(apiUrl);
-  return match === null ? null : `${match[1]}/${encodeURIComponent(project)}/_workitems/edit/${id}`;
+  const match = /^(https?:\/\/([^/]+))(?:\/([^/]+))?(?:\/[^/]+)?\/_apis\/wit\/workItems\//i.exec(
+    apiUrl,
+  );
+  if (match === null) return null;
+  const [, origin, host, organization] = match;
+  // A legacy organization is its hostname, so whatever the path starts with is a project.
+  const base = host!.toLowerCase().endsWith(".visualstudio.com")
+    ? origin
+    : organization === undefined
+      ? null
+      : `${origin}/${organization}`;
+  return base === null ? null : `${base}/${encodeURIComponent(project)}/_workitems/edit/${id}`;
 }
 
 function toActor(value: typeof IdentityValue.Type | undefined): IssueActor | null {
@@ -173,13 +185,13 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
   };
 }
 
-/** A flat WIQL answer; a row this cannot place is skipped rather than failing the page. */
+/** The `{ count, value }` page `wit/workitems` answers; a row this cannot place is skipped. */
 export function decodeWorkItemsJson(
   raw: string,
   closed: ClosedStates,
 ): Result.Result<ReadonlyArray<AzureDevOpsWorkItem>, DecodeFailure> {
-  return Result.map(decodeUnknownList(raw.trim().length === 0 ? "[]" : raw), (rows) =>
-    (rows ?? []).flatMap((entry) => {
+  return Result.map(decodeWorkItemList(raw), (page) =>
+    (page.value ?? []).flatMap((entry) => {
       const item = decodeWorkItemEntry(entry);
       if (Exit.isFailure(item)) return [];
       return toWorkItem(item.value, closed) ?? [];
@@ -302,26 +314,33 @@ function identityLogin(value: unknown): string | null {
 }
 
 /**
- * The timeline, read out of each revision's field changes. Azure reads `9999-01-01` as the changed
- * date of the newest revision, so the revision's own date is what every event carries.
+ * The timeline, read out of each revision's field changes, with how many updates the page held.
+ * `revisedDate` is when a revision was superseded, `9999-01-01` on the newest, so an event is
+ * dated by the revision's changed date where Azure states one.
  */
 export function decodeUpdatesJson(
   raw: string,
   closed: ClosedStates,
-): Result.Result<ReadonlyArray<IssueEvent>, DecodeFailure> {
-  return Result.map(decodeUpdatesPage(raw), (page) =>
-    (page.value ?? []).flatMap((entry) => {
+): Result.Result<
+  { readonly events: ReadonlyArray<IssueEvent>; readonly count: number },
+  DecodeFailure
+> {
+  return Result.map(decodeUpdatesPage(raw), (page) => ({
+    count: (page.value ?? []).length,
+    events: (page.value ?? []).flatMap((entry) => {
       const update = decodeUpdateEntry(entry);
       if (Exit.isFailure(update) || update.value.id === 1) return [];
       const { id, revisedBy, revisedDate } = update.value;
       const fields = update.value.fields ?? {};
+      const changedDate = fields["System.ChangedDate"]?.newValue;
+      const createdAt = typeof changedDate === "string" ? changedDate : revisedDate;
       const events: IssueEvent[] = [];
       const add = (kind: IssueEvent["kind"], detail: string | null) =>
         events.push({
           id: `update-${id}-${events.length}`,
           kind,
           actor: toActor(revisedBy),
-          createdAt: revisedDate,
+          createdAt,
           detail,
         });
       const state = fields["System.State"];
@@ -361,7 +380,7 @@ export function decodeUpdatesJson(
       }
       return events;
     }),
-  );
+  }));
 }
 
 /** A relation that links a pull request, as Azure spells it: `vstfs:///Git/PullRequestId/{project}/{repo}/{id}`. */

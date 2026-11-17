@@ -121,11 +121,17 @@ function answer(path: string): string {
   throw new Error(`unexpected path ${path}`);
 }
 
-function tracker(onExecute: (args: ReadonlyArray<string>) => string) {
+function tracker(
+  onExecute: (
+    args: ReadonlyArray<string>,
+    input: { readonly host?: string | undefined; readonly stdin?: string },
+  ) => string,
+) {
   return GitLabIssueTracker.make.pipe(
     Effect.provide(
       Layer.mock(GitLabCli.GitLabCli)({
-        execute: ({ args }) => Effect.succeed(TestSourceControlHost.processOutput(onExecute(args))),
+        execute: (input) =>
+          Effect.succeed(TestSourceControlHost.processOutput(onExecute(input.args, input))),
       }),
     ),
   );
@@ -134,13 +140,21 @@ function tracker(onExecute: (args: ReadonlyArray<string>) => string) {
 describe("GitLabIssueTracker", () => {
   it.effect("joins the detail's endpoints into the neutral issue shape", () =>
     Effect.gen(function* () {
-      const api = yield* tracker((args) => answer(args[1]!));
-      const issue = yield* api.getIssue({
-        cwd: "/w",
-        host: "gitlab.com",
-        scope: "acme/web",
-        key: "42",
+      const hosts = new Set<string | undefined>();
+      const awardCursors: unknown[] = [];
+      const api = yield* tracker((args, input) => {
+        hosts.add(input.host);
+        if (args[1] === "graphql") awardCursors.push(JSON.parse(input.stdin!).variables.cursor);
+        return answer(args[1]!);
       });
+      const target = { cwd: "/w", host: "gitlab.example.com", scope: "acme/web", key: "42" };
+      const issue = yield* api.getIssue(target);
+      // A later page of comments carries its own awards, found by the cursor's second half.
+      const later = yield* api.getComments({ ...target, cursor: "2:after-100" });
+      expect(later.comments.map((comment) => comment.reactions?.[0]?.count)).toEqual([2]);
+      expect(awardCursors).toEqual([null, "after-100"]);
+      // Every request names the tracker's own host rather than leaving glab to pick one.
+      expect([...hosts]).toEqual(["gitlab.example.com"]);
       expect(issue).toMatchObject({
         key: "42",
         displayKey: "#42",
@@ -193,14 +207,83 @@ describe("GitLabIssueTracker", () => {
         state: "open",
         involvement: "assigned",
         viewer: "julius",
+        sort: "updated",
         limit: 1,
         cursor: "3",
       });
       expect(paths[0]).toBe(
         "projects/acme%2Fweb/issues?state=opened&assignee_username=julius&order_by=updated_at&sort=desc&per_page=1&page=3",
       );
+      // A named assignee takes the one parameter GitLab reads, so "assigned to me" drops rows here.
+      const both = yield* api.listIssues({
+        cwd: "/w",
+        host: "gitlab.com",
+        scope: "acme/web",
+        state: "open",
+        involvement: "assigned",
+        viewer: "julius",
+        labels: ["bug", "needs triage"],
+        assignee: "theo",
+        sort: "created",
+        limit: 1,
+      });
+      expect(paths[1]).toBe(
+        "projects/acme%2Fweb/issues?state=opened&labels=bug%2Cneeds%20triage&assignee_username=theo&order_by=created_at&sort=desc&per_page=1&page=1",
+      );
+      expect(both.items).toEqual([]);
       expect(page.items[0]?.key).toBe("42");
       expect(page.nextCursor).toBe("4");
+    }),
+  );
+
+  it.effect("removes the viewer's own award by id, paging until it is found", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const api = yield* tracker((args) => {
+        const path = args[1]!;
+        calls.push(args.includes("DELETE") ? `DELETE ${path}` : path);
+        if (path === "user") return encode({ username: "julius" });
+        if (path.endsWith("page=1")) {
+          return encode([{ id: 1, name: "thumbsup", user: { username: "theo" } }]);
+        }
+        if (path.endsWith("page=2") && path.includes("/notes/7/")) {
+          return encode([{ id: 9, name: "thumbsup", user: { username: "julius" } }]);
+        }
+        return "[]";
+      });
+      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      yield* api.setReaction!({ ...target, subjectId: "7", content: "thumbs-up", reacted: false });
+      expect(calls.at(-1)).toBe("DELETE projects/acme%2Fweb/issues/42/notes/7/award_emoji/9");
+      // Nothing to delete is success, with no DELETE sent.
+      calls.length = 0;
+      yield* api.setReaction!({ ...target, content: "thumbs-up", reacted: false });
+      expect(calls).toEqual([
+        "user",
+        "projects/acme%2Fweb/issues/42/award_emoji?per_page=100&page=1",
+        "projects/acme%2Fweb/issues/42/award_emoji?per_page=100&page=2",
+      ]);
+    }),
+  );
+
+  it.effect("writes a kept assignee by the id its username resolves to", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const bodies: string[] = [];
+      const api = yield* tracker((args, input) => {
+        const path = args[1]!;
+        calls.push(path);
+        if (input.stdin !== undefined) bodies.push(input.stdin);
+        if (path === "users?username=theo") return encode([{ id: 2, username: "theo" }]);
+        if (path.startsWith("users?username=")) return "[]";
+        return "{}";
+      });
+      const target = { cwd: "/w", host: "gitlab.com", scope: "acme/web", key: "42" };
+      // The issue's own assignee comes back by login; a newly picked one by id.
+      yield* api.update!({ ...target, assignees: ["theo", "7"] });
+      expect(calls).toEqual(["users?username=theo", "projects/acme%2Fweb/issues/42"]);
+      expect(JSON.parse(bodies.at(-1)!)).toEqual({ assignee_ids: [2, 7] });
+      const error = yield* Effect.flip(api.update!({ ...target, assignees: ["nobody"] }));
+      expect(error.reason).toBe("failed");
     }),
   );
 

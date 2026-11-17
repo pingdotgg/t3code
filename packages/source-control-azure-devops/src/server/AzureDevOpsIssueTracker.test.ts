@@ -77,7 +77,14 @@ function answer(args: ReadonlyArray<string>): string {
   if (resource === "comments") {
     return encode({
       continuationToken: "next-token",
+      // Newest first, as `order=desc` answers.
       comments: [
+        {
+          id: 3,
+          text: "Still happening.",
+          createdDate: "2026-07-04T00:00:00Z",
+          createdBy: { uniqueName: "octo@acme.test" },
+        },
         {
           id: 1,
           text: "Repro attached.",
@@ -102,9 +109,11 @@ function answer(args: ReadonlyArray<string>): string {
         },
         {
           id: 2,
-          revisedDate: "2026-07-03T00:00:00Z",
+          // The newest revision has not been superseded, which Azure writes as year 9999.
+          revisedDate: "9999-01-01T00:00:00Z",
           revisedBy: { uniqueName: "theo@acme.test" },
           fields: {
+            "System.ChangedDate": { newValue: "2026-07-03T00:00:00Z" },
             "System.State": { oldValue: "Active", newValue: "Shipped" },
             "System.Tags": { oldValue: "ui", newValue: "bug; ui" },
           },
@@ -115,14 +124,14 @@ function answer(args: ReadonlyArray<string>): string {
   throw new Error(`unexpected az invocation ${args.join(" ")}`);
 }
 
-function tracker(onExecute: (args: ReadonlyArray<string>) => string) {
+function tracker(onExecute: (args: ReadonlyArray<string>, stdin: string | undefined) => string) {
   return AzureDevOpsIssueTracker.make.pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeFileSystem.layer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-          execute: ({ args }) =>
-            Effect.succeed(TestSourceControlHost.processOutput(onExecute(args))),
+          execute: ({ args, stdin }) =>
+            Effect.succeed(TestSourceControlHost.processOutput(onExecute(args, stdin))),
         }),
       ),
     ),
@@ -165,7 +174,10 @@ describe("AzureDevOpsIssueTracker", () => {
         commentsCursor: "next-token",
         viewerPermissions: { setState: true, edit: true, labels: true, assignees: true },
       });
-      expect(issue.comments).toEqual([
+      // The first page is the newest comments, handed over oldest first.
+      expect(seen.find((args) => args.includes("comments"))).toContain("order=desc");
+      expect(issue.comments.map((comment) => comment.id)).toEqual(["1", "3"]);
+      expect(issue.comments.slice(0, 1)).toEqual([
         {
           id: "1",
           author: { login: "julius@acme.test", name: "Julius", avatarUrl: null },
@@ -176,9 +188,9 @@ describe("AzureDevOpsIssueTracker", () => {
         },
       ]);
       // The first revision is the creation; a state move across the category line is a close.
-      expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
-        ["closed", "Shipped"],
-        ["labeled", "bug"],
+      expect(issue.events.map((event) => [event.kind, event.detail, event.createdAt])).toEqual([
+        ["closed", "Shipped", "2026-07-03T00:00:00Z"],
+        ["labeled", "bug", "2026-07-03T00:00:00Z"],
       ]);
       expect(issue.linkedPullRequests).toEqual([
         {
@@ -198,6 +210,7 @@ describe("AzureDevOpsIssueTracker", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const bodies: string[] = [];
+      const hydrated: string[] = [];
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
@@ -207,24 +220,51 @@ describe("AzureDevOpsIssueTracker", () => {
                     Effect.orDie,
                     Effect.map((body) => {
                       bodies.push(body);
-                      return TestSourceControlHost.processOutput(encode({ workItems: [] }));
+                      return TestSourceControlHost.processOutput(
+                        encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
+                      );
                     }),
                   )
-                : Effect.succeed(TestSourceControlHost.processOutput(answer(args))),
+                : Effect.sync(() => {
+                    if (args[args.indexOf("--resource") + 1] !== "workitems") {
+                      return TestSourceControlHost.processOutput(answer(args));
+                    }
+                    hydrated.push(args.find((arg) => arg.startsWith("ids=")) ?? "");
+                    // The page as REST answers it: an envelope, in an order of its own.
+                    return TestSourceControlHost.processOutput(
+                      encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
+                    );
+                  }),
           }),
         ),
       );
-      yield* api.listIssues({
+      const page = yield* api.listIssues({
         cwd: "/w",
         host: "dev.azure.com",
         scope: "acme/Web App",
         state: "open",
-        involvement: "all",
+        involvement: "mentioned",
         viewer: "octo@acme.test",
-        limit: 10,
+        labels: ["o'hare"],
+        assignee: "theo@acme.test",
+        sort: "created",
+        limit: 2,
+        cursor: "2026-07-01T00:00:00Z|7",
       });
+      // The rows come back in WIQL's order, and the cursor is the last one of the page.
+      expect(hydrated).toEqual(["ids=9,7"]);
+      expect(page.items.map((item) => item.key)).toEqual(["9", "7"]);
+      expect(page.nextCursor).toBe("2026-07-01T00:00:00Z|7");
       expect(bodies).toHaveLength(1);
       expect(bodies[0]).toContain("AND [System.State] NOT IN ('shipped')");
+      const { query } = JSON.parse(bodies[0]!) as { query: string };
+      // Mentions cannot be asked for over REST, so the filter sends no clause for them.
+      expect(query).not.toContain("@RecentMentions");
+      expect(query).toContain(
+        " AND [System.Tags] CONTAINS 'o''hare' AND [System.AssignedTo] = 'theo@acme.test'" +
+          " AND ([System.CreatedDate] < '2026-07-01T00:00:00Z' OR ([System.CreatedDate] = '2026-07-01T00:00:00Z' AND [System.Id] < 7))" +
+          " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
+      );
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
@@ -240,6 +280,109 @@ describe("AzureDevOpsIssueTracker", () => {
       );
       expect(error.reason).toBe("failed");
       expect(requests).toBe(0);
+    }),
+  );
+
+  it.effect("reads a legacy organization's work item and every page of its updates", () =>
+    Effect.gen(function* () {
+      const seen: string[][] = [];
+      const api = yield* tracker((args) => {
+        seen.push([...args]);
+        if (args[0] === "boards") {
+          return encode({
+            ...WORK_ITEM,
+            url: "https://acme.visualstudio.com/p-guid/_apis/wit/workItems/7",
+            relations: [],
+          });
+        }
+        if (args[args.indexOf("--resource") + 1] !== "updates") return answer(args);
+        const rename = (id: number) => ({
+          id,
+          revisedDate: "2026-07-02T00:00:00Z",
+          fields: { "System.Title": { oldValue: "a", newValue: `title ${id}` } },
+        });
+        return encode({
+          value: args.includes("$skip=100")
+            ? [rename(102)]
+            : Array.from({ length: 100 }, (_, index) => rename(index + 2)),
+        });
+      });
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "acme.visualstudio.com",
+        scope: "Web App",
+        key: "7",
+      });
+      for (const args of seen) {
+        expect(args).toContain("https://acme.visualstudio.com");
+      }
+      expect(issue.url).toBe("https://acme.visualstudio.com/Web%20App/_workitems/edit/7");
+      expect(issue.events).toHaveLength(101);
+      expect(issue.events.at(-1)?.detail).toBe("title 102");
+    }),
+  );
+
+  it.effect("refuses a write Azure cannot carry out as asked, without writing", () =>
+    Effect.gen(function* () {
+      const writes: string[][] = [];
+      const api = yield* tracker((args) => {
+        if (args[0] === "boards" && args[2] !== "show") writes.push([...args]);
+        return answer(args);
+      });
+      const target = { cwd: "/w", host: "dev.azure.com", key: "7" };
+      const own = { ...target, scope: "acme/Web App" };
+      // Work item 7 is in "Web App"; an id alone would let another project's scope write to it.
+      const elsewhere = { ...target, scope: "acme/Other" };
+      const refusals = yield* Effect.all([
+        Effect.flip(api.update!({ ...elsewhere, title: "x" })),
+        Effect.flip(api.setState!({ ...elsewhere, state: "Active" })),
+        Effect.flip(api.update!({ ...own, assignees: ["a@acme.test", "b@acme.test"] })),
+        // `az` would send the contents of that file as the tag.
+        Effect.flip(api.update!({ ...own, labels: ["@/etc/hostname"] })),
+        Effect.flip(api.getIssue({ ...target, scope: "acme/@secrets" })),
+      ]);
+      expect(refusals.map((error) => error.reason)).toEqual([
+        "not-found",
+        "not-found",
+        "failed",
+        "failed",
+        "failed",
+      ]);
+      expect(writes).toEqual([]);
+    }),
+  );
+
+  it.effect("sends text that starts with @ on stdin, where az reads no file for it", () =>
+    Effect.gen(function* () {
+      const writes: Array<{ args: string[]; stdin: string | undefined }> = [];
+      const api = yield* tracker((args, stdin) => {
+        if (args[0] === "boards" && args[2] !== "show") writes.push({ args: [...args], stdin });
+        return answer(args);
+      });
+      const scope = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App" };
+      yield* api.update!({ ...scope, key: "7", title: "@/etc/hostname", body: "@notes" });
+      yield* api.create!({
+        ...scope,
+        title: "@/etc/hostname",
+        body: "@notes",
+        labels: [],
+        assignees: [],
+      });
+      for (const write of writes) {
+        expect(write.args.filter((arg) => arg.startsWith("@") || arg.includes("=@/"))).toEqual([]);
+      }
+      expect(
+        writes.map((write) => [
+          write.args[2],
+          write.args.find((arg) => arg.endsWith("=@-")),
+          write.stdin,
+        ]),
+      ).toEqual([
+        ["update", "--title=@-", "@/etc/hostname"],
+        ["update", "--description=@-", "@notes"],
+        ["create", "--title=@-", "@/etc/hostname"],
+        ["update", "--description=@-", "@notes"],
+      ]);
     }),
   );
 

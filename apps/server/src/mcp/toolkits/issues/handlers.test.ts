@@ -266,6 +266,11 @@ describe("issue toolkit handlers", () => {
       const result = yield* harness.call("link_issue", { key: "7" });
       expect(result.url).toBe(detail.url);
       expect((yield* Ref.get(harness.links))[0]?.url).toBe(detail.url);
+      // Named by key and never read: the identity has no URL rather than an empty one, so it can
+      // be handed to another issue tool as it is.
+      const unlinked = yield* harness.call("unlink_issue", { key: "7" });
+      expect(unlinked).toMatchObject({ key: "7", wasLinked: false });
+      expect(unlinked).not.toHaveProperty("url");
     }),
   );
 

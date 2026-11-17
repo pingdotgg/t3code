@@ -5,6 +5,7 @@ import {
   IssueTrackerKind,
   type IssueCapabilities,
   type IssueInvolvement,
+  type IssueListSort,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
@@ -20,6 +21,7 @@ import { AddReaction, RemoveReaction } from "./pullRequestMutations.graphql.ts";
 import { gitHubReactionContent } from "./gitHubPullRequestJson.ts";
 import {
   decodeCreatedIssueJson,
+  decodeIssueMetadataJson,
   toIssueCandidates,
   toIssueComments,
   toIssueDetail,
@@ -48,11 +50,16 @@ const CAPABILITIES: IssueCapabilities = {
 
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
 
+/** Quoted, so no character in it can start a qualifier of its own. */
+function quotedTerm(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
 function searchTerms(query: string): ReadonlyArray<string> {
   return query
     .split(/\s+/)
     .filter((word) => word.length > 0)
-    .map((word) => `"${word.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`);
+    .map(quotedTerm);
 }
 
 const INVOLVEMENT_QUALIFIER: Record<IssueInvolvement, string | null> = {
@@ -68,6 +75,9 @@ function searchQuery(input: {
   readonly involvement: IssueInvolvement;
   readonly viewer: string;
   readonly query?: string | undefined;
+  readonly labels?: ReadonlyArray<string> | undefined;
+  readonly assignee?: string | undefined;
+  readonly sort: IssueListSort;
 }): string {
   const qualifier = INVOLVEMENT_QUALIFIER[input.involvement];
   return [
@@ -75,7 +85,9 @@ function searchQuery(input: {
     `repo:${input.scope.trim()}`,
     ...(input.state === "all" ? [] : [`is:${input.state}`]),
     ...(qualifier === null ? [] : [`${qualifier}:${input.viewer}`]),
-    "sort:updated-desc",
+    ...(input.labels ?? []).map((label) => `label:${quotedTerm(label)}`),
+    ...(input.assignee === undefined ? [] : [`assignee:${quotedTerm(input.assignee)}`]),
+    `sort:${input.sort}-desc`,
     ...searchTerms(input.query ?? ""),
   ].join(" ");
 }
@@ -187,18 +199,13 @@ export const make = Effect.gen(function* () {
     return { ...target, id: found.id, state: found.state, stateReason: found.stateReason };
   });
 
-  const patchIssue = (
-    input: { readonly host: string; readonly scope: string; readonly key: string },
-    operation: string,
-    body: Record<string, unknown>,
-  ) =>
-    verifiedIssue(input, operation).pipe(
-      Effect.flatMap(({ path }) =>
-        api
-          .rest({ host: input.host, operation, method: "PATCH", path, body })
-          .pipe(Effect.asVoid, Effect.mapError(fail(operation))),
-      ),
+  // As sets: GitHub applies a name asked for twice once.
+  const sameNames = (wanted: ReadonlyArray<string>, applied: ReadonlyArray<string>) => {
+    const names = new Set(wanted.map((name) => name.trim().toLowerCase()));
+    return (
+      names.size === new Set(applied).size && [...names].every((name) => applied.includes(name))
     );
+  };
 
   return {
     kind: KIND,
@@ -351,13 +358,35 @@ export const make = Effect.gen(function* () {
         ),
       ),
 
-    update: (input) =>
-      patchIssue(input, "update", {
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(input.body === undefined ? {} : { body: input.body }),
-        ...(input.labels === undefined ? {} : { labels: input.labels }),
-        ...(input.assignees === undefined ? {} : { assignees: input.assignees }),
-      }),
+    update: Effect.fn("GitHubIssueTracker.update")(function* (input) {
+      const { path } = yield* verifiedIssue(input, "update");
+      const response = yield* api
+        .rest({
+          host: input.host,
+          operation: "update",
+          method: "PATCH",
+          path,
+          body: {
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.body === undefined ? {} : { body: input.body }),
+            ...(input.labels === undefined ? {} : { labels: input.labels }),
+            ...(input.assignees === undefined ? {} : { assignees: input.assignees }),
+          },
+        })
+        .pipe(Effect.mapError(fail("update")));
+      // Without triage access GitHub drops labels and assignees and still answers with success.
+      const applied = decodeIssueMetadataJson(response.body);
+      if (
+        Result.isSuccess(applied) &&
+        ((input.labels !== undefined && !sameNames(input.labels, applied.success.labels)) ||
+          (input.assignees !== undefined && !sameNames(input.assignees, applied.success.assignees)))
+      ) {
+        return yield* invalid(
+          "update",
+          "GitHub did not apply the labels or assignees. Changing them needs triage access to the repository.",
+        );
+      }
+    }),
 
     setState: Effect.fn("GitHubIssueTracker.setState")(function* (input) {
       const { path, state, stateReason } = yield* verifiedIssue(input, "setState");
