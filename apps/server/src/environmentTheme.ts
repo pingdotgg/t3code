@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   type DefaultAppearancePreference,
@@ -52,6 +53,10 @@ const MAX_THEME_FILES = 32;
 export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
 const MAX_THEME_TOTAL_BYTES = 6 * MAX_THEME_FILE_BYTES;
 
+/** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
+const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
+const MAX_THEME_BACKGROUND_BYTES = 16 * 1024 * 1024;
+
 interface PublishedThemes {
   readonly seq: number;
   readonly themes: ReadonlyArray<EnvironmentTheme>;
@@ -101,6 +106,8 @@ export class EnvironmentThemeService extends Context.Service<
     readonly read: (themeId?: string) => Effect.Effect<
       {
         readonly current: string;
+        /** Where theme files and their background images live. */
+        readonly themesDir: string;
         readonly themes: ReadonlyArray<EnvironmentTheme>;
         readonly theme?: EnvironmentTheme;
       },
@@ -173,6 +180,35 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
+/**
+ * The background image published beside `themeId`, if any. Symlinks and oversized files are
+ * skipped. `entries` lets a directory scan skip lookups for names it did not list.
+ */
+export function findThemeBackground(
+  themesDir: string,
+  themeId: string,
+  entries?: ReadonlySet<string>,
+): { readonly path: string; readonly revision: string } | null {
+  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+    const name = `${themeId}.${extension}`;
+    if (entries !== undefined && !entries.has(name)) continue;
+    // Native separators: the asset route refuses a path that differs from its canonical form.
+    const filePath = NodePath.join(themesDir, name);
+    let info: NodeFS.BigIntStats;
+    try {
+      info = NodeFS.lstatSync(filePath, { bigint: true });
+    } catch {
+      continue;
+    }
+    if (!info.isFile() || info.size > MAX_THEME_BACKGROUND_BYTES) continue;
+    return {
+      path: filePath,
+      revision: [info.ino, info.size, info.mtimeNs].map((part) => part.toString(36)).join("-"),
+    };
+  }
+  return null;
+}
+
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const entries = yield* fs
@@ -180,6 +216,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     .pipe(Effect.orElseSucceed((): Array<string> => []));
 
   const themes: Array<EnvironmentTheme> = [];
+  const entryNames = new Set(entries);
   let examined = 0;
   let totalBytes = 0;
   for (const entry of entries.toSorted()) {
@@ -232,7 +269,8 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       break;
     }
 
-    themes.push({ id, ...file });
+    const background = findThemeBackground(themesDir, id, entryNames);
+    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
   }
   return themes;
 });
@@ -406,7 +444,8 @@ const make = Effect.gen(function* () {
   )(function* (themeId) {
     const { themes } = yield* refresh;
     const { defaultTheme } = yield* settings.getSettings;
-    if (themeId === undefined) return { current: defaultTheme, themes };
+    const themesDir = environmentThemesDir;
+    if (themeId === undefined) return { current: defaultTheme, themesDir, themes };
     const theme = themes.find((candidate) => candidate.id === themeId);
     if (theme === undefined) {
       return yield* new EnvironmentThemeRefusedError({
@@ -415,7 +454,7 @@ const make = Effect.gen(function* () {
         known: themes.map(({ id }) => id),
       });
     }
-    return { current: defaultTheme, themes, theme };
+    return { current: defaultTheme, themesDir, themes, theme };
   });
 
   return {
