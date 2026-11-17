@@ -62,6 +62,7 @@ export class DesktopTabRunner {
   private closed = false;
   private closing: Promise<void> | undefined;
   private dialog: Dialog | null = null;
+  private resolvingDialogs = 0;
   private fileChooser: FileChooser | null = null;
   private lastViewport: { width: number; height: number } | null = null;
   private setting: PreviewViewportSetting;
@@ -104,9 +105,15 @@ export class DesktopTabRunner {
     target: CdpRelayTarget,
     events: {
       on: (listener: (method: string, params: unknown, sessionId: string) => void) => () => void;
+      interceptDialogs?: (agentOwnsPage: () => boolean) => () => void;
     },
   ) {
     this.target = target;
+    const restoreDialogs = events.interceptDialogs?.(() => this.ownsDialogs());
+    if (restoreDialogs)
+      await Effect.runPromise(
+        Effect.addFinalizer(() => Effect.sync(restoreDialogs)).pipe(Scope.provide(this.scope)),
+      );
     const unsubscribe = events.on((method, params, sessionId) => {
       if (method === "Page.javascriptDialogClosed") this.dialog = null;
       if (!sessionId) {
@@ -141,6 +148,9 @@ export class DesktopTabRunner {
     // must announce existing contexts to this fresh Playwright connection.
     await target.send("Runtime.disable", {}, undefined);
     this.browser = await chromium.connectOverCDP(endpoint);
+    this.browser.once("disconnected", () => {
+      void this.close();
+    });
     const pages = this.browser.contexts().flatMap((context) => context.pages());
     if (pages.length !== 1) throw new Error("Desktop tab relay requires exactly one page.");
     this.page = pages[0]!;
@@ -148,7 +158,7 @@ export class DesktopTabRunner {
       void this.close();
     });
     this.page.on("dialog", (dialog) => {
-      this.dialog = dialog;
+      if (this.ownsDialogs()) this.dialog = dialog;
     });
     this.lastViewport = await this.viewport();
     this.report();
@@ -287,6 +297,16 @@ export class DesktopTabRunner {
     this.changed(this.acting);
   }
 
+  private ownsDialogs() {
+    return (
+      !this.closed &&
+      (this.acting ||
+        this.resolvingDialogs > 0 ||
+        this.dialog !== null ||
+        this.publicEndpoints.size > 0)
+    );
+  }
+
   close() {
     return (this.closing ??= this.shutdown());
   }
@@ -296,6 +316,8 @@ export class DesktopTabRunner {
     const draining = this.control.close();
     this.acting = false;
     this.report();
+    await this.dialog?.dismiss().catch(() => undefined);
+    this.dialog = null;
     for (const close of this.closeClients) close();
     await this.revokePublicEndpoints();
     await this.browser?.close();
@@ -456,10 +478,15 @@ export class DesktopTabRunner {
       const input = decodeDialog(request.input);
       const dialog = this.dialog;
       if (!dialog) throw new Error("No dialog is pending.");
-      if (input.accept) await dialog.accept(input.promptText);
-      else await dialog.dismiss();
-      if (this.dialog === dialog) this.dialog = null;
-      return this.execute({ ...request, operation: "status" });
+      this.resolvingDialogs++;
+      try {
+        if (input.accept) await dialog.accept(input.promptText);
+        else await dialog.dismiss();
+        if (this.dialog === dialog) this.dialog = null;
+        return await this.execute({ ...request, operation: "status" });
+      } finally {
+        this.resolvingDialogs--;
+      }
     }
     return this.control.agent(request.agentSessionId ?? "agent", async () => {
       if (this.dialog)

@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 import { DesktopTabRunner } from "./DesktopTabRunner.ts";
+import { interceptNativeDialogs } from "./NativeDialogs.ts";
 import type { DesktopTabHost, PreviewAutomationRequest } from "@t3tools/contracts";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -2816,6 +2817,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               ),
           },
           {
+            interceptDialogs: (agentOwnsPage) => interceptNativeDialogs(wc, agentOwnsPage),
             on: (listener) => {
               const onMessage = (
                 _event: Electron.Event,
