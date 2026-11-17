@@ -6,18 +6,62 @@ export function resolveProtocolRelativeMediaUrl(src: string): string {
   return `${protocol}${src}`;
 }
 
-async function readMediaBlob(src: string): Promise<Blob> {
-  let response: Response;
+// Data URL escapes are raw bytes, not UTF-8, so `%89` must stay one byte.
+function decodePercentBytes(payload: string) {
+  const encoder = new TextEncoder();
+  return Uint8Array.from(
+    payload
+      .split(/(%[0-9a-f]{2})/i)
+      .flatMap((part) =>
+        /^%[0-9a-f]{2}$/i.test(part)
+          ? [Number.parseInt(part.slice(1), 16)]
+          : [...encoder.encode(part)],
+      ),
+  );
+}
+
+/** Decodes inline media locally; desktop connect-src omits `data:`, so fetch() cannot read it. */
+function readDataUrlBlob(src: string): Blob {
+  // A fragment is never part of the payload; a literal `#` in data must be escaped as `%23`.
+  const url = src.split("#", 1)[0] ?? src;
+  const comma = url.indexOf(",");
+  const [mimeType = "", ...parameters] = url.slice("data:".length, comma).split(";");
+  const payload = url.slice(comma + 1);
   try {
-    response = await fetch(src);
+    if (comma < 0) throw new Error("Missing data URL payload.");
+    const isBase64 = parameters.some((parameter) => parameter.trim().toLowerCase() === "base64");
+    // Base64 text is ASCII, so any escape that is not valid UTF-8 is malformed anyway.
+    const bytes = isBase64
+      ? Uint8Array.from(atob(decodeURIComponent(payload)), (char) => char.charCodeAt(0))
+      : decodePercentBytes(payload);
+    return new Blob([bytes], { type: mimeType || "text/plain" });
   } catch (cause) {
-    throw new Error(
-      "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
-      { cause },
-    );
+    throw new Error("This inline media could not be decoded.", { cause });
   }
-  if (!response.ok) throw new Error(`The file could not be fetched (HTTP ${response.status}).`);
-  const blob = await response.blob();
+}
+
+async function fetchMediaBlob(src: string): Promise<Blob> {
+  const response = await fetch(src).catch(() => null);
+  if (response?.ok) return response.blob();
+  // An <img> can show media that fetch() may not read (CORS, CSP, cookies); desktop reads it natively.
+  const desktop = typeof window === "undefined" ? undefined : window.desktopBridge;
+  const native =
+    desktop && /^https?:/i.test(src) ? await desktop.readMedia(src).catch(() => null) : null;
+  if (native && native.status >= 200 && native.status < 300) {
+    return new Blob([new Uint8Array(native.data)], { type: native.mimeType });
+  }
+  const status = native?.status ?? response?.status;
+  if (status !== undefined) throw new Error(`The file could not be fetched (HTTP ${status}).`);
+  throw new Error(
+    desktop
+      ? "The file could not be fetched. Check the connection and try again."
+      : "The file could not be fetched. The host may block browser access (CORS), or the connection may be unavailable.",
+  );
+}
+
+async function readMediaBlob(src: string): Promise<Blob> {
+  if (/^data:/i.test(src)) return readDataUrlBlob(src);
+  const blob = await fetchMediaBlob(src);
   if (blob.type.split(";", 1)[0] === "text/html") {
     throw new Error("This link returned a web page instead of media. Open the original URL.");
   }

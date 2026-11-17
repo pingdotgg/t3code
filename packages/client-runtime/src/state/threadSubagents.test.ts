@@ -56,6 +56,33 @@ const activeRun = run("run-1", "running");
 const finishedRun = run("run-1", "completed");
 
 describe("deriveThreadTurnSubagents", () => {
+  it.each(["running", "completed"] as const)(
+    "keeps finished workflows after a later %s turn",
+    (status) => {
+      const workflow = subagent({
+        id: "workflow",
+        status: "completed",
+        workflow: { phases: [], agents: [] },
+      });
+      const turn = deriveThreadTurnSubagents({
+        runs: [finishedRun, run("run-2", status)],
+        subagents: [
+          workflow,
+          subagent({ id: "old", status: "completed" }),
+          subagent({
+            id: "recent",
+            runId: RunId.make("run-2"),
+            status,
+            updatedAt: at("2026-06-20T00:00:09.000Z"),
+          }),
+        ],
+      });
+
+      expect(turn?.subagents.map((entry) => entry.id)).toEqual(["recent", "workflow"]);
+      expect(resolveSubagentPillSegment(turn)).not.toBeNull();
+    },
+  );
+
   it("scopes the roster to the active run and orders it by start time", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [run("run-0", "completed"), activeRun],
@@ -264,15 +291,16 @@ describe("deriveThreadTurnSubagents", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [activeRun],
       subagents: [
-        subagent({ id: "a", status: "running" }),
+        subagent({ id: "a", status: "completed" }),
         subagent({ id: "b", status: "idle" }),
         subagent({ id: "c", status: "failed" }),
       ],
     });
 
-    expect(turn?.liveCount).toBe(1);
-    expect(turn?.settledCount).toBe(1);
+    expect(turn?.liveCount).toBe(0);
+    expect(turn?.settledCount).toBe(2);
     expect(turn?.subagents).toHaveLength(3);
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("2 done");
   });
 
   it("keeps settled workflows reachable without counting idle agents as done", () => {

@@ -17,8 +17,8 @@
     "react-router": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:node24",
     "@types/react": "catalog:",

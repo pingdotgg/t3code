@@ -40,11 +40,18 @@ const EMPTY_DEVICE_STATE: DeviceServiceState = {
 export function useDeviceState(environmentId: EnvironmentId | null): {
   readonly state: DeviceServiceState;
   readonly loaded: boolean;
+  readonly error: string | null;
+  readonly refresh: () => void;
 } {
   const query = useEnvironmentQuery(
     environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
   );
-  return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== undefined };
+  return {
+    state: query.data ?? EMPTY_DEVICE_STATE,
+    loaded: query.data !== null,
+    error: query.error,
+    refresh: query.refresh,
+  };
 }
 
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -162,7 +169,7 @@ export const NO_DEVICE_PROBE_ATOM = Atom.make(AsyncResult.initial<void, never>()
 );
 
 /**
- * The Expo account an EAS host editor shows as it opens, for the saved
+ * The Expo account an Expo host editor shows as it opens, for the saved
  * credential. Each open checks again; edits and manual checks use the command.
  */
 export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -171,3 +178,14 @@ export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connect
   staleTimeMs: 0,
   idleTtlMs: 0,
 });
+
+/** Who a Simlock token is, checked as the host editor's URL and token fields change. */
+export const deviceSimlockIdentityCheck = createEnvironmentRpcQueryAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "environment-data:device:simlock-identity-check",
+    tag: WS_METHODS.deviceSimlockIdentity,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  },
+);

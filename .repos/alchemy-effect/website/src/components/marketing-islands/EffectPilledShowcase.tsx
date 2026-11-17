@@ -264,14 +264,8 @@ export default function EffectPilledShowcase() {
     <div ref={wrapRef} className="eff-showcase" data-nosnippet="">
       <div className="eff-showcase__chrome">
         <div className="eff-showcase__header">
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-danger)" }}
-          />
-          <span
-            className="alc-code-block__dot"
-            style={{ background: "var(--alc-warn)" }}
-          />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
+          <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
           <span
             className="alc-code-block__dot"
             style={{ background: "var(--alc-accent-bright)" }}
@@ -312,11 +306,7 @@ export default function EffectPilledShowcase() {
         </div>
       </div>
       <div className="eff-showcase__hint" aria-hidden>
-        {pinned ? (
-          <span>tap a tab to switch</span>
-        ) : (
-          <span>cycling · tap to pin</span>
-        )}
+        {pinned ? <span>tap a tab to switch</span> : <span>cycling · tap to pin</span>}
       </div>
     </div>
   );
@@ -404,12 +394,7 @@ function StreamPanel() {
     <div className="eff-showcase__group">
       <div className="eff-showcase__group-title">Wired event source</div>
       <div className="eff-showcase__flow">
-        <FlowNode
-          icon="logos:aws-dynamodb"
-          label="Jobs"
-          sub="DynamoDB.Table"
-          delay={120}
-        />
+        <FlowNode icon="logos:aws-dynamodb" label="Jobs" sub="DynamoDB.Table" delay={120} />
         <FlowEdge label="stream" delay={260} />
         <FlowNode
           icon="logos:aws-lambda"
@@ -419,12 +404,7 @@ function StreamPanel() {
           delay={320}
         />
         <FlowEdge label="invoke" delay={440} />
-        <FlowNode
-          icon="mdi:lambda"
-          label="handler"
-          sub="your function"
-          delay={500}
-        />
+        <FlowNode icon="mdi:lambda" label="handler" sub="your function" delay={500} />
       </div>
     </div>
   );
@@ -629,21 +609,12 @@ function LayerCodeDiff({ impl }: { impl: LayerImpl }) {
   );
 }
 
-function CodeLine({
-  text,
-  kind,
-}: {
-  text: string;
-  kind: "common" | "ddb" | "d1";
-}) {
+function CodeLine({ text, kind }: { text: string; kind: "common" | "ddb" | "d1" }) {
   const html = highlightTS(text) || "&nbsp;";
   return (
     <div className={`eff-diff__line eff-diff__line--${kind}`}>
       <span className="eff-diff__marker" aria-hidden />
-      <span
-        className="eff-diff__content"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <span className="eff-diff__content" dangerouslySetInnerHTML={{ __html: html }} />
     </div>
   );
 }
@@ -662,17 +633,8 @@ function FeatureRow({
   delay?: number;
 }) {
   return (
-    <div
-      className="eff-showcase__feature"
-      style={{ animationDelay: `${delay}ms` }}
-    >
-      <Icon
-        icon={icon}
-        width={22}
-        height={22}
-        aria-hidden
-        className="eff-showcase__feature-icon"
-      />
+    <div className="eff-showcase__feature" style={{ animationDelay: `${delay}ms` }}>
+      <Icon icon={icon} width={22} height={22} aria-hidden className="eff-showcase__feature-icon" />
       <div className="eff-showcase__feature-text">
         <div className="eff-showcase__feature-label">{label}</div>
         <div className="eff-showcase__feature-sub">{sub}</div>
