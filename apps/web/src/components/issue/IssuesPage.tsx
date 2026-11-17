@@ -3,6 +3,7 @@ import {
   continueIssuePage,
   groupIssues,
   holdIssuePages,
+  keepIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
   issueTrackerKey,
@@ -191,6 +192,8 @@ export function IssuesPage() {
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);
+  const kept = keepIssuePages(pages, held);
+  if (kept !== pages) setPages(kept);
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   // One tracker group's button carries on that tracker's scopes only.

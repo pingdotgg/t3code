@@ -4,6 +4,7 @@ import {
   continueIssuePage,
   groupIssues,
   holdIssuePages,
+  keepIssuePages,
   issueFilterScopes,
   issueOrder,
   type EnvironmentIssueEntry,
@@ -153,6 +154,8 @@ export function IssuesScreen(
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);
+  const kept = keepIssuePages(pages, held);
+  if (kept !== pages) setPages(kept);
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
   const [loadingMore, setLoadingMore] = useState(false);
   const loading = useRef(false);
@@ -182,7 +185,7 @@ export function IssuesScreen(
     );
     loading.current = false;
     setLoadingMore(false);
-    setPages(new Map([...held, ...loaded]));
+    setPages(new Map([...pages, ...loaded]));
   };
 
   const groups = groupIssues(held, query, projects, sort);
