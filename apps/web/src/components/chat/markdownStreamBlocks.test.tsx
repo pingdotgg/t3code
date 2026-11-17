@@ -23,8 +23,19 @@ const html = (source: string) =>
     .replace(/>\s+</g, "><")
     .trim();
 
+const punctuatedHeadings = [
+  "Fix (web)",
+  "Step 1, setup",
+  "Version 1.2",
+  "What's next?",
+  'The "quoted" heading',
+  "Issue #123",
+  "Before - after – later — end",
+];
+
 describe("splitMarkdownBlocks", () => {
   it.each([
+    ...punctuatedHeadings.map((heading) => `## ${heading}\n\nNext paragraph.`),
     "# Title\n\nFirst paragraph with `code` and **bold**.\n\nSecond [link](https://example.com).",
     "# Setup\n\n# Setup\n\n[Second setup](#setup-1)",
     "> Setup\n> ===\n\n> Setup\n> ===",
@@ -51,6 +62,13 @@ describe("splitMarkdownBlocks", () => {
       expect(blocks.join("")).toBe(source);
       expect(blocks.map(html).join("")).toBe(html(source));
     }
+  });
+
+  it.each(punctuatedHeadings)("keeps splitting headings with prose punctuation: %s", (heading) => {
+    expect(splitMarkdownBlocks(`## ${heading}\n\nNext paragraph.`)).toEqual([
+      `## ${heading}\n\n`,
+      "Next paragraph.",
+    ]);
   });
 
   it("splits only between closed blocks", () => {
