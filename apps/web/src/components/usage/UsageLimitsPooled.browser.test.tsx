@@ -196,6 +196,7 @@ describe("UsageLimitsPooled", () => {
     await screen.getByRole("heading", { name: /Antigravity/ }).hover();
     await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
     const providerHandle = screen.getByRole("button", { name: "Reorder Codex", exact: true });
+    await userEvent.keyboard("{Shift}");
     providerHandle.element().focus();
     await expect.element(providerReorder).toHaveStyle({ opacity: "1" });
     await userEvent.keyboard("[Space]");
@@ -270,6 +271,13 @@ describe("UsageLimitsPooled", () => {
       screen.getByRole("button", { name: "Reorder Codex Session", exact: true }).element(),
       screen.getByRole("button", { name: "Reorder Codex Weekly", exact: true }).element(),
     );
+    await commands.resetPointer();
+    await expect
+      .element(
+        screen.getByRole("button", { name: "Reorder Codex Session", exact: true }).element()
+          .parentElement!,
+      )
+      .toHaveStyle({ opacity: "0" });
     expect(JSON.parse(window.localStorage.getItem(USAGE_LIMIT_LAYOUT_KEY)!)).toMatchObject({
       providerOrder: ["antigravity", "codex"],
       windowOrder: [

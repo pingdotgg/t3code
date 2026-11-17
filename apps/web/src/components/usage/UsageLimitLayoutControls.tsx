@@ -98,7 +98,7 @@ export function UsageLimitLayoutControls({
         "flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-background p-0.5 shadow-xs",
         isDragging || hidden || pinned
           ? "pointer-events-auto opacity-100"
-          : "pointer-events-none opacity-0 group-focus-within/limit-row:pointer-events-auto group-focus-within/limit-row:opacity-100 group-hover/limit-row:pointer-events-auto group-hover/limit-row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
+          : "pointer-events-none opacity-0 group-has-[:focus-visible]/limit-row:pointer-events-auto group-has-[:focus-visible]/limit-row:opacity-100 group-hover/limit-row:pointer-events-auto group-hover/limit-row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
       )}
     >
       <button
