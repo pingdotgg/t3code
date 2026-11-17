@@ -27,6 +27,7 @@ describe("splitMarkdownBlocks", () => {
   it.each([
     "# Title\n\nFirst paragraph with `code` and **bold**.\n\nSecond [link](https://example.com).",
     "# Setup\n\n# Setup\n\n[Second setup](#setup-1)",
+    "Setup\n===\n\n> ## **Setup**\n\n- # [Setup](https://example.com)\n\n```sh\n# Setup\n```",
     "- one\n- two\n\n- loose three\n\n  continued\n\nAfter the list.",
     "1. first\n\n2. second\n\nText\n\n3) restarted",
     "```ts\nconst a = 1;\n\n\nconst b = 2;\n```\n\nafter\n\n~~~\nx\n\n~~~~\n\ny\n~~~\n\nend",
