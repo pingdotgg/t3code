@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   continueIssuePage,
+  groupIssues,
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
@@ -151,5 +152,31 @@ describe("issueFilterScopes", () => {
       ],
     ]);
     expect(issueFilterScopes(held, [])).toEqual([]);
+  });
+});
+
+describe("groupIssues", () => {
+  it("lists an issue once when two environments hold the same repository", () => {
+    const github = {
+      tracker: "github",
+      host: "github.com",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const page = answer({
+      trackers: [github],
+      entries: [entry({ key: "1" }), entry({ key: "2" })],
+    });
+    const held = holdIssuePages(
+      [
+        [environmentId, page],
+        ["env-2" as EnvironmentId, answer({ ...page })],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.displayKey)).toEqual(["#1", "#2"]);
   });
 });
