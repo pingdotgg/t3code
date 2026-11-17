@@ -82,14 +82,15 @@ export const AgentSkillResources = Schema.Array(AgentSkillResource).check(
 );
 
 /**
- * The built-in template an agent or skill was installed from. `digest` is that template's digest,
- * so a copy whose own digest differs has been edited, and one whose template moved on is behind.
- * `version` is the app that wrote it, so an older app never offers its older text as an update.
+ * The built-in template a copy follows. A copy whose digest differs from `digest` was edited.
+ * `version` stops an older app offering older text. `mergingFrom` is the copy's digest when a merge
+ * chat started; while the copy still matches it, the merge is unsaved and stays listed.
  */
 export const AgentTemplateRecord = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   digest: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
   version: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  mergingFrom: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type AgentTemplateRecord = typeof AgentTemplateRecord.Type;
 

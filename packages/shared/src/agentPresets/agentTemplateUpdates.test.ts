@@ -105,9 +105,26 @@ describe("agentTemplateUpdates", () => {
     for (const update of agentTemplateUpdates(edited, current, "1.1.0")) {
       merged = markAgentTemplateMerged(merged, update, now);
     }
-    expect(statuses(merged)).toEqual([]);
+    // A merge chat that never saves leaves the copy as it was, so the update stays listed.
+    expect(statuses(merged)).toEqual([
+      ["agent", true],
+      ["skill", true],
+    ]);
     expect(merged.mcpGatewayProfiles[0]!.systemPrompt).toBe("You review code. Be terse.");
     expect(merged.agentSkills[0]!.digest).toBe(edited.agentSkills[0]!.digest);
+    const saved: Library = {
+      agentSkills: merged.agentSkills.map((item) =>
+        toAgentSkillStub(
+          { ...item, content: "# Merged" },
+          agentSkillDigest({ content: "# Merged" }),
+        ),
+      ),
+      mcpGatewayProfiles: merged.mcpGatewayProfiles.map((profile) => ({
+        ...profile,
+        systemPrompt: `${current[0]!.systemPrompt} Be terse.`,
+      })),
+    };
+    expect(statuses(saved)).toEqual([]);
   });
 
   it("counts a skill added to an agent as an edit", () => {

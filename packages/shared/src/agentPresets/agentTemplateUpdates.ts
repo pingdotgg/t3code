@@ -61,6 +61,8 @@ function templateState(
   unedited = false,
 ): { readonly modified: boolean } | null {
   if (record && compareSemverVersions(record.version, version) > 0) return null;
+  if (record?.mergingFrom !== undefined && record.mergingFrom === contentDigest())
+    return { modified: true };
   if (record?.digest === template.digest) return null;
   const digest = contentDigest();
   if (digest === template.digest) return null;
@@ -155,15 +157,21 @@ export function applyAgentTemplateUpdate(
 }
 
 /**
- * Records that an edited copy now follows the current template, once a chat to merge it has
- * started, so it stops showing as behind. Its content is left to that chat.
+ * Points an edited copy at the current template once a chat to merge it has started. The copy's
+ * digest is kept too, so the update stays listed until that chat saves a changed copy.
  */
 export function markAgentTemplateMerged(
   library: AgentLibrary,
   update: AgentTemplateUpdate,
   now: string,
 ): AgentLibrary {
-  const { template } = update.template;
+  const template = {
+    ...update.template.template,
+    mergingFrom:
+      update.kind === "agent"
+        ? profileTemplateDigest(update.profile, library.agentSkills)
+        : agentSkillDigestOf(update.skill),
+  };
   return update.kind === "agent"
     ? {
         agentSkills: library.agentSkills,
