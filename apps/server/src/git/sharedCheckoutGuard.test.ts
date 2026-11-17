@@ -2,7 +2,6 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -11,6 +10,7 @@ import { assertCheckoutIdle, busyThreadsInCheckout } from "./sharedCheckoutGuard
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
+const nestedProjectId = ProjectId.make("project-nested");
 
 const thread = (
   title: string,
@@ -18,8 +18,10 @@ const thread = (
     readonly projectId?: ProjectId;
     readonly worktreePath?: string | null;
     readonly activityRunStatus?: "preparing" | "starting" | "running" | "waiting" | null;
+    readonly archived?: boolean;
   } = {},
 ) => ({
+  archived: overrides.archived ?? false,
   id: ThreadId.make(title),
   title,
   projectId: overrides.projectId ?? projectId,
@@ -31,8 +33,8 @@ const thread = (
 describe("busyThreadsInCheckout", () => {
   it("finds running local threads in the project root checkout", () => {
     const busy = busyThreadsInCheckout({
-      cwd: "/repo",
-      projectId,
+      checkoutPaths: ["/repo"],
+      projectIds: new Set([projectId]),
       threads: [
         thread("local running"),
         thread("local idle", { activityRunStatus: null }),
@@ -46,8 +48,8 @@ describe("busyThreadsInCheckout", () => {
 
   it("finds running threads that share a worktree", () => {
     const busy = busyThreadsInCheckout({
-      cwd: "/worktrees/a",
-      projectId: null,
+      checkoutPaths: ["/worktrees/a"],
+      projectIds: new Set(),
       threads: [
         thread("same worktree", { worktreePath: "/worktrees/a", activityRunStatus: "waiting" }),
         thread("other worktree", { worktreePath: "/worktrees/b" }),
@@ -70,26 +72,33 @@ describe("assertCheckoutIdle", () => {
         repositoryRoot: () => Effect.succeed(input.repositoryRoot),
       }),
       Layer.mock(ProjectService.ProjectService)({
-        getByWorkspaceRoot: (workspaceRoot) =>
-          Effect.succeed(
-            workspaceRoot === "/repo"
-              ? Option.some({ id: projectId, workspaceRoot } as never)
-              : Option.none(),
-          ),
+        snapshot: Effect.succeed({
+          projects: [
+            { id: projectId, workspaceRoot: "/repo" },
+            { id: nestedProjectId, workspaceRoot: "/repo/packages/app" },
+            { id: otherProjectId, workspaceRoot: "/other" },
+          ],
+        } as never),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getShellSnapshot: (options) =>
           options?.worktreePath !== undefined && input.failWorktreeLookup
             ? Effect.fail("worktree lookup failed" as never)
-            : Effect.succeed({
-                threads: input.threads.filter(
-                  (candidate) =>
-                    (options?.projectId === undefined ||
-                      candidate.projectId === options.projectId) &&
-                    (options?.worktreePath === undefined ||
-                      candidate.worktreePath === options.worktreePath),
-                ),
-              } as never),
+            : Effect.succeed(
+                (() => {
+                  const matching = input.threads.filter(
+                    (candidate) =>
+                      (options?.projectId === undefined ||
+                        candidate.projectId === options.projectId) &&
+                      (options?.worktreePath === undefined ||
+                        candidate.worktreePath === options.worktreePath),
+                  );
+                  return {
+                    threads: matching.filter((candidate) => !candidate.archived),
+                    archivedThreads: matching.filter((candidate) => candidate.archived),
+                  } as never;
+                })(),
+              ),
       }),
     );
 
@@ -116,6 +125,27 @@ describe("assertCheckoutIdle", () => {
         ),
       );
       expect(error.detail).toContain("'local running'");
+    }),
+  );
+
+  it.effect("refuses a switch while a nested project or archived thread is working", () =>
+    Effect.gen(function* () {
+      const error = yield* assertCheckoutIdle("test", "/repo").pipe(
+        Effect.flip,
+        Effect.provide(
+          guardLayer({
+            repositoryRoot: "/repo",
+            threads: [
+              thread("nested running", { projectId: nestedProjectId }),
+              thread("archived running", { archived: true }),
+              thread("other running", { projectId: otherProjectId }),
+            ],
+          }),
+        ),
+      );
+      expect(error.detail).toContain("'nested running'");
+      expect(error.detail).toContain("'archived running'");
+      expect(error.detail).not.toContain("other running");
     }),
   );
 

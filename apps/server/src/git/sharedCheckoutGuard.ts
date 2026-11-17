@@ -4,7 +4,6 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -15,19 +14,18 @@ type CheckoutThread = Pick<
   "id" | "title" | "projectId" | "worktreePath" | "activityRunStatus"
 >;
 
-/** Threads with an active run whose working directory is `cwd`. */
+/** Threads with an active run whose working directory is one of `checkoutPaths`. */
 export function busyThreadsInCheckout<T extends CheckoutThread>(input: {
-  readonly cwd: string;
-  readonly projectId: ProjectId | null;
+  readonly checkoutPaths: ReadonlyArray<string>;
+  readonly projectIds: ReadonlySet<ProjectId>;
   readonly threads: ReadonlyArray<T>;
 }): ReadonlyArray<T> {
   return input.threads.filter(
     (thread) =>
       (thread.activityRunStatus ?? null) !== null &&
-      (thread.worktreePath === input.cwd ||
-        (thread.worktreePath === null &&
-          input.projectId !== null &&
-          thread.projectId === input.projectId)),
+      (thread.worktreePath === null
+        ? input.projectIds.has(thread.projectId)
+        : input.checkoutPaths.includes(thread.worktreePath)),
   );
 }
 
@@ -51,34 +49,36 @@ export const assertCheckoutIdle = Effect.fn("sharedCheckoutGuard.assertCheckoutI
   // `git checkout` from a subdirectory moves the whole checkout; records may hold either spelling.
   const root = yield* gitWorkflow.repositoryRoot(cwd).pipe(Effect.orElseSucceed(() => null));
   const checkoutPaths = [...new Set([cwd, ...(root === null ? [] : [root])])];
-  const busy = yield* Effect.forEach(
-    checkoutPaths,
-    (checkoutPath) =>
-      Effect.gen(function* () {
-        const project = yield* projectService.getByWorkspaceRoot(checkoutPath).pipe(
-          Effect.map(Option.getOrNull),
-          Effect.orElseSucceed(() => null),
-        );
-        // Each lookup fails open on its own, so one failure keeps what the other found.
-        const snapshots = yield* Effect.forEach(
-          [
-            threadManagement.getShellSnapshot({ location: "active", worktreePath: checkoutPath }),
-            ...(project === null
-              ? []
-              : [threadManagement.getShellSnapshot({ location: "active", projectId: project.id })]),
-          ],
-          (snapshot) => snapshot.pipe(Effect.orElseSucceed(() => ({ threads: [] }))),
-          { concurrency: "unbounded" },
-        );
-        return busyThreadsInCheckout({
-          cwd: checkoutPath,
-          projectId: project?.id ?? null,
-          threads: snapshots.flatMap((snapshot) => snapshot.threads),
-        });
-      }),
+  const projects = yield* projectService.snapshot.pipe(
+    Effect.map((snapshot) => snapshot.projects),
+    Effect.orElseSucceed(() => []),
+  );
+  // A project rooted inside the checkout shares it, as in a monorepo package.
+  const projectIds = new Set(
+    projects
+      .filter(
+        ({ workspaceRoot }) =>
+          checkoutPaths.includes(workspaceRoot) ||
+          (root !== null && workspaceRoot.startsWith(`${root}/`)),
+      )
+      .map(({ id }) => id),
+  );
+  // Archiving does not stop a run, so archived threads can still be working. Each lookup fails
+  // open on its own, so one failure keeps what the others found.
+  const snapshots = yield* Effect.forEach(
+    [
+      ...checkoutPaths.map((worktreePath) => threadManagement.getShellSnapshot({ worktreePath })),
+      ...[...projectIds].map((projectId) => threadManagement.getShellSnapshot({ projectId })),
+    ],
+    (snapshot) => snapshot.pipe(Effect.orElseSucceed(() => ({ threads: [], archivedThreads: [] }))),
     { concurrency: "unbounded" },
   );
-  const titles = [...new Map(busy.flat().map((thread) => [thread.id, thread.title])).values()];
+  const busy = busyThreadsInCheckout({
+    checkoutPaths,
+    projectIds,
+    threads: snapshots.flatMap((snapshot) => [...snapshot.threads, ...snapshot.archivedThreads]),
+  });
+  const titles = [...new Map(busy.map((thread) => [thread.id, thread.title])).values()];
   if (titles.length === 0) return;
   return yield* new GitCommandError({
     operation,
