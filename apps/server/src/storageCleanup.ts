@@ -1267,7 +1267,10 @@ const make = Effect.gen(function* () {
           settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
         // A worktree is unchanged before its first commit, so only finished threads qualify.
         const unchangedApplies =
-          settings.worktreeUnchanged && (settledThread !== undefined || thread.archivedAt !== null);
+          settings.worktreeUnchanged &&
+          (owner === undefined
+            ? group.every((member) => member.settledAt !== null || member.archivedAt !== null)
+            : settledThread !== undefined || thread.archivedAt !== null);
         let eligible = deleted || old || settled;
         let removalReason = deleted
           ? "thread was deleted"

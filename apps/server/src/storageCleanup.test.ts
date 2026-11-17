@@ -1498,7 +1498,7 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
-  it.effect.each(["same-project", "cross-project"] as const)(
+  it.effect.each(["same-project", "cross-project", "unchanged", "unchanged-one-settled"] as const)(
     "removes a worktree shared by top-level threads once every one is eligible (%s)",
     (scenario) =>
       Effect.gen(function* () {
@@ -1507,7 +1507,9 @@ describe("subagent worktree ownership", () => {
         fixture.setSettings({
           storageCleanup: {
             ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-            worktreeAfterDays: 8,
+            ...(scenario.startsWith("unchanged")
+              ? { worktreeUnchanged: true }
+              : { worktreeAfterDays: 8 }),
           },
           ...(scenario === "cross-project"
             ? {
@@ -1521,22 +1523,29 @@ describe("subagent worktree ownership", () => {
           branch: "feature",
           worktreePath: fixture.worktree,
           latestRunCompletedAt: at(-20 * DAY_MS),
+          settledAt: scenario.startsWith("unchanged") ? at(-20 * DAY_MS) : null,
         });
         const second = shell({
           ...first,
           id: ThreadId.make("thread-2"),
           lineage: { ...first.lineage, rootThreadId: ThreadId.make("thread-2") },
           latestRunCompletedAt: at(-15 * DAY_MS),
+          settledAt: scenario === "unchanged" ? at(-15 * DAY_MS) : null,
           ...(scenario === "cross-project" ? { projectId: ProjectId.make("project-2") } : {}),
         });
         fixture.setThreads([first, second]);
         const report = yield* fixture.service.runNow;
+        const kept = scenario === "cross-project" || scenario === "unchanged-one-settled";
         expect(report.entries[0]).toMatchObject(
           scenario === "cross-project"
             ? { outcome: "kept", reason: "Shared by 2 threads" }
-            : { outcome: "removed", reason: "Inactive for 15 days" },
+            : scenario === "unchanged-one-settled"
+              ? { outcome: "kept", reason: "Not settled" }
+              : scenario === "unchanged"
+                ? { outcome: "removed", reason: "No commits beyond the project branch" }
+                : { outcome: "removed", reason: "Inactive for 15 days" },
         );
-        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(scenario === "cross-project");
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(kept);
       }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
