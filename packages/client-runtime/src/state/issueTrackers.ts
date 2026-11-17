@@ -4,7 +4,7 @@ import {
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -52,7 +52,16 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
       onSettled: (target, registry) =>
-        Effect.sync(() => registry.refresh(refresh(target.environmentId))),
+        Effect.scoped(
+          Effect.gen(function* () {
+            const atom = refresh(target.environmentId);
+            yield* AtomRegistry.mount(registry, atom);
+            registry.refresh(atom);
+            yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }).pipe(
+              Effect.ignore,
+            );
+          }),
+        ),
     }),
   };
 }

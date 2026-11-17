@@ -208,12 +208,28 @@ export function IssueTrackerProjectRows(props: {
   const [binding, setBinding] = useState<ProjectId | null>(null);
   const change = async (projectId: ProjectId, scope: string) => {
     if (props.disabled || binding !== null) return;
+    const bound = props.bindings[projectId];
+    const current =
+      bound?.tracker === tracker.tracker ? [bound.scope, ...(bound.additionalScopes ?? [])] : [];
+    const scopes =
+      scope === UNBOUND
+        ? []
+        : current.includes(scope)
+          ? current.filter((key) => key !== scope)
+          : [...current, scope];
     setBinding(projectId);
     await bind({
       environmentId,
       input: {
         projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+        binding:
+          scopes.length === 0
+            ? null
+            : {
+                tracker: tracker.tracker,
+                scope: scopes[0]!,
+                additionalScopes: scopes.slice(1),
+              },
       },
     });
     setBinding(null);
@@ -221,7 +237,8 @@ export function IssueTrackerProjectRows(props: {
   return projects.map((project) => {
     const bound = props.bindings[project.id];
     // A project bound to another tracker keeps that binding; this row shows it unbound.
-    const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+    const value =
+      bound?.tracker === tracker.tracker ? [bound.scope, ...(bound.additionalScopes ?? [])] : [];
     const locked = props.disabled || binding !== null;
     return (
       <Menu
@@ -231,13 +248,13 @@ export function IssueTrackerProjectRows(props: {
           {
             id: UNBOUND,
             title: "Not bound",
-            state: value === UNBOUND ? "on" : "off",
+            state: value.length === 0 ? "on" : "off",
             attributes: { disabled: locked },
           },
           ...tracker.scopes.map((scope) => ({
             id: scope.key,
             title: `${scope.name} (${scope.key})`,
-            state: scope.key === value ? ("on" as const) : ("off" as const),
+            state: value.includes(scope.key) ? ("on" as const) : ("off" as const),
             attributes: { disabled: locked },
           })),
         ]}
@@ -248,9 +265,11 @@ export function IssueTrackerProjectRows(props: {
           label={project.title}
           valuePosition="trailing"
           value={
-            value === UNBOUND
+            value.length === 0
               ? "Not bound"
-              : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)
+              : value
+                  .map((key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key)
+                  .join(", ")
           }
           disabled={locked}
         />

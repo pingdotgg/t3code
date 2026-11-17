@@ -284,6 +284,12 @@ const CreateIssueTool = Tool.make("create_issue", {
     projectId: Schema.optional(
       ProjectId.annotate({ description: "Defaults to this thread's project." }),
     ),
+    scope: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "A bound team key or repository scope from list_issues. Defaults to the project's default scope.",
+      }),
+    ),
     title: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
     body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(50))),

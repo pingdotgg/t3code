@@ -549,10 +549,14 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
-/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+/** The standalone tracker scopes a project reads beside its git host's own issues. */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
+  /** The default scope for new issues and key-only references. */
   scope: TrimmedNonEmptyString,
+  additionalScopes: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(49)),
+  ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
 
@@ -581,7 +585,7 @@ export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  /** Which standalone tracker scopes each bound project reads; an absent project reads none. */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;

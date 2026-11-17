@@ -437,6 +437,94 @@ describe("IssueService", () => {
 });
 
 describe("IssueService with a standalone tracker", () => {
+  it.effect(
+    "lists and searches every bound team, continues each separately, and permits writes only in bound teams",
+    () =>
+      Effect.gen(function* () {
+        const listed: Array<{ scope: string; query?: string; cursor?: string }> = [];
+        const created: string[] = [];
+        const service = yield* makeService({
+          projects: [project({ id: "web", repository: "acme/web" })],
+          trackers: [
+            fakeTracker(),
+            fakeStandaloneTracker({
+              listIssues: (input) =>
+                Effect.sync(() => {
+                  listed.push({
+                    scope: input.scope,
+                    ...(input.query ? { query: input.query } : {}),
+                    ...(input.cursor ? { cursor: input.cursor } : {}),
+                  });
+                  return {
+                    items: [issue(`${input.scope}-1`)],
+                    nextCursor: input.cursor ? null : `${input.scope}-next`,
+                  };
+                }),
+              create: (input) =>
+                Effect.sync(() => {
+                  created.push(input.scope);
+                  return {
+                    key: `${input.scope}-2`,
+                    displayKey: `${input.scope}-2`,
+                    url: `https://linear.app/acme/issue/${input.scope}-2`,
+                  };
+                }),
+            }),
+          ],
+          bindings: {
+            web: { tracker: LINEAR, scope: "ENG", additionalScopes: ["OPS", "eng", "ops"] },
+          },
+        });
+        const first = yield* service.list({ state: "open", query: "cache" });
+        expect(listed).toEqual([
+          { scope: "ENG", query: "cache" },
+          { scope: "OPS", query: "cache" },
+        ]);
+        expect(
+          first.scopes?.filter((ref) => ref.tracker === LINEAR).map((ref) => ref.scope),
+        ).toEqual(["ENG", "OPS"]);
+        expect(first.trackers.find((tracker) => tracker.tracker === LINEAR)?.projectCount).toBe(1);
+        expect(first.nextCursors).toEqual({
+          "linear.app eng": "ENG-next",
+          "linear.app ops": "OPS-next",
+        });
+        listed.length = 0;
+        yield* service.list({
+          state: "open",
+          query: "cache",
+          cursors: { "linear.app ops": "OPS-next" },
+        });
+        expect(listed).toEqual([{ scope: "OPS", query: "cache", cursor: "OPS-next" }]);
+        const projectId = "web" as ProjectId;
+        expect((yield* service.projectScope(projectId)).scope).toBe("ENG");
+        expect((yield* service.projectScope(projectId, "ops")).scope).toBe("OPS");
+        const keyOnlyScope = yield* service.projectScope(projectId, undefined, "OPS-12");
+        expect(keyOnlyScope.scope).toBe("OPS");
+        yield* service.comment({ ...keyOnlyScope, key: "OPS-12", body: "Please check this." });
+        expect(yield* Effect.flip(service.projectScope(projectId, "OTHER"))).toMatchObject({
+          _tag: "IssueOperationError",
+          operation: "projectScope",
+        });
+        for (const scope of ["ENG", "OPS", "OTHER"]) {
+          const ref = { projectId, tracker: LINEAR, scope };
+          expect((yield* service.detail({ ...ref, key: `${scope}-1` })).writable).toBe(
+            scope !== "OTHER",
+          );
+          const create = service.create({
+            ...ref,
+            title: "Cache",
+            body: "",
+            labels: [],
+            assignees: [],
+          });
+          if (scope === "OTHER") {
+            expect(yield* Effect.flip(create)).toMatchObject({ reason: "read-only" });
+          } else yield* create;
+        }
+        expect(created).toEqual(["ENG", "OPS"]);
+      }),
+  );
+
   it.effect("lists a bound project's standalone scope beside its git host and serves both", () =>
     Effect.gen(function* () {
       const listed: string[] = [];
