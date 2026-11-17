@@ -38,13 +38,9 @@ function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null)
   if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
   const landscape =
     screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
-  const w = landscape
-    ? Math.max(screen.width, screen.height)
-    : Math.min(screen.width, screen.height);
-  const h = landscape
-    ? Math.min(screen.width, screen.height)
-    : Math.max(screen.width, screen.height);
-  return w / h;
+  // A portrait device can still have a wider-than-tall screen, such as an unfolded iPhone Duo.
+  if (!landscape) return screen.width / screen.height;
+  return Math.max(screen.width, screen.height) / Math.min(screen.width, screen.height);
 }
 
 // serve-sim sends raw portrait framebuffers even when iOS reports landscape; rotate the display.
@@ -226,7 +222,9 @@ export function DeviceStreamView(props: {
 
   const phoneUnavailableReason =
     isDuo && !screen?.supportsHingeAngle
-      ? "iPhone Duo 3D requires Device Hub 0.11.0 or newer"
+      ? props.serveSimOnly
+        ? "iPhone Duo 3D is unavailable because this device source does not report the hinge angle"
+        : "iPhone Duo 3D requires Device Hub 0.11.0 or newer"
       : phoneUnavailable
         ? "3D is unavailable on this browser"
         : mjpegUrl
