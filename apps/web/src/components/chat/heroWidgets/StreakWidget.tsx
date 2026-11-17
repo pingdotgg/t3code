@@ -3,6 +3,8 @@ import type { DailyTotals } from "@t3tools/shared/usageMerge";
 import { FlameIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
+import { cn } from "~/lib/utils";
+
 import { Text } from "../../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { DitherCanvas, type ResolveColor } from "./DitherCanvas";
@@ -72,6 +74,7 @@ export function StreakWidget({
       icon={FlameIcon}
       title="Streak"
       meta={`goal ${formatTokens(goal)} tokens a day`}
+      className="[container:streak/size]"
     >
       {daily.length === 0 ? (
         <p className="mt-3 text-meta text-muted-foreground">
@@ -79,7 +82,7 @@ export function StreakWidget({
         </p>
       ) : (
         <>
-          <div className="mt-2.5 flex items-baseline gap-2 leading-none">
+          <div className="mt-2.5 flex items-baseline gap-2 leading-none [@container_streak_(height<12rem)]:mt-1.5">
             <HeadlineFigure>{streak.current}</HeadlineFigure>
             <span className="text-body text-muted-foreground">
               day{streak.current === 1 ? "" : "s"} streak
@@ -91,7 +94,7 @@ export function StreakWidget({
             </span>
           </div>
           <DitherCanvas
-            className="mt-3 h-2.5"
+            className="mt-3 h-2.5 [@container_streak_(height<12rem)]:mt-2"
             label={`${formatTokens(streak.todayTokens)} of ${formatTokens(goal)} tokens today`}
             draw={(context, { width, height }, color) => {
               const columns = Math.floor(width / 3);
@@ -120,9 +123,9 @@ export function StreakWidget({
               )}
             </span>
           </div>
-          <div className="mt-3 flex min-h-0 flex-1 gap-5">
+          <div className="mt-3 flex min-h-0 flex-1 gap-5 [@container_streak_(height<12rem)]:mt-2">
             <Heatmap days={streak.days} goal={goal} />
-            <dl className="flex w-40 shrink-0 flex-col justify-center gap-1.5 text-meta tabular-nums">
+            <dl className="flex w-40 shrink-0 flex-col justify-center-safe gap-1.5 text-meta tabular-nums [container:streak-stats/size]">
               {streak.bestDay ? (
                 <Record label="Best day">
                   {formatTokens(streak.bestDay.tokens)}
@@ -133,7 +136,10 @@ export function StreakWidget({
                 </Record>
               ) : null}
               {streak.bestRun ? (
-                <Record label="Best run">
+                <Record
+                  label="Best run"
+                  className="[@container_streak-stats_(height<6.82em)]:hidden"
+                >
                   {streak.best}d
                   <span className="text-muted-foreground">
                     {" "}
@@ -146,7 +152,7 @@ export function StreakWidget({
                 {streak.metDays}
                 <span className="text-muted-foreground"> of {streak.trackedDays} days</span>
               </Record>
-              <div className="mt-1 flex items-center gap-2 text-micro text-muted-foreground">
+              <div className="mt-1 flex items-center gap-2 text-micro text-muted-foreground [@container_streak-stats_(height<8.82em)]:hidden">
                 <Swatch kind="met" /> hit
                 <Swatch kind="missed" /> missed
                 <Swatch kind="noData" /> no data
@@ -159,9 +165,17 @@ export function StreakWidget({
   );
 }
 
-function Record({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+function Record({
+  label,
+  className,
+  children,
+}: {
+  readonly label: string;
+  readonly className?: string;
+  readonly children: ReactNode;
+}) {
   return (
-    <div className="flex items-baseline justify-between gap-2">
+    <div className={cn("flex items-baseline justify-between gap-2", className)}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="truncate">{children}</dd>
     </div>
@@ -288,7 +302,7 @@ function Heatmap({
   const gridWidth = LABEL_WIDTH + weeks * pitch - GAP;
 
   return (
-    <div ref={ref} className="relative min-h-20 min-w-0 flex-1">
+    <div ref={ref} className="relative min-h-19 min-w-0 flex-1">
       <div className="absolute inset-y-0 left-0" style={{ width: gridWidth }}>
         {months.map((month) => (
           <span

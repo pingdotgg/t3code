@@ -103,7 +103,7 @@ export function WidgetCard({
  */
 export function HeadlineFigure({ children }: { readonly children: ReactNode }) {
   return (
-    <span className="text-title tracking-tight tabular-nums [--type-title:1.875rem]">
+    <span className="text-title leading-none tracking-tight tabular-nums [--type-title:1.875rem]">
       {children}
     </span>
   );
