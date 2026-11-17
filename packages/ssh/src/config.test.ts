@@ -90,7 +90,7 @@ describe("ssh config", () => {
       yield* fs.makeDirectory(path.join(sshDir, "single.d"));
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
-        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nInclude single.d/team?one.conf\nInclude single.d/exact??.conf\nHost real\n  HostName real.example.com\n",
+        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nInclude single.d/team?one.conf\nInclude single.d/exact??.conf\nHost real\n  HostName real.example.com\nHost svc?x\n  HostName wrong.example.com\nHost svc\u2028x\n  HostName correct.example.com\n",
       );
       for (const [index, separator] of ["\u2028", "\u2029"].entries()) {
         yield* fs.writeFileString(
@@ -144,6 +144,7 @@ describe("ssh config", () => {
           ["literal", "literal.example.com", "ssh-config"],
           ["real", "real.example.com", "ssh-config"],
           ["single-ascii", "single-ascii.example.com", "ssh-config"],
+          ["svc\u2028x", "correct.example.com", "ssh-config"],
           ["team", "team.example.com", "ssh-config"],
           ["unicode-0", "unicode-0.example.com", "ssh-config"],
           ["unicode-1", "unicode-1.example.com", "ssh-config"],
