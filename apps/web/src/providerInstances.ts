@@ -43,6 +43,11 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+/** Status dots share one corner per user, so a badge on one row can't move only that row's dot. */
+export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>): boolean {
+  return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
+}
+
 /** Disabled instances may retain ready status until reconciliation. */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
   return entry.enabled && entry.isAvailable && entry.status === "ready";
@@ -93,16 +98,21 @@ export function deriveProviderEntriesByEnvironment(
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
-    // The snapshot includes instances enabled by any project; machine settings alone do not.
-    const entries = settings
-      ? derived.map((entry) => applyProviderInstanceBranding(entry, settings))
-      : derived;
+    const entries = settings ? brandProviderInstanceEntries(derived, settings) : derived;
     byEnvironment.set(
       environmentId,
       new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),
     );
   }
   return byEnvironment;
+}
+
+// The snapshot includes instances enabled by any project; machine settings alone do not.
+export function brandProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.map((entry) => applyProviderInstanceBranding(entry, settings));
 }
 
 /** projectId applies project overrides; explicit null uses machine settings. */
@@ -239,4 +249,20 @@ export function resolveDefaultProviderModelSelection(
   if (selection?.instanceId === instanceId) return selection;
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
+}
+
+export function resolveProjectDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  // Matches resolveComposerProviderSelection: the first driver group wins before any other.
+  const entry =
+    resolveSelectableProviderInstanceEntry(
+      entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
+      undefined,
+    ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
+  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  return entry && model ? { instanceId: entry.instanceId, model } : null;
 }

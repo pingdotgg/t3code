@@ -25,31 +25,31 @@ import { openZipArchive } from "../zipArchive.ts";
 // https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
 // Never pin below 156.0.8078.70: the shell has no CRLSet and older SPKI blocklists trust
 // compromised eMudhra intermediates (crrev.com/c/8627687).
-const VERSION = "156.0.8078.70";
+const VERSION = "157.0.8103.78";
 const ARCHIVES = {
   linux64: {
-    bytes: 126_646_931,
-    sha256: "a313da592261ff1e342c1e507d315f25b1809006c0508f77ce86151d464d4ccb",
+    bytes: 127_965_683,
+    sha256: "f90329720fb61e5a76da9b6b509b6ad12a484c9c5df0359403e935177c6d153a",
   },
   "linux-arm64": {
-    bytes: 126_749_876,
-    sha256: "dca11213d2e0b1db52141edd9f92ec423fd52ca25715846790d84fa1d5d16e8a",
+    bytes: 128_047_138,
+    sha256: "912fbf877e53de34d7b3cca5104f3b95607d41bd35412ccc6cd2a599ff0c0dbf",
   },
   "mac-arm64": {
-    bytes: 103_901_293,
-    sha256: "1f848385611f2e58122e68969489712661880fc9a92c9dd20428099f9998ba7b",
+    bytes: 104_822_985,
+    sha256: "17bf66d53c1b1104dcb641c5b331cd4ac5d200c778f5feed0934a0b92deaf8d6",
   },
   "mac-x64": {
-    bytes: 109_387_968,
-    sha256: "ab4cc2949f88439e2241b2712c49268f24982f2d25af87960466cc22bdc2e6e1",
+    bytes: 110_132_547,
+    sha256: "f1a6a9561eaf1f409849538de663695d36d72fbf1ebca4d42e47c7b5f2a157f3",
   },
   win32: {
-    bytes: 119_029_359,
-    sha256: "37dc9a03f37fd79637fec9f26042bf32f04cfe5b83749d980eb1e7d1a429d47c",
+    bytes: 120_403_126,
+    sha256: "d9829c59dcc79d9e6e920f8ab841f2a9a055dcf54229d756ac0b42dfec303910",
   },
   win64: {
-    bytes: 126_214_071,
-    sha256: "41c6aa97046d05d015b817a95f7b1512c3a1a41b18364f8da46478ae520400b1",
+    bytes: 126_047_001,
+    sha256: "2138c1583d25d6f3abec5269943b2f430207d87a539895aa9e90cc4697ec0e1f",
   },
 } as const;
 
@@ -321,11 +321,14 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         yield* fs.remove(destination, { recursive: true, force: true });
         yield* fs.rename(unpacked, destination);
       }).pipe(Effect.scoped);
-      // Shared homes may have another server installing; preserve staging directories touched within the last hour.
+      // Shared homes may still use the newest other version or staging directories touched within the last hour.
       const entries = yield* fs.readDirectory(installRoot);
+      const previous = entries
+        .filter((name) => name !== release.version && !name.startsWith("."))
+        .toSorted((left, right) => right.localeCompare(left, "en", { numeric: true }))[0];
       const now = yield* Clock.currentTimeMillis;
       yield* Effect.forEach(
-        entries.filter((name) => name !== release.version),
+        entries.filter((name) => name !== release.version && name !== previous),
         (name) =>
           Effect.gen(function* () {
             const target = path.join(installRoot, name);

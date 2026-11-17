@@ -1,3 +1,4 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
@@ -10,6 +11,7 @@ import {
   type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
+import { compareTimestamps } from "../../lib/time";
 
 export const PR_LIST_PAGE_SIZE = 30;
 export type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -32,6 +34,34 @@ export function withoutScratchProjectScope(
   )
     ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
     : controls;
+}
+
+type FilterProject = Parameters<typeof pullRequestFilterProjects>[0][number];
+
+export function pullRequestProjectChoices<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  const isSelected = (project: Project) =>
+    project.id === input.controls.projectId &&
+    project.environmentId === input.controls.projectEnvironmentId;
+  return pullRequestFilterProjects(
+    projects.filter(
+      (project) =>
+        !project.isScratch &&
+        (input.environmentId === null || project.environmentId === input.environmentId) &&
+        (input.servesPullRequests(project.environmentId) || isSelected(project)),
+    ),
+    input.environmentLabels,
+    projects.find(isSelected),
+  );
 }
 
 export function pullRequestListKey(
@@ -213,7 +243,7 @@ export function mergePullRequestListEntries(
     const held = entries.get(key);
     if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
   }
-  return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...entries.values()].sort((a, b) => compareTimestamps(b.updatedAt, a.updatedAt));
 }
 
 export interface PullRequestListPages {
@@ -426,10 +456,10 @@ export function filterPullRequestList<
   }
   return [...unique.values()].sort((a, b) =>
     controls.sort === "created"
-      ? b.createdAt.localeCompare(a.createdAt)
+      ? compareTimestamps(b.createdAt, a.createdAt)
       : controls.sort === "oldest"
-        ? a.updatedAt.localeCompare(b.updatedAt)
-        : b.updatedAt.localeCompare(a.updatedAt),
+        ? compareTimestamps(a.updatedAt, b.updatedAt)
+        : compareTimestamps(b.updatedAt, a.updatedAt),
   );
 }
 

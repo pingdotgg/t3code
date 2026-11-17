@@ -36,13 +36,13 @@ import {
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { environmentThreadDetails, threadEnvironment } from "../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "./threads";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
-} from "../lib/threadActivity";
+} from "@t3tools/client-runtime/state/pending-user-input";
 import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";

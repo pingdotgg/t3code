@@ -1,0 +1,45 @@
+import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
+import * as Binding from "alchemy/Binding";
+import * as Effect from "effect/Effect";
+
+export interface GetMetricWidgetImageRequest extends cloudwatch.GetMetricWidgetImageInput {}
+
+/**
+ * Runtime binding for `cloudwatch:GetMetricWidgetImage` — render a metric
+ * graph as a PNG (useful for embedding charts in alerts or reports).
+ *
+ * Provide `CloudWatch.GetMetricWidgetImageHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * ### Rendering Metric Graphs
+ * **Example:** Render a Metric Graph as PNG
+ * ```typescript
+ * // init — grants cloudwatch:GetMetricWidgetImage
+ * const getMetricWidgetImage = yield* AWS.CloudWatch.GetMetricWidgetImage();
+ *
+ * // runtime
+ * const result = yield* getMetricWidgetImage({
+ *   MetricWidget: JSON.stringify({
+ *     metrics: [["MyApp/Payments", "PaymentProcessed"]],
+ *     width: 600,
+ *     height: 400,
+ *     start: "-PT3H",
+ *   }),
+ * });
+ * const png = result.MetricWidgetImage; // image bytes
+ * ```
+ *
+ * @binding
+ */
+export interface GetMetricWidgetImage extends Binding.Service<
+  GetMetricWidgetImage,
+  "AWS.CloudWatch.GetMetricWidgetImage",
+  () => Effect.Effect<
+    (
+      request: GetMetricWidgetImageRequest,
+    ) => Effect.Effect<cloudwatch.GetMetricWidgetImageOutput, cloudwatch.GetMetricWidgetImageError>
+  >
+> {}
+
+export const GetMetricWidgetImage = Binding.Service<GetMetricWidgetImage>(
+  "AWS.CloudWatch.GetMetricWidgetImage",
+);

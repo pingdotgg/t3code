@@ -16,30 +16,24 @@ import {
  * Typed structurally so the package carries no dependency on vite — the
  * *project's* install is always the one loaded.
  *
- * `build` (not `createBuilder`) is the entry point: React Router v7's
- * `@react-router/dev` plugin drives a two-pass build — `vite build` for the
- * `client` environment, then `vite build` with `build.ssr` for the server
- * environment — which is exactly what `react-router build` runs. (The
- * Vite Environment API path exists only behind the framework's
- * `future.v8_viteEnvironmentApi` flag and for RSC; see the module doc on
- * {@link make}.)
+ * `build` (not `createBuilder`) is the entry point: the integration drives a
+ * two-pass build — `vite build` for the `client` environment, then `vite
+ * build` with `build.ssr` for the server environment — which is what
+ * `react-router build` runs. React Router 8 always builds through the Vite
+ * Environment API, so the server pass's overrides are declared on the `ssr`
+ * environment as well (see {@link inlineServerBuildConfig}).
  */
 export interface ReactRouterViteModule {
   readonly version?: string;
   readonly build: (config: Record<string, unknown>) => Promise<unknown>;
-  readonly createServer: (
-    config: Record<string, unknown>,
-  ) => Promise<ReactRouterViteDevServer>;
+  readonly createServer: (config: Record<string, unknown>) => Promise<ReactRouterViteDevServer>;
 }
 
 /** The structural slice of a Vite dev server this package reads. */
 export interface ReactRouterViteDevServer {
   readonly listen: () => Promise<unknown>;
   readonly close: () => Promise<void>;
-  readonly resolvedUrls?:
-    | { readonly local: ReadonlyArray<string> }
-    | null
-    | undefined;
+  readonly resolvedUrls?: { readonly local: ReadonlyArray<string> } | null | undefined;
 }
 
 /** The slice of a resolved Vite config the output-directory capture reads. */
@@ -88,10 +82,7 @@ export interface ReactRouterTarget extends DeployTarget<ReactRouterTargetConfig>
  * value, a factory `(config) => ReactRouterTarget`, or a module specifier
  * resolved from the *project's* `node_modules`.
  */
-export type ReactRouterTargetInput = DeployTargetInput<
-  ReactRouterTarget,
-  ReactRouterTargetConfig
->;
+export type ReactRouterTargetInput = DeployTargetInput<ReactRouterTarget, ReactRouterTargetConfig>;
 
 /**
  * The default deploy target: this package's own AWS Lambda target module,
@@ -99,8 +90,7 @@ export type ReactRouterTargetInput = DeployTargetInput<
  * Router through its native Vite integration — `Cloudflare.Website.Vite` —
  * so no Cloudflare target exists here.)
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/react-router/aws";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/react-router/aws";
 
 /** The Vite plugin package a React Router project must install. */
 export const REACT_ROUTER_PLUGIN_SPECIFIER = "@react-router/dev";
@@ -192,9 +182,7 @@ export interface InlineVitePlugin {
   readonly enforce?: "pre" | "post" | undefined;
   readonly resolveId?: ((id: string) => string | undefined) | undefined;
   readonly load?: ((id: string) => string | undefined) | undefined;
-  readonly configResolved?:
-    | ((config: ResolvedViteBuildSlice) => void)
-    | undefined;
+  readonly configResolved?: ((config: ResolvedViteBuildSlice) => void) | undefined;
 }
 
 /**
@@ -206,12 +194,8 @@ export const serverEntryPlugin = (options?: {
 }): InlineVitePlugin => ({
   name: "alchemy:react-router-server-entry",
   enforce: "pre",
-  resolveId: (id) =>
-    id === SERVER_ENTRY_ID ? RESOLVED_SERVER_ENTRY_ID : undefined,
-  load: (id) =>
-    id === RESOLVED_SERVER_ENTRY_ID
-      ? serverEntrySource(options?.mode)
-      : undefined,
+  resolveId: (id) => (id === SERVER_ENTRY_ID ? RESOLVED_SERVER_ENTRY_ID : undefined),
+  load: (id) => (id === RESOLVED_SERVER_ENTRY_ID ? serverEntrySource(options?.mode) : undefined),
 });
 
 /** A mutable slot the {@link captureOutDirPlugin} writes the resolved outDir into. */
@@ -227,9 +211,7 @@ export interface OutDirCapture {
  * itself. Reading them off the config Vite actually resolved is exact, free,
  * and honors every project override.
  */
-export const captureOutDirPlugin = (
-  capture: OutDirCapture,
-): InlineVitePlugin => ({
+export const captureOutDirPlugin = (capture: OutDirCapture): InlineVitePlugin => ({
   name: "alchemy:react-router-capture-outdir",
   enforce: "post",
   configResolved: (config) => {
@@ -284,7 +266,15 @@ export const inlineServerBuildConfig = (
     rollupOptions: { input: SERVER_ENTRY_ID },
   },
   ssr: { noExternal: true },
-  environments: { ssr: { resolve: { noExternal: true } } },
+  // React Router 8 always builds through the Vite Environment API: its SSR
+  // environment reads its own `build.rollupOptions.input`, not the top-level
+  // one, so the wrapper input is declared there too.
+  environments: {
+    ssr: {
+      build: { rollupOptions: { input: SERVER_ENTRY_ID } },
+      resolve: { noExternal: true },
+    },
+  },
   plugins,
 });
 
@@ -309,7 +299,7 @@ export const inlineServerBuildConfig = (
  *   scoped — closing the Scope closes the server.
  *
  * NOT supported: React Server Components / multi-environment builds (React
- * Router's `unstable` RSC plugin, or `future.v8_viteEnvironmentApi`). Those
+ * Router's `unstable` RSC plugin). Those
  * emit more than one server environment, which this two-pass build does not
  * assemble; the build fails with an actionable error when no single server
  * entry is produced.
@@ -319,43 +309,34 @@ export const inlineServerBuildConfig = (
  */
 export const make: (
   options?: ReactRouterOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: ReactRouterOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: ReactRouterOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: ReactRouterTargetConfig = {
-    buildDirectory: options?.buildDirectory,
-  };
+    const targetConfig: ReactRouterTargetConfig = {
+      buildDirectory: options?.buildDirectory,
+    };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<
-      ReactRouterTarget,
-      ReactRouterTargetConfig
-    >(root, options?.target ?? DEFAULT_TARGET_SPECIFIER, targetConfig).pipe(
-      Effect.mapError((error) => fail(error.message, error.cause)),
-    );
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<ReactRouterTarget, ReactRouterTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
 
-  const loadVite = (root: string) =>
-    FrameworkCore.loadProjectModule<ReactRouterViteModule>(root, "vite").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Vite install", error.cause),
-      ),
-    );
+    const loadVite = (root: string) =>
+      FrameworkCore.loadProjectModule<ReactRouterViteModule>(root, "vite").pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Vite install", error.cause)),
+      );
 
-  const removeViteManifests = (directories: ReadonlyArray<string>) =>
-    Effect.forEach(directories, (directory) =>
-      fs
-        .remove(path.join(directory, ".vite"), { recursive: true })
-        .pipe(Effect.ignore),
-    );
+    const removeViteManifests = (directories: ReadonlyArray<string>) =>
+      Effect.forEach(directories, (directory) =>
+        fs.remove(path.join(directory, ".vite"), { recursive: true }).pipe(Effect.ignore),
+      );
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = {
@@ -381,10 +362,7 @@ export const make: (
       const serverCapture: OutDirCapture = {};
 
       yield* Effect.tryPromise({
-        try: () =>
-          vite.build(
-            inlineClientBuildConfig(root, [captureOutDirPlugin(clientCapture)]),
-          ),
+        try: () => vite.build(inlineClientBuildConfig(root, [captureOutDirPlugin(clientCapture)])),
         catch: (error) => fail("Failed to build the client", error),
       });
       yield* Effect.tryPromise({
@@ -398,10 +376,7 @@ export const make: (
         catch: (error) => fail("Failed to build the server", error),
       });
 
-      const fallbackDir = path.resolve(
-        root,
-        options?.buildDirectory ?? DEFAULT_BUILD_DIRECTORY,
-      );
+      const fallbackDir = path.resolve(root, options?.buildDirectory ?? DEFAULT_BUILD_DIRECTORY);
       const clientDir =
         clientCapture.outDir !== undefined
           ? path.resolve(root, clientCapture.outDir)
@@ -434,72 +409,68 @@ export const make: (
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const vite = yield* loadVite(root);
-    // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
-    // on older Vite — see `resolveViteDevPort`.
-    const port = yield* FrameworkCore.resolveViteDevPort(
-      vite.version,
-      devOptions?.port ?? options?.dev?.port,
-    );
-    const host = devOptions?.host;
+    const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const vite = yield* loadVite(root);
+      // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
+      // on older Vite — see `resolveViteDevPort`.
+      const port = yield* FrameworkCore.resolveViteDevPort(
+        vite.version,
+        devOptions?.port ?? options?.dev?.port,
+      );
+      const host = devOptions?.host;
 
-    const server = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          const server = await vite.createServer({
-            root,
-            logLevel: "warn",
-            server: {
-              port,
-              ...(host !== undefined ? { host } : undefined),
-            },
-          });
-          await server.listen();
-          return server;
-        },
-        catch: (error) =>
-          fail("Failed to start the React Router dev server", error),
-      }),
-      (server) =>
-        Effect.promise(async () => {
-          try {
-            await server.close();
-          } catch {
-            // teardown is best-effort
-          }
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            const server = await vite.createServer({
+              root,
+              logLevel: "warn",
+              server: {
+                port,
+                ...(host !== undefined ? { host } : undefined),
+              },
+            });
+            await server.listen();
+            return server;
+          },
+          catch: (error) => fail("Failed to start the React Router dev server", error),
         }),
-    );
+        (server) =>
+          Effect.promise(async () => {
+            try {
+              await server.close();
+            } catch {
+              // teardown is best-effort
+            }
+          }),
+      );
 
-    const resolved = server.resolvedUrls?.local[0];
-    if (resolved === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
-    }
-    // Vite reports its local URL with a trailing slash; hand back an origin
-    // that concatenates correctly (`${url}/about`, not `//about`).
-    const url = resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+      const resolved = server.resolvedUrls?.local[0];
+      if (resolved === undefined) {
+        return yield* fail("Could not determine the dev server URL");
+      }
+      // Vite reports its local URL with a trailing slash; hand back an origin
+      // that concatenates correctly (`${url}/about`, not `//about`).
+      const url = resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
 
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
-      },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
+        },
+        catch: (error) => fail("The dev server did not become reachable", error),
+      }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
 
-    return { url };
+      return { url };
+    });
+
+    return Framework.of({ build, dev });
   });
-
-  return Framework.of({ build, dev });
-});
 
 /** The resolved React Router build output directories. */
 export interface ReactRouterOutputDirs {
@@ -546,11 +517,7 @@ export const selectServerEntryName = (
  */
 export const readReactRouterOutput = (
   dirs: ReactRouterOutputDirs,
-): Effect.Effect<
-  FrameworkCore.BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem
-> =>
+): Effect.Effect<FrameworkCore.BuildOutput, FrameworkError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const expected = `server/${dirs.serverEntryFileName ?? DEFAULT_SERVER_BUILD_FILE}`;
     const modules = yield* FrameworkCore.readServerModulesFromDisk({
@@ -558,22 +525,16 @@ export const readReactRouterOutput = (
       prefix: "server",
     }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
     if (modules.length === 0) {
-      return yield* Effect.fail(
-        fail(
-          `The React Router build produced no server modules in ${dirs.serverDir}`,
-        ),
-      );
+      return yield* fail(`The React Router build produced no server modules in ${dirs.serverDir}`);
     }
     const entryName = selectServerEntryName(
       modules.map((module) => module.name),
       expected,
     );
     if (entryName === undefined) {
-      return yield* Effect.fail(
-        fail(
-          `The React Router build produced no "${expected}" entry in ${dirs.serverDir} — ` +
-            "React Server Components and multi-environment builds are not supported yet.",
-        ),
+      return yield* fail(
+        `The React Router build produced no "${expected}" entry in ${dirs.serverDir} — ` +
+          "React Server Components and multi-environment builds are not supported yet.",
       );
     }
     return {

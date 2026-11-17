@@ -12,10 +12,7 @@ import { useMemo } from "react";
 import { useFileOptions } from "../diff.tsx";
 
 const FileView = ({ name, text }: { name: string; text: string }) => {
-  const file = useMemo<FileContents>(
-    () => ({ name, contents: text }),
-    [name, text],
-  );
+  const file = useMemo<FileContents>(() => ({ name, contents: text }), [name, text]);
   const options = useFileOptions();
   return <File file={file} options={options} />;
 };

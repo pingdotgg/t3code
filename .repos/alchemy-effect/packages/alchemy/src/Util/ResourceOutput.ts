@@ -1,17 +1,14 @@
 import { stripVTControlCharacters } from "node:util";
-import type * as ConsoleService from "effect/Console";
 import * as Effect from "effect/Effect";
 import { makeLineBuffer } from "./LineBuffer.ts";
+import { logChildLine } from "./LogRecord.ts";
 import { ANSI_RESET, ansiFg, colorsEnabled } from "./Terminal.ts";
 import { theme } from "./Theme.ts";
 
 export type OutputChannel = "stdout" | "stderr";
 
 /** Sigil-themed resource attribution shared by every append-only log path. */
-export const formatResourceTag = (
-  id: string,
-  colors = colorsEnabled(),
-): string =>
+export const formatResourceTag = (id: string, colors = colorsEnabled()): string =>
   colors ? `${ansiFg(theme.color.info)}[${id}]${ANSI_RESET}` : `[${id}]`;
 
 const EFFECT_LOG_PREFIX =
@@ -29,6 +26,7 @@ export const stripChildEffectPrefix = (line: string): string => {
   let offset = 0;
   while (offset < line.length && visible < match[0].length) {
     if (line[offset] === "\x1b") {
+      // oxlint-disable-next-line no-control-regex
       const ansi = line.slice(offset).match(/^\x1b\[[0-?]*[ -/]*[@-~]/);
       if (ansi !== null) {
         offset += ansi[0].length;
@@ -42,36 +40,33 @@ export const stripChildEffectPrefix = (line: string): string => {
 };
 
 /**
- * The single terminal-output pipeline for resource-owned processes. Dev
- * servers, local workers, and deploy-time builders all use the same line
- * splitting, resource prefix, color policy, and stdout/stderr severity.
+ * Log one line a resource-owned process wrote, as a structured record: the
+ * child's text (with any pretty Effect prefix removed) plus the resource and
+ * stream it came from. The record keeps the text as written; the renderer
+ * draws the resource tag and strips styling when colors are off. A JSON line from an alchemy child is replayed as-is.
+ *
+ * stderr is a process transport, not a semantic failure: Vite and many other
+ * tools write warnings, progress, and ordinary diagnostics there, so both
+ * streams log at Info and carry the stream as data.
  */
-export const makeResourceOutput = (
-  id: string,
-  console: Pick<ConsoleService.Console, "log">,
-) => {
-  const prefix = formatResourceTag(id);
-  // stderr is a process transport, not a semantic failure: Vite and many
-  // other tools write warnings, progress, and ordinary diagnostics there.
-  // Sending it through Console.error makes CLIKit prepend an error glyph to
-  // every line. Both streams therefore enter the renderer as plain resource
-  // output; the child text retains its own ANSI severity styling.
-  const writeLine = (line: string) =>
-    console.log(`${prefix} ${stripChildEffectPrefix(line)}`);
-  return {
-    stdout: makeLineBuffer(writeLine),
-    stderr: makeLineBuffer(writeLine),
-  };
-};
+export const logResourceLine = (id: string, channel: OutputChannel, line: string) =>
+  logChildLine(stripChildEffectPrefix(line), { stream: channel, resource: id });
+
+/**
+ * Line-buffered output for resource-owned child processes whose streams
+ * arrive as chunks outside an Effect (workerd output pumps, stream mirrors).
+ * Captures the caller's services so each line goes through its loggers.
+ */
+export const makeResourceOutput = Effect.fn(function* (id: string) {
+  const context = yield* Effect.context<never>();
+  const writer = (channel: OutputChannel) =>
+    makeLineBuffer((line) => Effect.runSyncWith(context)(logResourceLine(id, channel, line)));
+  return { stdout: writer("stdout"), stderr: writer("stderr") };
+});
 
 /**
  * Effect-native output for resource-owned child processes whose streams are
- * already consumed inside an Effect. Both process channels are transport
- * details, not semantic severity, so they enter the configured logger at the
- * info level. The logger remains responsible for terminal and file sinks.
+ * already consumed inside an Effect.
  */
-export const makeResourceLogger = (id: string) => {
-  const prefix = formatResourceTag(id);
-  return (_channel: OutputChannel, line: string) =>
-    Effect.logInfo(`${prefix} ${stripChildEffectPrefix(line)}`);
-};
+export const makeResourceLogger = (id: string) => (channel: OutputChannel, line: string) =>
+  logResourceLine(id, channel, line);

@@ -41,7 +41,7 @@ function Host({ className, ...props }: ComponentProps<"div">) {
         "relative z-10 w-full rounded-2xl shadow-composer after:z-1 dark:shadow-none",
         "group-data-context-row/composer-surface:before:pointer-events-none group-data-context-row/composer-surface:before:absolute group-data-context-row/composer-surface:before:inset-0 group-data-context-row/composer-surface:before:-z-1 group-data-context-row/composer-surface:before:rounded-2xl group-data-context-row/composer-surface:before:bg-(--chat-composer-glass-surface)/(--glass-opacity) group-data-context-row/composer-surface:before:backdrop-blur-(--glass-blur) group-data-context-row/composer-surface:before:backdrop-saturate-(--glass-saturation)",
         outlineClasses,
-        "group-has-data-[composer-banner-surface=attached]/composer-surface:shadow-none group-has-data-[composer-banner-surface=attached]/composer-surface:after:hidden",
+        "group-has-data-[composer-banner-surface=attached]/composer-surface:shadow-none group-has-data-[composer-banner-surface=attached]/composer-surface:before:hidden group-has-data-[composer-banner-surface=attached]/composer-surface:after:hidden",
         className,
       )}
       {...props}
@@ -68,13 +68,13 @@ function Main({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** A plain row under the card (environment, worktree, branch) with no surface of its own. */
+/** A row under the card (environment, worktree, branch); page-coloured glass hides the timeline scrolling behind it. */
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-context-strip"
       className={cn(
-        "group/composer-context relative flex w-full items-center gap-2 overflow-x-clip px-2 pt-2 text-muted-foreground",
+        "group/composer-context surface-glass relative flex w-full items-center gap-2 overflow-x-clip px-2 pt-2 text-muted-foreground",
         className,
       )}
       {...props}

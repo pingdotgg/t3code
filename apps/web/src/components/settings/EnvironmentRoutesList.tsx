@@ -23,6 +23,7 @@ import {
   connectionRouteLabel,
   connectionRoutes,
   isLearned,
+  pendingRouteOrder,
 } from "@t3tools/client-runtime/connection";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
@@ -46,12 +47,10 @@ export function EnvironmentRoutesList({
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
   const [pending, setPending] = useState<ReadonlyArray<string> | null>(null);
-  const order: Array<string> =
-    pending !== null &&
-    pending.length === savedIds.length &&
-    pending.some((id, index) => id !== savedIds[index])
-      ? [...pending]
-      : savedIds;
+  const shownPending = pendingRouteOrder(pending, savedIds);
+  // Dropped during render so a stale order never outlives the save it was for.
+  if (pending !== null && shownPending === null) setPending(null);
+  const order: Array<string> = shownPending === null ? savedIds : [...shownPending];
   const byId = new Map(saved.map((route) => [connectionRouteId(route.target), route]));
   const routes = order.flatMap((id) => byId.get(id) ?? []);
 
@@ -109,6 +108,7 @@ export function EnvironmentRoutesList({
                 route={route}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
+                refused={environment.refusedRouteIds.includes(connectionRouteId(route.target))}
                 removable={routes.length > 1 && !isLearned(route)}
                 onRemove={() => void confirmRemove(route)}
               />
@@ -130,12 +130,14 @@ function SortableRouteRow({
   route,
   position,
   inUse,
+  refused,
   removable,
   onRemove,
 }: {
   readonly route: ConnectionRoute;
   readonly position: number;
   readonly inUse: boolean;
+  readonly refused: boolean;
   readonly removable: boolean;
   readonly onRemove: () => void;
 }) {
@@ -169,11 +171,21 @@ function SortableRouteRow({
               In use
             </span>
           ) : null}
+          {refused ? (
+            <span className="rounded-sm bg-destructive/8 px-1 text-2xs font-normal text-destructive-foreground">
+              Sign-in refused
+            </span>
+          ) : null}
         </p>
         {address !== null ? (
           <p className="truncate text-2xs text-muted-foreground">
             {address}
             {isLearned(route) ? " · found automatically" : ""}
+          </p>
+        ) : null}
+        {refused && address !== null ? (
+          <p className="text-2xs text-muted-foreground">
+            The host refused this device's sign-in. Pair this address again with Add route.
           </p>
         ) : null}
       </div>

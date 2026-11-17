@@ -1,3 +1,4 @@
+import { cutLineNote } from "@t3tools/shared/diffCutLines";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const ENTRY = "diff --git ";
@@ -127,4 +128,38 @@ export function parseDiffFilePaths(
   return parseEntries(patch).flatMap(({ oldPath, newPath }) =>
     (oldPath ?? newPath) === null ? [] : [{ oldPath, newPath }],
   );
+}
+
+function nextEntry(patch: string, from: number): number {
+  const at = patch.indexOf(`\n${ENTRY}`, from);
+  return at === -1 ? -1 : at + 1;
+}
+
+/** The one file's section of a multi-file patch, or null when no section names `path`. */
+export function diffFileSection(patch: string, path: string): string | null {
+  let start = patch.startsWith(ENTRY) ? 0 : nextEntry(patch, 0);
+  while (start !== -1) {
+    const end = nextEntry(patch, start);
+    const section = end === -1 ? patch.slice(start) : patch.slice(start, end);
+    // Only the header names the file; hunks can be megabytes.
+    const hunk = section.indexOf("\n@@");
+    const [entry] = parseEntries(hunk === -1 ? section : section.slice(0, hunk));
+    if (entry !== undefined && (entry.newPath ?? entry.oldPath) === path) return section;
+    start = end;
+  }
+  return null;
+}
+
+/** Cuts hunk lines past `maxLength` and says how much was cut; headers stay whole. */
+export function truncateLongDiffLines(patch: string, maxLength: number): string {
+  let inBody = false;
+  return patch
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith(ENTRY)) inBody = false;
+      else if (line.startsWith("@@")) inBody = true;
+      if (!inBody || line.length <= maxLength + 1) return line;
+      return `${line.slice(0, maxLength + 1)}${cutLineNote(line.length - 1 - maxLength)}`;
+    })
+    .join("\n");
 }
