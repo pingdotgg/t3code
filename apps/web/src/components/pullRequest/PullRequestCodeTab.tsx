@@ -97,6 +97,7 @@ import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildDiffReviewComment,
+  diffReviewSelectionId,
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
@@ -1093,7 +1094,7 @@ function PullRequestCodeTab({
       file === undefined
         ? null
         : buildDiffReviewComment({
-            id: `pull-request-selection:${anchor.fileKey}:${anchor.range.start}:${anchor.range.end}`,
+            id: `pull-request-selection:${diffReviewSelectionId(anchor.fileKey, anchor.range)}`,
             sectionId: `pull-request:${detail.number}`,
             // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
             sectionTitle: `PR #${detail.number} review`,

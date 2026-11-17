@@ -13,7 +13,14 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { reviewCommentContextLabel } from "~/lib/composerContextRecords";
+import {
+  formatComposerContextReference,
+  projectComposerContextForProvider,
+} from "@t3tools/shared/composerContextReferences";
+import {
+  reviewCommentContextLabel,
+  reviewCommentContextRecord,
+} from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -1027,35 +1034,59 @@ describe("asking about a change rather than working on it", () => {
   });
 
   it("keeps both pull requests when two repositories share a number", () => {
-    const selection = (id: string) => ({
+    const selection = (id: string, line = 12) => ({
       id,
       sectionId: "pull-request:42",
       sectionTitle: "PR #42 review",
       filePath: "apps/web/src/page.tsx",
-      startIndex: 11,
-      endIndex: 17,
-      rangeLabel: "L12-L18",
+      startIndex: line - 1,
+      endIndex: line + 5,
+      rangeLabel: `L${line}-L${line + 6}`,
       text: "",
       diff: "+const answer = 42;",
     });
     const otherUrl = "https://github.com/acme/other/pull/42";
     const first = buildAddSelectionToAgentHandoff({
       ...base,
-      comment: selection("pull-request-selection:t3code:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "why?",
     });
     const second = buildAddSelectionToAgentHandoff({
       ...base,
       url: otherUrl,
-      comment: selection("pull-request-selection:other:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "and here?",
     });
-    const draft = appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second);
+    const third = buildAddSelectionToAgentHandoff({
+      ...base,
+      comment: selection("pull-request-selection:page.tsx:20:26", 20),
+      request: "and this other range in the first pull request?",
+    });
+    const draft = appendHandoff(
+      appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second),
+      third,
+    );
     expect(draft.reviewComments.map((comment) => comment.pullRequest?.url)).toEqual([
       base.url,
       undefined,
       otherUrl,
       undefined,
+      undefined,
+    ]);
+    expect(
+      draft.reviewComments
+        .filter((comment) => comment.diff !== "")
+        .map((comment) => {
+          const record = reviewCommentContextRecord(comment);
+          return projectComposerContextForProvider({
+            text: formatComposerContextReference(record),
+            records: [record],
+          });
+        }),
+    ).toEqual([
+      expect.stringContaining(base.url),
+      expect.stringContaining(otherUrl),
+      expect.stringContaining(base.url),
     ]);
   });
 

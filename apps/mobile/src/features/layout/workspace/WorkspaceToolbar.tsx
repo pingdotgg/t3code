@@ -21,10 +21,12 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { shouldRestoreNativeSearch } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const SEARCH_LABELS = {
   threads: msg("Search threads"),
   pullRequests: msg("Search pull requests"),
+  issues: msg("Search issues"),
   settings: msg("Search settings"),
 } as const;
 
@@ -41,12 +43,10 @@ export function WorkspaceToolbar(props: {
   const floatingTabs = useFloatingWorkspaceTabs();
   const duoSearch = NATIVE_LIQUID_GLASS_SUPPORTED && isDuoDevice(deviceType);
   const bottomSearch = duoSearch && sidebarTabs !== "picker";
-  // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
+  const compose = useWorkspaceCompose();
+  // On the Duo, compose sits in the list's bar when folded and the detail column's when unfolded.
   const nativeToolbarCompose =
-    deviceType === "duo-folded" &&
-    !workspace.settingsOpen &&
-    workspace.state.selectedTab === "threads" &&
-    activeNewTask === null;
+    deviceType === "duo-folded" && compose !== null && activeNewTask === null;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
   const { layout, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
@@ -129,9 +129,9 @@ export function WorkspaceToolbar(props: {
   const composeButton = nativeToolbarCompose ? (
     <Toolbar.Button
       identifier="workspace-compose"
-      accessibilityLabel={gt("New chat")}
+      accessibilityLabel={compose?.label}
       icon="square.and.pencil"
-      onPress={props.onNewTask}
+      onPress={compose?.onPress}
       separateBackground
     />
   ) : null;
@@ -200,15 +200,15 @@ export function WorkspaceToolbar(props: {
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {composeButton}
-          {selectedTab !== "threads" ||
+          {compose === null ||
           isDuoDevice(deviceType) ||
           (deviceType === "pad" && layout.usesSplitView) ||
           sidebarTabs === "picker" ||
           floatingTabs ? null : (
             <Toolbar.Button
-              accessibilityLabel={gt("New chat")}
+              accessibilityLabel={compose.label}
               icon="square.and.pencil"
-              onPress={props.onNewTask}
+              onPress={compose.onPress}
             />
           )}
           {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (

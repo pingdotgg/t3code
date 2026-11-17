@@ -664,6 +664,142 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "list-issues": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed issues {count} time} other {Listed issues {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list issues {count} time} other {Tried to list issues {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "read-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Read {count} issue} other {Read {count} issues}}", { count }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} issue} other {Tried to read {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "create-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Filed {count} issue} other {Filed {count} issues}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to file {count} issue} other {Tried to file {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "comment-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Commented on {count} issue} other {Commented on {count} issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to comment on {count} issue} other {Tried to comment on {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "set-issue-state": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Changed the state of {count} issue} other {Changed the state of {count} issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to change the state of {count} issue} other {Tried to change the state of {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "link-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Linked {count} issue} other {Linked {count} issues}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to link {count} issue} other {Tried to link {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "unlink-issue": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Unlinked {count} issue} other {Unlinked {count} issues}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to unlink {count} issue} other {Tried to unlink {count} issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "list-thread-issues": {
+      const count = selected.length;
+      if (count === 1) {
+        label = done
+          ? resolve(msg("Checked linked issues"))
+          : resolve(msg("Tried to check linked issues"));
+      } else {
+        label = done
+          ? resolve(
+              msg(
+                "{count, plural, one {Checked linked issues {count} time} other {Checked linked issues {count} times}}",
+                { count },
+              ),
+            )
+          : resolve(
+              msg(
+                "{count, plural, one {Tried to check linked issues {count} time} other {Tried to check linked issues {count} times}}",
+                { count },
+              ),
+            );
+      }
+      break;
+    }
     case "html-preview": {
       const count = selected.length;
       label = done

@@ -281,6 +281,8 @@ import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-gro
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
+import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
+import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 
@@ -1141,7 +1143,8 @@ function OpenCommandPaletteDialog(props: {
               }
             />
             <TooltipPopup align="end" side="left">
-              {disabledHint ?? gt("Open Settings -> Source control to configure this provider.")}
+              {disabledHint ??
+                gt("Open Settings -> Source control & issues to configure this provider.")}
             </TooltipPopup>
           </Tooltip>
         </span>
@@ -1680,6 +1683,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.issues === true,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:issues",
+      searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
+      title: "Open issues",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues", search: readIssueListPreferences() });
       },
     });
   }

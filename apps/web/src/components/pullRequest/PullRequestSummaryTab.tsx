@@ -362,7 +362,7 @@ function CollapsedComment({
   );
 }
 
-function MetaRow({
+export function PullRequestMetaRow({
   icon,
   label,
   children,
@@ -382,7 +382,7 @@ function MetaRow({
   );
 }
 
-function Section({
+export function PullRequestSection({
   title,
   name,
   defaultOpen = true,
@@ -876,7 +876,7 @@ export function PullRequestSummaryTab({
     >
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
-          <MetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Reviewers")}>
+          <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Reviewers")}>
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               {reviewerEntries.length === 0 ? (
                 <span className="text-muted-foreground">
@@ -951,9 +951,9 @@ export function PullRequestSummaryTab({
                 />
               ) : null}
             </span>
-          </MetaRow>
+          </PullRequestMetaRow>
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (
-            <MetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
+            <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 {detail.labels.length === 0 ? (
                   <span className="text-muted-foreground">
@@ -978,12 +978,12 @@ export function PullRequestSummaryTab({
                   />
                 ) : null}
               </span>
-            </MetaRow>
+            </PullRequestMetaRow>
           ) : null}
         </div>
       </section>
 
-      <Section
+      <PullRequestSection
         key={`description:${detail.url}`}
         title={gt("Description")}
         keepMounted
@@ -1031,9 +1031,9 @@ export function PullRequestSummaryTab({
             </div>
           )}
         </div>
-      </Section>
+      </PullRequestSection>
 
-      <Section
+      <PullRequestSection
         key={`checks:${detail.url}`}
         title={gt("Checks", { $context: "CI checks section" })}
         name="checks"
@@ -1100,9 +1100,9 @@ export function PullRequestSummaryTab({
               } /* oxlint-enable react/no-array-index-key */,
           )
         )}
-      </Section>
+      </PullRequestSection>
 
-      <Section
+      <PullRequestSection
         title={gt("Comments ({count})", { count: detail.commentCount })}
         actions={
           <div className="flex shrink-0 items-center gap-1">
@@ -1213,7 +1213,7 @@ export function PullRequestSummaryTab({
             )}
           </>
         )}
-      </Section>
+      </PullRequestSection>
     </div>
   );
 }

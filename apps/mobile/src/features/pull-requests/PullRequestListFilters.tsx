@@ -3,6 +3,7 @@ import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
+import type { ReactNode } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
@@ -421,6 +422,7 @@ export function PullRequestListFilters(props: {
   /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
+  readonly savedViewsMenu: ReactNode;
 }) {
   const { count, more, reset, select, author, selectedLabelCount } = props.filters;
   const gt = useGT();
@@ -438,6 +440,7 @@ export function PullRequestListFilters(props: {
           : ROW_STYLE
       }
     >
+      {props.savedViewsMenu}
       {Platform.OS === "android" ? null : (
         <ListFilterMenu
           label={count ? String(count) : gt("Filters")}

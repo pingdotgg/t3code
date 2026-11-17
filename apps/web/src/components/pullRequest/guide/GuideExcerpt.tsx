@@ -19,6 +19,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import {
   buildDiffReviewComment,
+  diffReviewSelectionId,
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
@@ -245,7 +246,7 @@ function ExcerptDiff({
   const askAgent = (request: string) => {
     if (draft === null || onAskAgent === null) return;
     const comment = buildDiffReviewComment({
-      id: `pull-request-guide:${excerpt.path}:${draft.range.start}:${draft.range.end}`,
+      id: `pull-request-guide:${diffReviewSelectionId(excerpt.path, draft.range)}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
       // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
       sectionTitle: "Review guide",

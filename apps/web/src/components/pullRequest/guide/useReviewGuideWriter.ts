@@ -57,7 +57,7 @@ export function useReviewGuideWriter({
         title: m(msg("Could not start a review guide")),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          m(msg("Check the review guide model in Settings → Source control.")),
+          m(msg("Check the review guide model in Settings → Source control & issues.")),
         ),
       });
     }
