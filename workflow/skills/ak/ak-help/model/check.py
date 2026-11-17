@@ -122,14 +122,14 @@ tr_ph = [n for n in G if n not in can_merge and not terminal(n) and any(v != "-"
 show("FiledStatesCanStillReachMerged", tr_ph, "tickets are filed but merged is out of reach (a user stop does not count)")
 
 # 2. no state where nobody acts and nothing wakes anyone
-WAITS = {"GAsked", "GConfirm", "SAsked", "TQuiz", "PPresent", "PBlocked", "PAmbig", "WNoFog", "MAsk"}
+WAITS = {"GAsked", "GConfirm", "SAsked", "TQuiz", "PPresent", "PBlocked", "PAmbig", "PReapprove", "PGaps", "WNoFog", "WFogAsk", "MAsk"}
 
 
 def attention(n):
     st = states[n]
-    if terminal(n) or st["ph"] in WAITS or st["hd"] in ("bcq", "bcp") or st["is"] == "pr" or st["tr"] in ("batch", "sum"):
+    if terminal(n) or st["ph"] in WAITS or st["hd"] in ("bcq", "bcp", "bca") or st["is"] == "pr" or st["tr"] in ("batch", "sum"):
         return True
-    if "Help" in st["s"].values():
+    if {"Help", "HAnn"} & set(st["s"].values()):
         return True  # the maestro messaged the master
     if st["ph"] in ("Idea", "WIdle"):
         return True  # the user holds the baton by design
@@ -149,8 +149,8 @@ sinks = [n for n in stalled if auto.out_degree(n) == 0]  # where it actually sto
 def why(n):
     st = states[n]
     tk = [v for v in st["s"].values() if v != "-"]
-    if st["hd"] == "bcc":
-        return "bcheck committed and stopped: no PR, no merge, in-progress label stays"
+    if st["s"]["S"] == "Epic" and all(st["s"][t] == "Merged" for t in st["s"] if t != "S"):
+        return "every ticket merged, epic still open, maestro asleep, nobody nudges it"
     if st["mst"] == "off" and "Ready" in tk and st["hd"] == "-" and st["is"] != "run":
         return "tickets ready, maestro asleep (heartbeat paused or deleted), nobody told to wake it"
     if set(tk) <= {"Merged", "HReady"} and "HReady" in tk:
@@ -184,7 +184,7 @@ else:
         print(f"       {i}. {w}")
 
 # 4. approval points really require the user: every step that leaves a wait for the user is a user step
-AWAIT_VAR = [("ph", WAITS), ("hd", {"bcp"}), ("is", {"pr"}), ("tr", {"sum"})]
+AWAIT_VAR = [("ph", WAITS), ("hd", {"bcp", "bca"}), ("is", {"pr"}), ("tr", {"sum"})]
 bad_edges = []
 for u, v, d in G.edges(data=True):
     for var, vals in AWAIT_VAR:

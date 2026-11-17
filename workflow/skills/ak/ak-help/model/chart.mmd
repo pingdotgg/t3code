@@ -10,8 +10,6 @@ stateDiagram-v2
     lg4: exec
     lg5: done
     lg6: stop
-    lg7: Breaks ClaimsReleased or FogHasTicket or NoSpecDispatch or PlanFiledApproved in some cases
-    lg8: Path to the ClaimsReleased or FogHasTicket or NoSpecDispatch or PlanFiledApproved bug
   }
   class lg0 blue
   class lg1 purple
@@ -20,8 +18,6 @@ stateDiagram-v2
   class lg4 teal
   class lg5 pink
   class lg6 tan
-  class lg7 mayBreak
-  class lg8 bugPath
   s0: Idea
   s1: Grilling: thinking
   s2: Choosing a route
@@ -33,33 +29,36 @@ stateDiagram-v2
   s8: Wayfinder: grilling for the destination: thinking
   s9: You stopped
   s10: replan: auditing
-  s11: to-spec: waiting for you on seams
-  s12: replan: waiting for you on a blocking question
-  s13: replan: rewriting
-  s14: to-spec: publishing the spec
-  s15: Wayfinder: grilling the whole space: thinking
-  s16: plan-to-issues: waiting for you on dependencies
-  s17: plan-to-issues: creating issues
-  s18: Plan: waiting for your approval
-  s19: to-tickets: slicing
-  s20: Tickets ready, no maestro
-  s21: Wayfinder: charting the map
-  s22: to-tickets: waiting for you on the breakdown
-  s23: Waiting for you to start the maestro
-  s24: Wayfinder: no fog, waiting for you
-  s25: to-tickets: publishing
-  s26: Wayfinder: map between sessions
-  s27: Maestro dispatching
-  s28: Wayfinder: picking a ticket
-  s29: A worker is running
-  s30: Wayfinder: grilling one ticket: thinking
-  s31: Wayfinder: recording the answer
-  s32: Last ticket merged, closing out
-  s33: needs-help: waiting on the master
-  s34: Wayfinder: graduating fog
-  s35: Merged
-  s36: Wayfinder: the way is clear
-  s37: Tickets ready, maestro asleep
+  s11: replan: out of rounds, waiting for you
+  s12: to-spec: waiting for you on seams
+  s13: replan: waiting for you on a blocking question
+  s14: replan: rewriting
+  s15: to-spec: publishing the spec
+  s16: Wayfinder: grilling the whole space: thinking
+  s17: plan-to-issues: waiting for you on dependencies
+  s18: plan-to-issues: creating issues
+  s19: Plan: waiting for your approval
+  s20: plan-to-issues: waiting for you to approve the replanned plan
+  s21: to-tickets: slicing
+  s22: Tickets ready, no maestro
+  s23: Wayfinder: charting the map
+  s24: to-tickets: waiting for you on the breakdown
+  s25: Waiting for you to start the maestro
+  s26: Wayfinder: no fog, waiting for you
+  s27: to-tickets: publishing
+  s28: Wayfinder: map between sessions
+  s29: Maestro dispatching
+  s30: Wayfinder: picking a ticket
+  s31: A worker is running
+  s32: Wayfinder: grilling one ticket: thinking
+  s33: Wayfinder: recording the answer
+  s34: Tickets filed
+  s35: needs-help: waiting on the master
+  s36: Wayfinder: graduating fog
+  s37: Last ticket merged, closing out
+  s38: Wayfinder: the way is clear
+  s39: Wayfinder: no tickets left but fog, waiting for you
+  s40: Merged
   [*] --> s0
   s0 --> s1: you start grilling
   s0 --> s2: you skip straight to filing
@@ -75,146 +74,117 @@ stateDiagram-v2
   s4 --> s2: you confirm shared understanding
   s4 --> s9: you stop
   s5 --> s10: the agent drafts a plan
-  s6 --> s6: plan-to-issues finds the plan unaudited and runs replan
-  s7 --> s11: the agent proposes test seams
+  s6 --> s11: plan-to-issues' replan runs out of rounds
+  s7 --> s12: the agent proposes test seams
   s8 --> s3: the agent asks a round
   s8 --> s4: no questions left
-  s10 --> s12: the audit needs your input
-  s10 --> s13: the audit finds gaps
-  s10 --> s18: the audit reaches 100%
-  s11 --> s7: you reject the seams
-  s11 --> s14: you approve the seams
+  s10 --> s13: the audit needs your input
+  s10 --> s14: the audit finds gaps
+  s10 --> s19: the audit reaches 100%
+  s11 --> s10: you answer what is uncovered
   s11 --> s9: you stop
+  s12 --> s7: you reject the seams
+  s12 --> s15: you approve the seams
+  s12 --> s9: you stop
   s3 --> s8: you answer the round
   s4 --> s8: you want more grilling
-  s4 --> s15: you confirm the destination or you want more grilling
-  s6 --> s16: dependencies look ambiguous
-  s6 --> s17: dependencies are clear
-  s12 --> s10: you answer
-  s12 --> s9: you stop
-  s13 --> s10: the agent rewrites and re-audits
-  s14 --> s19: spec issue published as ready-for-agent
-  s15 --> s3: the agent asks a round
-  s15 --> s4: no questions left
-  s16 --> s17: you answer
-  s17 --> s20: epic and tasks created
-  s18 --> s5: you reject the plan
-  s18 --> s6: you approve the plan
-  s18 --> s9: you stop
-  s3 --> s15: you answer the round
-  s4 --> s21: you confirm the open decisions
-  s19 --> s22: the agent drafts slices
-  s20 --> s23: master asks you to start the maestro
-  s21 --> s24: no fog found
-  s21 --> s26: the map is charted with fog
-  s22 --> s19: you ask to split or merge tickets
-  s22 --> s9: you stop
-  s22 --> s25: you approve the breakdown
-  s23 --> s20: you decline the maestro
-  s23 --> s27: you start the maestro
-  s24 --> s7: you choose to-spec
+  s4 --> s16: you confirm the destination or you want more grilling
+  s6 --> s20: replan changed the plan, plan-to-issues asks again
+  s6 --> s17: dependencies look ambiguous
+  s6 --> s18: dependencies are clear
+  s13 --> s10: you answer
+  s13 --> s9: you stop
+  s14 --> s10: the agent rewrites and re-audits
+  s15 --> s21: spec issue published as an epic
+  s16 --> s3: the agent asks a round
+  s16 --> s4: no questions left
+  s17 --> s18: you answer
+  s18 --> s22: epic and tasks created, any maestro thread is nudged
+  s19 --> s5: you reject the plan
+  s19 --> s6: you approve the plan
+  s19 --> s9: you stop
+  s20 --> s5: you reject the changed plan
+  s20 --> s6: you approve the changed plan
+  s20 --> s9: you stop
+  s10 --> s11: gaps remain after the third round
+  s3 --> s16: you answer the round
+  s4 --> s23: you confirm the open decisions
+  s21 --> s24: the agent drafts slices
+  s22 --> s25: master asks you to start the maestro
+  s23 --> s26: no fog found
+  s23 --> s28: the map is charted with fog
+  s24 --> s21: you ask to split or merge tickets
   s24 --> s9: you stop
-  s25 --> s20: tickets published as ready-for-agent
+  s24 --> s27: you approve the breakdown
+  s25 --> s22: you decline the maestro
+  s25 --> s29: you start the maestro
+  s26 --> s7: you choose to-spec
   s26 --> s9: you stop
-  s26 --> s28: you start a ticket session
-  s27 --> s29: maestro claims a ticket and starts a worker
-  s28 --> s30: the session takes a HITL ticket
-  s28 --> s31: the session takes an AFK ticket
-  s29 --> s32: worker merges the PR
-  s29 --> s33: worker labels needs-help
-  s30 --> s3: the agent asks a round
-  s30 --> s4: no questions left
-  s31 --> s34: answer posted, ticket closed
-  s32 --> s35: every ticket is merged
-  s3 --> s30: you answer the round
-  s3 --> s26: you leave the ticket session, its claim stays
-  s4 --> s30: you want more grilling
-  s4 --> s31: you confirm the answer
-  s4 --> s26: you leave the ticket session, its claim stays
-  s34 --> s26: fog graduates into tickets or the map clears
-  s34 --> s36: fog graduates into tickets or the map clears
-  s33 --> s32: master finishes the ticket by hand
-  s33 --> s27: master removes needs-help or master finishes the ticket by hand
-  s36 --> s19: no tickets and no fog left
-  s26 --> s30: you name a ticket a dead session claimed
-  s33 --> s37: master removes needs-help or master finishes the ticket by hand
-  s29 --> s27: worker merges the PR
-  s37 --> s27: someone nudges the maestro
-  s33 --> s29: master finishes the ticket by hand or master removes needs-help
-  classDef mayBreak fill:#fff3e6,stroke:#e8730c,stroke-width:2.5px,color:#b85a06
+  s27 --> s22: tickets published as ready-for-agent, any maestro thread is nudged
+  s28 --> s9: you stop
+  s28 --> s30: you start a ticket session, week-old claims are unassigned
+  s29 --> s31: maestro claims a ticket and starts a worker
+  s30 --> s32: the session takes a HITL ticket
+  s30 --> s33: the session takes an AFK ticket
+  s31 --> s34: worker merges the PR
+  s31 --> s35: worker labels needs-help
+  s32 --> s3: the agent asks a round
+  s32 --> s4: no questions left
+  s33 --> s36: answer posted, ticket closed
+  s34 --> s37: maestro closes the epic, every sub-issue is closed
+  s3 --> s32: you answer the round
+  s3 --> s28: you leave the ticket session, its claim stays
+  s4 --> s32: you want more grilling
+  s4 --> s33: you confirm the answer
+  s4 --> s28: you leave the ticket session, its claim stays
+  s36 --> s28: fog graduates into tickets or the map clears
+  s36 --> s38: fog graduates into tickets or the map clears
+  s36 --> s39: fog graduates into tickets or the map clears
+  s35 --> s34: master finishes the ticket by hand
+  s35 --> s29: master removes needs-help
+  s37 --> s40: every ticket is merged
+  s38 --> s21: no tickets and no fog left
+  s39 --> s38: you rule the leftover fog out of scope
+  s39 --> s28: you graduate the leftover fog into tickets
+  s28 --> s32: you name a ticket a dead session claimed
+  s31 --> s37: worker merges the PR
+  s35 --> s37: master finishes the ticket by hand
   class s0 blue
-  class s0 bugPath
   class s1 blue
   class s2 blue
-  class s2 bugPath
-  class s3 mayBreak
-  class s3 bugPath
-  class s4 mayBreak
-  class s4 bugPath
   class s5 orange
   class s6 orange
-  class s6 bugPath
   class s7 purple
-  class s7 bugPath
   class s8 yellow
-  class s8 bugPath
   class s9 tan
-  class s9 mayBreak
   class s10 orange
-  class s11 purple
-  class s11 bugPath
-  class s12 orange
+  class s11 orange
+  class s12 purple
   class s13 orange
-  class s14 purple
-  class s14 bugPath
-  class s15 yellow
-  class s15 bugPath
-  class s16 orange
+  class s14 orange
+  class s15 purple
+  class s16 yellow
   class s17 orange
-  class s17 bugPath
   class s18 orange
-  class s19 purple
-  class s19 bugPath
-  class s20 teal
-  class s20 mayBreak
-  class s20 bugPath
-  class s21 yellow
-  class s21 bugPath
-  class s22 purple
-  class s22 bugPath
-  class s23 teal
-  class s23 mayBreak
-  class s23 bugPath
-  class s24 yellow
-  class s25 purple
-  class s25 bugPath
+  class s19 orange
+  class s20 orange
+  class s21 purple
+  class s22 teal
+  class s23 yellow
+  class s24 purple
+  class s25 teal
   class s26 yellow
-  class s26 mayBreak
-  class s26 bugPath
-  class s27 teal
-  class s27 mayBreak
-  class s27 bugPath
+  class s27 purple
   class s28 yellow
-  class s28 mayBreak
-  class s28 bugPath
   class s29 teal
-  class s29 mayBreak
-  class s29 bugPath
   class s30 yellow
-  class s30 mayBreak
-  class s30 bugPath
-  class s31 yellow
-  class s31 mayBreak
-  class s31 bugPath
-  class s32 teal
-  class s32 mayBreak
-  class s33 teal
-  class s33 mayBreak
-  class s34 yellow
-  class s34 mayBreak
-  class s34 bugPath
-  class s35 pink
-  class s35 mayBreak
+  class s31 teal
+  class s32 yellow
+  class s33 yellow
+  class s34 teal
+  class s35 teal
   class s36 yellow
   class s37 teal
-  class s37 mayBreak
+  class s38 yellow
+  class s39 yellow
+  class s40 pink
