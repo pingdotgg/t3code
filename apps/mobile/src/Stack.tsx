@@ -186,7 +186,7 @@ const SETTINGS_SCREENS = {
   SettingsEnvironmentSourceControl: createNativeStackScreen({
     screen: SettingsEnvironmentSourceControlRouteScreen,
     linking: "settings/source-control",
-    options: settingsPage("Source control"),
+    options: settingsPage("Source control & issues"),
   }),
   SettingsEnvironmentAgentBehavior: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
