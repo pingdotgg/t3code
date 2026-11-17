@@ -28,7 +28,11 @@ import {
   type TimelineNavigation,
   type TimelineViewport,
 } from "./timelineViewport";
-import { resolveTimelineIsAtEnd, type MessagesTimelineRow } from "./MessagesTimeline.logic";
+import {
+  resolveTimelineIsAtEnd,
+  timelineRowIsOwnUserMessage,
+  type MessagesTimelineRow,
+} from "./MessagesTimeline.logic";
 import { measuredEndOffset, settleListScroll } from "./useTimelinePositionRestore";
 import {
   releaseChatTimelineAnchor,
@@ -202,6 +206,19 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     setPill((current) =>
       current.visit === visit && current.show === show ? current : { visit, show },
     );
+  const [lastUserMessage, setLastUserMessage] = useState<{
+    readonly visit: TimelineFollowVisit;
+    readonly above: boolean;
+  }>({ visit, above: false });
+  // Like "Scroll to end", it shows only away from the end.
+  const showScrollToLastUserMessage =
+    showScrollToBottom && lastUserMessage.visit === visit && lastUserMessage.above;
+  // Reported on every scroll frame; an unchanged value must not re-render ChatView.
+  const onLastUserMessageAboveChange = (above: boolean) =>
+    setLastUserMessage((current) =>
+      current.visit === visit && current.above === above ? current : { visit, above },
+    );
+  const onLastUserMessageAboveChangeStable = useStableCallback(onLastUserMessageAboveChange);
   const [followStore] = useState(createTimelineFollowStore);
   const followSnapshot = useSyncExternalStore(followStore.subscribe, followStore.snapshot);
   const follow =
@@ -328,6 +345,20 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
+  const scrollToLastUserMessage = () => {
+    const list = legendListRef.current;
+    const rows = list?.getState().data as ReadonlyArray<MessagesTimelineRow> | undefined;
+    const index = rows?.findLastIndex(timelineRowIsOwnUserMessage) ?? -1;
+    if (!list || index < 0) return false;
+    viewportRef.current?.navigate({ releasesFollow: true });
+    void list.scrollToIndex({
+      index,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewPosition: 0,
+      viewOffset: 24,
+    });
+    return true;
+  };
   // The list does not follow footer layout, so the resting composer cannot scroll it. Growth
   // above the composer (a new notice) would cover the last rows instead.
   const followedInsetRef = useRef(composerTimelineInset);
@@ -532,11 +563,14 @@ export function useTimelineFollow(input: TimelineFollowInput) {
 
   return {
     showScrollToBottom,
+    showScrollToLastUserMessage,
+    onLastUserMessageAboveChangeStable,
     timelineLiveFollowEnabled,
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
     scrollToEnd,
+    scrollToLastUserMessage,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,

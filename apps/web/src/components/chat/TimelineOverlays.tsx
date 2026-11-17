@@ -1,4 +1,4 @@
-import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, PaperclipIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 
@@ -23,9 +23,10 @@ export function WorkspaceFileDropOverlay() {
  * Sits `bottom` pixels up, clear of the composer and its attached banners. The summary names
  * what waits at the end of the timeline, which is out of view while it shows.
  */
-export function ScrollToEndButton(props: {
+export function TimelineJumpButtons(props: {
   readonly bottom: number;
   readonly summary: string | null;
+  readonly onScrollToLastUserMessage: (() => void) | null;
   readonly onScrollToEnd: () => void;
 }) {
   return (
@@ -33,23 +34,36 @@ export function ScrollToEndButton(props: {
       className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
       style={{ bottom: props.bottom }}
     >
-      <Button
-        data-scroll-to-end="true"
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={props.onScrollToEnd}
-        className="pointer-events-auto"
-        size="xs"
-        variant="glass"
-      >
-        <ChevronDownIcon className="size-3.5" />
-        Scroll to end
-        {props.summary === null ? null : (
-          <span className="text-muted-foreground">
-            <span aria-hidden>· </span>
-            {props.summary}
-          </span>
+      <div data-scroll-to-end="true" className="flex gap-2">
+        {props.onScrollToLastUserMessage === null ? null : (
+          <Button
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={props.onScrollToLastUserMessage}
+            className="pointer-events-auto"
+            size="xs"
+            variant="glass"
+          >
+            <ChevronUpIcon className="size-3.5" />
+            Your last message
+          </Button>
         )}
-      </Button>
+        <Button
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={props.onScrollToEnd}
+          className="pointer-events-auto"
+          size="xs"
+          variant="glass"
+        >
+          <ChevronDownIcon className="size-3.5" />
+          Scroll to end
+          {props.summary === null ? null : (
+            <span className="text-muted-foreground">
+              <span aria-hidden>· </span>
+              {props.summary}
+            </span>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }

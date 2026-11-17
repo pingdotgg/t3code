@@ -3,7 +3,7 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
-import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
+import { TimelineJumpButtons, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -2136,11 +2136,14 @@ export default function ChatView(props: ChatViewProps) {
 
   const {
     showScrollToBottom,
+    showScrollToLastUserMessage,
+    onLastUserMessageAboveChangeStable,
     timelineLiveFollowEnabled,
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
     scrollToEnd,
+    scrollToLastUserMessage,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,
@@ -2360,8 +2363,9 @@ export default function ChatView(props: ChatViewProps) {
     composerOverlayElement,
     isDraftHeroState,
     publishComposerOverlayHeightStable,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The scroll-to-bottom button changes the overlay's height without resizing the observed node first.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The jump buttons change the overlay's height without resizing the observed node first.
     showScrollToBottom,
+    showScrollToLastUserMessage,
   ]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget =
@@ -2770,6 +2774,7 @@ export default function ChatView(props: ChatViewProps) {
           return false;
         openThreadFind(activeThreadKey);
       },
+      "chat.jumpToLastUserMessage": () => scrollToLastUserMessage(),
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
@@ -3525,6 +3530,7 @@ export default function ChatView(props: ChatViewProps) {
                   contentInsetEndAdjustment={composerTimelineInset}
                   liveFollowEnabled={timelineLiveFollowEnabled}
                   onIsAtEndChange={onIsAtEndChangeStable}
+                  onLastUserMessageAboveChange={onLastUserMessageAboveChangeStable}
                   onViewportAttach={attachTimelineViewport}
                   onFooterGrow={onTimelineFooterGrowStable}
                   hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
@@ -3537,9 +3543,12 @@ export default function ChatView(props: ChatViewProps) {
               </WorkspaceMutationIdContext>
 
               {showScrollToBottom && !isThreadFindActive && (
-                <ScrollToEndButton
+                <TimelineJumpButtons
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
+                  onScrollToLastUserMessage={
+                    showScrollToLastUserMessage ? scrollToLastUserMessage : null
+                  }
                   onScrollToEnd={() => scrollToEnd(true)}
                 />
               )}
