@@ -7,17 +7,26 @@ import {
 import { type EnvironmentId, ServerSourceUpdateError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { useSyncExternalStore } from "react";
 
 import { useNowAfter } from "~/hooks/useDeadline";
-import { useLocalStorage, writeLocalStorageValue } from "~/hooks/useLocalStorage";
+import {
+  readLocalStorageValue,
+  subscribeLocalStorageKey,
+  useLocalStorage,
+  writeLocalStorageValue,
+} from "~/hooks/useLocalStorage";
 import { ensureLocalApi } from "~/localApi";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useServerConfigs } from "~/state/entities";
+import { environmentAtomList, environmentIdsKey } from "~/state/environmentAtomList";
+import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuerySelector } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  collectSourceUpdateMachines,
   isSourceUpdateSettled,
   resolveSourceUpdatePhase,
   SOURCE_UPDATE_GIVE_UP_MS,
@@ -76,6 +85,62 @@ export function useSourceUpdateState(environmentId: EnvironmentId | null) {
         ? IDLE_PHASE
         : resolveSourceUpdatePhase({ status, run, conflictThreadId, dismissedRunId, nowMs }),
   };
+}
+
+/** What `useSourceUpdateState` reads from atoms, or null where this client may not update. */
+const sourceUpdateInputsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    get(serverEnvironment.runSourceUpdate.permissionAtom(environmentId))
+      ? {
+          status: selectEnvironmentQueryData(
+            get(serverEnvironment.sourceUpdateStatus({ environmentId, input: {} })),
+          ),
+          run: get(serverEnvironment.sourceUpdateRunAtom(environmentId)),
+          conflictThreadId: get(serverEnvironment.sourceUpdateConflictThreadAtom(environmentId)),
+        }
+      : null,
+  ).pipe(Atom.withLabel(`web-source-update-inputs:${environmentId}`)),
+);
+const sourceUpdateInputsListAtom = environmentAtomList(
+  "web-source-update-inputs",
+  sourceUpdateInputsAtom,
+);
+
+function useDismissedRunIds(environmentIds: ReadonlyArray<EnvironmentId>) {
+  const keys = environmentIds.map(dismissedRunKey);
+  const subscribe = (onChange: () => void) => {
+    const unsubscribes = keys.map((key) => subscribeLocalStorageKey(key, onChange));
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  };
+  const snapshot = () =>
+    JSON.stringify(keys.map((key) => readLocalStorageValue(key, null, DismissedRunId)));
+  return JSON.parse(useSyncExternalStore(subscribe, snapshot, snapshot)) as Array<string | null>;
+}
+
+/** Connected source-built environments with something to update, running, failed or resolving. */
+export function useSourceUpdateMachines() {
+  const { environments } = useEnvironments();
+  const candidates = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      supportsSourceUpdate(environment.serverConfig ?? undefined),
+  );
+  const environmentIds = candidates.map(({ environmentId }) => environmentId);
+  const inputs = useAtomValue(sourceUpdateInputsListAtom(environmentIdsKey(environmentIds)));
+  const dismissedRunIds = useDismissedRunIds(environmentIds);
+  const deadlines = inputs.flatMap((input) =>
+    input?.run ? [input.run.startedAtMs + SOURCE_UPDATE_GIVE_UP_MS] : [],
+  );
+  const nowMs = useNowAfter(deadlines.length === 0 ? null : Math.min(...deadlines));
+  return collectSourceUpdateMachines(
+    candidates.flatMap(({ environmentId, label }, index) => {
+      const input = inputs[index];
+      if (!input) return [];
+      const dismissedRunId = dismissedRunIds[index] ?? null;
+      const phase = resolveSourceUpdatePhase({ ...input, dismissedRunId, nowMs });
+      return [{ environmentId, label, status: input.status, phase }];
+    }),
+  );
 }
 
 const toastFailure = (title: string, error: unknown) =>

@@ -1,4 +1,9 @@
-import type { ServerConfig, ServerSourceUpdateStatus, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ServerConfig,
+  ServerSourceUpdateStatus,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { SourceUpdateRun } from "@t3tools/client-runtime/state/server";
 
 export type SourceUpdatePhase =
@@ -141,4 +146,44 @@ export function canCancelSourceUpdate(phase: SourceUpdatePhase): boolean {
 
 export function isSourceUpdateSettled(phase: SourceUpdatePhase): phase is SettledPhase {
   return phase.kind === "succeeded" || phase.kind === "failed";
+}
+
+export interface SourceUpdateMachine {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly phase: SourceUpdatePhase;
+  readonly canUpdate: boolean;
+}
+
+/** The environments the sidebar pill lists: something to update, running, failed or resolving. */
+export function collectSourceUpdateMachines(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly status: ServerSourceUpdateStatus | null;
+    readonly phase: SourceUpdatePhase;
+  }>,
+): ReadonlyArray<SourceUpdateMachine> {
+  return environments
+    .filter(({ phase }) => phase.kind !== "idle" && phase.kind !== "succeeded")
+    .map(({ environmentId, label, status, phase }) => ({
+      environmentId,
+      label,
+      phase,
+      canUpdate: canRunSourceUpdate(status, phase),
+    }));
+}
+
+/** The pill names the state that most needs attention; null hides it. */
+export function sourceUpdatePillLabel(machines: ReadonlyArray<SourceUpdateMachine>): string | null {
+  const has = (kind: SourceUpdatePhase["kind"]) =>
+    machines.some(({ phase }) => phase.kind === kind);
+  if (has("failed")) return "Update failed";
+  if (has("resolving")) return "Resolving conflicts…";
+  if (has("running")) return "Updating…";
+  const available = machines.filter(({ phase }) => phase.kind === "available");
+  if (available.length === 0) return null;
+  return available.length === 1
+    ? `Update · ${available[0]!.label}`
+    : `Update · ${available.length} machines`;
 }

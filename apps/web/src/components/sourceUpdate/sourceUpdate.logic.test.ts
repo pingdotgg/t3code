@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { type ServerSourceUpdateStatus, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerSourceUpdateStatus, ThreadId } from "@t3tools/contracts";
 
 import {
   canCancelSourceUpdate,
   canRunSourceUpdate,
+  collectSourceUpdateMachines,
   resolveSourceUpdatePhase,
   SOURCE_UPDATE_GIVE_UP_MS,
+  type SourceUpdatePhase,
+  sourceUpdatePillLabel,
   sourceUpdateSummary,
   supportsSourceUpdate,
 } from "./sourceUpdate.logic";
@@ -265,5 +268,71 @@ describe("source update actions", () => {
       "remote-fork",
     ]);
     expect(supportsSourceUpdate(undefined)).toBe(false);
+  });
+});
+
+describe("sidebar source update pill", () => {
+  const available = { kind: "available", behindOrigin: 1, upstreamAhead: 0, unbuilt: 0 } as const;
+  const machines = (...phases: ReadonlyArray<readonly [string, SourceUpdatePhase]>) =>
+    collectSourceUpdateMachines(
+      phases.map(([label, phase]) => ({
+        environmentId: EnvironmentId.make(label),
+        label,
+        status: status(),
+        phase,
+      })),
+    );
+
+  it("lists only environments with something to do or show", () => {
+    const listed = machines(
+      ["idle", { kind: "idle" }],
+      ["done", { kind: "succeeded", runId: "r", sha: "abc", message: "" }],
+      ["behind", available],
+      ["running", { kind: "running", cancellable: true }],
+      ["broken", { kind: "failed", runId: "r", message: "x" }],
+      ["merging", { kind: "resolving", threadId: ThreadId.make("t") }],
+    );
+    expect(listed.map(({ label, canUpdate }) => [label, canUpdate])).toEqual([
+      ["behind", true],
+      ["running", false],
+      ["broken", true],
+      ["merging", true],
+    ]);
+  });
+
+  it.each([
+    [[], null],
+    [[["idle", { kind: "idle" }]], null],
+    [[["laptop", available]], "Update · laptop"],
+    [
+      [
+        ["laptop", available],
+        ["vps", available],
+      ],
+      "Update · 2 machines",
+    ],
+    [
+      [
+        ["laptop", available],
+        ["vps", { kind: "running", cancellable: false }],
+      ],
+      "Updating…",
+    ],
+    [
+      [
+        ["vps", { kind: "running", cancellable: true }],
+        ["laptop", { kind: "resolving", threadId: ThreadId.make("t") }],
+      ],
+      "Resolving conflicts…",
+    ],
+    [
+      [
+        ["laptop", { kind: "resolving", threadId: ThreadId.make("t") }],
+        ["vps", { kind: "failed", runId: "r", message: "x" }],
+      ],
+      "Update failed",
+    ],
+  ] as const)("%j reads %s", (phases, label) => {
+    expect(sourceUpdatePillLabel(machines(...phases))).toBe(label);
   });
 });
