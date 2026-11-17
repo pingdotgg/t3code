@@ -180,6 +180,8 @@ export const ServerAuthDescriptor = Schema.Struct({
   sessionCookieName: TrimmedNonEmptyString,
   /** Older servers omit this and authorize self-updates with orchestration:operate. */
   serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
+  /** Older servers omit this; a DPoP session from a pairing link cannot renew there. */
+  accessTokenRenewal: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
@@ -221,7 +223,8 @@ export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetada
 export const AuthTokenExchangeRequest = Schema.Struct({
   grant_type: Schema.Literal(AuthTokenExchangeGrantType),
   subject_token: TrimmedNonEmptyString,
-  subject_token_type: Schema.Literal(AuthEnvironmentBootstrapTokenType),
+  /** An access token renews its own session, with a DPoP proof from the key it is bound to. */
+  subject_token_type: Schema.Literals([AuthEnvironmentBootstrapTokenType, AuthAccessTokenType]),
   requested_token_type: Schema.Literal(AuthAccessTokenType),
   scope: Schema.optionalKey(TrimmedNonEmptyString),
   client_label: Schema.optionalKey(TrimmedNonEmptyString),

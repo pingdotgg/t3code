@@ -85,6 +85,12 @@ export interface IssuedBearerSession {
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
+// A device pairing with its DPoP key renews the session itself, so the token can be short and
+// the device stays signed in while used. One idle for the whole window pairs again.
+const RENEWABLE_ACCESS_TOKEN_TTL = Duration.hours(1);
+const RENEWABLE_SESSION_WINDOW = Duration.days(30);
+const PAIRING_LINK_SUBJECT = "one-time-token";
+
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
   readonly label: string;
@@ -513,6 +519,13 @@ export class EnvironmentAuth extends Context.Service<
       | ServerAuthInvalidRequestError
       | ServerAuthConnectApprovalPendingError
       | ServerAuthInternalError
+    >;
+    readonly renewAccessToken: (
+      accessToken: string,
+      proofKeyThumbprint: string,
+    ) => Effect.Effect<
+      AuthAccessTokenResult,
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
@@ -1040,6 +1053,36 @@ export const make = Effect.gen(function* () {
   // spending its credential and trusting the key would be undone by that exchange.
   const connectTrustLock = yield* Semaphore.make(1);
 
+  const toAccessTokenResult = (session: SessionStore.IssuedSession) =>
+    DateTime.now.pipe(
+      Effect.map(
+        (now) =>
+          ({
+            access_token: session.token,
+            issued_token_type: AuthAccessTokenType,
+            token_type: session.proofKeyThumbprint ? "DPoP" : "Bearer",
+            expires_in: Math.max(
+              0,
+              Math.floor((session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000),
+            ),
+            scope: encodeOAuthScope(session.scopes),
+          }) satisfies AuthAccessTokenResult,
+      ),
+    );
+
+  const renewAccessToken: EnvironmentAuth["Service"]["renewAccessToken"] = Effect.fn(
+    "EnvironmentAuth.renewAccessToken",
+  )(function* (accessToken, proofKeyThumbprint) {
+    const session = yield* sessions
+      .renew(accessToken, {
+        proofKeyThumbprint,
+        ttl: RENEWABLE_ACCESS_TOKEN_TTL,
+        renewalWindow: RENEWABLE_SESSION_WINDOW,
+      })
+      .pipe(mapSessionVerificationErrors);
+    return yield* toAccessTokenResult(session);
+  });
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
@@ -1065,6 +1108,12 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
+            // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
+            const renewable =
+              input?.proofKeyThumbprint !== undefined &&
+              grant.method === "one-time-token" &&
+              grant.subject === PAIRING_LINK_SUBJECT;
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
@@ -1073,9 +1122,10 @@ export const make = Effect.gen(function* () {
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
                     }
                   : {}),
+                ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -1089,25 +1139,7 @@ export const make = Effect.gen(function* () {
               );
           }),
         ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
-                    ),
-                  ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
-            ),
-          ),
-        ),
+        Effect.flatMap(toAccessTokenResult),
         (exchange) =>
           input?.proofKeyThumbprint ? connectTrustLock.withPermits(1)(exchange) : exchange,
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
@@ -1611,6 +1643,7 @@ export const make = Effect.gen(function* () {
     getSessionState,
     createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
+    renewAccessToken,
     createPairingLink,
     issueConnectCredential,
     approveConnectDevice,

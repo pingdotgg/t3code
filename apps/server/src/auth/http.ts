@@ -1,5 +1,6 @@
 import {
   authScopeRequiredResponse,
+  AuthAccessTokenType,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
   AuthGrantScope,
@@ -400,6 +401,19 @@ export const layer = HttpApiBuilder.group(
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
+            if (args.payload.subject_token_type === AuthAccessTokenType) {
+              if (requestedScopes !== undefined) {
+                return yield* failEnvironmentInvalidRequest("invalid_scope");
+              }
+              if (!proof) {
+                yield* appendDpopChallengeHeader;
+                return yield* failEnvironmentAuthInvalid("invalid_credential");
+              }
+              return yield* serverAuth.renewAccessToken(
+                args.payload.subject_token,
+                proof.thumbprint,
+              );
+            }
             return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
               args.payload.subject_token,
               requestedScopes,
