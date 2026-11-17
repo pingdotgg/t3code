@@ -1800,7 +1800,7 @@ export const make = Effect.gen(function* () {
           return typeof configured === "string" ? configured : hostEnvironment[name];
         };
 
-        let homePath: string;
+        let homePaths: ReadonlyArray<string>;
         if (source === "opencode") {
           const environment = yield* mergeProviderInstanceEnvironment(
             instance.environment,
@@ -1808,31 +1808,36 @@ export const make = Effect.gen(function* () {
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
           const configured = environment.OPENCODE_DATA_DIR?.trim();
           const localAppData = environment.LOCALAPPDATA?.trim();
-          const dataDirectory = configured
-            ? path.resolve(expandHomePath(configured, homeDir))
+          const dataDirectories = configured
+            ? [path.resolve(expandHomePath(configured, homeDir))]
             : platform === "darwin"
-              ? path.join(homeDir, "Library", "Application Support", "opencode")
+              ? [path.join(homeDir, "Library", "Application Support", "opencode")]
               : platform === "win32"
-                ? path.join(localAppData || path.join(homeDir, "AppData", "Local"), "opencode")
-                : path.join(environment.XDG_DATA_HOME?.trim() || path.join(homeDir, ".local", "share"), "opencode");
-          homePath = path.join(dataDirectory, "opencode.db");
+                ? [
+                    path.join(localAppData || path.join(homeDir, "AppData", "Local"), "opencode"),
+                    // Some Windows OpenCode installs (including the portable/npm setup)
+                    // keep their database in the XDG location under the user's home.
+                    path.join(homeDir, ".local", "share", "opencode"),
+                  ]
+                : [path.join(environment.XDG_DATA_HOME?.trim() || path.join(homeDir, ".local", "share"), "opencode")];
+          homePaths = dataDirectories.map((directory) => path.join(directory, "opencode.db"));
         } else if (source === "pi") {
           const environment = yield* mergeProviderInstanceEnvironment(
             instance.environment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-          homePath = resolvePiSessionsDir(
+          homePaths = [resolvePiSessionsDir(
             environment,
             piHome(environment, homeDir, platform),
             path,
-          );
+          )];
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(
+          homePaths = [resolveClaudeConfigDir(
             config.value.homePath,
             environmentHome("CLAUDE_CONFIG_DIR"),
-          );
+          )];
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
@@ -1846,13 +1851,15 @@ export const make = Effect.gen(function* () {
           const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
             Effect.provideService(Path.Path, path),
           );
-          homePath = layout.sharedHomePath;
+          homePaths = [layout.sharedHomePath];
         }
 
-        const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
-        if (seenHomes.has(homeKey)) continue;
-        seenHomes.add(homeKey);
-        homes.push({ homePath, providerInstanceId: instanceId });
+        for (const homePath of homePaths) {
+          const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
+          if (seenHomes.has(homeKey)) continue;
+          seenHomes.add(homeKey);
+          homes.push({ homePath, providerInstanceId: instanceId });
+        }
       }
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
