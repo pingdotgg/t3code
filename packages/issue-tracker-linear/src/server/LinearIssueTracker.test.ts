@@ -127,6 +127,40 @@ function fakeLinear(
 const target = { cwd: "/w/web", host: "linear.app", scope: "ENG" };
 
 describe("LinearIssueTracker", () => {
+  it.effect("parses Linear issue links with their workspace and team", () =>
+    Effect.gen(function* () {
+      const api = yield* fakeLinear({}).tracker;
+      for (const suffix of ["", "/issue-title", "/old-title?view=all#comment"]) {
+        expect(api.parseIssueUrl(new URL(`https://linear.app/acme/issue/ENG-1${suffix}`))).toEqual({
+          host: "linear.app",
+          workspace: "acme",
+          scope: "ENG",
+          key: "ENG-1",
+        });
+      }
+      expect(
+        api.parseIssueUrl(new URL("https://linear.app/other-workspace/issue/ENG-1")),
+      ).toMatchObject({
+        workspace: "other-workspace",
+        key: "ENG-1",
+      });
+      for (const url of [
+        "http://linear.app/acme/issue/ENG-1",
+        "https://example.com/acme/issue/ENG-1",
+        "https://linear.app.example.com/acme/issue/ENG-1",
+        "https://linear.app:444/acme/issue/ENG-1",
+        "https://linear.app/acme/team/ENG-1",
+        "https://linear.app//issue/ENG-1",
+        "https://linear.app/acme/issue/",
+        "https://linear.app/acme/issue/ENG-0",
+        "https://linear.app/acme/issue/eng-1",
+        "https://linear.app/acme/issue/ENG-1extra",
+      ]) {
+        expect(api.parseIssueUrl(new URL(url)), url).toBeNull();
+      }
+    }),
+  );
+
   it.effect("lists a team's issues as summaries keyed by identifier", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeLinear({
