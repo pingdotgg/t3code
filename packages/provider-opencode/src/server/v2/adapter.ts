@@ -908,6 +908,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
+    // The last listing per directory, kept across reconnects for when a new listing fails.
+    const lastAgentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
     const modelVariants = new Map<string, Map<string, ReadonlySet<string>>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
@@ -4054,9 +4056,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ),
           Effect.option,
         );
-        if (listed._tag === "None") return undefined;
+        if (listed._tag === "None") return lastAgentRules.get(directory);
         known = new Map(listed.value.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
+        lastAgentRules.set(directory, known);
       }
       return known;
     });
@@ -4107,8 +4110,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
-      // Without its agent's rules a subagent would lose its own denies; keep its rules for a retry.
-      if (state.subagent !== undefined && (yield* agentsIn(state.directory)) === undefined) return;
       const rules = yield* rulesFor(state, policy, rootOf(state).providerThread.appThreadId);
       if (!sameRules(state.rules, rules)) {
         yield* client.session.update({

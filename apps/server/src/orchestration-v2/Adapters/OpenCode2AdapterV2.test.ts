@@ -2018,7 +2018,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ],
     },
     {
-      // Rewriting without the agent's rules would drop its own denies.
+      // The chosen policy still applies when OpenCode cannot list the subagent's agent.
       name: " while its agent's rules cannot be read",
       rules: [
         out("agent.list", "<any>"),
@@ -2026,6 +2026,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           status: 502,
           body: { _tag: "UnknownError", message: "bad gateway" },
         }),
+        out("session.update", { sessionID: CHILD, permissions: t3Rules }),
+        reply("session.update", null),
       ],
     },
   ])("settles the background call a foreground call joined to a failed child$name", ({ rules }) =>
