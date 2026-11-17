@@ -31,7 +31,11 @@ export type PullRequestParams = {
   readonly initialSummary?: PullRequestListEntry | PullRequestSummary;
 };
 
-export type PullRequestDiffParams = PullRequestParams & { readonly commit?: string };
+export type PullRequestDiffParams = PullRequestParams & {
+  readonly commit?: string;
+  // A guide stop reads the diff at the push its guide was written for, not a cached older one.
+  readonly guideHeadSha?: string;
+};
 
 export function pullRequestTarget(params: PullRequestParams) {
   return {
@@ -115,7 +119,11 @@ export function usePullRequestDiff(
   const reference = pullRequestTarget(params);
   const target = {
     ...reference,
-    input: { ...reference.input, ...(params.commit ? { commit: params.commit } : {}) },
+    input: {
+      ...reference.input,
+      ...(params.commit ? { commit: params.commit } : {}),
+      ...(params.guideHeadSha ? { cacheHeadSha: params.guideHeadSha } : {}),
+    },
   };
   const key = JSON.stringify(target);
   const firstPageAtom = composerPullRequests.diff(target);
