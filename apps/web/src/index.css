@@ -195,8 +195,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --appearance-contrast-target: white;
-    --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-    --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+    /* Keeps the idle thumb above 3:1 (WCAG 1.4.11) on #000; 35% renders as gray 89, just under. */
+    --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+    --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   }
 }
 
@@ -2597,8 +2598,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   @variant dark {
     --well-shade: 16%;
     --well-switch-shade: 30%;
-    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 8%, transparent);
-    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 12%, transparent);
+    --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
+    --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
   }
 }
 
@@ -4144,8 +4145,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 :root.black-chrome [data-chrome-scope] {
   --appearance-contrast-target: white;
-  --app-scrollbar-thumb: rgb(255 255 255 / 8%);
-  --app-scrollbar-thumb-hover: rgb(255 255 255 / 12%);
+  --app-scrollbar-thumb: rgb(255 255 255 / 36%);
+  --app-scrollbar-thumb-hover: rgb(255 255 255 / 45%);
   --background: var(--app-chrome-background);
   --muted-foreground: #8a8a8a;
   --dim-foreground: #666666;
