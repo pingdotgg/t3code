@@ -469,21 +469,39 @@ const agentLimits = (
           : [
               entry,
               ...caps
-                .filter((own) => actionPattern(entry.action, caseless).test(own.action))
+                .filter((own) => actionMatches(entry.action, own.action, caseless))
                 .map((own) => ({ ...own, resource: entry.resource })),
             ],
     );
 };
 
 // Mirrors OpenCode's Wildcard.match: `*` is any run, `?` one character, no case on Windows.
-const actionPattern = (pattern: string, caseless: boolean) =>
-  new RegExp(
-    `^${pattern
-      .replaceAll(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replaceAll("*", ".*")
-      .replaceAll("?", ".")}$`,
-    caseless ? "si" : "s",
-  );
+// Agent config is untrusted; a backtracking RegExp stalls the event loop on runs of `*`, while
+// resuming only from the last `*` keeps this within pattern length times action length.
+const actionMatches = (pattern: string, action: string, caseless: boolean) => {
+  const glob = caseless ? pattern.toLowerCase() : pattern;
+  const name = caseless ? action.toLowerCase() : action;
+  let at = 0;
+  let of = 0;
+  let star = -1;
+  let resume = 0;
+  while (of < name.length) {
+    if (glob[at] === "?" || (glob[at] !== "*" && glob[at] === name[of])) {
+      at += 1;
+      of += 1;
+    } else if (glob[at] === "*") {
+      star = at;
+      at += 1;
+      resume = of;
+    } else if (star !== -1) {
+      at = star + 1;
+      resume += 1;
+      of = resume;
+    } else return false;
+  }
+  while (glob[at] === "*") at += 1;
+  return at === glob.length;
+};
 
 const sessionRules = (
   policy: RulesPolicy,
