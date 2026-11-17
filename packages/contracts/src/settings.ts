@@ -1,5 +1,6 @@
 import {
   AgentSkill,
+  AgentTemplateRecord,
   agentSkillDigestOf,
   isAgentSkillStub,
   MAX_SKILL_LIBRARY_BYTES,
@@ -1238,6 +1239,7 @@ const AgentSkills = Schema.Array(AgentSkill).check(
 );
 
 export const McpGatewayProfile = Schema.Struct({
+  template: Schema.optional(AgentTemplateRecord),
   description: Schema.optional(Schema.String.check(Schema.isMaxLength(280))),
   color: Schema.optional(Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/))),
   icon: Schema.optional(

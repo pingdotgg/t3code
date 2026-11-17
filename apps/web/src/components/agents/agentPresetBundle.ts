@@ -4,7 +4,9 @@ import {
   agentPresetFilesFromArchive,
   decodeAgentPresets,
   exportAgentPresets,
+  withAgentTemplates,
 } from "@t3tools/shared/agentPresets";
+import { APP_VERSION } from "../../branding";
 import JSZip from "jszip";
 
 // Loaded with a dynamic import so preset text stays out of the main bundle.
@@ -14,9 +16,10 @@ const files = import.meta.glob<string>(
 );
 const root = "../../../../../packages/shared/src/agentPresets/";
 
-export const agentPresets = decodeAgentPresets(
+const builtIns = decodeAgentPresets(
   Object.fromEntries(Object.entries(files).map(([path, text]) => [path.slice(root.length), text])),
 );
+export const agentPresets = withAgentTemplates(builtIns, builtIns, APP_VERSION);
 
 /** Reads a .zip holding `presets/<id>/…` and `skills/<name>/…`, at its root or in one folder. */
 export async function readAgentPresetArchive(file: Blob) {
@@ -25,7 +28,7 @@ export async function readAgentPresetArchive(file: Blob) {
     agentPresetFilesFromArchive([...entries].map(([path, entry]) => [path, entry.bytes] as const)),
   );
   if (presets.length === 0) throw new Error("This archive has no presets/<id>/preset.json.");
-  return presets;
+  return withAgentTemplates(presets, builtIns, APP_VERSION);
 }
 
 /** Downloads agents and the skills they use as a preset archive that Import reads back. */

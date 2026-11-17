@@ -81,6 +81,19 @@ export const AgentSkillResources = Schema.Array(AgentSkillResource).check(
   ),
 );
 
+/**
+ * The built-in template a copy follows. A copy whose digest differs from `digest` was edited.
+ * `version` stops an older app offering older text. `mergingFrom` is the copy's digest when a merge
+ * chat started; while the copy still matches it, the merge is unsaved and stays listed.
+ */
+export const AgentTemplateRecord = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  digest: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  version: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  mergingFrom: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+});
+export type AgentTemplateRecord = typeof AgentTemplateRecord.Type;
+
 /** The complete portable bundle is frozen with each thread's profile snapshot. */
 export const AgentSkill = Schema.Struct({
   skillId: TrimmedNonEmptyString,
@@ -101,6 +114,7 @@ export const AgentSkill = Schema.Struct({
   resourceCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   /** {@link agentSkillDigest} of content and resources; lets stubs compare bodies without them. */
   digest: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+  template: Schema.optional(AgentTemplateRecord),
 });
 export type AgentSkill = typeof AgentSkill.Type;
 
@@ -122,14 +136,19 @@ function fnv1a(input: string, seed: number) {
 }
 
 /** Stable across machines; identifies a body, not a security boundary. */
+export const textDigest = (input: string) =>
+  `${fnv1a(input, 0x811c9dc5)}${fnv1a(input, 0x050c5d1f)}`;
+
 export function agentSkillDigest(skill: Pick<AgentSkill, "content" | "resources">) {
-  const input = [
-    skill.content,
-    ...(skill.resources ?? []).map(
-      (file) => `${file.path}\u0000${file.executable === true ? 1 : 0}\u0000${file.contentBase64}`,
-    ),
-  ].join("\u0001");
-  return `${fnv1a(input, 0x811c9dc5)}${fnv1a(input, 0x050c5d1f)}`;
+  return textDigest(
+    [
+      skill.content,
+      ...(skill.resources ?? []).map(
+        (file) =>
+          `${file.path}\u0000${file.executable === true ? 1 : 0}\u0000${file.contentBase64}`,
+      ),
+    ].join("\u0001"),
+  );
 }
 
 const digests = new WeakMap<AgentSkill, string>();

@@ -125,6 +125,7 @@ export function AgentEditor({
   const skillsTriggerRef = useRef<HTMLButtonElement>(null);
   // Preset skills already in the library preselect that skill instead of a copy.
   const presetSkills = skillsAvailable && preset ? preset.skills : [];
+  const template = profile ? profile.template : preset?.template;
   const presetSkillIds = presetSkills.map(
     (skill, index) =>
       findIdenticalSkill(skills, skill)?.skillId ??
@@ -251,6 +252,7 @@ export function AgentEditor({
               const saved = await onSave(
                 {
                   profileId: profile?.profileId ?? randomUUID(),
+                  ...(template && { template }),
                   name: name.trim(),
                   description: description.trim(),
                   systemPrompt,

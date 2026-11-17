@@ -38,7 +38,15 @@ import { AgentSkillsEditor } from "./AgentSkillsEditor";
 import { AgentEditor } from "./AgentEditor";
 import { AgentPresetPicker } from "./AgentPresetPicker";
 import { randomUUID } from "../../lib/utils";
-import { AgentTaskDialog } from "./AgentTaskDialog";
+import { AgentTaskDialog, type AgentTaskSeed } from "./AgentTaskDialog";
+import { AgentTemplateUpdates } from "./AgentTemplateUpdates";
+import { useBuiltInAgentPresets } from "./useBuiltInAgentPresets";
+import {
+  agentTemplateUpdates,
+  markAgentTemplateMerged,
+  type AgentTemplateUpdate,
+} from "@t3tools/shared/agentTemplateUpdates";
+import { APP_VERSION } from "../../branding";
 import { AgentsLoadingNotice } from "./AgentsLoadingNotice";
 import { useAgentsPaneWidths } from "./useAgentsPaneWidths";
 import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
@@ -187,6 +195,15 @@ export function AgentsBoard() {
   const { profiles, skills, skillsAvailable, skillResourcesAvailable, available, updateSettings } =
     useAgentLibrary();
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [merging, setMerging] = useState<{
+    readonly update: AgentTemplateUpdate;
+    readonly seed: AgentTaskSeed;
+  } | null>(null);
+  const builtInPresets = useBuiltInAgentPresets();
+  const library = { agentSkills: skills, mcpGatewayProfiles: profiles };
+  const templateUpdates =
+    builtInPresets && available ? agentTemplateUpdates(library, builtInPresets, APP_VERSION) : [];
   const [order, setOrder] = useLocalStorage(
     "t3code:agents:column-order",
     emptyAgentOrder,
@@ -317,6 +334,15 @@ export function AgentsBoard() {
             >
               Skills
             </button>
+            {templateUpdates.length > 0 && (
+              <button
+                className="agent-icon-button"
+                aria-haspopup="dialog"
+                onClick={() => setUpdatesOpen(true)}
+              >
+                Updates · {templateUpdates.length}
+              </button>
+            )}
             <button
               className="agent-icon-button"
               onClick={() => openCommandPalette({ open: "add-project" })}
@@ -569,6 +595,29 @@ export function AgentsBoard() {
           profiles={profiles}
           orderedProfiles={orderedProfiles}
           onClose={() => setNewChatOpen(false)}
+        />
+      )}
+      {updatesOpen && (
+        <AgentTemplateUpdates
+          updates={templateUpdates}
+          onMerge={(update, seed) => {
+            setUpdatesOpen(false);
+            setMerging({ update, seed });
+          }}
+          onClose={() => setUpdatesOpen(false)}
+        />
+      )}
+      {merging && (
+        <AgentTaskDialog
+          profiles={profiles}
+          orderedProfiles={orderedProfiles}
+          seed={merging.seed}
+          onSeedStarted={() =>
+            void updateSettings(
+              markAgentTemplateMerged(library, merging.update, new Date().toISOString()),
+            )
+          }
+          onClose={() => setMerging(null)}
         />
       )}
       {deleting && (
