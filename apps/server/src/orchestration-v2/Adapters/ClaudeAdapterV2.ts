@@ -6219,6 +6219,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const retriedFreshNativeSessions = new Map<string, string>();
         const activeNativeThreadId = (id: string | null | undefined) =>
           id == null ? id : (retriedFreshNativeSessions.get(id) ?? id);
+        const reportedNativeSessionId = (id: string): string => {
+          let current = id;
+          const seen = new Set<string>();
+          while (!seen.has(current)) {
+            seen.add(current);
+            const next = clearedNativeSessions.get(current);
+            if (next === undefined || next === current) break;
+            current = next;
+          }
+          return current;
+        };
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -6258,7 +6269,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
             const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
-            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
+            const nativeSessionId = reportedNativeSessionId(nativeThreadId);
             const metadataNativeThreadId =
               retriedFreshNativeSessions.get(nativeThreadId) ?? nativeThreadId;
             event = {
@@ -6268,7 +6279,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 metadataNativeThreadId,
               ),
             };
-            if (nativeSessionId !== undefined) {
+            if (nativeSessionId !== nativeThreadId) {
               event = {
                 ...event,
                 providerThread: {
@@ -13236,8 +13247,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.modelSelection,
               querySession.launchArgSettings,
             );
+            // The allocated native ref may be abandoned before the first prompt.
+            // Use the successful CLI's identity everywhere that inspects the turn snapshot.
+            const effectiveProviderThread: OrchestrationV2ProviderThread =
+              turnInput.providerThread.nativeThreadRef?.nativeId === nativeThreadId
+                ? turnInput.providerThread
+                : {
+                    ...turnInput.providerThread,
+                    nativeThreadRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeThreadId,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                  };
             const context: ActiveClaudeTurnContext = {
-              input: turnInput,
+              input:
+                effectiveProviderThread === turnInput.providerThread
+                  ? turnInput
+                  : { ...turnInput, providerThread: effectiveProviderThread },
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
@@ -13975,7 +14003,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }),
           // Untraced: the run's event stream calls this once per provider event.
           hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread, options) {
-            const nativeThreadId = activeNativeThreadId(providerThread.nativeThreadRef?.nativeId);
+            const nativeThreadId = activeNativeThreadId(
+              providerThread.nativeThreadRef?.nativeId,
+            );
             if (nativeThreadId === undefined || nativeThreadId === null) {
               return false;
             }
@@ -14199,7 +14229,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !== activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
+              live.nativeThreadId !==
+                activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
             ) {
               return;
             }
@@ -14230,7 +14261,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !== activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
+              live.nativeThreadId !==
+                activeNativeThreadId(providerThread.nativeThreadRef?.nativeId)
             ) {
               return;
             }
@@ -14270,7 +14302,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(
             function* ({ providerThread, taskIds, awaited }) {
-              const nativeThreadId = activeNativeThreadId(providerThread.nativeThreadRef?.nativeId);
+              const nativeThreadId = activeNativeThreadId(
+                providerThread.nativeThreadRef?.nativeId,
+              );
               if (nativeThreadId == null) return { matched: [] };
               const roster = rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
