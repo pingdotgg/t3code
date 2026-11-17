@@ -551,7 +551,7 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("brings a repository to a linked environment, only through full access", () =>
+it.effect("brings a repository to a linked environment, only through a link above supervised", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const seen = yield* Ref.make<Seen>(nothingSeen);
@@ -583,8 +583,8 @@ it.effect("brings a repository to a linked environment, only through full access
       expect(failureOf(planned)).toMatchObject({ code: "capability_denied" });
       expect(yield* Ref.get(b.bearers)).toEqual([]);
 
-      // Nor may a full-access agent through a link with less: the box holds it.
-      yield* linkTo(a.links, b, "auto");
+      // Nor may a full-access agent through a supervised link: the box holds it.
+      yield* linkTo(a.links, b, "approval-required");
       for (const [name, args] of [
         ["t3_project_clone", clone],
         ["t3_project_create", register],

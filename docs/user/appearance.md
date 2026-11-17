@@ -77,7 +77,7 @@ An agent on the same machine as the server can restyle T3 Code for you. Ask it t
 for example "make T3 Code's chat header taller" or "give T3 Code a solarized theme". It publishes
 an [environment theme](#environment-themes) with colors and CSS, and web and desktop clients of that
 server switch to it. It can also switch them to light, dark, or system mode. The thread must run
-in Full access. Ask the agent to set a built-in theme to undo it.
+in Auto-accept edits, Auto, or Full access, outside plan mode. Ask the agent to set a built-in theme to undo it.
 
 ## Environment themes
 

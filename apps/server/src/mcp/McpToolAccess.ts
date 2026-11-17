@@ -27,8 +27,8 @@ import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
-  assertFullAccess,
   assertLiveCaller,
+  assertMayChangeEnvironment,
   assertTargetWithinLimits,
   type Caller,
   loadCaller,
@@ -318,8 +318,8 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
     forwarded,
   );
 
-const fullAccessRequired =
-  "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
+const environmentChangeRefused =
+  "Changing projects or environment settings needs a calling thread with Auto-accept edits, Auto or Full access permissions that is not in plan mode, or a client approved for more than Supervised access. Ask the user to change this thread's permissions, or to make the change themselves.";
 
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
@@ -341,14 +341,14 @@ export const writesEnvironment = <P, A, E, R>(
         ? Effect.void
         : assertNotLinked(caller, "change projects or environment settings"),
     ),
-    Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+    Effect.tap((caller) => assertMayChangeEnvironment(caller, environmentChangeRefused)),
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
       orchestratingCaller.pipe(
-        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+        Effect.tap((caller) => assertMayChangeEnvironment(caller, environmentChangeRefused)),
       ),
   );
 };
