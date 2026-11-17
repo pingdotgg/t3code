@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -383,7 +384,7 @@ function ProjectScriptEditorForm({
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
     } catch (error) {
-      setValidationError(error instanceof Error ? error.message : gt("Failed to save action."));
+      setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
       return;
     }
 
@@ -397,9 +398,7 @@ function ProjectScriptEditorForm({
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
-            setValidationError(
-              error instanceof Error ? error.message : gt("Failed to save action."),
-            );
+            setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
           }
         } else {
           close();
@@ -407,7 +406,7 @@ function ProjectScriptEditorForm({
       }
     } catch (error) {
       if (pendingSubmissionRef.current === submission) {
-        setValidationError(error instanceof Error ? error.message : gt("Failed to save action."));
+        setValidationError(errorDisplayMessage(error, m) ?? gt("Failed to save action."));
       }
     }
     if (pendingSubmissionRef.current === submission) {
@@ -505,6 +504,7 @@ function ProjectScriptEditorForm({
               </Label>
               <Textarea
                 id="script-command"
+                // oxlint-disable-next-line t3code/no-untranslated-copy -- example shell command
                 placeholder="bun test"
                 value={command}
                 onChange={(event) => setCommand(event.target.value)}

@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -44,7 +46,7 @@ export function useCheckProviderUpdates() {
           const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
           const error = squashAtomCommandFailure(result);
-          return [`${label}: ${error instanceof Error ? error.message : gt("Refresh failed.")}`];
+          return [`${label}: ${errorDisplayMessage(error, m) ?? gt("Refresh failed.")}`];
         }),
     );
     const lines = failures.flat();

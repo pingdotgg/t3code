@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import { changeRequestTermKind, type ChangeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import {
   scopeProjectRef,
   scopedThreadKey,
@@ -206,18 +207,38 @@ type PullRequestBadgeState = ThreadPullRequestBadge["state"];
 function stackBadgeLabel(
   state: PullRequestBadgeState,
   count: number,
-  items: string,
+  term: ChangeRequestTermKind,
   resolve: MessageResolver,
 ): string {
   switch (state) {
     case "open":
-      return resolve(msg("Stack of {count} {items}, open", { count, items }));
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, open} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, open}}",
+          { count, term },
+        ),
+      );
     case "draft":
-      return resolve(msg("Stack of {count} {items}, draft", { count, items }));
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, draft} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, draft}}",
+          { count, term },
+        ),
+      );
     case "closed":
-      return resolve(msg("Stack of {count} {items}, closed", { count, items }));
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, closed} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, closed}}",
+          { count, term },
+        ),
+      );
     case "merged":
-      return resolve(msg("Stack of {count} {items}, merged", { count, items }));
+      return resolve(
+        msg(
+          "{count, plural, one {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, merged} other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}, merged}}",
+          { count, term },
+        ),
+      );
   }
 }
 
@@ -229,48 +250,90 @@ function moreLinkedBadgeLabel(
 ): string {
   switch (state) {
     case "open":
-      return resolve(msg("{tooltip}, and {others} more linked; overall open", { tooltip, others }));
+      return resolve(
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall open} other {{tooltip}, and {others} more linked; overall open}}",
+          { tooltip, others },
+        ),
+      );
     case "draft":
       return resolve(
-        msg("{tooltip}, and {others} more linked; overall draft", { tooltip, others }),
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall draft} other {{tooltip}, and {others} more linked; overall draft}}",
+          { tooltip, others },
+        ),
       );
     case "closed":
       return resolve(
-        msg("{tooltip}, and {others} more linked; overall closed", { tooltip, others }),
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall closed} other {{tooltip}, and {others} more linked; overall closed}}",
+          { tooltip, others },
+        ),
       );
     case "merged":
       return resolve(
-        msg("{tooltip}, and {others} more linked; overall merged", { tooltip, others }),
+        msg(
+          "{others, plural, one {{tooltip}, and {others} more linked; overall merged} other {{tooltip}, and {others} more linked; overall merged}}",
+          { tooltip, others },
+        ),
       );
   }
 }
 
 function prStatusLabels(
   state: PullRequestBadgeState,
-  shortLabel: string,
+  term: ChangeRequestTermKind,
   number: number,
   resolve: MessageResolver,
 ): { readonly label: string; readonly tooltipLead: string } {
   switch (state) {
     case "open":
       return {
-        label: resolve(msg("{shortLabel} open", { shortLabel })),
-        tooltipLead: resolve(msg("{shortLabel} #{number} - Open", { shortLabel, number })),
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} open", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Open", {
+            term,
+            number,
+          }),
+        ),
       };
     case "draft":
       return {
-        label: resolve(msg("{shortLabel} draft", { shortLabel })),
-        tooltipLead: resolve(msg("{shortLabel} #{number} - Draft", { shortLabel, number })),
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} draft", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Draft", {
+            term,
+            number,
+          }),
+        ),
       };
     case "closed":
       return {
-        label: resolve(msg("{shortLabel} closed", { shortLabel })),
-        tooltipLead: resolve(msg("{shortLabel} #{number} - Closed", { shortLabel, number })),
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} closed", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Closed", {
+            term,
+            number,
+          }),
+        ),
       };
     case "merged":
       return {
-        label: resolve(msg("{shortLabel} merged", { shortLabel })),
-        tooltipLead: resolve(msg("{shortLabel} #{number} - Merged", { shortLabel, number })),
+        label: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} merged", { term }),
+        ),
+        tooltipLead: resolve(
+          msg("{term, select, mr {MR} cr {change request} other {PR}} #{number} - Merged", {
+            term,
+            number,
+          }),
+        ),
       };
   }
 }
@@ -295,7 +358,12 @@ function resolveThreadPullRequestBadgePresentation(
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: stackBadgeLabel(badge.state, badge.layers, terminology.plural, resolve),
+      label: stackBadgeLabel(
+        badge.state,
+        badge.layers,
+        changeRequestTermKind(terminology),
+        resolve,
+      ),
       text: badge.layers,
     };
   }
@@ -303,7 +371,12 @@ function resolveThreadPullRequestBadgePresentation(
 
   const tooltip =
     status?.tooltip ??
-    resolve(msg("{kind} #{number}, status pending", { kind: terminology.shortLabel, number }));
+    resolve(
+      msg("{term, select, mr {MR} cr {change request} other {PR}} #{number}, status pending", {
+        term: changeRequestTermKind(terminology),
+        number,
+      }),
+    );
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -542,11 +615,11 @@ export function prStatusIndicator(
   resolve: MessageResolver = m,
 ): PrStatusIndicator | null {
   if (!pr) return null;
-  const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
+  const term = changeRequestTermKind(sourceControlClients.get(provider?.kind).changeRequest);
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }, resolve);
   const { label, tooltipLead } = prStatusLabels(
     pr.state === "open" && pr.isDraft === true ? "draft" : pr.state,
-    shortLabel,
+    term,
     pr.number,
     resolve,
   );
@@ -554,7 +627,7 @@ export function prStatusIndicator(
     label,
     colorClass: state.toneClassName,
     Icon: state.Icon,
-    tooltip: `${tooltipLead}: ${pr.title}`,
+    tooltip: resolve(msg("{tooltipLead}: {title}", { tooltipLead, title: pr.title })),
     tooltipLead,
     tooltipTitle: pr.title,
     url: pr.url,
@@ -656,9 +729,10 @@ export function ThreadTerminalStatusButton({
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const terminalId = terminalIds[0];
   if (terminalId === undefined) return null;
-  const status = terminalStatusFromRunningIds(terminalIds);
+  const status = terminalStatusFromRunningIds(terminalIds, messages);
   const label = gt(
     "{count, plural, one {{count} terminal process running. Open terminal} other {{count} terminal processes running. Open terminal}}",
     { count: terminalIds.length },
@@ -876,10 +950,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={gt("{kind} #{number}, status pending", {
-            kind: changeRequestTerminologyForUrl(pendingLink.url).shortLabel,
-            number: pendingLink.number,
-          })}
+          aria-label={gt(
+            "{term, select, mr {MR} cr {change request} other {PR}} #{number}, status pending",
+            {
+              term: changeRequestTermKind(changeRequestTerminologyForUrl(pendingLink.url)),
+              number: pendingLink.number,
+            },
+          )}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

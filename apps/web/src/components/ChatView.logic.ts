@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 import type { SetStateAction } from "react";
 import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../providerModels";
-import { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";
+import { sanitizeThreadErrorMessage, errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentThread, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -139,7 +139,10 @@ export function agentControlledBrowserCloseConfirmation(
   }
   return [
     resolve(
-      msg("Close {count} browsers while the agent is using them?", { count: activeBrowserCount }),
+      msg(
+        "{count, plural, one {Close {count} browsers while the agent is using them?} other {Close {count} browsers while the agent is using them?}}",
+        { count: activeBrowserCount },
+      ),
     ),
     resolve(
       msg(
@@ -782,13 +785,13 @@ export function buildExpiredTerminalContextToastCopy(
     return {
       title: resolve(
         msg(
-          "{count, plural, one {Expired terminal context won't be sent} other {Expired terminal contexts won't be sent}}",
+          "{count, plural, =1 {Expired terminal context won't be sent} other {Expired terminal contexts won't be sent}}",
           { count },
         ),
       ),
       description: resolve(
         msg(
-          "{count, plural, one {Remove it or re-add it to include terminal output.} other {Remove them or re-add them to include terminal output.}}",
+          "{count, plural, =1 {Remove it or re-add it to include terminal output.} other {Remove them or re-add them to include terminal output.}}",
           { count },
         ),
       ),
@@ -797,13 +800,13 @@ export function buildExpiredTerminalContextToastCopy(
   return {
     title: resolve(
       msg(
-        "{count, plural, one {Expired terminal context omitted from message} other {Expired terminal contexts omitted from message}}",
+        "{count, plural, =1 {Expired terminal context omitted from message} other {Expired terminal contexts omitted from message}}",
         { count },
       ),
     ),
     description: resolve(
       msg(
-        "{count, plural, one {Re-add it if you want that terminal output included.} other {Re-add them if you want that terminal output included.}}",
+        "{count, plural, =1 {Re-add it if you want that terminal output included.} other {Re-add them if you want that terminal output included.}}",
         { count },
       ),
     ),
@@ -1236,7 +1239,7 @@ export type LocalThreadErrorEntry = {
 };
 
 export function chatActionErrorMessage(error: unknown, resolve: MessageResolver = m): string {
-  return error instanceof Error ? error.message : resolve(msg("An error occurred."));
+  return errorDisplayMessage(error, resolve) ?? resolve(msg("An error occurred."));
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

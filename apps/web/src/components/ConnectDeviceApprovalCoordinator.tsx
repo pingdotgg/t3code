@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useNavigate } from "@tanstack/react-router";
 import {
   type AtomCommandResult,
@@ -55,7 +56,7 @@ async function reportFailure(
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
       }),
     );
   }

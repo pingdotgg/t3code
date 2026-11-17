@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   foldSearchQuery,
   PALETTE_SECONDARY_LIMIT,
@@ -893,7 +894,7 @@ export function remoteProjectInputPlaceholder(
   return resolve(
     msg("Enter {source} repository ({hint})", {
       source: addProjectRemoteSourceLabel(flow.source, resolve),
-      hint: addProjectRemoteSourcePathHint(flow.source),
+      hint: addProjectRemoteSourcePathHint(flow.source, resolve),
     }),
   );
 }
@@ -906,10 +907,10 @@ export function buildPaletteRemoteSourceReadiness(
 }
 
 export function errorMessage(error: unknown, resolve: MessageResolver = m): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  return resolve(msg("An error occurred."));
+  return (
+    (error instanceof Error ? errorDisplayMessage(error, resolve) : null) ??
+    resolve(msg("An error occurred."))
+  );
 }
 
 const OVERLAY_MODE_BY_COMMAND = {

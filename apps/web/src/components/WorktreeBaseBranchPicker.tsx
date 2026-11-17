@@ -35,11 +35,14 @@ export function WorktreeBaseBranchPicker({
   const messages = useMessages();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const branches = usePaginatedBranches({
-    environmentId,
-    cwd,
-    query: sanitizeNewRefName(query.trim()),
-  });
+  const branches = usePaginatedBranches(
+    {
+      environmentId,
+      cwd,
+      query: sanitizeNewRefName(query.trim()),
+    },
+    messages,
+  );
   const selectedRefQuery = useEnvironmentQuery(
     cwd && value
       ? vcsEnvironment.listRefs({
@@ -71,10 +74,13 @@ export function WorktreeBaseBranchPicker({
       : branches.isFetchingNextPage
         ? gt("Loading more refs...")
         : hasNextPage
-          ? gt("Showing {shown} of {total} refs", {
-              shown: branches.refs.length,
-              total: String(branches.data?.totalCount),
-            })
+          ? gt(
+              "{total, plural, one {Showing {shown} of {total} refs} other {Showing {shown} of {total} refs}}",
+              {
+                shown: branches.refs.length,
+                total: String(branches.data?.totalCount),
+              },
+            )
           : null);
   const handleOpenChange = (next: boolean) => {
     setOpen(next);

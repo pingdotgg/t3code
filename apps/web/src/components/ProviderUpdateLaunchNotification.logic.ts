@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
@@ -249,7 +250,7 @@ export function getProviderUpdateRunOutcome(
     const error = squashAtomCommandFailure(run.result);
     return {
       status: "failed",
-      line: `${label}: ${error instanceof Error ? error.message : resolve(msg("Provider update failed."))}`,
+      line: `${label}: ${errorDisplayMessage(error, resolve) ?? resolve(msg("Provider update failed."))}`,
     };
   }
   const provider = run.result.value.providers.find(
@@ -295,7 +296,12 @@ export function getProviderUpdateRunToastView(
       title:
         settled.length === 1
           ? resolve(msg("Provider updated"))
-          : resolve(msg("{count} providers updated", { count: settled.length })),
+          : resolve(
+              msg(
+                "{count, plural, one {{count} providers updated} other {{count} providers updated}}",
+                { count: settled.length },
+              ),
+            ),
       description:
         successMessages.join("\n") || getProviderUpdatedDescription(settled.length, resolve),
     };
@@ -305,10 +311,13 @@ export function getProviderUpdateRunToastView(
     title:
       failureLines.length < settled.length
         ? resolve(
-            msg("{failed} of {total} provider updates failed", {
-              failed: failureLines.length,
-              total: settled.length,
-            }),
+            msg(
+              "{total, plural, one {{failed} of {total} provider updates failed} other {{failed} of {total} provider updates failed}}",
+              {
+                failed: failureLines.length,
+                total: settled.length,
+              },
+            ),
           )
         : settled.length === 1
           ? resolve(msg("Provider update failed"))
@@ -380,7 +389,12 @@ export function getProviderUpdateSidebarPillView(
       title:
         activeProviders.length === 1
           ? resolve(msg("Updating {provider}", { provider: activeProviderName }))
-          : resolve(msg("Updating {count} providers", { count: activeProviders.length })),
+          : resolve(
+              msg(
+                "{count, plural, one {Updating {count} providers} other {Updating {count} providers}}",
+                { count: activeProviders.length },
+              ),
+            ),
       description:
         activeProviders.length === 1
           ? resolve(
@@ -418,7 +432,12 @@ export function getProviderUpdateSidebarPillView(
       title:
         failedProviders.length === 1
           ? getProviderFailedUpdateTitle(failedProvider, resolve)
-          : resolve(msg("{count} provider updates failed", { count: failedProviders.length })),
+          : resolve(
+              msg(
+                "{count, plural, one {{count} provider updates failed} other {{count} provider updates failed}}",
+                { count: failedProviders.length },
+              ),
+            ),
       description: getFailedProviderUpdateDescription(failedProviders, resolve),
       dismissible: true,
     });
@@ -444,7 +463,10 @@ export function getProviderUpdateSidebarPillView(
         unchangedProviders.length === 1
           ? resolve(msg("{provider} still needs an update", { provider: unchangedProviderName }))
           : resolve(
-              msg("{count} providers still need updates", { count: unchangedProviders.length }),
+              msg(
+                "{count, plural, one {{count} providers still need updates} other {{count} providers still need updates}}",
+                { count: unchangedProviders.length },
+              ),
             ),
       description:
         unchangedProviders.length === 1
@@ -479,7 +501,12 @@ export function getProviderUpdateSidebarPillView(
       title:
         succeededProviders.length === 1
           ? getProviderUpdatedTitle(succeededProvider, resolve)
-          : resolve(msg("{count} providers updated", { count: succeededProviders.length })),
+          : resolve(
+              msg(
+                "{count, plural, one {{count} providers updated} other {{count} providers updated}}",
+                { count: succeededProviders.length },
+              ),
+            ),
       description:
         [...new Set(succeededProviders.map(getProviderRestartNotice).filter(Boolean))].join("\n") ||
         getProviderUpdatedDescription(succeededProviders.length, resolve),

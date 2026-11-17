@@ -7,9 +7,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "../i18n/messages";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useRef, useState } from "react";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 
 import {
   readCachedPullRequestResolution,
@@ -74,6 +77,7 @@ export function PullRequestThreadDialog({
   onPrepared,
 }: PullRequestThreadDialogProps) {
   const gt = useGT();
+  const messages = useMessages();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
@@ -94,6 +98,7 @@ export function PullRequestThreadDialog({
   );
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const terminology = sourceControlPresentation.terminology;
+  const term = changeRequestTermKind(terminology);
   const SourceControlIcon = sourceControlPresentation.Icon;
 
   const parsedReference = parsePullRequestReference(reference);
@@ -156,9 +161,11 @@ export function PullRequestThreadDialog({
       } else {
         const error = squashAtomCommandFailure(result);
         setPrepareErrorMessage(
-          error instanceof Error
-            ? error.message
-            : gt("Failed to prepare {kind} thread.", { kind: terminology.singular }),
+          errorDisplayMessage(error, m) ??
+            gt(
+              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
+              { term },
+            ),
         );
       }
       return;
@@ -177,22 +184,28 @@ export function PullRequestThreadDialog({
   const validationMessage = !referenceDirty
     ? null
     : reference.trim().length === 0
-      ? gt("Paste a {kind} URL, checkout command, or enter 123 / #123.", {
-          kind: terminology.singular,
-        })
+      ? gt(
+          "Paste a {term, select, mr {merge request} cr {change request} other {pull request}} URL, checkout command, or enter 123 / #123.",
+          { term },
+        )
       : parsedReference === null
-        ? gt("Use a {kind} URL, checkout command, 123, or #123.", { kind: terminology.singular })
+        ? gt(
+            "Use a {term, select, mr {merge request} cr {change request} other {pull request}} URL, checkout command, 123, or #123.",
+            { term },
+          )
         : null;
   const errorMessage =
     validationMessage ??
     prepareErrorMessage ??
     (resolvedPullRequest === null && pullRequestResolution.error
       ? pullRequestResolution.error
-      : preparePullRequestThreadAction.error instanceof Error
-        ? preparePullRequestThreadAction.error.message
-        : preparePullRequestThreadAction.error
-          ? gt("Failed to prepare {kind} thread.", { kind: terminology.singular })
-          : null);
+      : preparePullRequestThreadAction.error
+        ? (errorDisplayMessage(preparePullRequestThreadAction.error, messages) ??
+          gt(
+            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
+            { term },
+          ))
+        : null);
 
   return (
     <Dialog
@@ -214,28 +227,34 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <SourceControlIcon className="me-2 size-4" />
-            <T>
-              Checkout <Var>{terminology.singular}</Var>
-            </T>
+            {gt(
+              "Checkout {term, select, mr {merge request} cr {change request} other {pull request}}",
+              { term },
+            )}
           </DialogTitle>
           <DialogDescription>
-            <T>
-              Resolve a <Var>{sourceControlPresentation.providerName}</Var>{" "}
-              <Var>{terminology.singular}</Var>, then create the draft thread in the main repo or in
-              a dedicated worktree.
-            </T>
+            {gt(
+              "Resolve a {provider} {term, select, mr {merge request} cr {change request} other {pull request}}, then create the draft thread in the main repo or in a dedicated worktree.",
+              { provider: sourceControlPresentation.providerName, term },
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <label className="grid gap-1.5">
             <span className="text-xs font-medium text-foreground capitalize">
-              {terminology.singular}
+              {gt("{term, select, mr {merge request} cr {change request} other {pull request}}", {
+                term,
+                $context: "field label, capitalized by CSS",
+              })}
             </span>
             <Input
               ref={referenceInputRef}
-              placeholder={gt("{kind} URL, checkout command, or #42", {
-                kind: terminology.shortLabel,
-              })}
+              placeholder={gt(
+                "{term, select, mr {MR} cr {change request} other {PR}} URL, checkout command, or #42",
+                {
+                  term,
+                },
+              )}
               value={reference}
               onChange={(event) => {
                 setReferenceDirty(true);
@@ -270,7 +289,13 @@ export function PullRequestThreadDialog({
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
-                  {resolvedPullRequest.state}
+                  {gt(
+                    "{state, select, open {open} closed {closed} merged {merged} other {{state}}}",
+                    {
+                      state: resolvedPullRequest.state,
+                      $context: "pull request state, capitalized by CSS",
+                    },
+                  )}
                 </span>
               </div>
             </div>
@@ -279,9 +304,10 @@ export function PullRequestThreadDialog({
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <Spinner size="sm" />
-              <T>
-                Resolving <Var>{terminology.singular}</Var>...
-              </T>
+              {gt(
+                "Resolving {term, select, mr {merge request} cr {change request} other {pull request}}...",
+                { term },
+              )}
             </div>
           ) : null}
 

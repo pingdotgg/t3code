@@ -347,6 +347,29 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
   );
 }
 
+function PreviewAnnotationContextChip(props: {
+  annotation: PreviewAnnotationPayload;
+  screenshot: ComposerImageAttachment | undefined;
+  detailsMode: ContextPresentationCapability["details"];
+}) {
+  const m = useMessages();
+  return (
+    <ContextChip
+      icon={<MousePointerClickIcon />}
+      label={previewAnnotationContextLabel(props.annotation, m)}
+      kindLabel={msg("Preview annotation")}
+      details={
+        <ComposerPreviewAnnotationDetails
+          annotation={props.annotation}
+          screenshot={props.screenshot}
+        />
+      }
+      detailsMode={props.detailsMode}
+      kind="preview-annotation"
+    />
+  );
+}
+
 function ComposerPreviewAnnotationDetails({
   annotation,
   screenshot,
@@ -491,18 +514,10 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       canRender: (entry) => entry.kind === "preview-annotation",
       render: (entry, context, definition) =>
         entry.kind === "preview-annotation" ? (
-          <ContextChip
-            icon={<MousePointerClickIcon />}
-            label={previewAnnotationContextLabel(entry.record)}
-            kindLabel={msg("Preview annotation")}
-            details={
-              <ComposerPreviewAnnotationDetails
-                annotation={entry.record}
-                screenshot={entry.screenshot}
-              />
-            }
+          <PreviewAnnotationContextChip
+            annotation={entry.record}
+            screenshot={entry.screenshot}
             detailsMode={definition.capabilities.details}
-            kind="preview-annotation"
           />
         ) : (
           <UnresolvedContextChip label={context.label} />

@@ -7,6 +7,7 @@ import type {
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
+import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
   changeRequestTerminologyFor,
@@ -14,6 +15,7 @@ import {
   type DefaultBranchConfirmableAction,
   type GitActionIconName,
   type GitDialogAction,
+  vcsActionLabelText,
 } from "@t3tools/client-runtime/state/vcs";
 
 export {
@@ -66,6 +68,7 @@ export function resolveGitActionProgressPresentation(
     readonly isRunning: boolean;
     readonly operation: string | null;
     readonly currentLabel: string | null;
+    readonly hookName?: string | null;
     readonly lastOutputLine: string | null;
     readonly phaseStartedAtMs: number | null;
     readonly hookStartedAtMs: number | null;
@@ -85,7 +88,8 @@ export function resolveGitActionProgressPresentation(
   return {
     status:
       currentLabel && currentLabel !== "Running source control action"
-        ? currentLabel
+        ? (vcsActionLabelText({ currentLabel, hookName: input.hookName ?? null }, resolve) ??
+          currentLabel)
         : isPull
           ? resolve(msg("Pulling latest changes..."))
           : resolve(msg("Starting source control action...")),
@@ -147,7 +151,7 @@ export function buildMenuItems(
 
   const commitItem: GitActionMenuItem = {
     id: "commit",
-    label: resolve(msg("Commit")),
+    label: resolve(msg("Commit", { $context: "verb, git action" })),
     disabled: !canCommit,
     icon: "commit",
     kind: "open_dialog",
@@ -160,7 +164,7 @@ export function buildMenuItems(
 
   const pushItem: GitActionMenuItem = {
     id: "push",
-    label: resolve(msg("Push")),
+    label: resolve(msg("Push", { $context: "verb, git action" })),
     disabled: !canPush,
     icon: "push",
     kind: "open_dialog",
@@ -176,7 +180,11 @@ export function buildMenuItems(
     pushItem,
     {
       id: "pr",
-      label: resolve(msg("Create {kind}", { kind: terminology.shortLabel })),
+      label: resolve(
+        msg("Create {term, select, mr {MR} cr {change request} other {PR}}", {
+          term: changeRequestTermKind(terminology),
+        }),
+      ),
       disabled: !canCreatePr,
       icon: "pr",
       kind: "open_dialog",
@@ -234,27 +242,42 @@ export function getMenuActionDisabledReason(
 
   if (!hasBranch) {
     return resolve(
-      msg("Detached HEAD: check out a branch before creating a {kind}.", {
-        kind: terminology.singular,
-      }),
+      msg(
+        "Detached HEAD: check out a branch before creating a {term, select, mr {merge request} cr {change request} other {pull request}}.",
+        { term: changeRequestTermKind(terminology) },
+      ),
     );
   }
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
     return resolve(
-      msg('Add an "origin" remote before creating a {kind}.', { kind: terminology.singular }),
+      msg(
+        'Add an "origin" remote before creating a {term, select, mr {merge request} cr {change request} other {pull request}}.',
+        { term: changeRequestTermKind(terminology) },
+      ),
     );
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return resolve(msg("No local commits to include in a {kind}.", { kind: terminology.singular }));
+    return resolve(
+      msg(
+        "No local commits to include in a {term, select, mr {merge request} cr {change request} other {pull request}}.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+    );
   }
   if (isBehind) {
     return resolve(
-      msg("Branch is behind upstream. Pull/rebase before creating a {kind}.", {
-        kind: terminology.singular,
-      }),
+      msg(
+        "Branch is behind upstream. Pull/rebase before creating a {term, select, mr {merge request} cr {change request} other {pull request}}.",
+        { term: changeRequestTermKind(terminology) },
+      ),
     );
   }
-  return resolve(msg("Create {kind} is currently unavailable.", { kind: terminology.singular }));
+  return resolve(
+    msg(
+      "Create {term, select, mr {merge request} cr {change request} other {pull request}} is currently unavailable.",
+      { term: changeRequestTermKind(terminology) },
+    ),
+  );
 }
 
 export function hasUsableGitMenuContent(input: {
@@ -279,7 +302,7 @@ export function resolveQuickAction(
 ): GitQuickAction {
   if (isBusy) {
     return {
-      label: resolve(msg("Commit")),
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
       hint: resolve(msg("Git action in progress.")),
@@ -288,7 +311,7 @@ export function resolveQuickAction(
 
   if (!gitStatus) {
     return {
-      label: resolve(msg("Commit")),
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
       hint: resolve(msg("Git status is unavailable.")),
@@ -306,13 +329,14 @@ export function resolveQuickAction(
 
   if (!hasBranch) {
     return {
-      label: resolve(msg("Commit")),
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
       hint: resolve(
-        msg("Create and checkout a ref before pushing or opening a {kind}.", {
-          kind: terminology.singular,
-        }),
+        msg(
+          "Create and checkout a ref before pushing or opening a {term, select, mr {merge request} cr {change request} other {pull request}}.",
+          { term: changeRequestTermKind(terminology) },
+        ),
       ),
     };
   }
@@ -320,7 +344,7 @@ export function resolveQuickAction(
   if (hasChanges) {
     if (isBehind || (!gitStatus.hasUpstream && !hasPrimaryRemote)) {
       return {
-        label: resolve(msg("Commit")),
+        label: resolve(msg("Commit", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
         action: "commit",
@@ -335,7 +359,11 @@ export function resolveQuickAction(
       };
     }
     return {
-      label: resolve(msg("Commit, push & {kind}", { kind: terminology.shortLabel })),
+      label: resolve(
+        msg("Commit, push & {term, select, mr {MR} cr {change request} other {PR}}", {
+          term: changeRequestTermKind(terminology),
+        }),
+      ),
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -353,14 +381,14 @@ export function resolveQuickAction(
     if (!isAhead) {
       if (hasOpenPr) {
         return {
-          label: resolve(msg("Commit")),
+          label: resolve(msg("Commit", { $context: "verb, git action" })),
           disabled: true,
           kind: "show_hint",
           hint: resolve(msg("Branch is up to date. No action needed.")),
         };
       }
       return {
-        label: resolve(msg("Push")),
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: true,
         kind: "show_hint",
         hint: resolve(msg("No local commits to push.")),
@@ -368,14 +396,18 @@ export function resolveQuickAction(
     }
     if (hasOpenPr || isDefaultRef) {
       return {
-        label: resolve(msg("Push")),
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
         action: isDefaultRef ? "commit_push" : "push",
       };
     }
     return {
-      label: resolve(msg("Push & create {kind}", { kind: terminology.shortLabel })),
+      label: resolve(
+        msg("Push & create {term, select, mr {MR} cr {change request} other {PR}}", {
+          term: changeRequestTermKind(terminology),
+        }),
+      ),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -402,14 +434,18 @@ export function resolveQuickAction(
   if (isAhead) {
     if (hasOpenPr || isDefaultRef) {
       return {
-        label: resolve(msg("Push")),
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
         action: isDefaultRef ? "commit_push" : "push",
       };
     }
     return {
-      label: resolve(msg("Push & create {kind}", { kind: terminology.shortLabel })),
+      label: resolve(
+        msg("Push & create {term, select, mr {MR} cr {change request} other {PR}}", {
+          term: changeRequestTermKind(terminology),
+        }),
+      ),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -418,7 +454,7 @@ export function resolveQuickAction(
 
   if (hasOpenPr && gitStatus.hasUpstream) {
     return {
-      label: resolve(msg("Commit")),
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
       hint: resolve(msg("Branch is up to date. No action needed.")),
@@ -427,7 +463,11 @@ export function resolveQuickAction(
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
     return {
-      label: resolve(msg("Create {kind}", { kind: terminology.shortLabel })),
+      label: resolve(
+        msg("Create {term, select, mr {MR} cr {change request} other {PR}}", {
+          term: changeRequestTermKind(terminology),
+        }),
+      ),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -435,7 +475,7 @@ export function resolveQuickAction(
   }
 
   return {
-    label: resolve(msg("Commit")),
+    label: resolve(msg("Commit", { $context: "verb, git action" })),
     disabled: true,
     kind: "show_hint",
     hint: resolve(msg("Branch is up to date. No action needed.")),
@@ -452,8 +492,7 @@ export function resolveDefaultBranchActionDialogCopy(
   resolve: MessageResolver = m,
 ): DefaultBranchActionDialogCopy {
   const branch = input.branchName;
-  const kind = input.terminology.shortLabel;
-  const singular = input.terminology.singular;
+  const term = changeRequestTermKind(input.terminology);
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
@@ -482,25 +521,41 @@ export function resolveDefaultBranchActionDialogCopy(
 
   if (input.includesCommit) {
     return {
-      title: resolve(msg("Commit, push & create {kind} from default ref?", { kind })),
-      description: resolve(
+      title: resolve(
         msg(
-          'This action will commit, push, and create a {singular} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-          { singular, branch },
+          "Commit, push & create {term, select, mr {MR} cr {change request} other {PR}} from default ref?",
+          { term },
         ),
       ),
-      continueLabel: resolve(msg("Commit, push & create {kind}", { kind })),
+      description: resolve(
+        msg(
+          'This action will commit, push, and create a {term, select, mr {merge request} cr {change request} other {pull request}} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
+          { term, branch },
+        ),
+      ),
+      continueLabel: resolve(
+        msg("Commit, push & create {term, select, mr {MR} cr {change request} other {PR}}", {
+          term,
+        }),
+      ),
     };
   }
   return {
-    title: resolve(msg("Push & create {kind} from default ref?", { kind })),
-    description: resolve(
+    title: resolve(
       msg(
-        'This action will push local commits and create a {singular} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
-        { singular, branch },
+        "Push & create {term, select, mr {MR} cr {change request} other {PR}} from default ref?",
+        { term },
       ),
     ),
-    continueLabel: resolve(msg("Push & create {kind}", { kind })),
+    description: resolve(
+      msg(
+        'This action will push local commits and create a {term, select, mr {merge request} cr {change request} other {pull request}} on "{branch}". You can continue on this ref or create a feature ref and run the same action there.',
+        { term, branch },
+      ),
+    ),
+    continueLabel: resolve(
+      msg("Push & create {term, select, mr {MR} cr {change request} other {PR}}", { term }),
+    ),
   };
 }
 

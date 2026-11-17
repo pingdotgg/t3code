@@ -1,5 +1,6 @@
-import { msg, T, useGT, useMessages, Var } from "gt-react";
-import type { MessageResolver } from "../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { decodeMsg, msg, T, useGT, useMessages, Var } from "gt-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -620,7 +621,7 @@ function OpenCommandPaletteDialog(props: {
           isPrimary,
           machine: resolveEnvironmentMachineKind(environment.serverConfig),
           isConnected: canCreateProjectInEnvironment(environment.connection.phase),
-          status: connectionStatusText(environment.connection),
+          status: connectionStatusText(environment.connection, messages),
         };
       });
 
@@ -1118,7 +1119,7 @@ function OpenCommandPaletteDialog(props: {
           ? gt("Clone from a remote URL")
           : gt("Clone {source} {hint}", {
               source: label,
-              hint: addProjectRemoteSourcePathHint(source),
+              hint: addProjectRemoteSourcePathHint(source, messages),
             });
       const readiness = readinessBySource(source);
       const disabledHint = readiness.hint;
@@ -1814,8 +1815,13 @@ function OpenCommandPaletteDialog(props: {
   ).map((item) => ({
     kind: "action",
     value: `setting:${item.id}`,
-    searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
-    title: item.title,
+    // Matches the English and the displayed language, like the settings search.
+    searchTerms: [
+      item.title,
+      SETTINGS_SECTION_LABELS[item.to],
+      ...(item.searchTerms ?? []),
+    ].flatMap((term) => [messages(term), decodeMsg(term)]),
+    title: messages(item.title),
     description: gt("Settings · {section}", {
       section: messages(SETTINGS_SECTION_LABELS[item.to]),
     }),
@@ -2001,7 +2007,7 @@ function OpenCommandPaletteDialog(props: {
             stackedThreadToast({
               type: "error",
               title: gt("Failed to open project"),
-              description: error instanceof Error ? error.message : gt("An error occurred."),
+              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
             }),
           );
           return;
@@ -2039,7 +2045,7 @@ function OpenCommandPaletteDialog(props: {
           stackedThreadToast({
             type: "error",
             title: gt("Failed to add project"),
-            description: error instanceof Error ? error.message : gt("An error occurred."),
+            description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
@@ -2055,7 +2061,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: gt("Failed to add project"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
         }),
       );
       return;
@@ -2152,6 +2158,7 @@ function OpenCommandPaletteDialog(props: {
       const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
         addProjectCloneFlow.source,
         rawRepository,
+        m,
       );
       if (incompleteOwnerMessage) {
         toastManager.add(
@@ -2202,7 +2209,7 @@ function OpenCommandPaletteDialog(props: {
             stackedThreadToast({
               type: "error",
               title: gt("Repository lookup failed"),
-              description: errorMessage(squashAtomCommandFailure(lookupResult)),
+              description: errorMessage(squashAtomCommandFailure(lookupResult), m),
             }),
           );
         }
@@ -2296,7 +2303,7 @@ function OpenCommandPaletteDialog(props: {
           stackedThreadToast({
             type: "error",
             title: gt("Clone failed"),
-            description: errorMessage(squashAtomCommandFailure(startResult)),
+            description: errorMessage(squashAtomCommandFailure(startResult), m),
           }),
         );
       }
@@ -2319,7 +2326,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: gt("Failed to open project"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
         }),
       );
     }
@@ -2589,7 +2596,7 @@ function OpenCommandPaletteDialog(props: {
     query.trim().length > 0 &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
     !isRemoteProjectPending;
-  const fileManagerName = getLocalFileManagerName(navigator.platform);
+  const fileManagerName = getLocalFileManagerName(navigator.platform, messages);
   const canOpenProjectFromFileManager =
     isBrowsing &&
     browseEnvironmentId !== null &&
@@ -2809,7 +2816,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: gt("Unable to run command"),
-          description: error instanceof Error ? error.message : gt("An unexpected error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An unexpected error occurred."),
         }),
       );
     });

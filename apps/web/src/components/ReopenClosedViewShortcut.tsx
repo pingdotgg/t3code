@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopeProjectRef,
@@ -153,7 +155,7 @@ export function ReopenClosedViewShortcut() {
         toastManager.add({
           type: "error",
           title: gt("Could not reopen view"),
-          description: error instanceof Error ? error.message : String(error),
+          description: errorDisplayMessage(error, m) ?? String(error),
         });
       });
   });

@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -46,6 +47,7 @@ import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles
 import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
+import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   type BranchHold,
@@ -100,7 +102,7 @@ interface BranchToolbarBranchSelectorProps {
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
 function toBranchActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : m(msg("An error occurred."));
+  return errorDisplayMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 export function BranchToolbarBranchSelector({
@@ -269,13 +271,16 @@ export function BranchToolbarBranchSelector({
   );
   const activeProjectCheckoutRoot = projectStatusQuery.data?.workingTree.rootPath;
   const trimmedBranchQuery = branchQuery.trim();
-  const branchRefState = usePaginatedBranches({
-    environmentId,
-    cwd: branchCwd,
-    // Substring search needs sanitized names to detect new-branch collisions; refs cannot contain ASCII
-    // spaces.
-    query: sanitizeNewRefName(trimmedBranchQuery),
-  });
+  const branchRefState = usePaginatedBranches(
+    {
+      environmentId,
+      cwd: branchCwd,
+      // Substring search needs sanitized names to detect new-branch collisions; refs cannot contain ASCII
+      // spaces.
+      query: sanitizeNewRefName(trimmedBranchQuery),
+    },
+    messages,
+  );
   const refs = branchRefState.refs;
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
@@ -383,7 +388,10 @@ export function BranchToolbarBranchSelector({
     : isFetchingNextPage
       ? gt("Loading more refs...")
       : hasNextPage
-        ? gt("Showing {shown} of {total} refs", { shown: refs.length, total: totalBranchCount })
+        ? gt(
+            "{total, plural, one {Showing {shown} of {total} refs} other {Showing {shown} of {total} refs}}",
+            { shown: refs.length, total: totalBranchCount },
+          )
         : null;
 
   const copyBranchName = (branchName: string) => {
@@ -734,9 +742,10 @@ export function BranchToolbarBranchSelector({
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col items-start">
               <span className="truncate font-medium">
-                <T>
-                  Checkout <Var>{sourceControlPresentation.terminology.singular}</Var>
-                </T>
+                {gt(
+                  "Checkout {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term: changeRequestTermKind(sourceControlPresentation.terminology) },
+                )}
               </span>
               <span className="truncate text-muted-foreground text-xs">{prReference}</span>
             </span>

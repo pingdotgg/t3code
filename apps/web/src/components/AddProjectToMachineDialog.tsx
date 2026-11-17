@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -235,7 +237,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : gt("Could not start the clone."));
+      setError(errorDisplayMessage(cause, m) ?? gt("Could not start the clone."));
       setSubmitting(false);
     }
   };
@@ -281,6 +283,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 </span>
               </div>
               <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-xs">
+                {/* oxlint-disable-next-line t3code/no-untranslated-copy -- git command name */}
                 <span>git clone</span>
                 <span className="flex w-full items-center">
                   <span className="h-px flex-1 bg-border" />
@@ -437,10 +440,16 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 {ignoredFiles.data?.truncated ? (
                   <p className="text-muted-foreground text-xs">
                     {canSearchFiles
-                      ? gt("Showing the first {count} files. Search to find the rest.", {
-                          count: files.length,
-                        })
-                      : gt("Showing the first {count} files.", { count: files.length })}
+                      ? gt(
+                          "{count, plural, one {Showing the first {count} files. Search to find the rest.} other {Showing the first {count} files. Search to find the rest.}}",
+                          {
+                            count: files.length,
+                          },
+                        )
+                      : gt(
+                          "{count, plural, one {Showing the first {count} files.} other {Showing the first {count} files.}}",
+                          { count: files.length },
+                        )}
                   </p>
                 ) : null}
                 <p className="text-muted-foreground text-xs">

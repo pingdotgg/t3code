@@ -1,6 +1,7 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import {
   isAtomCommandInterrupted,
@@ -33,7 +34,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -434,7 +435,7 @@ function terminalContextMenuItems(options: {
       disabled: !hasSelection,
     })),
     { id: "paste", label: m(msg("Paste")), ...(options.readOnly ? { disabled: true } : {}) },
-    { id: "select-all", label: m(msg("Select all")) },
+    { id: "select-all", label: m(msg("Select all", { $context: "select all terminal text" })) },
     { id: "scroll-to-bottom", label: m(msg("Jump to latest")) },
   ];
 }
@@ -852,7 +853,7 @@ function TerminalSessionViewport({
         if (requestId !== selectionActionRequestIdRef.current) return;
         const activeTerminal = terminalRef.current;
         if (activeTerminal) {
-          writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallback);
+          writeSystemMessage(activeTerminal, errorDisplayMessage(error, m) ?? fallback);
         }
       };
 
@@ -981,7 +982,7 @@ function TerminalSessionViewport({
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
-              report(error instanceof Error ? error.message : fallbackError);
+              report(errorDisplayMessage(error, m) ?? fallbackError);
             }
             return false;
           },
@@ -997,11 +998,7 @@ function TerminalSessionViewport({
             if (result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
-              report(
-                error instanceof Error
-                  ? error.message
-                  : m(msg("Failed to close interrupted paste")),
-              );
+              report(errorDisplayMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
             }
             return false;
           },
@@ -1073,7 +1070,7 @@ function TerminalSessionViewport({
             void localApi.shell.openExternal(text).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
-                error instanceof Error ? error.message : m(msg("Unable to open link")),
+                errorDisplayMessage(error, m) ?? m(msg("Unable to open link")),
               );
             });
           };
@@ -1087,8 +1084,7 @@ function TerminalSessionViewport({
                 stackedThreadToast({
                   type: "error",
                   title: m(msg("Unable to open link")),
-                  description:
-                    error instanceof Error ? error.message : m(msg("An error occurred.")),
+                  description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
                 }),
               );
             },
@@ -1104,7 +1100,7 @@ function TerminalSessionViewport({
           const error = squashAtomCommandFailure(result);
           writeSystemMessage(
             latestTerminal,
-            error instanceof Error ? error.message : m(msg("Unable to open path")),
+            errorDisplayMessage(error, m) ?? m(msg("Unable to open path")),
           );
         })();
       }
@@ -1161,7 +1157,7 @@ function TerminalSessionViewport({
         setupTerminal = null;
         if (cancelled) return;
         const message =
-          error instanceof Error ? error.message : m(msg("Unable to initialize libghostty-vt"));
+          errorDisplayMessage(error, m) ?? m(msg("Unable to initialize libghostty-vt"));
         mount.textContent = m(
           msg("{message}. Close and reopen the terminal to retry.", { message }),
         );
@@ -1506,6 +1502,7 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const gt = useGT();
+  const messages = useMessages();
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalArea = workspaceAreaProps("terminal", 5, gt("Terminal"));
   const isPanel = mode === "panel";
@@ -1622,7 +1619,10 @@ export default function ThreadTerminalDrawer({
   const terminalLabelById = (() => {
     const next = new Map<string, string>();
     for (const terminalId of normalizedTerminalIds) {
-      next.set(terminalId, terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId));
+      next.set(
+        terminalId,
+        terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId, messages),
+      );
     }
     return next;
   })();
@@ -1688,7 +1688,7 @@ export default function ThreadTerminalDrawer({
   };
   const confirmCloseTerminal = (terminalId: string) => {
     if (!canOperateTerminal) return;
-    const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
+    const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
         onCloseTerminal(terminalId, threadRef);

@@ -43,6 +43,7 @@ vi.mock("gt-react", async (importOriginal) => ({
     () =>
     (text: string, values: Record<string, unknown> = {}) =>
       text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key])),
+  useMessages: () => (text: string) => text,
   T: ({ children }: { children: ReactNode }) => children,
   Var: ({ children }: { children: ReactNode }) => children,
 }));

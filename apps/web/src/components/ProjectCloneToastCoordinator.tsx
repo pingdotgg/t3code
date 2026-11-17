@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -7,11 +8,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   projectCloneDisplayName,
-  projectCloneProgressSummary,
   type EnvironmentId,
   type ProjectCloneSnapshot,
   type ProjectId,
 } from "@t3tools/contracts";
+import { projectCloneProgressSummary } from "@t3tools/client-runtime/contract-labels";
 import { useEffect, useRef } from "react";
 import { msg } from "gt-react";
 
@@ -61,7 +62,7 @@ async function runCloneAction(
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+        description: errorDisplayMessage(error, m) ?? m(msg("An error occurred.")),
       }),
     );
   }
@@ -123,7 +124,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         const options = stackedThreadToast({
           type: "loading",
           title: m(msg("Cloning {name}", { name })),
-          description: projectCloneProgressSummary(clone),
+          description: projectCloneProgressSummary(clone, m),
           timeout: 0,
           actionProps: {
             children: m(msg("Cancel")),

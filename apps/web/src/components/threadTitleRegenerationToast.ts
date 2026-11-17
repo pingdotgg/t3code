@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { ThreadTitleRegenerationOutcome } from "@t3tools/contracts";
 import {
   type AtomCommandResult,
@@ -15,7 +16,7 @@ function failureMessage(result: TitleRegenerationResult): string | null {
   if (result._tag === "Failure") {
     if (isAtomCommandInterrupted(result)) return null;
     const error = squashAtomCommandFailure(result);
-    return error instanceof Error ? error.message : m(msg("An error occurred."));
+    return errorDisplayMessage(error, m) ?? m(msg("An error occurred."));
   }
   return result.value?.status === "failed"
     ? (result.value.message ?? m(msg("Title generation failed.")))
@@ -38,10 +39,13 @@ export function titleRegenerationToast(results: ReadonlyArray<TitleRegenerationR
         results.length === 1
           ? m(msg("Failed to regenerate thread title"))
           : m(
-              msg("Failed to regenerate {failed} of {total} thread titles", {
-                failed: failures.length,
-                total: results.length,
-              }),
+              msg(
+                "{total, plural, one {Failed to regenerate {failed} of {total} thread titles} other {Failed to regenerate {failed} of {total} thread titles}}",
+                {
+                  failed: failures.length,
+                  total: results.length,
+                },
+              ),
             ),
       description: failures[0],
     });
@@ -60,7 +64,12 @@ export function titleRegenerationToast(results: ReadonlyArray<TitleRegenerationR
     title:
       kept === results.length
         ? m(msg("Titles kept"))
-        : m(msg("Kept {kept} of {total} titles", { kept, total: results.length })),
+        : m(
+            msg(
+              "{total, plural, one {Kept {kept} of {total} titles} other {Kept {kept} of {total} titles}}",
+              { kept, total: results.length },
+            ),
+          ),
     description:
       kept === results.length
         ? m(msg("The current titles already fit these threads."))

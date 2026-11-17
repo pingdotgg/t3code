@@ -1,5 +1,7 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
+import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
@@ -555,7 +557,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          setPublishError(error instanceof Error ? error.message : gt("An error occurred."));
+          setPublishError(errorDisplayMessage(error, m) ?? gt("An error occurred."));
         }
         return;
       }
@@ -791,7 +793,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     publishAdvancedOpen ? "" : "-rotate-90",
                   )}
                 />
-                <T>Advanced</T>
+                <T context="publish dialog section of advanced options">Advanced</T>
               </button>
               {publishAdvancedOpen ? (
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -912,7 +914,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         <WizardFooter>
           {publishWizardStep === 2 ? (
             <Button onClick={() => handleOpenChange(false)}>
-              <T>Done</T>
+              <T context="button, closes the finished publish dialog">Done</T>
             </Button>
           ) : (
             <>
@@ -1326,7 +1328,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Action failed"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
@@ -1339,7 +1341,9 @@ export default function GitActionsControl({
     const createdPullRequest = actionResult.pr.status === "created";
     setInlineSuccess({
       title: createdPullRequest
-        ? gt("Created {kind}", { kind: changeRequestTerminology.shortLabel })
+        ? gt("Created {term, select, mr {MR} cr {change request} other {PR}}", {
+            term: changeRequestTermKind(changeRequestTerminology),
+          })
         : actionResult.toast.title,
       description: createdPullRequest ? null : (actionResult.toast.description ?? null),
       scopeKey: successScopeKey,
@@ -1407,7 +1411,7 @@ export default function GitActionsControl({
             stackedThreadToast({
               type: "error",
               title: gt("Pull failed"),
-              description: error instanceof Error ? error.message : gt("An error occurred."),
+              description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
               timeout: errorToastTiming.timeout,
               ...(threadToastData !== undefined ? { data: threadToastData } : {}),
             }),
@@ -1498,7 +1502,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Unable to open file"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1536,7 +1540,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: gt("Git initialization failed"),
-          description: error instanceof Error ? error.message : gt("An error occurred."),
+          description: errorDisplayMessage(error, m) ?? gt("An error occurred."),
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1602,10 +1606,10 @@ export default function GitActionsControl({
       ) : null}
       {isDetachedHead && (
         <p className="px-2 py-1.5 text-xs text-warning">
-          <T>
-            Detached HEAD: create and check out a branch to enable push and{" "}
-            <Var>{changeRequestTerminology.singular}</Var> actions.
-          </T>
+          {gt(
+            "Detached HEAD: create and check out a branch to enable push and {term, select, mr {merge request} cr {change request} other {pull request}} actions.",
+            { term: changeRequestTermKind(changeRequestTerminology) },
+          )}
         </p>
       )}
       {isCleanAndBehind && (
@@ -1864,7 +1868,7 @@ export default function GitActionsControl({
                   <div className="flex items-center gap-2">
                     {isEditingFiles && allFiles.length > 0 && (
                       <Checkbox
-                        aria-label="Include all files"
+                        aria-label={gt("Include all files")}
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
                         onCheckedChange={() => {
@@ -1892,7 +1896,11 @@ export default function GitActionsControl({
                       size="xs"
                       onClick={() => setIsEditingFiles((prev) => !prev)}
                     >
-                      {isEditingFiles ? <T>Done</T> : <T context="verb">Edit</T>}
+                      {isEditingFiles ? (
+                        <T context="button, finish editing the file list">Done</T>
+                      ) : (
+                        <T context="verb">Edit</T>
+                      )}
                     </Button>
                   )}
                 </div>
@@ -1914,7 +1922,7 @@ export default function GitActionsControl({
                               >
                                 {isEditingFiles && (
                                   <Checkbox
-                                    aria-label={`Include ${file.path}`}
+                                    aria-label={gt("Include {path}", { path: file.path })}
                                     checked={!excludedFiles.has(file.path)}
                                     onCheckedChange={() => {
                                       setExcludedFiles((prev) => {

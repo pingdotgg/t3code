@@ -1,4 +1,10 @@
-import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import {
+  ClipboardApiUnavailableError,
+  ClipboardWriteError,
+  writeTextToClipboard,
+} from "../hooks/useCopyToClipboard";
+import * as Schema from "effect/Schema";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -69,7 +75,11 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
+
 import { observeResize } from "~/lib/observeResize";
+
+const isClipboardApiUnavailableError = Schema.is(ClipboardApiUnavailableError);
+const isClipboardWriteError = Schema.is(ClipboardWriteError);
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
@@ -125,8 +135,12 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
             stackedThreadToast({
               type: "error",
               title: resolveMessage(msg("Failed to copy path")),
-              description:
-                error instanceof Error ? error.message : resolveMessage(msg("An error occurred.")),
+              description: isClipboardApiUnavailableError(error)
+                ? resolveMessage(msg("Clipboard API is unavailable while copying workspace path."))
+                : isClipboardWriteError(error)
+                  ? resolveMessage(msg("Failed to copy workspace path to the clipboard."))
+                  : (errorDisplayMessage(error, resolveMessage) ??
+                    resolveMessage(msg("An error occurred."))),
             }),
           );
         },

@@ -140,7 +140,7 @@ export function useCommandPaletteThemeItems() {
           kind: "action",
           value: `appearance:${mode}`,
           title: messages(label),
-          searchTerms: [label, "appearance", "mode"],
+          searchTerms: [messages(label), label, "appearance", "mode"],
           icon: <Icon className={ITEM_ICON_CLASS} />,
           titleTrailingContent:
             appearanceMode === mode ? (
