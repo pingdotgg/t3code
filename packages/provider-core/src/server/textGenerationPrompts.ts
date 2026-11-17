@@ -1,5 +1,8 @@
-import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { limitTitleMessage } from "./threadTitleContext.ts";
 import type { BranchNamingOptions, ChatAttachment } from "@t3tools/contracts";
 
@@ -626,17 +629,38 @@ ${statements
   )
   .join("\n")}
 `;
-  const outputSchema = Schema.Struct({
-    results: Schema.Array(
-      Schema.Struct({
-        ref: Schema.Int,
-        verdict: Schema.Literals(["standing", "task", "code"]),
-        selfContained: Schema.Boolean,
-      }),
-    ),
-  });
-  return { prompt, outputSchema };
+  return { prompt, outputSchema: FactStandingCheckOutput };
 }
+
+const FactStandingCheckEntry = Schema.Struct({
+  ref: Schema.Int,
+  verdict: Schema.Literals(["standing", "task", "code"]),
+  selfContained: Schema.Boolean,
+});
+const decodeFactStandingCheckEntry = Schema.decodeUnknownOption(FactStandingCheckEntry);
+// Entries decode one by one: a malformed entry sets aside its own statement, not the batch.
+// The model still sees the strict entry schema, since the JSON Schema comes from the type side.
+const FactStandingCheckOutput = Schema.Struct({
+  results: Schema.Array(
+    Schema.Unknown.pipe(
+      Schema.decodeTo(
+        Schema.toType(FactStandingCheckEntry),
+        SchemaTransformation.transform({
+          decode: (entry: unknown) =>
+            Option.getOrElse(decodeFactStandingCheckEntry(entry), () => {
+              const ref = Predicate.hasProperty(entry, "ref") ? entry.ref : undefined;
+              return {
+                ref: Number.isSafeInteger(ref) ? (ref as number) : 0,
+                verdict: "task" as const,
+                selfContained: false,
+              };
+            }),
+          encode: (entry) => entry,
+        }),
+      ),
+    ),
+  ),
+});
 
 /** The rolled-up statements must fit beside the verbatim tail of a small handoff. */
 const CONDENSED_SUMMARY_MAX_CHARS = 1_200;

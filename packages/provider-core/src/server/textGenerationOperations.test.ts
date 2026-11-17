@@ -207,7 +207,21 @@ it.effect("sets aside every statement the standing check does not clearly keep",
     );
     // Statement 5 is unanswered; 4 is answered twice; 9 does not exist.
     assert.deepStrictEqual(verdicts, ["standing", "task", "code", "task", "task"]);
-    const offSchema = yield* check('{"results":[{"ref":1,"verdict":"keep"}]}').pipe(Effect.flip);
-    assert.strictEqual(offSchema.operation, "checkFactStanding");
+    // A malformed entry sets aside only its own statement.
+    const partlyMalformed = yield* check(
+      JSON.stringify({
+        results: [
+          { ref: 1, verdict: "standing", selfContained: true },
+          { ref: 2, verdict: "standing" },
+          { ref: 3, verdict: "keep", selfContained: true },
+          { ref: 4, verdict: "standing", selfContained: true },
+          { ref: 4, verdict: "keep" },
+          "five",
+        ],
+      }),
+    );
+    assert.deepStrictEqual(partlyMalformed.verdicts, ["standing", "task", "task", "task", "task"]);
+    const noResults = yield* check('{"verdicts":["standing"]}').pipe(Effect.flip);
+    assert.strictEqual(noResults.operation, "checkFactStanding");
   }),
 );
