@@ -516,6 +516,48 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
   );
 
+  describe("typing while scrolled up", () => {
+    async function scrolledUp() {
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+      const harness = createHarness();
+      const surface = await harness.create({ beforeKey: () => true });
+      surface.write(Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\r\n"));
+      (surface as unknown as { core: GhosttyTerminalCore }).core.scroll(-100);
+      expect(surface.isAtBottom()).toBe(false);
+      return { harness, surface };
+    }
+
+    it("returns to the bottom on a key press and still sends it", async () => {
+      const { harness, surface } = await scrolledUp();
+      key(surface, "a", "KeyA");
+      expect(surface.isAtBottom()).toBe(true);
+      expect(harness.onData.mock.calls).toEqual([["a"]]);
+    });
+
+    it("returns to the bottom on a native paste", async () => {
+      const { harness, surface } = await scrolledUp();
+      paste(surface, "echo hi");
+      expect(surface.isAtBottom()).toBe(true);
+      expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+    });
+
+    it("returns to the bottom on committed text input", async () => {
+      const { harness, surface } = await scrolledUp();
+      surface.input.value = "é";
+      surface.input.dispatchEvent(new Event("input"));
+      expect(surface.isAtBottom()).toBe(true);
+      expect(harness.onData.mock.calls).toEqual([["é"]]);
+    });
+
+    it("stays put for a lone modifier press and for a key release", async () => {
+      const { harness, surface } = await scrolledUp();
+      key(surface, "Shift", "ShiftLeft", { shiftKey: true });
+      key(surface, "a", "KeyA", {}, "keyup");
+      expect(surface.isAtBottom()).toBe(false);
+      expect(harness.onData).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps a selection through redraws until the selected text changes", async () => {
     const harness = createHarness();
     const surface = await harness.create();
