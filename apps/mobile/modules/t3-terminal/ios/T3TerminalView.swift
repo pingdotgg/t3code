@@ -220,6 +220,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private var lastAppliedBuffer = ""
   private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
+  private var viewportScrolled = false
   private var menuText: String?
   private var sentInput = ""
   private var app: ghostty_app_t?
@@ -378,10 +379,10 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
     inputField.addTarget(self, action: #selector(handleInputEditingChanged), for: .editingChanged)
     inputField.onDeleteBackward = { [weak self] in
-      self?.emitInput("\u{7F}")
+      self?.emitUserInput("\u{7F}")
     }
     inputField.onInsert = { [weak self] data in
-      self?.emitInput(data)
+      self?.emitUserInput(data)
       self?.resetInputField()
     }
     inputField.onPaste = { [weak self] in
@@ -449,7 +450,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
     // Return during a composition commits it; that is not Enter.
     guard textField.markedTextRange == nil else { return false }
-    emitInput(TerminalInputSequence.carriageReturn)
+    emitUserInput(TerminalInputSequence.carriageReturn)
     resetInputField()
     return false
   }
@@ -508,6 +509,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       }
 
       ghostty_surface_mouse_scroll(surface, 0, Double(verticalSteps), 0)
+      viewportScrolled = true
       redrawSurface()
       gesture.setTranslation(.zero, in: terminalViewport)
     default:
@@ -530,7 +532,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     let unsent = String(String.UnicodeScalarView(sentScalars.dropFirst(commonCount)))
     let added = String(String.UnicodeScalarView(fieldScalars.dropFirst(commonCount)))
     // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
-    emitInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
+    emitUserInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
     sentInput = text
     // A Hangul syllable never spans whitespace; past the cap, keep the last character to compose onto.
     if text.last?.isWhitespace == true {
@@ -922,8 +924,24 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     onInput(["data": data])
   }
 
+  // Typing while scrolled into history jumps back to the prompt; terminal replies do not.
+  private func emitUserInput(_ data: String) {
+    guard !readOnly, !data.isEmpty else { return }
+    scrollToBottom()
+    onInput(["data": data])
+  }
+
+  private func scrollToBottom() {
+    guard viewportScrolled, let surface else { return }
+    viewportScrolled = false
+    let action = "scroll_to_bottom"
+    _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+    redrawSurface()
+  }
+
   private func emitPaste() {
     guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
+    scrollToBottom()
     onPaste(["text": text])
   }
 
