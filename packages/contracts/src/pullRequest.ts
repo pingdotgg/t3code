@@ -754,8 +754,8 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
-  oldPath: TrimmedNonEmptyString,
-  newPath: TrimmedNonEmptyString,
+  oldPath: Schema.NonEmptyString,
+  newPath: Schema.NonEmptyString,
 });
 export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContentsInput.Type;
 
