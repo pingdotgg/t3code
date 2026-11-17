@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { IssueTrackerKind } from "@t3tools/contracts";
 import { IssueTrackerError } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -64,8 +63,7 @@ const listWithProbeFailure = (reason: IssueTrackerError["reason"]) =>
                 IssueTrackerRegistry.fromTrackers([tracker]),
               ),
               Layer.mock(ServerSecretStore.ServerSecretStore)({
-                // @effect-diagnostics-next-line preferSucceedSomeOrNone:off -- kept as the repro wrote it.
-                get: () => Effect.succeed(Option.some(new TextEncoder().encode("saved-valid-key"))),
+                get: () => Effect.succeedSome(new TextEncoder().encode("saved-valid-key")),
               }),
               Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
                 list: Effect.succeed(new Map()),
@@ -83,10 +81,7 @@ describe("IssueTrackerConnections", () => {
     (reason) =>
       Effect.gen(function* () {
         const result = yield* listWithProbeFailure(reason);
-        expect(
-          result,
-          "temporary probe failures must reach the settings load-error and Retry state",
-        ).toMatchObject({
+        expect(result).toMatchObject({
           _tag: "Failure",
           failure: { reason: "failed" },
         });
