@@ -1,9 +1,10 @@
+import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
-import { BackgroundThreadContext } from "./backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -53,7 +54,7 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { parseSideChatCommand, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -106,9 +107,12 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  readComposerDraftPrompt,
+  resolveLiveComposerDraftTarget,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../../threadRoutes";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -148,6 +152,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import {
+  formatComposerContextReference,
   threadContextRecord,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
@@ -253,6 +258,7 @@ import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
 import { usePendingUserInputDraft } from "./usePendingThreadRequests";
 import type { PendingApproval, PendingUserInput, TimelineEntry } from "../../session-logic";
 import {
+  composerRunsDraftLocally,
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -716,7 +722,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
-      const preview = buildExpandedImagePreview(composerImages, imageId);
+      const preview = buildExpandedImagePreview(
+        composerImages,
+        imageId,
+        copyComposerSnapshotStable,
+      );
       if (preview) onExpandImage(preview);
     },
     openFile: setPreviewFileId,
@@ -1045,6 +1055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const backgroundThread = use(BackgroundThreadContext);
+  const hiddenThread = use(HiddenThreadContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to keydown, window blur and the desktop paste-as-text event to arm plain-text paste
   useEffect(() => {
     // A background composer listens on its own form, so it never hears the main composer's keys.
@@ -1333,7 +1344,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               : null);
           if (!record) return [];
           if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
-          return [record];
+          return [
+            record.kind === "image" && attachment.type === "image" && attachment.source
+              ? { ...record, source: attachment.source }
+              : record,
+          ];
         }),
     ];
     if (records.length === 0) return null;
@@ -1345,6 +1360,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (fragment) rememberCopiedComposerAttachments(environmentId, copiedFiles);
     return fragment;
   };
+  const copyComposerSnapshot = async (imageId: string) => {
+    const image = composerImages.find((candidate) => candidate.id === imageId);
+    if (!image) throw new Error("Snapshot is no longer available.");
+    const contextId = toKindScopedComposerContextId("image", image.id);
+    const fragment = buildContextClipboardFragment([contextId]);
+    if (!fragment || !image.previewUrl) throw new Error("The snapshot is not ready to copy.");
+    await copySnapshot(
+      image.previewUrl,
+      formatComposerContextReference({ kind: "image", contextId, label: image.name }),
+      fragment,
+    );
+  };
+  const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
   const {
     loadThreadTranscript,
@@ -1822,6 +1850,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
+    label: activeThread?.title ?? null,
+    presented: !hiddenThread,
+    // A question's answer lives only in this composer, so only the thread draft outlives it.
+    persistentDraft: questionAttachmentTarget
+      ? undefined
+      : {
+          readStoredText: () => readComposerDraftPrompt(composerDraftTarget),
+          commitStoredText: (text) => {
+            const live = resolveLiveComposerDraftTarget(composerDraftTarget);
+            if (live !== null) setComposerDraftPrompt(live, text);
+          },
+          // The route, not the draft target: a queued-message edit has a draft id but no route.
+          open: () =>
+            void (routeKind === "draft" && typeof composerDraftTarget === "string"
+              ? navigate({
+                  to: "/draft/$draftId",
+                  params: buildDraftThreadRouteParams(composerDraftTarget),
+                })
+              : navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(routeThreadRef),
+                })),
+        },
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -2415,6 +2466,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         allImages={composerImages}
         resolvedTheme={resolvedTheme}
         onExpandImage={onExpandImage}
+        onCopySnapshot={copyComposerSnapshotStable}
         onShowMore={expandMobileComposer}
       />
     ) : null;
@@ -2489,6 +2541,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const replyTo = composerDraft?.replyTo ?? null;
+  const draftRunsLocally = composerRunsDraftLocally({
+    text: prompt,
+    holdsOnlyText:
+      composerImages.length + composerFiles.length === 0 &&
+      composerSendState.sendableTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      composerThreadContexts.length === 0 &&
+      composerEnvironmentContexts.length === 0 &&
+      replyTo === null,
+    sideChat: props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null,
+    usageLimits: props.onUsageLimitsCommand !== undefined,
+    codexFeedback: selectedProvider === "codex" && multipleModelSelections === null,
+    freshSession: props.onFreshSession !== undefined,
+  });
   const replyBannerItems: readonly ComposerBannerStackItem[] = replyTo
     ? [
         {
@@ -2744,9 +2811,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+    const pastedContext =
+      !isLiteralPendingAnswer &&
+      (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
     if (
       folders.length > 0 ||
-      (activeThreadId &&
+      (!pastedContext &&
+        activeThreadId &&
         files.length > 0 &&
         shouldHandleComposerAttachmentPaste({ files, plainText }))
     ) {
@@ -2759,7 +2830,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
 
-    if ((readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0) return;
+    if (pastedContext) return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
       return;
     }
@@ -3299,6 +3370,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentId={environmentId}
         attachmentDraftTarget={attachmentDraftTarget}
         canOperateThread={canOperateThread}
+        onCopySnapshot={copyComposerSnapshotStable}
         onExpandImage={onExpandImage}
         onFileOpen={onFileOpen}
         onRemoveImage={removeComposerImage}
@@ -3737,11 +3809,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     pendingAction={pendingPrimaryAction}
-                    // A side-chat command starts a side chat; it never queues or steers the turn.
-                    isRunning={
-                      (phase === "running" || phase === "connecting") &&
-                      !(props.sideChatAvailable === true && parseSideChatCommand(prompt) !== null)
-                    }
+                    isRunning={(phase === "running" || phase === "connecting") && !draftRunsLocally}
                     canInterrupt={canInterrupt}
                     runId={activeThread?.runtime?.activeRunId ?? null}
                     followUpBehavior={followUpBehavior}
@@ -3787,6 +3855,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
+                          recordingStartedAt={speechInput.recordingStartedAt}
                           disabled={dictationDisabled}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
