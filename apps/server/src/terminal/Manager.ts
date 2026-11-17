@@ -216,7 +216,14 @@ export class TerminalManager extends Context.Service<
       registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void, TerminalError>;
 
-    readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
+    /**
+     * Attached viewers share one reply owner per PTY until it detaches. Marked replies
+     * from other or detached viewer IDs are dropped; identity-free writes do not claim ownership.
+     */
+    readonly write: (
+      input: TerminalWriteInput,
+      viewerId?: string,
+    ) => Effect.Effect<void, TerminalError>;
 
     readonly resize: (
       input: TerminalResizeInput,
@@ -255,6 +262,7 @@ interface TerminalSubprocessInspectResult {
 interface TerminalSubprocessInspector {
   (
     terminalPid: number,
+    shell: string | null,
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
 }
 
@@ -328,6 +336,7 @@ interface TerminalGrid {
 interface TerminalViewer {
   streams: number;
   grid: TerminalGrid | null;
+  answersQueries: boolean;
 }
 
 interface PersistHistoryRequest {
@@ -579,6 +588,10 @@ function joinWindowsPath(...parts: ReadonlyArray<string>): string {
     .join("\\");
 }
 
+// PowerShell decodes native output with the console code page (often OEM 437), mangling UTF-8.
+const POWERSHELL_UTF8_SETUP =
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()";
+
 function shellCandidateFromCommand(
   command: string | null,
   platform: NodeJS.Platform,
@@ -586,7 +599,7 @@ function shellCandidateFromCommand(
   if (!command || command.length === 0) return null;
   const shellName = basenameForPlatform(command, platform).toLowerCase();
   if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
-    return { shell: command, args: ["-NoLogo"] };
+    return { shell: command, args: ["-NoLogo", "-NoExit", "-Command", POWERSHELL_UTF8_SETUP] };
   }
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
@@ -766,21 +779,48 @@ function processTableSnapshotFromProcesses(
   return { childrenByParent, commandById };
 }
 
+// A root with one of these names is still an interactive shell, e.g. after `.bashrc` runs `exec zsh`.
+const INTERACTIVE_SHELL_NAMES = new Set([
+  "bash",
+  "zsh",
+  "fish",
+  "sh",
+  "dash",
+  "ksh",
+  "mksh",
+  "tcsh",
+  "csh",
+  "nu",
+]);
+
 function deriveSubprocessInspectResult(
   snapshot: TerminalProcessTableSnapshot,
   terminalPid: number,
+  shell: string | null,
   platform: NodeJS.Platform,
+  foregroundProcessGroup?: number | null,
 ): TerminalSubprocessInspectResult {
   const commandName = (pid: number) =>
     normalizeChildCommandName(snapshot.commandById.get(pid) ?? "", platform);
   const shellName = commandName(terminalPid);
-  // Async prompt themes fork childless shell helpers that are not user commands.
-  const childPid = (snapshot.childrenByParent.get(terminalPid) ?? []).find(
-    (pid) =>
-      shellName === null ||
-      commandName(pid) !== shellName ||
-      (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0,
-  );
+  // `exec <command>` replaces the shell, leaving the command itself as the root.
+  const rootIsCommand =
+    platform !== "win32" &&
+    shell !== null &&
+    shellName !== null &&
+    shellName !== normalizeChildCommandName(shell, platform) &&
+    !INTERACTIVE_SHELL_NAMES.has(shellName.replace(/^-/, ""));
+  // Async prompt themes fork childless shell helpers that are not user commands;
+  // a foreground job owns the terminal's process group, and an unknown one counts as foreground.
+  const childPid = rootIsCommand
+    ? terminalPid
+    : (snapshot.childrenByParent.get(terminalPid) ?? []).find(
+        (pid) =>
+          shellName === null ||
+          commandName(pid) !== shellName ||
+          (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0 ||
+          (foregroundProcessGroup !== undefined && foregroundProcessGroup !== terminalPid),
+      );
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
@@ -801,6 +841,12 @@ function deriveSubprocessInspectResult(
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
     processIds: [...processIds],
   };
+}
+
+// Field 8 of /proc/<pid>/stat is the tty's foreground process group; comm (field 2) may hold spaces or parens.
+function parseProcStatForegroundProcessGroup(stat: string): number | null {
+  const tpgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[5]);
+  return Number.isInteger(tpgid) ? tpgid : null;
 }
 
 const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
@@ -863,7 +909,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const command =
-    'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
       command: "powershell.exe",
@@ -1620,6 +1666,7 @@ interface TerminalManagerOptions {
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
     TerminalSubprocessCheckError
   >;
+  foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -1800,6 +1847,30 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             snapshotSucceeded: Result.isSuccess(fallback.snapshot),
           })),
         );
+  const foregroundProcessGroup =
+    options.foregroundProcessGroup ??
+    ((terminalPid: number) =>
+      platform === "linux"
+        ? fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
+            Effect.map(parseProcStatForegroundProcessGroup),
+            Effect.orElseSucceed(() => null),
+          )
+        : processRunner
+            .run({
+              command: posixPsCommand ?? "ps",
+              args: ["-o", "tpgid=", "-p", String(terminalPid)],
+              timeout: CLOSE_IDLE_QUERY_TIMEOUT.posix,
+              timeoutBehavior: "timedOutResult",
+            })
+            .pipe(
+              Effect.map((result) => {
+                const tpgid = Number(result.stdout.trim());
+                return result.code === 0 && !result.timedOut && Number.isInteger(tpgid) && tpgid > 0
+                  ? tpgid
+                  : null;
+              }),
+              Effect.orElseSucceed(() => null),
+            ));
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector = (
     fallbackTimeout: Duration.Input,
@@ -1820,8 +1891,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             inspector: Result.map(
               snapshot,
               (table): TerminalSubprocessInspector =>
-                (terminalPid) =>
-                  Effect.succeed(deriveSubprocessInspectResult(table, terminalPid, platform)),
+                (terminalPid, shell) => {
+                  const result = deriveSubprocessInspectResult(table, terminalPid, shell, platform);
+                  // Only shell-named childless children are ambiguous; read the foreground group for those alone.
+                  if (
+                    result.hasRunningSubprocess ||
+                    platform === "win32" ||
+                    (table.childrenByParent.get(terminalPid)?.length ?? 0) === 0
+                  ) {
+                    return Effect.succeed(result);
+                  }
+                  return Effect.map(foregroundProcessGroup(terminalPid), (group) =>
+                    deriveSubprocessInspectResult(table, terminalPid, shell, platform, group),
+                  );
+                },
             ),
             snapshotSucceeded,
             queryElapsedMs,
@@ -1928,7 +2011,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // After a viewer's first size, resizes own it; attach retries resend the original size.
       viewer.grid ??= grid;
     } else {
-      viewers.set(viewerId, { streams: 1, grid });
+      viewers.set(viewerId, { streams: 1, grid, answersQueries: false });
     }
   };
 
@@ -1941,6 +2024,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (viewer.streams > 0) return false;
     viewers.delete(viewerId);
     if (viewers.size === 0) terminalViewers.delete(sessionKey);
+    return true;
+  };
+
+  // The first attached viewer to answer a query keeps answering until it detaches.
+  const acceptsQueryReply = (sessionKey: string, viewerId: string | undefined) => {
+    const viewers = terminalViewers.get(sessionKey);
+    const viewer = viewerId === undefined ? undefined : viewers?.get(viewerId);
+    if (viewerId !== undefined && !viewer) return false;
+    if (viewer?.answersQueries) return true;
+    for (const other of viewers?.values() ?? []) {
+      if (other.answersQueries) return false;
+    }
+    if (viewer) viewer.answersQueries = true;
     return true;
   };
 
@@ -2946,7 +3042,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       let mark = candidate.mark;
       const previous = quietSessions.get(session);
       quietSessions.delete(session);
-      const inspectResult = yield* subprocessInspector(terminalPid).pipe(
+      const inspectResult = yield* subprocessInspector(terminalPid, session.shell).pipe(
         Effect.asSome,
         Effect.catch((reason) =>
           Effect.logWarning("failed to check terminal subprocess activity", {
@@ -3615,29 +3711,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
-    const terminalId = input.terminalId;
-    const session = yield* requireSession(input.threadId, terminalId);
-    const process = session.process;
-    if (!process || session.status !== "running") {
-      if (session.status === "exited") return;
-      return yield* new TerminalNotRunningError({
-        threadId: input.threadId,
-        terminalId,
-      });
-    }
-    session.inputCount += 1;
-    yield* Effect.try({
-      try: () => process.write(input.data),
-      catch: (cause) =>
-        new TerminalWriteError({
+  const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
+    function* (input, viewerId) {
+      const terminalId = input.terminalId;
+      const session = yield* requireSession(input.threadId, terminalId);
+      const process = session.process;
+      if (!process || session.status !== "running") {
+        if (session.status === "exited") return;
+        return yield* new TerminalNotRunningError({
           threadId: input.threadId,
           terminalId,
-          terminalPid: process.pid,
-          cause,
-        }),
-    });
-  });
+        });
+      }
+      if (input.reply && !acceptsQueryReply(toSessionKey(input.threadId, terminalId), viewerId)) {
+        return;
+      }
+      session.inputCount += 1;
+      yield* Effect.try({
+        try: () => process.write(PtyAdapter.ptyInput(input.data, input.binary)),
+        catch: (cause) =>
+          new TerminalWriteError({
+            threadId: input.threadId,
+            terminalId,
+            terminalPid: process.pid,
+            cause,
+          }),
+      });
+    },
+  );
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (
     input: TerminalResizeInput,
@@ -3741,7 +3842,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* Effect.forEach(
           running,
           (session) =>
-            inspector(session.pid).pipe(
+            inspector(session.pid, session.shell).pipe(
               Effect.flatMap((result) =>
                 result.hasRunningSubprocess ||
                 terminalActivityMark(session) !== marks.get(session.terminalId)
