@@ -290,6 +290,19 @@ describe("AzureDevOpsIssueTracker", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
+  it.effect("reads the viewer from the account service, which no organization lists", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker((args) => {
+        if (!args.includes("https://app.vssps.visualstudio.com")) {
+          throw new Error("--area is not present in current organization");
+        }
+        return encode({ displayName: "Theo", emailAddress: "theo@acme.test" });
+      });
+      const viewer = yield* api.getViewer({ cwd: "/w", host: "dev.azure.com" });
+      expect(viewer).toBe("theo@acme.test");
+    }),
+  );
+
   it.effect("refuses a scope that is not organization/project without a request", () =>
     Effect.gen(function* () {
       let requests = 0;

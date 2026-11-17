@@ -67,6 +67,8 @@ const VIEWER_PERMISSIONS: IssueViewerPermissions = {
 };
 
 const REST_API_VERSION = "7.1";
+/** Profiles live on the account service; no organization lists a `profile` area for `az`. */
+const PROFILE_ORGANIZATION = "https://app.vssps.visualstudio.com";
 const PAGE_SIZE = 100;
 /** Updates are read a page per `az` process, oldest first, so a long history is bounded. */
 const UPDATE_PAGE_LIMIT = 5;
@@ -590,7 +592,9 @@ export const make: Effect.Effect<
           "devops",
           "invoke",
           "--detect",
-          "true",
+          "false",
+          "--organization",
+          PROFILE_ORGANIZATION,
           "--area",
           "profile",
           "--resource",
