@@ -301,7 +301,11 @@ export function delegatedTaskProgress(projection: {
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
   const monitorRuns = new Set(
     projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
       .map((message) => message.runId),
   );
   const workRuns = projection.runs.filter(
