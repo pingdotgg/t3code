@@ -28,6 +28,7 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly cloudModel?: CloudSpeechModelId | undefined;
   readonly hasAudioConsent: () => boolean;
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  readonly getStreamingEnabled: () => boolean;
   readonly getMicrophoneId: () => string | Promise<string>;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
@@ -36,6 +37,7 @@ export function createBrowserVoiceInputPlatform(input: {
 }) {
   return createBrowserPcmCapture(input, async (options) => {
     const recordingOptions = input.getTranscriptionOptions();
+    const streamingEnabled = input.getStreamingEnabled();
     const transcribeRecording = async (
       uri: string,
       { signal: transcriptionSignal }: VoiceTranscriptionOptions,
@@ -102,13 +104,12 @@ export function createBrowserVoiceInputPlatform(input: {
           recordingOptions.speechLanguage,
         )
       : "auto";
+    const nativeStreaming = status.supportsStreaming && streamingEnabled;
     const locale =
-      !status.supportsStreaming &&
-      status.supportsTranslation &&
-      recordingOptions.speechTranslateToEnglish
+      !nativeStreaming && status.supportsTranslation && recordingOptions.speechTranslateToEnglish
         ? "en"
         : language;
-    if (!status.supportsStreaming && !status.supportsBufferedStreaming) {
+    if (status.supportsStreaming ? !nativeStreaming : !status.supportsBufferedStreaming) {
       return { locale, transcribe: transcribeRecording };
     }
     const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);

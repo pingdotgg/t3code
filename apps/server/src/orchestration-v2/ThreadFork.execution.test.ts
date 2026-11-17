@@ -935,6 +935,40 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect("a side chat of a busy parent points history recovery at the parent", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("side-chat-recovery-parent");
+    const sideChatId = ThreadId.make("side-chat-recovery-child");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-recovery-stable-run"),
+      ordinal: 1,
+      status: "completed",
+      text: "Earlier parent history",
+      stable: true,
+    });
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-recovery-busy-run"),
+      ordinal: 2,
+      status: "running",
+      text: "Parent work in progress",
+    });
+    yield* forkSideChat("side-chat-recovery-fork", parentId, sideChatId);
+    yield* askSideChat(sideChatId, "side-chat-recovery-first-message");
+
+    const started = yield* orchestrator.getThreadProjection(sideChatId);
+    assert.equal(started.contextTransfers[0]?.resolution?.strategy, "portable_context");
+    const handoff = started.contextHandoffs.find((item) => item.strategy === "full_thread_summary");
+    const coverage = handoff?.history?.coverage ?? "";
+    assert.include(coverage, `t3_thread_read({threadId:"${parentId}"`);
+    assert.notInclude(coverage, `threadId:"${sideChatId}"`);
+    assert.isFalse(started.turnItems.some((item) => item.type === "handoff"));
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of an idle parent still starts with the framing note", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
