@@ -235,7 +235,7 @@ export function ResetCredits(props: {
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   readonly dense?: boolean;
-  /** Never wraps: compact summaries, and a status or permission note replaces the first one. */
+  /** Each choice stays on one line with a compact summary. */
   readonly singleLine?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false, singleLine = false } = props;
@@ -272,10 +272,9 @@ export function ResetCredits(props: {
     ]);
   };
 
-  const note = !canManageProviders ? "This connection cannot manage provider accounts." : null;
   return (
     <View className="gap-1">
-      {resetCreditChoices(credits, input, now, singleLine).map((choice, index) => (
+      {resetCreditChoices(credits, input, now, singleLine).map((choice) => (
         <View
           key={choice.key}
           className={cn(
@@ -285,13 +284,12 @@ export function ResetCredits(props: {
         >
           <Text
             className={cn(
-              "text-xs tabular-nums",
-              singleLine && index === 0 && status ? "text-foreground" : "text-foreground-tertiary",
+              "text-xs tabular-nums text-foreground-tertiary",
               singleLine && "min-w-0 shrink",
             )}
             numberOfLines={singleLine ? 1 : undefined}
           >
-            {singleLine && index === 0 ? (status ?? note ?? choice.summary) : choice.summary}
+            {choice.summary}
           </Text>
           {choice.availableCount > 0 ? (
             <Pressable
@@ -319,10 +317,12 @@ export function ResetCredits(props: {
           ) : null}
         </View>
       ))}
-      {note && !singleLine ? (
-        <Text className="text-xs text-foreground-tertiary">{note}</Text>
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
       ) : null}
-      {status && !singleLine ? <Text className="text-sm text-foreground">{status}</Text> : null}
+      {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
   );
 }
