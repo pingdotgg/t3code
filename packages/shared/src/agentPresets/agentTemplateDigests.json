@@ -1,0 +1,74 @@
+{
+  "presets/advosary": {
+    "digest": "55fb5db4eab17372",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "presets/captain": {
+    "digest": "ecee84276b285d7d",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "presets/cleaner": {
+    "digest": "32cd5fed10f88823",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "presets/cook": {
+    "digest": "55fb5db4eab17372",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "presets/cook-opensource": {
+    "digest": "82bbd021956b125b",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "presets/pastry": {
+    "digest": "cb449cad083a7207",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/agentic-harness-design": {
+    "digest": "fa0467ad69cb7b8f",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/captain-event-loop": {
+    "digest": "90cc73a308d0c20d",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/diagnose": {
+    "digest": "17854abc1dcc89d6",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/grill-me": {
+    "digest": "b2e510e6e68f69c8",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/grilling": {
+    "digest": "4e21139c1d04d12a",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/improve-codebase-architecture": {
+    "digest": "db7e6c3777e4db21",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/new-pattern-project": {
+    "digest": "a3a579efe6e640c5",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/playwright-cli": {
+    "digest": "c082640b0e3c5991",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/principle-prove-it-works": {
+    "digest": "521628d0f8ee1376",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/retro": {
+    "digest": "2834bfcf57f5c3a5",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/t3-agents": {
+    "digest": "bbbd884d51db45cb",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "skills/worktree-cleanup-rule": {
+    "digest": "33873f2a8a055f60",
+    "updatedAt": "2026-11-17T00:00:00.000Z"
+  }
+}

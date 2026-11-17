@@ -5,13 +5,15 @@ import {
   type AgentTemplateRecord,
   type McpGatewayProfile,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "../semver.ts";
 import {
   addPresetSkills,
   agentTemplateDigest,
+  agentTemplateRecord,
   type AgentPreset,
   type AgentPresetSkill,
+  type AgentTemplate,
 } from "./agentPresets.ts";
+import { AGENT_TEMPLATES_SHIPPED_AT } from "./agentTemplateDates.ts";
 
 interface AgentLibrary {
   readonly agentSkills: ReadonlyArray<AgentSkill>;
@@ -24,13 +26,13 @@ export type AgentTemplateUpdate =
       readonly kind: "agent";
       readonly modified: boolean;
       readonly profile: McpGatewayProfile;
-      readonly template: AgentPreset & { readonly template: AgentTemplateRecord };
+      readonly template: AgentPreset & { readonly template: AgentTemplate };
     }
   | {
       readonly kind: "skill";
       readonly modified: boolean;
       readonly skill: AgentSkill;
-      readonly template: AgentPresetSkill & { readonly template: AgentTemplateRecord };
+      readonly template: AgentPresetSkill & { readonly template: AgentTemplate };
     };
 
 const nameKey = (name: string) => name.trim().toLowerCase();
@@ -48,24 +50,22 @@ const isUneditedSeededSkill = (skill: AgentSkill) =>
   skill.skillId.startsWith("t3-default-") && skill.revision === 1;
 
 /**
- * Whether a copy is behind its template, and whether its user edited it. A recorded copy is
- * edited when it no longer matches the template it records. A copy from before records follows
- * the template of the same name and counts as edited whenever it differs. A record written by a
- * newer app is left to that app.
+ * Whether a copy is behind its template, and whether its user edited it. Only the template's date
+ * in the repo counts: a copy is behind once the template changed after the date the copy last
+ * took, however recently its user edited it. A copy from before records took the shipping date.
  */
 function templateState(
   record: AgentTemplateRecord | undefined,
-  template: AgentTemplateRecord,
+  template: AgentTemplate,
   contentDigest: () => string,
-  version: string,
   unedited = false,
 ): { readonly modified: boolean } | null {
-  if (record && compareSemverVersions(record.version, version) > 0) return null;
-  if (record?.mergingFrom !== undefined && record.mergingFrom === contentDigest())
-    return { modified: true };
-  if (record?.digest === template.digest) return null;
+  const templateTime = Date.parse(template.updatedAt);
+  const syncedTime = Date.parse(record?.syncedAt ?? AGENT_TEMPLATES_SHIPPED_AT);
+  if (templateTime < syncedTime) return null;
   const digest = contentDigest();
-  if (digest === template.digest) return null;
+  if (record?.mergingFrom !== undefined && record.mergingFrom === digest) return { modified: true };
+  if (templateTime === syncedTime || digest === template.digest) return null;
   return { modified: record ? digest !== record.digest : !unedited };
 }
 
@@ -73,7 +73,6 @@ function templateState(
 export function agentTemplateUpdates(
   library: AgentLibrary,
   presets: ReadonlyArray<AgentPreset>,
-  version: string,
 ): ReadonlyArray<AgentTemplateUpdate> {
   const skillTemplates = new Map(
     presets
@@ -87,11 +86,8 @@ export function agentTemplateUpdates(
         : nameKey(item.name) === nameKey(profile.name),
     );
     if (!preset?.template) return [];
-    const state = templateState(
-      profile.template,
-      preset.template,
-      () => profileTemplateDigest(profile, library.agentSkills),
-      version,
+    const state = templateState(profile.template, preset.template, () =>
+      profileTemplateDigest(profile, library.agentSkills),
     );
     return state
       ? [{ kind: "agent", ...state, profile, template: { ...preset, template: preset.template } }]
@@ -104,7 +100,6 @@ export function agentTemplateUpdates(
       skill.template,
       template.template,
       () => agentSkillDigestOf(skill),
-      version,
       isUneditedSeededSkill(skill),
     );
     return state
@@ -133,7 +128,7 @@ export function applyAgentTemplateUpdate(
           content: template.content,
           // Explicit, so a server keeping the stored files for an omitted field drops the old ones.
           resources: template.resources,
-          template: template.template,
+          template: agentTemplateRecord(template.template),
           updatedAt: options.now,
         };
       }),
@@ -148,7 +143,7 @@ export function applyAgentTemplateUpdate(
             ...profile,
             systemPrompt: update.template.systemPrompt,
             skillIds: added.skillIds,
-            template: update.template.template,
+            template: agentTemplateRecord(update.template.template),
             updatedAt: options.now,
           }
         : profile,
@@ -166,7 +161,7 @@ export function markAgentTemplateMerged(
   now: string,
 ): AgentLibrary {
   const template = {
-    ...update.template.template,
+    ...agentTemplateRecord(update.template.template),
     mergingFrom:
       update.kind === "agent"
         ? profileTemplateDigest(update.profile, library.agentSkills)

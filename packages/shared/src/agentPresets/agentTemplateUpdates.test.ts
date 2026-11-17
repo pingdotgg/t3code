@@ -2,9 +2,17 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { toAgentSkillStub, agentSkillDigest, type McpGatewayProfile } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { addPresetSkills, decodeAgentPresets, withAgentTemplates } from "./agentPresets.ts";
+import {
+  addPresetSkills,
+  decodeAgentPresets,
+  defaultAgentSkills,
+  withAgentTemplates,
+} from "./agentPresets.ts";
+import { readAgentPresetSkillFiles } from "./agentPresetSkillFiles.ts";
+import { AGENT_TEMPLATES_SHIPPED_AT } from "./agentTemplateDates.ts";
 import {
   agentTemplateUpdates,
   applyAgentTemplateUpdate,
@@ -23,21 +31,25 @@ const files = Object.fromEntries(
       ];
     }),
 );
-const builtIns = (version: string, edit: (files: Record<string, string>) => void = () => {}) => {
+const builtIns = (updatedAt: string, edit: (files: Record<string, string>) => void = () => {}) => {
   const copy = { ...files };
   edit(copy);
   const presets = decodeAgentPresets(copy);
-  return withAgentTemplates(presets, presets, version);
+  return withAgentTemplates(presets, presets, "1.0.0", {
+    presets: { reviewer: updatedAt },
+    skills: { "review-checklist": updatedAt },
+  });
 };
-const older = builtIns("1.0.0", (copy) => {
+const LATER = "2026-12-01T00:00:00.000Z";
+const AFTER_LATER = "2026-12-05T00:00:00.000Z";
+const older = builtIns(AGENT_TEMPLATES_SHIPPED_AT, (copy) => {
   copy["presets/reviewer/system-prompt.md"] = "You review code.";
   copy["skills/review-checklist/SKILL.md"] = "---\nname: review-checklist\n---\n# Old checklist";
 });
-const current = builtIns("1.1.0");
-const now = "2026-11-17T00:00:00.000Z";
+const current = builtIns(LATER);
 
-/** A library as installing `presets[0]` left it. */
-function installed(presets: typeof older) {
+/** A library as installing `presets[0]` at `now` left it. */
+function installed(presets: typeof older, now = AGENT_TEMPLATES_SHIPPED_AT) {
   const preset = presets[0]!;
   const added = addPresetSkills([], preset.skills, { now, makeId: () => "skill-1" });
   const profile: McpGatewayProfile = {
@@ -55,76 +67,71 @@ function installed(presets: typeof older) {
   return { agentSkills: added.agentSkills, mcpGatewayProfiles: [profile] };
 }
 type Library = Parameters<typeof agentTemplateUpdates>[0];
-const statuses = (library: Library, version = "1.1.0") =>
-  agentTemplateUpdates(library, current, version).map((update) => [update.kind, update.modified]);
+const statuses = (library: Library, presets = current) =>
+  agentTemplateUpdates(library, presets).map((update) => [update.kind, update.modified]);
+/** The library after its user saved edits; the server stamps the save time. */
+const saved = (library: Library, updatedAt: string, content = "# Mine"): Library => ({
+  agentSkills: library.agentSkills.map((skill) =>
+    toAgentSkillStub({ ...skill, content, updatedAt }, agentSkillDigest({ content })),
+  ),
+  mcpGatewayProfiles: library.mcpGatewayProfiles.map((profile) => ({
+    ...profile,
+    systemPrompt: `${profile.systemPrompt} Be terse.`,
+    updatedAt,
+  })),
+});
+
+const strip = <T extends { template?: unknown }>({ template: _template, ...item }: T) => item;
 
 describe("agentTemplateUpdates", () => {
-  it("offers an unedited install the current template and stops once it is applied", () => {
+  it("offers an install the repo template changed after, and stops on every app once applied", () => {
     const library = installed(older);
     expect(statuses(library)).toEqual([
       ["agent", false],
       ["skill", false],
     ]);
     let next: Library = library;
-    for (const update of agentTemplateUpdates(library, current, "1.1.0")) {
-      next = applyAgentTemplateUpdate(next, update, { now, makeId: () => "unused" });
+    for (const update of agentTemplateUpdates(library, current)) {
+      next = applyAgentTemplateUpdate(next, update, { now: AFTER_LATER, makeId: () => "unused" });
     }
     expect(next.mcpGatewayProfiles[0]).toMatchObject({
       systemPrompt: current[0]!.systemPrompt,
       skillIds: ["skill-1"],
-      template: current[0]!.template,
+      template: { id: "reviewer", digest: current[0]!.template!.digest, syncedAt: LATER },
     });
     expect(next.agentSkills).toEqual([
       expect.objectContaining({
         skillId: "skill-1",
         content: current[0]!.skills[0]!.content,
         resources: current[0]!.skills[0]!.resources,
-        template: current[0]!.skills[0]!.template,
+        template: expect.objectContaining({ syncedAt: LATER }),
       }),
     ]);
     expect(statuses(next)).toEqual([]);
+    expect(statuses(next, older)).toEqual([]);
   });
 
-  it("reads an edit, including on a metadata stub, and never replaces it", () => {
-    const library = installed(older);
-    const [skill] = library.agentSkills;
-    const edited = {
-      agentSkills: [
-        toAgentSkillStub({ ...skill!, content: "# Mine" }, agentSkillDigest({ content: "# Mine" })),
-      ],
-      mcpGatewayProfiles: library.mcpGatewayProfiles.map((profile) => ({
-        ...profile,
-        systemPrompt: "You review code. Be terse.",
-      })),
-    };
-    expect(statuses(edited)).toEqual([
+  it("still offers a later repo update to a copy its user edited after syncing", () => {
+    expect(statuses(saved(installed(older), AFTER_LATER))).toEqual([
       ["agent", true],
       ["skill", true],
     ]);
+  });
+
+  it("keeps a merge listed until its chat saves, then clears it on every app", () => {
+    const edited = saved(installed(older), AFTER_LATER);
     let merged: Library = edited;
-    for (const update of agentTemplateUpdates(edited, current, "1.1.0")) {
-      merged = markAgentTemplateMerged(merged, update, now);
+    for (const update of agentTemplateUpdates(edited, current)) {
+      merged = markAgentTemplateMerged(merged, update, AFTER_LATER);
     }
-    // A merge chat that never saves leaves the copy as it was, so the update stays listed.
     expect(statuses(merged)).toEqual([
       ["agent", true],
       ["skill", true],
     ]);
-    expect(merged.mcpGatewayProfiles[0]!.systemPrompt).toBe("You review code. Be terse.");
-    expect(merged.agentSkills[0]!.digest).toBe(edited.agentSkills[0]!.digest);
-    const saved: Library = {
-      agentSkills: merged.agentSkills.map((item) =>
-        toAgentSkillStub(
-          { ...item, content: "# Merged" },
-          agentSkillDigest({ content: "# Merged" }),
-        ),
-      ),
-      mcpGatewayProfiles: merged.mcpGatewayProfiles.map((profile) => ({
-        ...profile,
-        systemPrompt: `${current[0]!.systemPrompt} Be terse.`,
-      })),
-    };
-    expect(statuses(saved)).toEqual([]);
+    const done = saved(merged, AFTER_LATER, "# Merged");
+    expect(done.mcpGatewayProfiles[0]!.template).toMatchObject({ syncedAt: LATER });
+    expect(statuses(done)).toEqual([]);
+    expect(statuses(done, older)).toEqual([]);
   });
 
   it("counts a skill added to an agent as an edit", () => {
@@ -138,40 +145,67 @@ describe("agentTemplateUpdates", () => {
     ).toContainEqual(["agent", true]);
   });
 
-  it("treats a copy from before records as edited only when it differs from the template", () => {
-    const strip = <T extends { template?: unknown }>({ template: _template, ...item }: T) => item;
+  it("gives a copy from before records the shipping date, so only a later repo change shows", () => {
     const stale = installed(older);
     const legacy = {
       agentSkills: stale.agentSkills.map(strip),
       mcpGatewayProfiles: stale.mcpGatewayProfiles.map(strip),
     };
+    const shipped = builtIns(AGENT_TEMPLATES_SHIPPED_AT);
+    expect(statuses(legacy, shipped)).toEqual([]);
+    expect(statuses(saved(legacy, AFTER_LATER), shipped)).toEqual([]);
     expect(statuses(legacy)).toEqual([
       ["agent", true],
       ["skill", true],
     ]);
-    const fresh = installed(current);
-    expect(
-      statuses({
-        agentSkills: fresh.agentSkills.map(strip),
-        mcpGatewayProfiles: fresh.mcpGatewayProfiles.map(strip),
-      }),
-    ).toEqual([]);
-    const seeded = { ...legacy.agentSkills[0]!, skillId: "t3-default-review-checklist" };
+    const seeded = {
+      ...legacy.agentSkills[0]!,
+      skillId: "t3-default-review-checklist",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    };
     expect(statuses({ agentSkills: [seeded], mcpGatewayProfiles: [] })).toEqual([["skill", false]]);
     expect(statuses({ agentSkills: [{ ...seeded, revision: 2 }], mcpGatewayProfiles: [] })).toEqual(
       [["skill", true]],
     );
   });
 
-  it("leaves a copy recorded by a newer app alone", () => {
-    expect(
-      statuses(
-        installed(
-          builtIns("2.0.0", (copy) => {
-            copy["presets/reviewer/system-prompt.md"] = "Newer.";
-          }),
-        ),
-      ),
-    ).toEqual([]);
+  it("writes records that builds from before syncedAt still decode", () => {
+    const olderRecord = Schema.decodeUnknownSync(
+      Schema.Struct({
+        id: Schema.NonEmptyString,
+        digest: Schema.NonEmptyString,
+        version: Schema.NonEmptyString,
+        mergingFrom: Schema.optional(Schema.NonEmptyString),
+      }),
+    );
+    const library = installed(older);
+    let applied: Library = library;
+    let merged: Library = saved(library, AFTER_LATER);
+    for (const update of agentTemplateUpdates(library, current)) {
+      applied = applyAgentTemplateUpdate(applied, update, { now: AFTER_LATER, makeId: () => "x" });
+    }
+    for (const update of agentTemplateUpdates(merged, current)) {
+      merged = markAgentTemplateMerged(merged, update, AFTER_LATER);
+    }
+    const seeded = defaultAgentSkills(
+      {
+        agentSkills: [],
+        agentSkillDeletedAt: {},
+        mcpGatewayProfiles: [],
+        mcpGatewayProfileDeletedAt: {},
+      },
+      readAgentPresetSkillFiles(),
+      "1.0.0",
+    );
+    const records = [
+      library,
+      applied,
+      merged,
+      { agentSkills: seeded, mcpGatewayProfiles: [] },
+    ].flatMap((item) =>
+      [...item.agentSkills, ...item.mcpGatewayProfiles].map((copy) => copy.template),
+    );
+    expect(records).toHaveLength(8);
+    for (const record of records) expect(() => olderRecord(record)).not.toThrow();
   });
 });

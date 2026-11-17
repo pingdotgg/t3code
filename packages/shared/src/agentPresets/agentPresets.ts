@@ -15,6 +15,7 @@ import {
 import * as Schema from "effect/Schema";
 import { parse as parseYaml } from "yaml";
 import { legacyAgentIcon } from "../agentIcons.ts";
+import { AGENT_TEMPLATE_UPDATED_AT, type AgentTemplateDates } from "./agentTemplateDates.ts";
 
 const PresetSlug = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/));
 
@@ -46,6 +47,23 @@ export type PresetSkillChoice =
   | { readonly kind: "update"; readonly skillId: string }
   | { readonly kind: "new" };
 
+/** A built-in template as of its last change in the repo. */
+export interface AgentTemplate {
+  readonly id: string;
+  readonly digest: string;
+  readonly updatedAt: string;
+  /** The app version that shipped it. */
+  readonly version: string;
+}
+
+/** What a copy records once it takes `template`. */
+export const agentTemplateRecord = (template: AgentTemplate): AgentTemplateRecord => ({
+  id: template.id,
+  digest: template.digest,
+  version: template.version,
+  syncedAt: template.updatedAt,
+});
+
 export interface AgentPresetSkill {
   readonly name: string;
   readonly description: string;
@@ -53,15 +71,15 @@ export interface AgentPresetSkill {
   readonly resources: ReadonlyArray<AgentSkillResource>;
   /** Set by the picker for a same-name conflict; absent means `presetSkillConflicts`' default. */
   readonly choice?: PresetSkillChoice;
-  /** Set when this is a built-in skill, recorded on the copy it installs. */
-  readonly template?: AgentTemplateRecord;
+  /** Set when this is a built-in skill. */
+  readonly template?: AgentTemplate;
 }
 
 export interface AgentPreset extends Omit<AgentPresetManifest, "skills"> {
   readonly systemPrompt: string;
   readonly skills: ReadonlyArray<AgentPresetSkill>;
-  /** Set when this is a built-in preset, recorded on the agent it installs. */
-  readonly template?: AgentTemplateRecord;
+  /** Set when this is a built-in preset. */
+  readonly template?: AgentTemplate;
 }
 
 const skillNameKey = (name: string) => name.trim().toLowerCase();
@@ -101,6 +119,7 @@ export function withAgentTemplates(
   presets: ReadonlyArray<AgentPreset>,
   builtIns: ReadonlyArray<AgentPreset>,
   version: string,
+  dates: AgentTemplateDates = AGENT_TEMPLATE_UPDATED_AT,
 ): ReadonlyArray<AgentPreset> {
   const builtInSkills = new Map(
     builtIns.flatMap((preset) => preset.skills).map((skill) => [skillNameKey(skill.name), skill]),
@@ -108,16 +127,21 @@ export function withAgentTemplates(
   return presets.map((preset) => {
     const builtIn = builtIns.find((item) => item.id === preset.id);
     const digest = presetDigest(preset);
+    const updatedAt = dates.presets[preset.id];
     return {
       ...preset,
-      ...(builtIn && presetDigest(builtIn) === digest
-        ? { template: { id: preset.id, digest, version } }
+      ...(builtIn && updatedAt && presetDigest(builtIn) === digest
+        ? { template: { id: preset.id, digest, updatedAt, version } }
         : {}),
       skills: preset.skills.map((skill) => {
         const match = builtInSkills.get(skillNameKey(skill.name));
         const skillDigest = presetSkillDigest(skill);
-        return match && presetSkillDigest(match) === skillDigest
-          ? { ...skill, template: { id: match.name, digest: skillDigest, version } }
+        const skillUpdatedAt = match && dates.skills[match.name];
+        return match && skillUpdatedAt && presetSkillDigest(match) === skillDigest
+          ? {
+              ...skill,
+              template: { id: match.name, digest: skillDigest, updatedAt: skillUpdatedAt, version },
+            }
           : skill;
       }),
     };
@@ -307,7 +331,7 @@ export function addPresetSkills(
       } = withoutAgentSkillTransportFields(agentSkills[target]!);
       agentSkills[target] = {
         ...current,
-        ...(skill.template ? { template: skill.template } : {}),
+        ...(skill.template ? { template: agentTemplateRecord(skill.template) } : {}),
         description: skill.description,
         content: skill.content,
         // Explicit, so a server keeping the stored files for an omitted field drops the old ones.
@@ -324,7 +348,7 @@ export function addPresetSkills(
       description: skill.description,
       content: skill.content,
       ...(skill.resources.length ? { resources: skill.resources } : {}),
-      ...(skill.template ? { template: skill.template } : {}),
+      ...(skill.template ? { template: agentTemplateRecord(skill.template) } : {}),
       revision: 1,
       createdAt: options.now,
       updatedAt: options.now,
@@ -371,13 +395,19 @@ export function defaultAgentSkills(
   if (!isNewAgentLibrary(library)) return [];
   return DEFAULT_AGENT_SKILL_NAMES.map((name): AgentSkill => {
     const skill = decodeSkill(name, skillFiles);
+    const updatedAt = AGENT_TEMPLATE_UPDATED_AT.skills[skill.name];
     return {
       skillId: `t3-default-${name}`,
       name: skill.name,
       description: skill.description,
       content: skill.content,
       ...(skill.resources.length ? { resources: skill.resources } : {}),
-      template: { id: skill.name, digest: agentSkillDigest(skill), version },
+      template: {
+        id: skill.name,
+        digest: agentSkillDigest(skill),
+        version,
+        ...(updatedAt && { syncedAt: updatedAt }),
+      },
       revision: 1,
       createdAt: DEFAULT_AGENT_SKILL_TIME,
       updatedAt: DEFAULT_AGENT_SKILL_TIME,
