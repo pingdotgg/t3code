@@ -43,7 +43,9 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>, savedT
       title: "Failed to save project actions",
       description: [
         ...(savedTargets > 0
-          ? [`Actions were already saved to ${savedTargets} selected checkouts. Retry to finish.`]
+          ? [
+              `Actions were already saved to ${savedTargets} selected ${savedTargets === 1 ? "checkout" : "checkouts"}. Retry to finish.`,
+            ]
           : []),
         error instanceof Error ? error.message : "An error occurred.",
       ].join(" "),

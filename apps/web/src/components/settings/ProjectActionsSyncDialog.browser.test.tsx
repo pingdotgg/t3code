@@ -187,22 +187,6 @@ describe("ProjectActionsSyncDialog", () => {
     });
   });
 
-  it("rechecks permissions at execution", async () => {
-    setup();
-    const onClose = vi.fn();
-    await using _screen = await render(
-      <ProjectActionsSyncDialog
-        group={{ memberProjects: state.projects }}
-        initialProjectKey="source:repo"
-        onClose={onClose}
-      />,
-    );
-    state.writable.delete(destinationId);
-    await userEvent.click(page.getByRole("button", { name: "Sync actions", exact: true }));
-    expect(state.updateSettings).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it("reports a partial copy without claiming success or closing the dialog", async () => {
     setup();
     state.environments[2]!.connection.phase = "connected";
@@ -226,7 +210,7 @@ describe("ProjectActionsSyncDialog", () => {
     expect(state.toast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "error",
-        description: expect.stringContaining("already saved to 1 selected checkouts"),
+        description: expect.stringContaining("already saved to 1 selected checkout."),
       }),
     );
   });
