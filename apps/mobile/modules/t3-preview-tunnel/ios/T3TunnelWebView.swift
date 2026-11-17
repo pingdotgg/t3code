@@ -1,3 +1,4 @@
+import CryptoKit
 import ExpoModulesCore
 import Network
 import WebKit
@@ -11,6 +12,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 
   private var webView: WKWebView?
   private var listener: T3SocksListener?
+  private var proxyPort: UInt16?
+  private var environmentId: String?
   private var pendingUrl: String?
   private var requestedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
@@ -27,7 +30,10 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     }
     self.listener = listener
     listener.start { [weak self] port in
-      DispatchQueue.main.async { self?.attachWebView(proxyPort: port) }
+      DispatchQueue.main.async {
+        self?.proxyPort = port
+        self?.attachWebView()
+      }
     }
   }
 
@@ -35,8 +41,18 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     listener?.stop()
   }
 
-  private func attachWebView(proxyPort: UInt16) {
-    let store = WKWebsiteDataStore.nonPersistent()
+  /// JavaScript remounts the view for another environment, so only the first one counts.
+  func setEnvironment(_ environmentId: String) {
+    guard self.environmentId == nil else { return }
+    self.environmentId = environmentId
+    attachWebView()
+  }
+
+  private func attachWebView() {
+    guard webView == nil, let proxyPort, let environmentId else { return }
+    // One lasting store per environment, so its cookies survive closing or maximizing the page
+    // and never reach another environment's pages.
+    let store = WKWebsiteDataStore(forIdentifier: Self.storeIdentifier(environmentId))
     var proxy = ProxyConfiguration(
       socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
     )
@@ -60,6 +76,13 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       webView.observe(\.canGoForward) { [weak self] _, _ in self?.reportNavigation() },
     ]
     if let pendingUrl { load(pendingUrl) }
+  }
+
+  private static func storeIdentifier(_ environmentId: String) -> UUID {
+    var bytes = Array(SHA256.hash(data: Data("t3-preview-tunnel:\(environmentId)".utf8)).prefix(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x50
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    return NSUUID(uuidBytes: bytes) as UUID
   }
 
   override func layoutSubviews() {

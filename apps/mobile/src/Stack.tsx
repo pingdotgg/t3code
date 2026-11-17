@@ -636,12 +636,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadBrowserPreview: createNativeStackScreen({
       screen: BrowserPreviewRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/browser`,
-      options: immersiveRoute(),
+      options: immersiveRoute({ spansRail: true }),
     }),
     ThreadLocalPreview: createNativeStackScreen({
       screen: LocalPreviewRouteScreen,
       linking: "environments/:environmentId/local-preview",
-      options: immersiveRoute(),
+      options: immersiveRoute({ spansRail: true }),
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
