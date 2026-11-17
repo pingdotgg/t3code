@@ -19,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -103,64 +104,104 @@ const harness = Effect.gen(function* () {
   // The cards as the thread stores them, and the runs a stop has ended.
   const shown = yield* Ref.make(new Map<string, CardRecord>());
   const stopped = yield* Ref.make(new Set<string>());
-  const threads = Layer.mock(Threads.ThreadManagementService)({
-    dispatch: (command) =>
-      Ref.update(shown, (cards) => {
-        const card = command as CardRecord;
-        const existing = cards.get(card.turnItemId);
-        // A decided card stays decided, as the orchestrator keeps it.
-        return existing === undefined || existing.feedbackStatus === "pending"
-          ? new Map(cards).set(card.turnItemId, card)
-          : cards;
-      }).pipe(Effect.andThen(Queue.offer(cards, command as CardRecord)), Effect.as({} as never)),
-    getThreadRecords: (_threadId, fields, filter) =>
-      Effect.gen(function* () {
-        const stored = yield* Ref.get(items);
-        const ended = yield* Ref.get(stopped);
-        const wanted = fields as ReadonlyArray<string>;
-        const selected =
-          filter?.runIds === undefined
-            ? filter?.latestRunLimit === undefined
-              ? runs
-              : runs.slice(-filter.latestRunLimit)
-            : runs.filter((run) => filter.runIds?.includes(run.id));
-        return {
-          ...(wanted.includes("runs")
-            ? {
-                runs: selected.map((run) => ({
-                  ...run,
-                  status: ended.has(run.id) ? "interrupted" : "running",
-                })),
-              }
-            : {}),
-          ...(wanted.includes("turnItems")
-            ? {
-                turnItems: filter?.turnItemTypes?.includes("feedback_request")
-                  ? [...(yield* Ref.get(shown)).values()].map((card) => ({
-                      type: "feedback_request",
-                      id: card.turnItemId,
-                      runId: card.runId,
-                      feedbackStatus: card.feedbackStatus,
-                    }))
-                  : stored.filter(
-                      (item) =>
-                        filter?.turnItemRunIds?.includes(item.runId) === true &&
-                        filter.turnItemTypes?.includes(item.type) === true,
-                    ),
-              }
-            : {}),
-        };
-      }) as never,
-    getThreadShell: () =>
-      Ref.get(runId).pipe(
-        Effect.map((activeRunId) => ({
-          ...liveThreadShell(threadId, { activeRunId }),
-          modelSelection: { instanceId, model: "gpt-5.5" },
-          branch: "acme/secret-launch",
-          worktreePath: "/srv/checkouts/acme-app-7",
-        })),
-      ),
-  });
+  // The projection rows the storing step reads share the database, as in the server.
+  const threads = Layer.unwrap(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const run of runs) {
+        yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+          run_id: run.id,
+          thread_id: threadId,
+          ordinal: run.ordinal,
+          provider: "codex",
+          status: "running",
+          requested_at: "2026-01-01T00:00:00.000Z",
+          payload_json: "{}",
+        })}`;
+      }
+      const project = (card: CardRecord) => sql`
+        INSERT INTO orchestration_v2_projection_turn_items ${sql.insert({
+          turn_item_id: card.turnItemId,
+          thread_id: threadId,
+          run_id: card.runId,
+          ordinal: 0,
+          type: "feedback_request",
+          status:
+            card.feedbackStatus === "pending"
+              ? "waiting"
+              : card.feedbackStatus === "sent"
+                ? "completed"
+                : "cancelled",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          payload_json: "{}",
+        })}
+        ON CONFLICT (turn_item_id) DO UPDATE SET status = excluded.status
+        WHERE orchestration_v2_projection_turn_items.status = 'waiting'`;
+      return Layer.mock(Threads.ThreadManagementService)({
+        dispatch: (command) =>
+          Ref.update(shown, (cards) => {
+            const card = command as CardRecord;
+            const existing = cards.get(card.turnItemId);
+            // A decided card stays decided, as the orchestrator keeps it.
+            return existing === undefined || existing.feedbackStatus === "pending"
+              ? new Map(cards).set(card.turnItemId, card)
+              : cards;
+          }).pipe(
+            Effect.andThen(project(command as CardRecord)),
+            Effect.orDie,
+            Effect.andThen(Queue.offer(cards, command as CardRecord)),
+            Effect.as({} as never),
+          ),
+        getThreadRecords: (_threadId, fields, filter) =>
+          Effect.gen(function* () {
+            const stored = yield* Ref.get(items);
+            const ended = yield* Ref.get(stopped);
+            const wanted = fields as ReadonlyArray<string>;
+            const selected =
+              filter?.runIds === undefined
+                ? filter?.latestRunLimit === undefined
+                  ? runs
+                  : runs.slice(-filter.latestRunLimit)
+                : runs.filter((run) => filter.runIds?.includes(run.id));
+            return {
+              ...(wanted.includes("runs")
+                ? {
+                    runs: selected.map((run) => ({
+                      ...run,
+                      status: ended.has(run.id) ? "interrupted" : "running",
+                    })),
+                  }
+                : {}),
+              ...(wanted.includes("turnItems")
+                ? {
+                    turnItems: filter?.turnItemTypes?.includes("feedback_request")
+                      ? [...(yield* Ref.get(shown)).values()].map((card) => ({
+                          type: "feedback_request",
+                          id: card.turnItemId,
+                          runId: card.runId,
+                          feedbackStatus: card.feedbackStatus,
+                        }))
+                      : stored.filter(
+                          (item) =>
+                            filter?.turnItemRunIds?.includes(item.runId) === true &&
+                            filter.turnItemTypes?.includes(item.type) === true,
+                        ),
+                  }
+                : {}),
+            };
+          }) as never,
+        getThreadShell: () =>
+          Ref.get(runId).pipe(
+            Effect.map((activeRunId) => ({
+              ...liveThreadShell(threadId, { activeRunId }),
+              modelSelection: { instanceId, model: "gpt-5.5" },
+              branch: "acme/secret-launch",
+              worktreePath: "/srv/checkouts/acme-app-7",
+            })),
+          ),
+      });
+    }),
+  );
   const layer = Feedback.layer(() => ["t3_thread_read"]).pipe(
     Layer.provideMerge(Approvals.layer),
     Layer.provideMerge(
@@ -623,6 +664,30 @@ it.effect("sends nothing approved after the turn stopped or feedback was turned 
       expect((yield* Effect.flip(Fiber.join(turnedOff)))._tag).toBe("FeedbackOffError");
       expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
       yield* nothingKept;
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("sends nothing when the turn stops after Send was accepted but before storing", () =>
+  Effect.gen(function* () {
+    const { events, cards, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const feedback = yield* Feedback.FeedbackService;
+      const approvals = yield* Approvals.FeedbackApprovals;
+      const sql = yield* SqlClient.SqlClient;
+      const call = yield* feedback
+        .submit({ ...input, userRequested: true }, fromThread)
+        .pipe(Effect.forkChild);
+      const shown = yield* Queue.take(cards);
+      // The stop commits to the projection after the answer's own check saw a live turn, which
+      // reads the thread service; the storing step reads the committed row.
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
+        WHERE run_id = ${shown.runId}`;
+      yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" });
+      expect(yield* Fiber.join(call)).toMatchObject({ approved: false, status: "cancelled" });
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+      expect(yield* listFeedbackReports).toEqual([]);
+      expect(yield* Ref.get(events)).toEqual([]);
     }).pipe(Effect.provide(layer));
   }),
 );

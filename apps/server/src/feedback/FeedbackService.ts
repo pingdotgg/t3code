@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import {
   type AgentFeedbackPreview,
   CommandId,
+  OrchestrationV2RunStatus,
   type ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -88,6 +89,12 @@ export class FeedbackTurnsError extends Schema.TaggedError<FeedbackTurnsError>()
   }
 }
 
+/** The approved card's turn ended, or its card closed, before the report was stored. */
+class FeedbackTurnEndedError extends Schema.TaggedError<FeedbackTurnEndedError>()(
+  "FeedbackTurnEndedError",
+  {},
+) {}
+
 /** A requested report needs a thread with an active turn to show the user its preview. */
 export class FeedbackApprovalError extends Schema.TaggedError<FeedbackApprovalError>()(
   "FeedbackApprovalError",
@@ -127,6 +134,7 @@ export class FeedbackService extends Context.Service<
 >()("t3/feedback/FeedbackService") {}
 
 const storageError = (cause: unknown) => new FeedbackStorageError({ cause });
+const isRunStatus = Schema.is(OrchestrationV2RunStatus);
 const TraceJson = Schema.NullOr(Schema.fromJsonString(FeedbackTrace));
 const encodeTrace = Schema.encodeEffect(TraceJson);
 
@@ -250,7 +258,10 @@ const make = Effect.fn("FeedbackService.make")(function* (
     const runId = thread?.activeRunId ?? null;
     const id = yield* random.uuidV7();
     if (!input.userRequested) {
-      return yield* store(preview, { caller, runId, id, dimensions, userRequested: false });
+      return yield* store(preview, { caller, runId, id, dimensions, userRequested: false }).pipe(
+        // Only an approved card's turn can end under a report.
+        Effect.catchTags({ FeedbackTurnEndedError: Effect.die }),
+      );
     }
 
     // Nothing is stored, sent or counted before the user answers.
@@ -299,27 +310,24 @@ const make = Effect.fn("FeedbackService.make")(function* (
       return { approved: false, status, note: FEEDBACK_NOT_APPROVED_NOTE[status] } as const;
     }
     // The answer can come long after the call: Off or a stopped turn since then sends nothing.
-    const turnEnded = yield* threads
-      .getThreadRecords(card.threadId, ["runs"], { runIds: [card.runId] })
-      .pipe(
-        Effect.map(({ runs }) => {
-          const current = runs.find((candidate) => candidate.id === card.runId);
-          return current === undefined || Threads.isTerminalRunStatus(current.status);
-        }),
-        Effect.mapError(storageError),
-        Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
-      );
-    if (turnEnded) {
-      yield* record("cancelled").pipe(Effect.ignore);
-      return {
-        approved: false,
-        status: "cancelled",
-        note: FEEDBACK_NOT_APPROVED_NOTE.cancelled,
-      } as const;
-    }
-    return yield* store(preview, { caller, runId, id, dimensions, userRequested: true }).pipe(
+    return yield* store(preview, {
+      caller,
+      runId,
+      id,
+      dimensions,
+      userRequested: true,
+      card: { runId: card.runId, turnItemId: card.turnItemId },
+    }).pipe(
       Effect.tap(() => record("sent").pipe(Effect.ignore)),
       Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
+      Effect.catchTags({
+        FeedbackTurnEndedError: () =>
+          Effect.succeed({
+            approved: false,
+            status: "cancelled",
+            note: FEEDBACK_NOT_APPROVED_NOTE.cancelled,
+          } as const),
+      }),
     );
   });
 
@@ -333,6 +341,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
       readonly dimensions: Readonly<Record<string, string>>;
       /** True only for a preview the user approved. */
       readonly userRequested: boolean;
+      /** The approved card, whose turn must still be live and card still waiting. */
+      readonly card?: { readonly runId: string; readonly turnItemId: string };
     },
   ) {
     const { userRequested } = context;
@@ -355,10 +365,31 @@ const make = Effect.fn("FeedbackService.make")(function* (
       sql
         .withTransaction(
           Effect.gen(function* () {
-            // Read again here: the setting can turn Off while a requested report waits.
-            yield* requireOn;
             const limited = yield* overLimit(context.runId, userRequested);
             if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
+            // The projection shares this database and writer, so a stop that commits first is
+            // seen here and none can commit between this read and the insert.
+            if (context.card !== undefined) {
+              const [live] = yield* sql<{
+                readonly runStatus: string;
+                readonly cardStatus: string | null;
+              }>`
+                SELECT run.status AS "runStatus", card.status AS "cardStatus"
+                FROM orchestration_v2_projection_runs run
+                LEFT JOIN orchestration_v2_projection_turn_items card
+                  ON card.turn_item_id = ${context.card.turnItemId}
+                WHERE run.run_id = ${context.card.runId}`;
+              if (
+                live === undefined ||
+                live.cardStatus !== "waiting" ||
+                !isRunStatus(live.runStatus) ||
+                Threads.isTerminalRunStatus(live.runStatus)
+              ) {
+                return yield* new FeedbackTurnEndedError({});
+              }
+            }
+            // Last before the insert: the setting can turn Off while a requested report waits.
+            yield* requireOn;
             yield* sql`INSERT INTO agent_feedback ${sql.insert({
               id: report.id,
               thread_id: report.threadId,
@@ -378,7 +409,9 @@ const make = Effect.fn("FeedbackService.make")(function* (
         )
         .pipe(
           Effect.mapError((error) =>
-            error._tag === "FeedbackLimitError" || error._tag === "FeedbackOffError"
+            error._tag === "FeedbackLimitError" ||
+            error._tag === "FeedbackOffError" ||
+            error._tag === "FeedbackTurnEndedError"
               ? error
               : storageError(error),
           ),
