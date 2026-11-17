@@ -30,6 +30,7 @@ import {
 } from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
+import { applyThemeBackground } from "./themeBackground";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
@@ -412,7 +413,9 @@ const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function normalizeThemeId(themeId: string): string {
-  return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
+  return Object.hasOwn(LEGACY_THEME_ID_ALIASES, themeId)
+    ? (LEGACY_THEME_ID_ALIASES[themeId] ?? themeId)
+    : themeId;
 }
 
 export function canonicalThemePreference(theme: string): string {
@@ -1498,6 +1501,13 @@ function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   return overrides;
 }
 
+function parseThemeSeedColor(name: string, value: unknown): string {
+  if (typeof value !== "string" || !toCanonicalThemeColor(value)) {
+    throw new Error(`The theme's "${name}" must be a literal CSS color.`);
+  }
+  return value;
+}
+
 export function parseThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) {
     throw new Error("Theme files must contain a JSON object.");
@@ -1533,7 +1543,14 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     throw new Error(`Theme CSS must be text of ${THEME_CSS_MAX_LENGTH} characters or fewer.`);
   }
 
-  const fallback = getDefaultThemeColors(appearance);
+  const fallback =
+    value.canvas !== undefined && value.accent !== undefined
+      ? createVividThemeColors(
+          appearance,
+          parseThemeSeedColor("canvas", value.canvas),
+          parseThemeSeedColor("accent", value.accent),
+        )
+      : getDefaultThemeColors(appearance);
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   if (value.variants !== undefined) {
     if (!isRecord(value.variants)) throw new Error("Theme variants must be an object.");
@@ -1679,6 +1696,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
   applyThemeCss(palette?.css);
+  applyThemeBackground(palette?.id);
 
   if (palette) {
     root.dataset.themeId = palette.id;

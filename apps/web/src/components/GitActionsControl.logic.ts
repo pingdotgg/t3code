@@ -1,9 +1,11 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  PullRequestChangeBreakdown,
   ReviewDiffPreviewSource,
   VcsStatusResult,
 } from "@t3tools/contracts";
+import { summarizeChangedFiles } from "@t3tools/shared/changedFileKind";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -438,13 +440,19 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-/** Clean trees cannot create feature branches because the server derives names from uncommitted changes. */
+/** The server names a feature branch from the commit it makes, so the action must commit changes. */
 export function resolveFeatureBranchUnavailableReason(input: {
+  action: DefaultBranchConfirmableAction;
   branchName: string;
   hasWorkingTreeChanges: boolean;
 }): string | null {
-  if (input.hasWorkingTreeChanges) return null;
-  return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  if (!input.hasWorkingTreeChanges) {
+    return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  }
+  if (input.action === "push" || input.action === "create_pr") {
+    return `This action doesn't commit your changes, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+  }
+  return null;
 }
 
 export function resolveThreadBranchUpdate(
@@ -504,6 +512,8 @@ export type ChangesLineTotals = {
   readonly deletions: number;
   /** Ref the counts compare against; `null` means they are uncommitted changes against HEAD. */
   readonly baseRef: string | null;
+  /** `null` when the selected totals carry no per-file stats. */
+  readonly breakdown: PullRequestChangeBreakdown;
 };
 
 // `branchChanges ?? workingTree` treats `{0,0}` as present, so a zero branch total hid a dirty
@@ -521,7 +531,12 @@ export function resolveChangesTotals(
       insertions += file.additions;
       deletions += file.deletions;
     }
-    return { insertions, deletions, baseRef: branchPreview.baseRef };
+    return {
+      insertions,
+      deletions,
+      baseRef: branchPreview.baseRef,
+      breakdown: summarizeChangedFiles(branchPreview.files),
+    };
   }
   if (!status) return null;
   const branch = status.branchChanges;
@@ -536,5 +551,15 @@ export function resolveChangesTotals(
     insertions: selected.insertions,
     deletions: selected.deletions,
     baseRef: selected.baseRef,
+    breakdown:
+      selected === tree
+        ? summarizeChangedFiles(
+            tree.files.map((file) => ({
+              path: file.path,
+              additions: file.insertions,
+              deletions: file.deletions,
+            })),
+          )
+        : null,
   };
 }

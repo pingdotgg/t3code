@@ -1,5 +1,9 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
+import {
+  diffFileSection,
+  truncateLongDiffLines,
+} from "@t3tools/source-control-core/server/diffFileRevisions";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -25,6 +29,7 @@ import type {
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestOmittedFileStat,
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
@@ -56,6 +61,7 @@ import {
   decodeMergeRequestGraphqlListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeMergeRequestStatsJson,
   decodeMutationErrorsJson,
   decodeNotesJson,
@@ -75,6 +81,7 @@ import {
   LABEL_PERMISSION_GRAPHQL_QUERY,
   MERGE_MESSAGES_GRAPHQL_QUERY,
   MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+  MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   LIST_ITEM_GRAPHQL_FIELDS,
@@ -89,6 +96,7 @@ import {
 } from "./gitLabMergeRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
+  ProviderChangeRequestWatchFingerprint,
   ProviderFileStats,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -341,6 +349,9 @@ const diffPageSize = (commit: string | undefined) =>
 const CONVERSATION_PAGES = 10;
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
+const WITHHELD_FILE_DIFF_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+// Withheld files are often generated or minified, where one line can be megabytes.
+const WITHHELD_FILE_MAX_LINE_LENGTH = 1_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
@@ -367,6 +378,8 @@ export interface GitLabMergeRequestDiffSlice {
   readonly patch: string;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
+  readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export class GitLabPullRequestCli extends Context.Service<
@@ -448,6 +461,13 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<ProviderFileStats, GitLabPullRequestCliError>;
 
+    readonly getMergeRequestWatchFingerprint: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, GitLabPullRequestCliError>;
+
     readonly listNotes: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
@@ -472,6 +492,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      /** Reads one file a page withheld as too large; ignores `cursor`. */
+      readonly path?: string | undefined;
     }) => Effect.Effect<GitLabMergeRequestDiffSlice, GitLabPullRequestCliError>;
 
     readonly getMergeRequestDiffFileContents: (input: {
@@ -1164,7 +1186,13 @@ export const make = Effect.gen(function* () {
     readonly number: number;
     readonly page: number;
     readonly commit?: string | undefined;
-  }): Effect.Effect<GitLabMergeRequestDiffSlice, GitLabPullRequestCliError> =>
+  }): Effect.Effect<
+    GitLabMergeRequestDiffSlice & {
+      readonly withheldPaths: ReadonlyArray<string>;
+      readonly legacy: boolean;
+    },
+    GitLabPullRequestCliError
+  > =>
     api({
       cwd: input.cwd,
       host: input.host,
@@ -1236,6 +1264,8 @@ export const make = Effect.gen(function* () {
           patch: patch.length === 0 ? patch : patch.replace(/\n?$/, "\n"),
           truncated: decoded.success.truncated,
           nextCursor: morePages ? String(input.page + 1) : null,
+          withheldPaths: decoded.success.withheldPaths,
+          legacy,
         });
       }),
     );
@@ -1837,6 +1867,67 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<A, GitLabPullRequestCliError> =>
     read.pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(fallback)));
 
+  const mergeRequestFileStats = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: "getMergeRequestFileStats",
+      query: MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iid: String(input.number) },
+      decode: decodeMergeRequestFileStatsJson,
+    });
+
+  // GitLab has no per-file diff, so a withheld file is cut from the whole raw diff here and
+  // only its section reaches the client. `/raw_diffs` needs GitLab 17.9 or newer.
+  const withheldFileDiff = (input: {
+    readonly cwd: string;
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+    readonly commit?: string | undefined;
+    readonly path: string;
+  }): Effect.Effect<GitLabMergeRequestDiffSlice, GitLabPullRequestCliError> => {
+    const readError = (message: string) =>
+      new GitLabMergeRequestReadError({
+        command: "glab",
+        cwd: input.cwd,
+        operation: "getMergeRequestDiff",
+        cause: new Error(message),
+      });
+    if (input.commit !== undefined) {
+      return Effect.fail(readError("A commit's withheld files cannot be read one at a time."));
+    }
+    return api({
+      cwd: input.cwd,
+      host: input.host,
+      path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/raw_diffs`,
+      maxOutputBytes: WITHHELD_FILE_DIFF_MAX_OUTPUT_BYTES,
+      timeoutMs: DIFF_TIMEOUT_MS,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const section = result.stdoutTruncated ? null : diffFileSection(result.stdout, input.path);
+        return section === null
+          ? Effect.fail(
+              readError(
+                result.stdoutTruncated
+                  ? `The diff for ${input.path} is too large to load.`
+                  : `GitLab's diff does not include ${input.path}.`,
+              ),
+            )
+          : Effect.succeed({
+              patch: truncateLongDiffLines(section, WITHHELD_FILE_MAX_LINE_LENGTH),
+              truncated: false,
+              nextCursor: null,
+            });
+      }),
+    );
+  };
+
   const graphqlMutation = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
@@ -2295,14 +2386,20 @@ export const make = Effect.gen(function* () {
 
     listMergeRequestStats,
 
-    getMergeRequestFileStats: Effect.fn("GitLabPullRequestCli.getMergeRequestFileStats")((input) =>
+    getMergeRequestFileStats: Effect.fn("GitLabPullRequestCli.getMergeRequestFileStats")(
+      mergeRequestFileStats,
+    ),
+
+    getMergeRequestWatchFingerprint: Effect.fn(
+      "GitLabPullRequestCli.getMergeRequestWatchFingerprint",
+    )((input) =>
       graphqlRead({
         cwd: input.cwd,
         host: input.host,
-        operation: "getMergeRequestFileStats",
-        query: MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+        operation: "getMergeRequestWatchFingerprint",
+        query: MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY,
         variables: { fullPath: input.repository, iid: String(input.number) },
-        decode: decodeMergeRequestFileStatsJson,
+        decode: decodeMergeRequestWatchFingerprintJson,
       }),
     ),
 
@@ -2330,26 +2427,39 @@ export const make = Effect.gen(function* () {
       // GitLab deletes an award by its id and takes no emoji name there, so the reader's own
       // award of that name is looked up first.
       const viewer = yield* viewerUsername(input);
-      const listed = yield* api({ cwd: input.cwd, host: input.host, path: subject });
-      const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
-        content: input.content,
-        viewer,
-      });
-      if (!Result.isSuccess(own)) {
-        return yield* new GitLabMergeRequestReadError({
-          command: "glab",
+      for (let page = 1; ; page++) {
+        const listed = yield* api({
           cwd: input.cwd,
-          operation: "setReaction",
-          cause: own.failure,
+          host: input.host,
+          path: `${subject}?${query([
+            ["per_page", String(MAX_PAGE_SIZE)],
+            ["page", String(page)],
+          ])}`,
         });
+        const own = decodeOwnAwardIdJson(listed.stdout.trim(), {
+          content: input.content,
+          viewer,
+        });
+        if (!Result.isSuccess(own)) {
+          return yield* new GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "setReaction",
+            cause: own.failure,
+          });
+        }
+        if (own.success.id !== null) {
+          yield* api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${subject}/${own.success.id}`,
+            method: "DELETE",
+          });
+          return;
+        }
+        // An empty raw page establishes exhaustion even when the host caps page size.
+        if (own.success.empty) return;
       }
-      if (own.success === null) return;
-      yield* api({
-        cwd: input.cwd,
-        host: input.host,
-        path: `${subject}/${own.success}`,
-        method: "DELETE",
-      });
     }),
 
     listCommits: Effect.fn("GitLabPullRequestCli.listCommits")(function (input) {
@@ -2390,13 +2500,33 @@ export const make = Effect.gen(function* () {
         number: input.number,
         ...(input.commit === undefined ? {} : { commit: input.commit }),
       };
-      if (input.cursor === undefined) {
-        return yield* diffPage({ ...target, page: 1 });
+      if (input.path !== undefined) {
+        return yield* withheldFileDiff({ ...target, path: input.path });
       }
-      const page = diffCursorPage(input.cursor);
+      const page = input.cursor === undefined ? 1 : diffCursorPage(input.cursor);
       if (page === null)
         return yield* new GitLabDiffCursorError({ command: "glab", cwd: input.cwd });
-      return yield* diffPage({ ...target, page });
+      const { withheldPaths, legacy, ...slice } = yield* diffPage({ ...target, page });
+      // A commit's diff has no per-file counts or raw diff to read a withheld file from.
+      if (input.commit !== undefined) return slice;
+      const readable = page === 1 && !legacy ? { withheldFilesReadable: true } : {};
+      if (withheldPaths.length === 0) return { ...slice, ...readable };
+      const stats = yield* orWhenUnanswered(mergeRequestFileStats(target), {
+        files: [],
+        truncated: true,
+      });
+      const statsByPath = new Map(stats.files.map((file) => [file.path, file]));
+      const omittedFileStats = withheldPaths.flatMap((path) => {
+        const stat = statsByPath.get(path);
+        return stat === undefined
+          ? []
+          : [{ path, additions: stat.additions, deletions: stat.deletions }];
+      });
+      return {
+        ...slice,
+        ...readable,
+        ...(omittedFileStats.length === 0 ? {} : { omittedFileStats }),
+      };
     }),
 
     getMergeRequestDiffFileContents: Effect.fn(

@@ -499,6 +499,26 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("keeps user hooks off over launch args that turn them on", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Hookless title" }),
+        launchArgs: "--config features.hooks=true --enable hooks",
+        requireArg: "--config features.codex_hooks=false --config features.hooks=false",
+        forbidArg: "--enable",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Hookless title");
+        }),
+    ),
+  );
+
   it.effect("passes exec-safe launch args into codex exec", () =>
     withFakeCodexEnv(
       {
