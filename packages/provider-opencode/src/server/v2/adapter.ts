@@ -1052,9 +1052,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         input: { sessionID: state.sessionId },
       });
       const goal = yield* decodeGoal(result.output);
-      yield* lock.withPermit(
+      return yield* lock.withPermit(
         Effect.gen(function* () {
-          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+          if (state.goalRevision !== revision) return false;
+          yield* updateGoal(state, goal);
+          return true;
         }),
       );
     });
@@ -3204,11 +3206,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Effect.forkIn(
         readGoal(state).pipe(
           Effect.timeout(INVENTORY_TIMEOUT),
-          Effect.catch(() => Effect.logWarning("Could not refresh OpenCode goal state.")),
-          Effect.ensuring(
+          Effect.catch(() =>
+            Effect.logWarning("Could not refresh OpenCode goal state.").pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((applied) =>
             lock.withPermit(
               Effect.gen(function* () {
                 if (state.goalRevision === revision) state.goalRefreshing = false;
+                // A newer goal event or a reconnect's read owns settlement now.
+                else if (!applied) return;
                 if (state.active !== undefined) yield* endIfSettled(state, state.active);
               }),
             ),
