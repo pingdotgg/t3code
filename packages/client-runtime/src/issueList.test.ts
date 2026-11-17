@@ -16,6 +16,7 @@ import {
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
+  keepIssuePages,
 } from "./issueList.ts";
 
 const environmentId = "env-1" as EnvironmentId;
@@ -163,6 +164,26 @@ describe("issueFilterScopes", () => {
     } finally {
       registry.dispose();
     }
+  });
+
+  it("keeps a Linear team's filter scope across a search's loading gap", () => {
+    const first = holdIssuePages(
+      [[environmentId, answer({ trackers: [tracker({})], entries: [linearRow] })]],
+      new Map(),
+    );
+    const pages = keepIssuePages(new Map(), first);
+    const loading = holdIssuePages([], pages);
+    const kept = keepIssuePages(pages, loading);
+    const searched = holdIssuePages(
+      [[environmentId, answer({ trackers: [tracker({})], entries: [] })]],
+      kept,
+    );
+    expect(issueFilterScopes(searched, [])).toEqual([
+      {
+        environmentId,
+        input: { projectId: api, tracker: "linear", host: "linear.app", scope: "ENG" },
+      },
+    ]);
   });
 
   it("skips a tracker that cannot be read", () => {
