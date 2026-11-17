@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { CLI_NPM_PACKAGE_NAME } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -122,13 +123,14 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
 
       // A global npm launcher runs the downloaded executable; PATH's `t3` is that launcher.
       const prefix = path.join(home, "npm");
-      const npmLauncher = path.join(prefix, "lib/node_modules/t3/bin/t3.mjs");
+      const packageRoot = path.join(prefix, "lib/node_modules", CLI_NPM_PACKAGE_NAME);
+      const npmLauncher = path.join(packageRoot, "bin/t3.mjs");
       yield* fs.makeDirectory(path.dirname(npmLauncher), { recursive: true });
       yield* fs.makeDirectory(path.join(prefix, "bin"));
       yield* fs.writeFileString(npmLauncher, "", { mode: 0o755 });
       yield* fs.writeFileString(
-        path.join(prefix, "lib/node_modules/t3/package.json"),
-        `{"name":"t3","version":"${packageJson.version}"}`,
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: CLI_NPM_PACKAGE_NAME, version: packageJson.version }),
       );
       yield* fs.symlink(npmLauncher, path.join(prefix, "bin/t3"));
       expect(
