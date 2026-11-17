@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,13 +31,13 @@ import { APP_NAME } from "@t3tools/shared/branding";
 
 /**
  * A child on another environment settles with its card over this server's own full-access link
- * there, else through a connected T3 app, and its own environment cascades to what is under it.
- * Each environment gets its own outbox effect; one that cannot be reached yet fails and is
- * queued again each minute, and when an app connects, a link changes or the roster changes.
+ * there, else through a connected T3 app. Each environment gets its own outbox effect; one not
+ * reachable yet fails, and is queued again by a backing-off minute sweep or at once on a change.
  */
 
 // A card's settle time is this machine's clock; a remote child's is its own machine's.
 const CLOCK_SKEW_MS = 60_000;
+const SWEEP_BACKOFF_CAP = Duration.minutes(15);
 
 const settles = (scopes: ReadonlyArray<GatewayScope> | undefined) =>
   scopes?.includes("read") === true && scopes.includes("lifecycle");
@@ -310,24 +311,32 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-  /** Queues every remote settlement that could not reach its environment again. */
-  const retryWaiting = Effect.gen(function* () {
-    const createdAfter = DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION);
-    const requeued = yield* outbox.requeueFailed({
-      effectType: "thread-settlement.remote",
-      createdAfter,
-    });
-    // Until one fails again, nothing waits: no row is younger than the age-out and failed.
-    if (requeued === 0) waiting = false;
-  }).pipe(
+  const requeue = Effect.fn("RemoteSettlementCascade.requeue")(
+    function* (backoffCap: Duration.Duration | undefined) {
+      const createdAfter = DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION);
+      const requeued = yield* outbox.requeueFailed({
+        effectType: "thread-settlement.remote",
+        createdAfter,
+        ...(backoffCap === undefined ? {} : { backoffCap }),
+      });
+      // Until one fails again, nothing waits: no row is younger than the age-out and failed.
+      if (requeued === 0 && backoffCap === undefined) waiting = false;
+    },
     Effect.catch((cause) =>
       Effect.logWarning("Could not retry settlement on other environments", { cause }),
     ),
+  );
+
+  /** Queues every remote settlement that could not reach its environment again. */
+  const retryWaiting = requeue(undefined).pipe(
     Effect.withSpan("RemoteSettlementCascade.retryWaiting"),
   );
 
-  /** The minute sweep, which writes nothing while no settlement waits. */
-  const sweep = Effect.suspend(() => (waiting ? retryWaiting : Effect.void));
+  /**
+   * The minute sweep, which writes nothing while no settlement waits. A machine that stays away
+   * is asked less often, so waiting settlements do not rewrite the outbox every minute for days.
+   */
+  const sweep = Effect.suspend(() => (waiting ? requeue(SWEEP_BACKOFF_CAP) : Effect.void));
 
   return { run, retryWaiting, sweep };
 });

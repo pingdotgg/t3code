@@ -288,10 +288,15 @@ export interface EffectOutboxV2Shape {
     readonly error: string;
   }) => Effect.Effect<boolean, EffectOutboxError>;
   readonly pruneSettled: Effect.Effect<number, EffectOutboxError>;
-  /** Makes failed effects of a type created since `createdAfter` pending again, with fresh attempts. */
+  /**
+   * Makes failed effects of a type created since `createdAfter` pending again, with fresh attempts.
+   * With `backoffCap`, an effect waits since its last failure as long as it had waited before it,
+   * up to the cap.
+   */
   readonly requeueFailed: (input: {
     readonly effectType: OrchestrationEffectRequestV2["type"];
     readonly createdAfter: DateTime.Utc;
+    readonly backoffCap?: Duration.Duration;
   }) => Effect.Effect<number, EffectOutboxError>;
 }
 
@@ -757,8 +762,15 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           ),
       ),
       requeueFailed: Effect.fn("EffectOutbox.requeueFailed")(
-        function* ({ effectType, createdAfter }) {
+        function* ({ effectType, createdAfter, backoffCap }) {
           const now = DateTime.formatIso(yield* DateTime.now);
+          const backedOff =
+            backoffCap === undefined
+              ? sql`1 = 1`
+              : sql`julianday(${now}) - julianday(completed_at) >= min(
+                  ${Duration.toMillis(backoffCap) / 86_400_000},
+                  julianday(completed_at) - julianday(created_at)
+                )`;
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
             SET
@@ -771,6 +783,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE effect_type = ${effectType}
               AND status = 'failed'
               AND created_at >= ${DateTime.formatIso(createdAfter)}
+              AND ${backedOff}
             RETURNING effect_id
           `;
           if (rows.length > 0) yield* notifyAvailable(rows.length);
