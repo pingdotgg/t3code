@@ -1352,19 +1352,20 @@ async function recordMessagesUntilTurnResult(input: {
       (toolName) => status !== undefined && !status.readToolNames.has(toolName),
     );
     if (status !== undefined && unread.length > 0) {
-      input.entries.push({
-        type: "expect_outbound",
-        label: "query.mcp_server_status",
-        frame: { type: "query.mcp_server_status" },
-      });
-      input.entries.push({
-        type: "emit_inbound",
-        label: "mcp_server_status",
-        frame: {
-          type: "mcp_server_status",
-          statuses: (await status.read()).map(mcpServerStatusForReplay),
+      // Appended together after the read, so permission entries recorded meanwhile cannot split the pair.
+      const statuses = (await status.read()).map(mcpServerStatusForReplay);
+      input.entries.push(
+        {
+          type: "expect_outbound",
+          label: "query.mcp_server_status",
+          frame: { type: "query.mcp_server_status" },
         },
-      });
+        {
+          type: "emit_inbound",
+          label: "mcp_server_status",
+          frame: { type: "mcp_server_status", statuses },
+        },
+      );
       for (const toolName of unread) status.readToolNames.add(toolName);
     }
     if (replayMessage.type === "result") {
