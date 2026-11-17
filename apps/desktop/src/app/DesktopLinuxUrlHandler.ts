@@ -101,15 +101,12 @@ export function renderUrlHandlerDesktopEntry(input: {
 }
 
 // AppImageLauncher, Gear Lever and appimaged install their own visible entry for the AppImage.
-export const launchesAppImage = (entry: string, appImagePath: string): boolean =>
-  entry
-    .split("\n")
-    .some(
-      (line) =>
-        line === `Exec=${appImagePath}` ||
-        line.startsWith(`Exec=${appImagePath} `) ||
-        line.startsWith(`Exec="${appImagePath}"`),
-    );
+// The update migration can leave that entry on a symlink, so callers also compare real paths.
+export function desktopEntryProgram(entry: string): string | null {
+  const exec = /^Exec=(.*)$/mu.exec(entry)?.[1];
+  if (exec === undefined) return null;
+  return /^"([^"]*)"/u.exec(exec)?.[1] ?? exec.split(" ")[0] ?? null;
+}
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
   const exec = /^Exec=(.*) %U$/mu.exec(entry)?.[1];
@@ -181,21 +178,24 @@ export const make = Effect.gen(function* () {
   const integratedAppImage = Effect.fn("DesktopLinuxUrlHandler.integratedAppImage")(function* (
     appImagePath: string,
   ) {
-    return yield* fileSystem.readDirectory(environment.linuxApplicationsDir).pipe(
-      Effect.orElseSucceed((): ReadonlyArray<string> => []),
-      Effect.flatMap((names) =>
-        Effect.forEach(
-          names.filter(
-            (name) => name.endsWith(".desktop") && name !== environment.linuxDesktopEntryName,
-          ),
-          (name) =>
-            fileSystem
-              .readFileString(environment.path.join(environment.linuxApplicationsDir, name))
-              .pipe(Effect.orElseSucceed(() => "")),
-        ),
-      ),
-      Effect.map((entries) => entries.some((entry) => launchesAppImage(entry, appImagePath))),
-    );
+    const realPath = (path: string) =>
+      fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => null));
+    const appImageRealPath = yield* realPath(appImagePath);
+    const names = yield* fileSystem
+      .readDirectory(environment.linuxApplicationsDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const name of names) {
+      if (!name.endsWith(".desktop") || name === environment.linuxDesktopEntryName) continue;
+      const program = desktopEntryProgram(
+        yield* fileSystem
+          .readFileString(environment.path.join(environment.linuxApplicationsDir, name))
+          .pipe(Effect.orElseSucceed(() => "")),
+      );
+      if (program === null) continue;
+      if (program === appImagePath) return true;
+      if (appImageRealPath !== null && (yield* realPath(program)) === appImageRealPath) return true;
+    }
+    return false;
   });
 
   const writeDesktopEntry = Effect.gen(function* () {

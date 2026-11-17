@@ -72,6 +72,7 @@ const layerHandler = (
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly otherEntries?: Record<string, string>;
+    readonly realPaths?: Record<string, string>;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
@@ -116,6 +117,7 @@ const layerHandler = (
               : Effect.sync(() => {
                   recorded.icons.push({ path, bytes: [...bytes] });
                 }),
+          realPath: (path) => Effect.succeed(input.realPaths?.[path] ?? path),
           readDirectory: () => Effect.succeed(Object.keys(input.otherEntries ?? {})),
           readFileString: (path) =>
             Effect.succeed(
@@ -311,21 +313,27 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("keeps the entry hidden when an AppImage integrator already launches it", () => {
-    const recorded = emptyRecording();
+  it.effect.each([
+    { integrated: "/home/alice/Applications/T3-Code.AppImage", label: "the same path" },
+    { integrated: "/home/alice/Applications/T3-Code-0.1.8.AppImage", label: "an update symlink" },
+  ])(
+    "keeps the entry hidden when an AppImage integrator launches it through $label",
+    ({ integrated }) => {
+      const recorded = emptyRecording();
 
-    return Effect.gen(function* () {
-      yield* runRegister(recorded, {
-        otherEntries: {
-          "appimagekit_0123abcd-T3_Code.desktop":
-            "[Desktop Entry]\nExec=/home/alice/Applications/T3-Code.AppImage %U\n",
-        },
+      return Effect.gen(function* () {
+        yield* runRegister(recorded, {
+          otherEntries: {
+            "appimagekit_0123abcd-T3_Code.desktop": `[Desktop Entry]\nExec=${integrated} %U\n`,
+          },
+          realPaths: { [integrated]: "/home/alice/Applications/T3-Code.AppImage" },
+        });
+
+        assert.include(recorded.files[0]?.content, "NoDisplay=true");
+        assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
       });
-
-      assert.include(recorded.files[0]?.content, "NoDisplay=true");
-      assert.notInclude(recorded.files[0]?.content, "StartupWMClass=");
-    });
-  });
+    },
+  );
 
   it.effect("does not rewrite the pre-ready entry while the portal can be reading it", () => {
     const recorded = emptyRecording();

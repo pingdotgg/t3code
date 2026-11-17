@@ -17,6 +17,7 @@ const {
   execFileSyncMock,
   readFileSyncMock,
   readdirSyncMock,
+  realpathSyncMock,
   symlinkSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
@@ -30,6 +31,7 @@ const {
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   readdirSyncMock: vi.fn(),
+  realpathSyncMock: vi.fn(),
   symlinkSyncMock: vi.fn(),
 }));
 
@@ -53,6 +55,7 @@ vi.mock("electron", () => ({
 vi.mock("node:fs", () => ({
   readFileSync: readFileSyncMock,
   readdirSync: readdirSyncMock,
+  realpathSync: realpathSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
@@ -79,6 +82,7 @@ describe("DesktopPreReadyPlatform", () => {
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
     readdirSyncMock.mockReset().mockReturnValue([]);
+    realpathSyncMock.mockReset().mockImplementation((path: string) => path);
     symlinkSyncMock.mockReset();
   });
 
@@ -260,37 +264,49 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
-  it.effect("keeps the early entry hidden when an AppImage integrator already launches it", () => {
-    vi.stubEnv("VITE_DEV_SERVER_URL", "");
-    getSwitchValueMock.mockReturnValue("");
-    readdirSyncMock.mockReturnValue(["com.t3tools.T3Code.desktop", "appimagekit_0123-T3.desktop"]);
-    readFileSyncMock.mockImplementation((path: string) =>
-      path === "/xdg/applications/appimagekit_0123-T3.desktop"
-        ? "[Desktop Entry]\nExec=/Applications/current.AppImage %U\n"
-        : "{}",
-    );
+  it.effect.each([
+    { integrated: "/Applications/current.AppImage", label: "the same path" },
+    { integrated: "/Applications/T3-Code-0.1.8-x86_64.AppImage", label: "an update symlink" },
+  ])(
+    "keeps the early entry hidden when an AppImage integrator launches it through $label",
+    ({ integrated }) => {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      getSwitchValueMock.mockReturnValue("");
+      readdirSyncMock.mockReturnValue([
+        "com.t3tools.T3Code.desktop",
+        "appimagekit_0123-T3.desktop",
+      ]);
+      realpathSyncMock.mockImplementation((path: string) =>
+        path === integrated ? "/Applications/current.AppImage" : path,
+      );
+      readFileSyncMock.mockImplementation((path: string) =>
+        path === "/xdg/applications/appimagekit_0123-T3.desktop"
+          ? `[Desktop Entry]\nExec=${integrated} %U\n`
+          : "{}",
+      );
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        yield* Layer.build(
-          DesktopPreReadyPlatform.layer.pipe(
-            Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-            Layer.provide(
-              DesktopConfig.layerTest({
-                XDG_DATA_HOME: "/xdg",
-                APPIMAGE: "/Applications/current.AppImage",
-              }),
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(
+                DesktopConfig.layerTest({
+                  XDG_DATA_HOME: "/xdg",
+                  APPIMAGE: "/Applications/current.AppImage",
+                }),
+              ),
             ),
-          ),
-        );
-        const entry = writeFileSyncMock.mock.calls.find(
-          ([path]) => path === "/xdg/applications/com.t3tools.T3Code.desktop",
-        )?.[1];
-        assert.include(entry, "NoDisplay=true");
-        assert.notInclude(entry, "StartupWMClass=");
-      }),
-    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
-  });
+          );
+          const entry = writeFileSyncMock.mock.calls.find(
+            ([path]) => path === "/xdg/applications/com.t3tools.T3Code.desktop",
+          )?.[1];
+          assert.include(entry, "NoDisplay=true");
+          assert.notInclude(entry, "StartupWMClass=");
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+    },
+  );
 
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",

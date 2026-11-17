@@ -15,7 +15,7 @@ import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
-  launchesAppImage,
+  desktopEntryProgram,
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
@@ -69,12 +69,26 @@ function isIntegratedAppImage(
   ownEntryName: string,
   appImagePath: string,
 ): boolean {
+  const realPath = (path: string) => {
+    try {
+      return NodeFS.realpathSync(path);
+    } catch {
+      return null;
+    }
+  };
+  const appImageRealPath = realPath(appImagePath);
   try {
     return NodeFS.readdirSync(applicationsDir).some((name) => {
       if (!name.endsWith(".desktop") || name === ownEntryName) return false;
       try {
-        const entry = NodeFS.readFileSync(NodePath.posix.join(applicationsDir, name), "utf8");
-        return launchesAppImage(entry, appImagePath);
+        const program = desktopEntryProgram(
+          NodeFS.readFileSync(NodePath.posix.join(applicationsDir, name), "utf8"),
+        );
+        return (
+          program !== null &&
+          (program === appImagePath ||
+            (appImageRealPath !== null && realPath(program) === appImageRealPath))
+        );
       } catch {
         return false;
       }
