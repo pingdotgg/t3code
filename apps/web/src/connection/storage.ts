@@ -567,15 +567,18 @@ function withCrossWindowCatalogLock<A, E>(effect: Effect.Effect<A, E>): Effect.E
   return Effect.acquireUseRelease(
     Effect.promise(
       () =>
-        new Promise<() => void>((granted) => {
-          void locks.request(
-            CATALOG_LOCK_NAME,
-            () => new Promise<void>((release) => granted(() => release())),
-          );
+        new Promise<(() => void) | undefined>((granted) => {
+          // A lock that cannot be taken leaves only the per-window lock, rather than hanging.
+          locks
+            .request(
+              CATALOG_LOCK_NAME,
+              () => new Promise<void>((release) => granted(() => release())),
+            )
+            .catch(() => granted(undefined));
         }),
     ),
     () => effect,
-    (release) => Effect.sync(release),
+    (release) => Effect.sync(() => release?.()),
   );
 }
 
