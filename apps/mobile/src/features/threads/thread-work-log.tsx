@@ -1475,10 +1475,6 @@ function ToolActivityIconView(props: {
         fallback={props.fallback}
         color={props.fallbackColor}
         themeAppearance={props.themeAppearance}
-        lightTile={
-          props.themeAppearance === "dark" &&
-          source === toolActivityFaviconUrl(props.icon, "light", 32)
-        }
       />
     ) : props.fallback ? (
       <WorkLogIcon icon={props.fallback} color={props.fallbackColor} />
@@ -1496,7 +1492,6 @@ function ToolActivityIconView(props: {
         fallback={props.fallback}
         color={props.fallbackColor}
         themeAppearance={props.themeAppearance}
-        lightTile={props.themeAppearance === "dark" && props.icon.logoUrlDark === undefined}
       />
     );
   }
@@ -1535,24 +1530,16 @@ function NativeAppToolActivityIcon(props: {
   ) : null;
 }
 
-/** `lightTile` keeps a logo drawn for light backgrounds legible in dark mode. */
 function ToolActivityImage(props: {
   readonly source: string;
   readonly fallback: WorkContentIcon | undefined;
   readonly color: ColorValue;
   readonly themeAppearance: "light" | "dark";
-  readonly lightTile?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
-    <View
-      className={cn(
-        "h-4 w-4 items-center justify-center overflow-hidden rounded-[6px]",
-        props.lightTile ? "bg-white" : "bg-screen",
-      )}
-      style={{ borderCurve: "continuous" }}
-    >
+    <View className="h-4 w-4 items-center justify-center overflow-hidden rounded-[3px] bg-screen">
       {(!loaded || failed) && props.fallback ? (
         <WorkLogIcon icon={props.fallback} color={props.color} />
       ) : null}

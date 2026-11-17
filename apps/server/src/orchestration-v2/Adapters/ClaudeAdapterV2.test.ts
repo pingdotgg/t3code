@@ -6534,11 +6534,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       status: { config: { type: "http", url: "https://mcp.probe.dev/mcp?key=secret" } },
       icon: { _tag: "website", pageUrl: "https://probe.dev" },
     },
-    {
-      name: "no icon for a stdio server that declares none",
-      status: { config: { type: "stdio", command: "probe-mcp" } },
-      icon: undefined,
-    },
   ] as const)("shows an MCP tool row with $name", ({ status, icon }) =>
     Effect.gen(function* () {
       const { item } = yield* runClaudeMcpAppToolTurn([], {

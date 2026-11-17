@@ -98,9 +98,6 @@ export function ToolActivityIconView(props: {
         fallbackName={props.fallbackName}
         className={props.className}
         muted={props.muted}
-        lightTile={
-          resolvedTheme === "dark" && src === toolActivityFaviconUrl(props.icon, "light", 32)
-        }
       />
     ) : (
       <FallbackIcon name={props.fallbackName} className={fallbackClassName} />
@@ -119,7 +116,6 @@ export function ToolActivityIconView(props: {
         fallbackName={props.fallbackName}
         className={props.className}
         muted={props.muted}
-        lightTile={resolvedTheme === "dark" && props.icon.logoUrlDark === undefined}
       />
     );
   }
@@ -171,14 +167,12 @@ function NativeAppToolActivityIcon(props: {
 
 const loadedToolActivityIconSrcs = new Map<string, string>();
 
-/** `lightTile` keeps a logo drawn for light backgrounds legible in dark mode. */
 function ToolActivityImageIcon(props: {
   cacheKey: string;
   src: string;
   fallbackName: WorkEntryIconName | undefined;
   className: string;
   muted: boolean;
-  lightTile?: boolean;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(
     () => loadedToolActivityIconSrcs.get(props.cacheKey) ?? null,
@@ -202,8 +196,7 @@ function ToolActivityImageIcon(props: {
         <span
           className={cn(
             props.className,
-            "inline-block overflow-hidden rounded-md [corner-shape:squircle]",
-            props.lightTile ? "bg-white" : "bg-background",
+            "inline-block overflow-hidden rounded-xs bg-background",
             props.muted && "dark:opacity-70",
           )}
         >

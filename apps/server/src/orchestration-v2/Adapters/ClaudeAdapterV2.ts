@@ -8720,24 +8720,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (toolName) => !cache.has(toolName),
             );
             if (unresolved.length === 0) return cache;
-            const statuses = yield* liveQuery.query.mcpServerStatus;
-            for (const toolName of unresolved) {
-              cache.set(toolName, claudeMcpServerPresentation(statuses, toolName) ?? null);
-            }
-            return cache;
-          },
-          (effect, liveQuery) =>
-            effect.pipe(
+            // A failed read still resolves these tools, so a CLI that cannot answer costs one timeout.
+            const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
               Effect.timeout(CLAUDE_MCP_SERVER_STATUS_TIMEOUT),
               Effect.catchCauseIf(
                 (cause) => !Cause.hasInterruptsOnly(cause),
                 (cause) =>
                   Effect.logDebug("Failed to read Claude MCP server status for tool icons.", {
                     cause,
-                  }).pipe(Effect.as(liveQuery.mcpServerPresentations)),
+                  }).pipe(Effect.as([])),
               ),
               Effect.orDie,
-            ),
+            );
+            for (const toolName of unresolved) {
+              cache.set(toolName, claudeMcpServerPresentation(statuses, toolName) ?? null);
+            }
+            return cache;
+          },
         );
 
         const settleToolCall = Effect.fnUntraced(function* (input: {
