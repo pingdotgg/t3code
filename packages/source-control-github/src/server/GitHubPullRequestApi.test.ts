@@ -3754,7 +3754,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     { name: "alone", responses: [[refusedRules]], requestedReviewers: 100 },
     {
       name: "with a reviewer refusal",
-      responses: [[refusedRules, refusedReviewer], [refusedReviewer], [refusedRules]],
+      responses: [[refusedRules, refusedReviewer], [refusedReviewer]],
       requestedReviewers: 0,
     },
   ])(
@@ -3778,6 +3778,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
           requestedReviewers,
         });
         expect(mockedExecute).toHaveBeenCalledTimes(responses.length + 1);
+
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+        yield* cli.getPullRequestDetail({
+          ...pullRequestInput,
+          repository: `acme/refused-rules-${name.replaceAll(" ", "-")}`,
+        });
+        expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requiredRules: false });
+        expect(mockedExecute).toHaveBeenCalledTimes(responses.length + 2);
       }),
   );
 

@@ -1543,6 +1543,12 @@ export const make = Effect.gen(function* () {
     timeToLive: "10 minutes",
     lookup: (_key: string) => Effect.void,
   });
+  // Likewise a credential refused base branch rules, which only add pending required checks.
+  const refusedRequiredRules = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "10 minutes",
+    lookup: (_key: string) => Effect.void,
+  });
   const readRequestedReviewers = Effect.fn("GitHubPullRequestApi.readRequestedReviewers")(
     function* <A, E, R>(
       input: { readonly host: string; readonly repository: string; readonly number: number },
@@ -1566,7 +1572,9 @@ export const make = Effect.gen(function* () {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
     const required = asksRequired(input.host);
-    const read = (requestedReviewers: number) => {
+    const read = Effect.fn("GitHubPullRequestApi.readPullRequestCore")(function* (
+      requestedReviewers: number,
+    ) {
       const core = (requiredRules: boolean) =>
         client
           .PullRequestCore({
@@ -1580,17 +1588,19 @@ export const make = Effect.gen(function* () {
             mergeQueue: input.host.toLowerCase() === "github.com",
           })
           .pipe(toleratingMissingPullRef(decodePullRequestCore));
-      // Base branch rules only add pending required checks, so a refusal of them reads without.
-      return core(required).pipe(
+      const host = normalizeHost(input.host);
+      const { fingerprint } = yield* api.credential(host);
+      const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}`;
+      if (!required || (yield* Cache.has(refusedRequiredRules, key))) return yield* core(false);
+      return yield* core(true).pipe(
         Effect.catchIf(
           (error) =>
-            required &&
             isRefusedOnlyAt(error, isRequestedReviewerPath, isRequiredRulesPath) &&
             !isRefusedOnlyAt(error, isRequestedReviewerPath),
-          () => core(false),
+          () => Cache.set(refusedRequiredRules, key, undefined).pipe(Effect.andThen(core(false))),
         ),
       );
-    };
+    });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
         readRequestedReviewers(input, 100, read).pipe(
