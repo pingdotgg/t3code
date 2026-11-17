@@ -3416,9 +3416,9 @@ index 44e9aa8290..26216cdbe7 100644
  } from "./checkpointDiff.ts";
  import { ModelSelection } from "./modelSelection.ts";
 +import { AgentId } from "./agentDefinition.ts";
+ import { ThreadIssueKey, ThreadIssueLink, ThreadIssueLinkSource } from "./issue.ts";
  import {
    ThreadLinkedPullRequest,
-   ThreadPullRequestLink,
 @@ -470,6 +471,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
    title: TrimmedNonEmptyString,
    providerInstanceId: ProviderInstanceId,
