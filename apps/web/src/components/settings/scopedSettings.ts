@@ -21,8 +21,10 @@ import {
   resolveWorktreeCleanup,
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
+import { Atom } from "effect/reactivity";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -53,6 +55,69 @@ export function isConnectedWithConfig(
   environment: Pick<ScopedSettingsEnvironment, "connection" | "serverConfig">,
 ) {
   return environment.connection.phase === "connected" && environment.serverConfig !== null;
+}
+
+/**
+ * A server save shown before its environment pushes the new settings back. It applies while in
+ * flight, and after success only until that environment's settings change from `settledOver`.
+ */
+export interface PendingScopedWrite {
+  readonly save: object;
+  readonly environmentId: EnvironmentId;
+  readonly patch: ServerSettingsPatch;
+  readonly settledOver?: ServerSettings;
+}
+
+export const pendingScopedWritesAtom = Atom.make<readonly PendingScopedWrite[]>([]).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-settings:pending-scoped-writes"),
+);
+
+const pendingWriteApplies = (write: PendingScopedWrite, settings: ServerSettings | undefined) =>
+  settings !== undefined && (write.settledOver === undefined || write.settledOver === settings);
+
+/** Settles one environment's write: a failure or an already-pushed result drops it. */
+export function settlePendingScopedWrites(
+  writes: readonly PendingScopedWrite[],
+  target: Pick<PendingScopedWrite, "save" | "environmentId">,
+  readSettings: (environmentId: EnvironmentId) => ServerSettings | undefined,
+  saved?: ServerSettings,
+): readonly PendingScopedWrite[] {
+  return writes.flatMap((write) => {
+    const current = readSettings(write.environmentId);
+    if (write.save !== target.save || write.environmentId !== target.environmentId) {
+      return pendingWriteApplies(write, current) ? [write] : [];
+    }
+    if (saved === undefined || current === undefined || Equal.equals(current, saved)) return [];
+    return [{ ...write, settledOver: current }];
+  });
+}
+
+export function applyPendingScopedWrites<T extends ScopedSettingsEnvironment>(
+  environments: readonly T[],
+  writes: readonly PendingScopedWrite[],
+): readonly T[] {
+  if (writes.length === 0) return environments;
+  return environments.map((environment) => {
+    const config = environment.serverConfig;
+    if (config === null) return environment;
+    const settings = writes.reduce(
+      (current, write) =>
+        write.environmentId === environment.environmentId &&
+        pendingWriteApplies(write, config.settings)
+          ? applyServerSettingsPatch(current, write.patch)
+          : current,
+      config.settings,
+    );
+    if (settings === config.settings) return environment;
+    // Legacy servers read `compactIdleThreads`, so project the mode back onto it.
+    const { idleCompaction: _mode, ...legacy } = settings;
+    const projected =
+      config.settings.idleCompaction === undefined
+        ? { ...legacy, ...idleCompactionPatch(config.settings, globalIdleCompaction(settings)) }
+        : settings;
+    return { ...environment, serverConfig: { ...config, settings: projected } };
+  });
 }
 
 /** The representative supplies display values, never the set of write targets. */

@@ -321,6 +321,22 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
+// Rows built after a pick on another instance carry no options for the thread's own model.
+export function withStoredThreadModelOptions(
+  selection: ModelSelection,
+  stored: ModelSelection,
+): ModelSelection {
+  if (
+    (selection.options?.length ?? 0) > 0 ||
+    !stored.options?.length ||
+    selection.instanceId !== stored.instanceId ||
+    selection.model !== stored.model
+  ) {
+    return selection;
+  }
+  return { ...selection, options: stored.options };
+}
+
 function matchesLockedProvider(
   config: T3ServerConfig | null | undefined,
   provider: T3ServerConfig["providers"][number],
