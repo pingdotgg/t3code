@@ -8,6 +8,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -635,6 +636,24 @@ it("keeps the number written on each ordered list item only when enabled", () =>
       "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
     ),
   ).toEqual([undefined, undefined, undefined, undefined, undefined]);
+});
+
+it("keeps the spaces a user typed at the start of a line in a sent message", () => {
+  type Node = { type: string; tagName?: string; value?: string; children?: Node[] };
+  const text = (node: Node): string =>
+    node.type === "text"
+      ? (node.value ?? "")
+      : node.tagName === "br"
+        ? ""
+        : (node.children ?? []).map(text).join("");
+  const processor = unified()
+    .use(remarkParse)
+    .use([...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS, ...CHAT_USER_MARKDOWN_REMARK_PLUGINS])
+    .use(remarkRehype, { allowDangerousHtml: true });
+  const render = (markdown: string) =>
+    text(processor.runSync(processor.parse(markdown), markdown) as Node).replace(/\u00a0/g, " ");
+
+  expect(render("Plan\n   Step one\n        Detail a")).toBe("Plan\n   Step one\n        Detail a");
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
