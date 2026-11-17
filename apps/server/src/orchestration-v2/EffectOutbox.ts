@@ -593,7 +593,25 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 maxRunningTitleGenerations,
               )}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
-              ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
+              -- Mirrors isDelegatedAppThread. A stopped delegated tree leaves a backlog of captures
+              -- on one cwd; the user's own thread must not finalize behind all of them.
+              ORDER BY
+                (
+                  candidate.effect_type = 'checkpoint.capture'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM orchestration_v2_projection_threads AS capture_thread
+                    WHERE capture_thread.thread_id = candidate.thread_id
+                      AND (
+                        json_extract(capture_thread.payload_json, '$.lineage.relationshipToParent')
+                          = 'subagent'
+                        OR json_extract(capture_thread.payload_json, '$.delegatedFrom') IS NOT NULL
+                      )
+                  )
+                ) ASC,
+                candidate.available_at ASC,
+                candidate.created_at ASC,
+                candidate.effect_id ASC
               LIMIT 1
             )
             RETURNING *
