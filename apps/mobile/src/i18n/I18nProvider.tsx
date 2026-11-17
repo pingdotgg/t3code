@@ -15,6 +15,7 @@ import ja from "./translations/ja.json";
 import ko from "./translations/ko.json";
 import ptBR from "./translations/pt-BR.json";
 import ru from "./translations/ru.json";
+import sv from "./translations/sv.json";
 import zh from "./translations/zh.json";
 
 // Screens import GT from here so the polyfills above always load first.
@@ -30,6 +31,7 @@ const TRANSLATIONS: Readonly<Record<string, Record<string, string>>> = {
   ja,
   ko,
   ru,
+  sv,
 };
 
 initializeGT({
