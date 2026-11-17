@@ -26,6 +26,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
+  type KeybindingCommand,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -450,6 +451,21 @@ function writableSessionGeneration(
   return canOperate && session.version > 0 && session.status === "running"
     ? session.output.generation
     : null;
+}
+
+/** Native chords stay with the surface, whose fallbacks survive denied clipboard access. */
+export function terminalClipboardShortcutAction(
+  command: KeybindingCommand | null,
+  event: Parameters<typeof isTerminalCopyShortcut>[0],
+  hasSelection: boolean,
+): "copy" | "paste" | "native" | null {
+  if (command === "terminal.copy") {
+    return !event.altKey && hasSelection && isTerminalCopyShortcut(event) ? "native" : "copy";
+  }
+  if (command === "terminal.paste") {
+    return !event.altKey && isTerminalPasteShortcut(event) ? "native" : "paste";
+  }
+  return null;
 }
 
 export function shouldHandleTerminalExit(
@@ -1028,20 +1044,18 @@ function TerminalSessionViewport({
           return false;
         }
 
-        const clipboardCommand = resolveShortcutCommand(event, currentKeybindings, options);
-        if (clipboardCommand === "terminal.copy" || clipboardCommand === "terminal.paste") {
-          if (clipboardCommand === "terminal.paste" && isTerminalPasteShortcut(event)) return true;
-          if (
-            clipboardCommand === "terminal.copy" &&
-            terminalRef.current?.hasSelection() &&
-            isTerminalCopyShortcut(event)
-          )
-            return true;
+        const clipboardAction = terminalClipboardShortcutAction(
+          resolveShortcutCommand(event, currentKeybindings, options),
+          event,
+          terminalRef.current?.hasSelection() ?? false,
+        );
+        if (clipboardAction === "native") return true;
+        if (clipboardAction !== null) {
           event.preventDefault();
           event.stopPropagation();
           clearSelectionAction();
           const requestId = selectionActionRequestIdRef.current;
-          if (clipboardCommand === "terminal.copy") {
+          if (clipboardAction === "copy") {
             const selection = terminalRef.current?.getSelection();
             if (selection) void copySelection(selection, requestId);
           } else {
