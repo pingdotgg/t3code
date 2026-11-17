@@ -1532,9 +1532,18 @@ function ComposerPromptEditorTiptapInner(
     [],
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the disabled prop into the imperative Tiptap editor via setEditable
+  const resumeEditingFocusRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves native selection focus across temporarily making the editor read-only for dictation
   useEffect(() => {
-    editor?.setEditable(!disabled);
+    if (!editor) return;
+    if (disabled && editor.isEditable) resumeEditingFocusRef.current = editor.view.hasFocus();
+    editor.setEditable(!disabled);
+    if (!disabled && resumeEditingFocusRef.current) {
+      resumeEditingFocusRef.current = false;
+      // Respect focus moved to another control while dictation was finishing.
+      if (document.activeElement === document.body || document.activeElement === editor.view.dom)
+        editor.view.focus();
+    }
   }, [disabled, editor]);
 
   // Push attributes before layout measurements; Tiptap updates them later in a passive effect.

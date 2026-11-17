@@ -66,6 +66,7 @@ function Composer({
   onCommandKeyDown = () => false,
   importContextFragment,
   literalText = false,
+  disabled = false,
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -74,6 +75,7 @@ function Composer({
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
+  disabled?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -84,7 +86,7 @@ function Composer({
       richTextEnabled={richTextEnabled}
       contextRecords={new Map()}
       skills={skills}
-      disabled={false}
+      disabled={disabled}
       placeholder=""
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
@@ -1078,4 +1080,45 @@ describe("an Arabic line", () => {
       box.left + box.width / 2,
     );
   });
+});
+
+it.each([true, false])(
+  "restores the caret after dictation unlocks the editor (rich text: %s)",
+  async (richTextEnabled) => {
+    const ui = (disabled: boolean) => (
+      <Composer value="Draft" richTextEnabled={richTextEnabled} skills={[]} disabled={disabled} />
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => {
+      editor.commands.setTextSelection(3);
+      editor.view.focus();
+    });
+    await screen.rerender(ui(true));
+    await screen.rerender(ui(false));
+    expect(editor.view.hasFocus()).toBe(true);
+    expect(
+      window.getSelection()?.anchorNode &&
+        editor.view.dom.contains(window.getSelection()!.anchorNode),
+    ).toBe(true);
+    await userEvent.keyboard("X");
+    expect(editor.getText()).toBe("DrXaft");
+  },
+);
+
+it("does not reclaim focus moved to another field during dictation", async () => {
+  const ui = (disabled: boolean) => (
+    <>
+      <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
+      <input aria-label="Other field" />
+    </>
+  );
+  await using screen = await render(ui(false));
+  const editor = editorIn(screen.container);
+  await act(() => editor.view.focus());
+  await screen.rerender(ui(true));
+  const other = screen.container.querySelector("input")!;
+  other.focus();
+  await screen.rerender(ui(false));
+  expect(document.activeElement).toBe(other);
 });
