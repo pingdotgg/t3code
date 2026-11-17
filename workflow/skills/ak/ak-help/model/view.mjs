@@ -1,4 +1,9 @@
-const grill = { intake: "Grilling", dest: "Wayfinder: grilling for the destination", breadth: "Wayfinder: grilling the whole space", ticket: "Wayfinder: grilling one ticket" };
+const grill = {
+  intake: "Grilling",
+  dest: "Wayfinder: grilling for the destination",
+  breadth: "Wayfinder: grilling the whole space",
+  ticket: "Wayfinder: grilling one ticket",
+};
 const exec = (v) => {
   const st = Object.values(v.s);
   if (st.every((x) => x === "Merged" || x === "-")) return "Last ticket merged, closing out";
@@ -11,49 +16,150 @@ const exec = (v) => {
   if (st.includes("Help") || st.includes("WHelp")) return "needs-help: waiting on the master";
   if (st.includes("Run")) return "A worker is running";
   if (st.includes("Claimed")) return "Ticket in-progress by hand";
-  if (st.includes("Ready")) return v.mst === "on" ? "Maestro dispatching" : v.mst === "off" ? "Tickets ready, maestro asleep" : "Tickets ready, no maestro";
+  if (st.includes("Ready"))
+    return v.mst === "on"
+      ? "Maestro dispatching"
+      : v.mst === "off"
+        ? "Tickets ready, maestro asleep"
+        : "Tickets ready, no maestro";
   return "Tickets filed";
 };
 const names = {
-  Idea: "Idea", GThink: null, GAsked: "Grilling: waiting for your answers", GConfirm: "Grilling: waiting for you to confirm", Route: "Choosing a route",
-  SSeams: "to-spec: sketching seams", SAsked: "to-spec: waiting for you on seams", SPublish: "to-spec: publishing the spec",
-  TDraft: "to-tickets: slicing", TQuiz: "to-tickets: waiting for you on the breakdown", TPublish: "to-tickets: publishing",
-  PDraft: "Plan: drafting", PAudit: "replan: auditing", PRewrite: "replan: rewriting", PBlocked: "replan: waiting for you on a blocking question",
-  PPresent: "Plan: waiting for your approval", PIssues: "plan-to-issues: reading the plan", PAmbig: "plan-to-issues: waiting for you on dependencies", PCreate: "plan-to-issues: creating issues",
-  WChart: "Wayfinder: charting the map", WNoFog: "Wayfinder: no fog, waiting for you", WIdle: "Wayfinder: map between sessions", WPick: "Wayfinder: picking a ticket",
-  WRecord: "Wayfinder: recording the answer", WGrad: "Wayfinder: graduating fog", WDone: "Wayfinder: the way is clear",
-  MAsk: "Waiting for you to start the maestro", Stopped: "You stopped", Done: "Merged",
+  Idea: "Idea",
+  GThink: null,
+  GAsked: "Grilling: waiting for your answers",
+  GConfirm: "Grilling: waiting for you to confirm",
+  Route: "Choosing a route",
+  SSeams: "to-spec: sketching seams",
+  SAsked: "to-spec: waiting for you on seams",
+  SPublish: "to-spec: publishing the spec",
+  TDraft: "to-tickets: slicing",
+  TQuiz: "to-tickets: waiting for you on the breakdown",
+  TPublish: "to-tickets: publishing",
+  PDraft: "Plan: drafting",
+  PAudit: "replan: auditing",
+  PRewrite: "replan: rewriting",
+  PBlocked: "replan: waiting for you on a blocking question",
+  PPresent: "Plan: waiting for your approval",
+  PIssues: "plan-to-issues: reading the plan",
+  PAmbig: "plan-to-issues: waiting for you on dependencies",
+  PCreate: "plan-to-issues: creating issues",
+  WChart: "Wayfinder: charting the map",
+  WNoFog: "Wayfinder: no fog, waiting for you",
+  WIdle: "Wayfinder: map between sessions",
+  WPick: "Wayfinder: picking a ticket",
+  WRecord: "Wayfinder: recording the answer",
+  WGrad: "Wayfinder: graduating fog",
+  WDone: "Wayfinder: the way is clear",
+  MAsk: "Waiting for you to start the maestro",
+  Stopped: "You stopped",
+  Done: "Merged",
 };
 export const title = "Idea to merged: the skill pipeline";
-export const state = (v) => (v.ph === "GThink" ? `${grill[v.gc]}: thinking` : v.ph === "Exec" ? exec(v) : names[v.ph]);
+export const state = (v) =>
+  v.ph === "GThink" ? `${grill[v.gc]}: thinking` : v.ph === "Exec" ? exec(v) : names[v.ph];
 export const group = (v) => {
   if (v.ph === "Done") return "done";
   if (v.ph === "Stopped") return "stop";
   if (v.ph === "Exec" || v.ph === "MAsk") return "exec";
-  if (v.ph.startsWith("W") || v.gc === "dest" || v.gc === "breadth" || v.gc === "ticket") return "wayfinder";
+  if (v.ph.startsWith("W") || v.gc === "dest" || v.gc === "breadth" || v.gc === "ticket")
+    return "wayfinder";
   if (v.ph.startsWith("P")) return "plan";
   if (v.ph.startsWith("S") || v.ph.startsWith("T")) return "spec";
   return "intake";
 };
-export const colors = { intake: "blue", spec: "purple", plan: "orange", wayfinder: "yellow", exec: "teal", done: "pink", stop: "tan" };
+export const colors = {
+  intake: "blue",
+  spec: "purple",
+  plan: "orange",
+  wayfinder: "yellow",
+  exec: "teal",
+  done: "pink",
+  stop: "tan",
+};
 const words = {
-  StartGrilling: "you start grilling", UserSkipsGrilling: "you skip straight to filing", AskRound: "the agent asks a round", FrontierEmpty: "no questions left",
-  UserAnswers: "you answer the round", UserKeepsGrilling: "you want more grilling", UserConfirmsIntake: "you confirm shared understanding", UserConfirmsDest: "you confirm the destination",
-  UserConfirmsBreadth: "you confirm the open decisions", UserConfirmsTicket: "you confirm the answer", UserStopsGrilling: "you stop", UserLeavesTicketSession: "you leave the ticket session, its claim stays",
-  RouteSpec: "master picks to-spec", RoutePlan: "master picks plan then plan-to-issues", RoutePlanFile: "you hand over your own plan file", RouteWayfinder: "master picks wayfinder",
-  SketchSeams: "the agent proposes test seams", UserApprovesSeams: "you approve the seams", UserRejectsSeams: "you reject the seams", UserStopsSpec: "you stop", PublishSpec: "spec issue published as ready-for-agent",
-  DraftSlices: "the agent drafts slices", UserApprovesBreakdown: "you approve the breakdown", UserWantsRevision: "you ask to split or merge tickets", UserStopsTickets: "you stop", PublishTickets: "tickets published as ready-for-agent",
-  DraftPlan: "the agent drafts a plan", AuditCovers: "the audit reaches 100%", AuditFindsGaps: "the audit finds gaps", RewritePlan: "the agent rewrites and re-audits", AuditAsksBlocking: "the audit needs your input",
-  UserAnswersBlocking: "you answer", UserStopsBlocked: "you stop", UserApprovesPlan: "you approve the plan", UserRejectsPlan: "you reject the plan", UserStopsPlan: "you stop",
-  ReplanInline: "plan-to-issues finds the plan unaudited and runs replan", AsksDeps: "dependencies look ambiguous", DepsClear: "dependencies are clear", UserAnswersDeps: "you answer", CreateIssues: "epic and tasks created",
-  ChartFog: "the map is charted with fog", ChartNoFog: "no fog found", UserPicksSpec: "you choose to-spec", UserStopsNoFog: "you stop", UserInvokesMap: "you start a ticket session", UserNamesStaleTicket: "you name a ticket a dead session claimed",
-  UserStopsMap: "you stop", PickAfkTicket: "the session takes an AFK ticket", PickHitlTicket: "the session takes a HITL ticket", RecordResolution: "answer posted, ticket closed", Graduate: "fog graduates into tickets or the map clears", FileMapTickets: "no tickets and no fog left",
-  MaestroDispatches: "maestro claims a ticket and starts a worker", MaestroReaps: "maestro labels needs-help and tells the master", MaestroPauses: "maestro finds nothing to do and pauses its heartbeat", MaestroRestarts: "maestro restarts",
-  WorkerMerges: "worker merges the PR", WorkerAsksHelp: "worker labels needs-help", MasterFinishes: "master finishes the ticket by hand", MasterReleases: "master removes needs-help",
-  HandOffNudges: "someone nudges the maestro", HandOffAsksToStart: "master asks you to start the maestro", UserStartsMaestro: "you start the maestro", UserDeclinesMaestro: "you decline the maestro",
-  BcheckPicks: "you run bcheck and it claims a ticket", BcheckReady: "bcheck judges it ready", BcheckNeedsPlanning: "bcheck judges it needs planning", UserAnswersBcheck: "you answer, plan is audited", UserApprovesBcheckPlan: "you approve the plan",
-  UserRejectsBcheckPlan: "you reject the plan", BcheckImplements: "bcheck implements and commits", UserRunsImplementSpec: "you run implement-spec", ImplementSpecFinishes: "implement-spec marks the PR ready", UserMergesIntegrationPR: "you merge the integration PR",
-  UserRunsTriage: "you run triage", UserAnswersBatch: "you answer a batch", NextBatch: "more findings", SummarizeFindings: "all findings discussed", UserApprovesFixes: "you approve the fixes", FixesDone: "fixes applied", FixTooBig: "a fix needs a new planning cycle",
+  StartGrilling: "you start grilling",
+  UserSkipsGrilling: "you skip straight to filing",
+  AskRound: "the agent asks a round",
+  FrontierEmpty: "no questions left",
+  UserAnswers: "you answer the round",
+  UserKeepsGrilling: "you want more grilling",
+  UserConfirmsIntake: "you confirm shared understanding",
+  UserConfirmsDest: "you confirm the destination",
+  UserConfirmsBreadth: "you confirm the open decisions",
+  UserConfirmsTicket: "you confirm the answer",
+  UserStopsGrilling: "you stop",
+  UserLeavesTicketSession: "you leave the ticket session, its claim stays",
+  RouteSpec: "master picks to-spec",
+  RoutePlan: "master picks plan then plan-to-issues",
+  RoutePlanFile: "you hand over your own plan file",
+  RouteWayfinder: "master picks wayfinder",
+  SketchSeams: "the agent proposes test seams",
+  UserApprovesSeams: "you approve the seams",
+  UserRejectsSeams: "you reject the seams",
+  UserStopsSpec: "you stop",
+  PublishSpec: "spec issue published as ready-for-agent",
+  DraftSlices: "the agent drafts slices",
+  UserApprovesBreakdown: "you approve the breakdown",
+  UserWantsRevision: "you ask to split or merge tickets",
+  UserStopsTickets: "you stop",
+  PublishTickets: "tickets published as ready-for-agent",
+  DraftPlan: "the agent drafts a plan",
+  AuditCovers: "the audit reaches 100%",
+  AuditFindsGaps: "the audit finds gaps",
+  RewritePlan: "the agent rewrites and re-audits",
+  AuditAsksBlocking: "the audit needs your input",
+  UserAnswersBlocking: "you answer",
+  UserStopsBlocked: "you stop",
+  UserApprovesPlan: "you approve the plan",
+  UserRejectsPlan: "you reject the plan",
+  UserStopsPlan: "you stop",
+  ReplanInline: "plan-to-issues finds the plan unaudited and runs replan",
+  AsksDeps: "dependencies look ambiguous",
+  DepsClear: "dependencies are clear",
+  UserAnswersDeps: "you answer",
+  CreateIssues: "epic and tasks created",
+  ChartFog: "the map is charted with fog",
+  ChartNoFog: "no fog found",
+  UserPicksSpec: "you choose to-spec",
+  UserStopsNoFog: "you stop",
+  UserInvokesMap: "you start a ticket session",
+  UserNamesStaleTicket: "you name a ticket a dead session claimed",
+  UserStopsMap: "you stop",
+  PickAfkTicket: "the session takes an AFK ticket",
+  PickHitlTicket: "the session takes a HITL ticket",
+  RecordResolution: "answer posted, ticket closed",
+  Graduate: "fog graduates into tickets or the map clears",
+  FileMapTickets: "no tickets and no fog left",
+  MaestroDispatches: "maestro claims a ticket and starts a worker",
+  MaestroReaps: "maestro labels needs-help and tells the master",
+  MaestroPauses: "maestro finds nothing to do and pauses its heartbeat",
+  MaestroRestarts: "maestro restarts",
+  WorkerMerges: "worker merges the PR",
+  WorkerAsksHelp: "worker labels needs-help",
+  MasterFinishes: "master finishes the ticket by hand",
+  MasterReleases: "master removes needs-help",
+  HandOffNudges: "someone nudges the maestro",
+  HandOffAsksToStart: "master asks you to start the maestro",
+  UserStartsMaestro: "you start the maestro",
+  UserDeclinesMaestro: "you decline the maestro",
+  BcheckPicks: "you run bcheck and it claims a ticket",
+  BcheckReady: "bcheck judges it ready",
+  BcheckNeedsPlanning: "bcheck judges it needs planning",
+  UserAnswersBcheck: "you answer, plan is audited",
+  UserApprovesBcheckPlan: "you approve the plan",
+  UserRejectsBcheckPlan: "you reject the plan",
+  BcheckImplements: "bcheck implements and commits",
+  UserRunsImplementSpec: "you run implement-spec",
+  ImplementSpecFinishes: "implement-spec marks the PR ready",
+  UserMergesIntegrationPR: "you merge the integration PR",
+  UserRunsTriage: "you run triage",
+  UserAnswersBatch: "you answer a batch",
+  NextBatch: "more findings",
+  SummarizeFindings: "all findings discussed",
+  UserApprovesFixes: "you approve the fixes",
+  FixesDone: "fixes applied",
+  FixTooBig: "a fix needs a new planning cycle",
   Finish: "every ticket is merged",
 };
 export const step = (action) => words[action] ?? null;
