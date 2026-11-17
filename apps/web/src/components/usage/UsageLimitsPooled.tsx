@@ -11,6 +11,7 @@ import {
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
+  nextPoolRefillPercent,
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
@@ -555,7 +556,7 @@ function PoolWindowCard({
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const nextRefill = nextPoolRefillPercent(pool);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -571,10 +572,8 @@ function PoolWindowCard({
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
+        {nextRefill !== null && pool.columns.length > 1 ? (
+          <span className="text-xs font-medium text-foreground tabular-nums">↻ +{nextRefill}%</span>
         ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
