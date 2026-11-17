@@ -3,7 +3,6 @@ import { msg, T, useGT, useMessages } from "gt-react-native";
 import { Button } from "../../components/ui/Button";
 import {
   WORKTREE_SETUP_STAGE_ORDER,
-  worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
@@ -38,6 +37,14 @@ const statusLabels = {
   failed: msg("failed", { $context: "setup stage status" }),
   warning: msg("warning", { $context: "setup stage status" }),
 } as const satisfies Record<WorktreeSetupStage["status"], string>;
+
+const stageLabels = {
+  fetch: msg("Fetch base branch"),
+  checkout: msg("Check out files"),
+  submodules: msg("Init submodules"),
+  "setup-script": msg("Run setup script"),
+  agent: msg("Start agent"),
+} as const satisfies Record<WorktreeSetupStage["id"], string>;
 
 const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
   pending: "circle",
@@ -366,8 +373,8 @@ function StageRow({
   const m = useMessages();
   const label =
     stage.id === "setup-script"
-      ? (scriptName ?? worktreeSetupStageLabel(stage.id))
-      : worktreeSetupStageLabel(stage.id);
+      ? (scriptName ?? m(stageLabels[stage.id]))
+      : m(stageLabels[stage.id]);
   const detail =
     stage.status === "pending"
       ? null

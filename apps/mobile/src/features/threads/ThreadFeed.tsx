@@ -62,6 +62,7 @@ import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRunt
 import {
   AuthFilesystemReadScope,
   idleCompactionOf,
+  isOrchestrationV2WorkActive,
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -103,7 +104,10 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  contextCompactionTokenCounts,
+  resolveViewedImageAsset,
+} from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
@@ -1353,8 +1357,9 @@ function AssistantMarkdownBlocks(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
 }) {
+  const m = useMessages();
   const { blocks, definitions } = useMemo(() => {
-    const blocks = splitMarkdownDetails(props.markdown).map((block) =>
+    const blocks = splitMarkdownDetails(props.markdown, m).map((block) =>
       block.kind === "details"
         ? block
         : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
@@ -1366,7 +1371,7 @@ function AssistantMarkdownBlocks(props: {
       blocks,
       definitions: props.definitions ?? (whole ? [] : markdownReferenceDefinitions(props.markdown)),
     };
-  }, [props.markdown, props.definitions]);
+  }, [m, props.markdown, props.definitions]);
   return blocks.map((block) => {
     if (block.kind === "details") {
       return (
@@ -1722,11 +1727,25 @@ function ThreadAutomationMessageRow(props: {
 }
 
 /** Leads with why T3 Code compacted, when it did so without being asked. */
-function compactionLabel(label: string, title: string | undefined) {
+function compactionLabel(
+  label: string,
+  title: string | undefined,
+  item: OrchestrationV2ProjectedTurnItem["item"],
+  gt: ReturnType<typeof useGT>,
+) {
+  const compacted =
+    item.type === "compaction" &&
+    item.status !== "failed" &&
+    item.status !== "cancelled" &&
+    item.status !== "interrupted" &&
+    !isOrchestrationV2WorkActive(item.status);
+  const tokens = compacted ? contextCompactionTokenCounts(item) : null;
   const text =
-    title !== undefined && label.startsWith("Context compacted")
-      ? title + label.slice("Context compacted".length)
-      : label;
+    title === undefined || !compacted
+      ? label
+      : tokens
+        ? gt("{title} {before} → {after} tokens", { title, ...tokens })
+        : title;
   // Non-breaking spaces keep "549K → 16.8K tokens" on one line when the label wraps.
   return text.replace(/ (→|tokens)/g, "\u00A0$1").replace(/→ /g, "→\u00A0");
 }
@@ -2128,7 +2147,7 @@ function renderFeedEntry(
             ? `${label} · ${failure}`
             : active && labels
               ? labels.compacting
-              : compactionLabel(label, labels?.title)
+              : compactionLabel(label, labels?.title, item, gt)
         }
         icon={
           item.status === "failed" ? "exclamationmark.circle" : "arrow.down.right.and.arrow.up.left"
@@ -2181,7 +2200,7 @@ function renderFeedEntry(
               ? gt("Context compaction")
               : reason === undefined
                 ? gt("Compacting context")
-                : IDLE_COMPACTING_LABELS[reason]
+                : props.m(IDLE_COMPACTING_LABELS[reason])
           }
           icon="arrow.down.right.and.arrow.up.left"
           iconColor={iconSubtleColor}
@@ -3715,8 +3734,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     appendPendingTurn(
       useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
       { zen: props.toolCallVisibility === "zen" },
+      m,
     ),
     guestShare,
+    m,
   );
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;

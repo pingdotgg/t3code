@@ -845,7 +845,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })
     : null;
   const pr = useThreadPr(thread);
-  const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
+  const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr, m).accessibilityLabel : null;
   const handleOpenPullRequests = useCallback(() => {
     if (pr) onOpenThreadPullRequests(thread, pr);
   }, [onOpenThreadPullRequests, pr, thread]);
@@ -962,11 +962,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
-  const snoozePresets = resolveThreadListV2SnoozePresets({
-    secondary: swipeActions.secondary,
-    now: props.snoozePresetMinute || snoozeGateNow,
-    presets: props.snoozePresets,
-  });
+  const snoozePresets = resolveThreadListV2SnoozePresets(
+    {
+      secondary: swipeActions.secondary,
+      now: props.snoozePresetMinute || snoozeGateNow,
+      presets: props.snoozePresets,
+    },
+    m,
+  );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
       ...snoozePresets.map((preset) => ({
@@ -1092,69 +1095,81 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
     ];
     if (snoozedRow) {
-      return layoutThreadListV2RowMenuActions({
-        nested,
-        direct: [...direct, localized(SNOOZED_MENU_ACTIONS[0]!)],
-        reorder: [],
-        pin: [],
-        secondary: [
-          ...titleMenuItems,
-          ...autoSettleMenuItems,
-          localized(LEGACY_MENU_ACTIONS[0]!),
-          localized(SNOOZED_MENU_ACTIONS[1]!),
-        ],
-      });
+      return layoutThreadListV2RowMenuActions(
+        {
+          nested,
+          direct: [...direct, localized(SNOOZED_MENU_ACTIONS[0]!)],
+          reorder: [],
+          pin: [],
+          secondary: [
+            ...titleMenuItems,
+            ...autoSettleMenuItems,
+            localized(LEGACY_MENU_ACTIONS[0]!),
+            localized(SNOOZED_MENU_ACTIONS[1]!),
+          ],
+        },
+        m,
+      );
     }
     if (!props.settlementSupported) {
-      return layoutThreadListV2RowMenuActions({
-        nested,
-        direct: [...direct, localized(LEGACY_MENU_ACTIONS[0]!)],
-        reorder: reorderMenuItems,
-        pin: pinMenuItems,
-        secondary: [...titleMenuItems, localized(LEGACY_MENU_ACTIONS[1]!)],
-      });
+      return layoutThreadListV2RowMenuActions(
+        {
+          nested,
+          direct: [...direct, localized(LEGACY_MENU_ACTIONS[0]!)],
+          reorder: reorderMenuItems,
+          pin: pinMenuItems,
+          secondary: [...titleMenuItems, localized(LEGACY_MENU_ACTIONS[1]!)],
+        },
+        m,
+      );
     }
     if (canUnsettle) {
-      return layoutThreadListV2RowMenuActions({
+      return layoutThreadListV2RowMenuActions(
+        {
+          nested,
+          direct: [...direct, localized(SLIM_MENU_ACTIONS[0]!)],
+          reorder: reorderMenuItems.filter(
+            (action) => action.id !== "move-up" && action.id !== "move-down",
+          ),
+          pin: pinMenuItems,
+          secondary: [
+            ...titleMenuItems,
+            ...autoSettleMenuItems,
+            localized(LEGACY_MENU_ACTIONS[0]!),
+            localized(SLIM_MENU_ACTIONS[1]!),
+          ],
+        },
+        m,
+      );
+    }
+    return layoutThreadListV2RowMenuActions(
+      {
         nested,
-        direct: [...direct, localized(SLIM_MENU_ACTIONS[0]!)],
-        reorder: reorderMenuItems.filter(
-          (action) => action.id !== "move-up" && action.id !== "move-down",
-        ),
+        direct: [
+          ...direct,
+          localized(CARD_MENU_ACTIONS[0]!),
+          ...(swipeActions.secondary === "snooze"
+            ? [
+                {
+                  id: "snooze",
+                  title: gt("Snooze", { $context: "verb, thread action" }),
+                  image: "clock",
+                  subactions: snoozePresetActions,
+                },
+              ]
+            : []),
+        ],
+        reorder: reorderMenuItems,
         pin: pinMenuItems,
         secondary: [
           ...titleMenuItems,
           ...autoSettleMenuItems,
           localized(LEGACY_MENU_ACTIONS[0]!),
-          localized(SLIM_MENU_ACTIONS[1]!),
+          localized(CARD_MENU_ACTIONS[1]!),
         ],
-      });
-    }
-    return layoutThreadListV2RowMenuActions({
-      nested,
-      direct: [
-        ...direct,
-        localized(CARD_MENU_ACTIONS[0]!),
-        ...(swipeActions.secondary === "snooze"
-          ? [
-              {
-                id: "snooze",
-                title: gt("Snooze", { $context: "verb, thread action" }),
-                image: "clock",
-                subactions: snoozePresetActions,
-              },
-            ]
-          : []),
-      ],
-      reorder: reorderMenuItems,
-      pin: pinMenuItems,
-      secondary: [
-        ...titleMenuItems,
-        ...autoSettleMenuItems,
-        localized(LEGACY_MENU_ACTIONS[0]!),
-        localized(CARD_MENU_ACTIONS[1]!),
-      ],
-    });
+      },
+      m,
+    );
   }, [
     autoSettleMenuItems,
     canUnsettle,
@@ -1196,6 +1211,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         const target = threadChipCopyTarget(
           { environmentId: thread.environmentId, threadId: thread.id },
           thread.title,
+          undefined,
+          m,
         );
         void copyThreadReference(target).then((didCopy) => {
           if (!didCopy) Dialog.alert(target.failureTitle, gt("Try copying this thread again."));
@@ -1226,6 +1243,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       gt,
+      m,
       onNewThreadOnBranch,
       thread,
       handleArchive,

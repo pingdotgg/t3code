@@ -102,6 +102,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 // Below this (keyboard up on iPad, phone landscape) the hero cannot fit above the composer,
 // so the project and environment pickers move into the composer controls instead.
 const SHORT_DRAFT_VIEWPORT_HEIGHT = 380;
+const HEADING_PROJECT_SLOT = "\uE000";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -252,13 +253,16 @@ export function NewTaskDraftScreen(props: {
   };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
-    ? composerAttachmentUploadBlockReason({
-        environmentId: selectedProject.environmentId,
-        attachments: flow.attachments,
-        connected: environmentConnected,
-        serverConfig: selectedEnvironmentServerConfig,
-        states: uploadStates,
-      })
+    ? composerAttachmentUploadBlockReason(
+        {
+          environmentId: selectedProject.environmentId,
+          attachments: flow.attachments,
+          connected: environmentConnected,
+          serverConfig: selectedEnvironmentServerConfig,
+          states: uploadStates,
+        },
+        m,
+      )
     : null;
   const attachmentsUploading =
     environmentConnected &&
@@ -752,6 +756,14 @@ export function NewTaskDraftScreen(props: {
       <T>The shared content is no longer in the inbox. You can continue editing this task draft.</T>
     </Text>
   ) : null;
+  const headingParts = gt("What should we build in {project}?", {
+    project: HEADING_PROJECT_SLOT,
+  }).split(HEADING_PROJECT_SLOT);
+  const headingBefore = headingParts[0] ?? "";
+  const headingAfter = headingParts[1] ?? "";
+  const headingBreak = headingBefore.trimEnd().lastIndexOf(" ");
+  const headingFirstLine = headingBreak < 0 ? headingBefore : headingBefore.slice(0, headingBreak);
+  const headingLead = headingBreak < 0 ? "" : headingBefore.slice(headingBreak + 1);
   const hero = flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
@@ -775,13 +787,11 @@ export function NewTaskDraftScreen(props: {
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          <T>What should we build</T>
+          {headingFirstLine}
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
-            {gt("in ", {
-              $context: "between 'What should we build' and the project name, then a question mark",
-            })}
+            {headingLead}
           </Text>
           <Pressable
             accessibilityHint={gt("Opens the project picker")}
@@ -798,7 +808,9 @@ export function NewTaskDraftScreen(props: {
               {selectedProjectLabel ?? selectedProject.title}
             </Text>
           </Pressable>
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
+          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
+            {headingAfter}
+          </Text>
         </View>
       </View>
 
@@ -1019,6 +1031,7 @@ export function NewTaskDraftScreen(props: {
         screenTone={connectionTone(
           connectionState,
           environmentRuntime?.connectionAwaitingApproval === true,
+          m,
         )}
         connectionError={environmentRuntime?.connectionError ?? null}
         environmentLabel={selectedEnvironmentLabel}

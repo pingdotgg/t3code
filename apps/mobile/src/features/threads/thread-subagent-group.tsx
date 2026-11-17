@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -108,6 +108,7 @@ export function ThreadSubagentGroup(props: {
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
@@ -137,7 +138,10 @@ export function ThreadSubagentGroup(props: {
   const label = gt("{count, plural, one {{count} subagent} other {{count} subagents}}", {
     count: agents.length,
   });
-  const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
+  const summary = summarizeSubagentStatuses(
+    agents.map((agent) => agent.status),
+    messages,
+  );
   const expanded = props.expandedRows[props.anchorKey] ?? false;
   const serverConfigs = useServerConfigs();
   // A task in a linked environment runs a provider instance of that environment.

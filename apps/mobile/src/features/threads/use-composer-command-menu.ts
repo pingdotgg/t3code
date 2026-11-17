@@ -519,17 +519,23 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "path") {
       const threadItems = environmentId
-        ? matchComposerThreadItems({
-            shells: threadShells,
-            environmentId,
-            linkedEnvironments,
-            excludeThreadId: currentThreadId,
-            query: trigger.query,
-            now,
-          })
+        ? matchComposerThreadItems(
+            {
+              shells: threadShells,
+              environmentId,
+              linkedEnvironments,
+              excludeThreadId: currentThreadId,
+              query: trigger.query,
+              now,
+            },
+            messages,
+          )
         : [];
       const environmentItems = environmentId
-        ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
+        ? matchComposerEnvironmentItems(
+            { environments, environmentId, query: trigger.query },
+            messages,
+          )
         : [];
       const modelItems =
         modelOptions && modelProviders

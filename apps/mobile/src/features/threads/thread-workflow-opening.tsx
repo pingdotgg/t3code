@@ -10,7 +10,7 @@ import {
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import { Atom } from "effect/reactivity";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -27,6 +27,7 @@ const FOLDED_SCRIPT_LINES = 10;
 const NO_THREAD_ATOM = Atom.make<EnvironmentThread | null>(null);
 
 export function useWorkflowOpening(ref: ScopedThreadRef | null) {
+  const messages = useMessages();
   const threadAtom = ref === null ? NO_THREAD_ATOM : environmentThreadDetails.threadAtom(ref);
   // Selected as a primitive so an ordinary thread's updates never change the result.
   const parentId = useAtomValue(threadAtom, (thread) =>
@@ -48,11 +49,14 @@ export function useWorkflowOpening(ref: ScopedThreadRef | null) {
   );
   return projection === null
     ? null
-    : resolveWorkflowOpening({
-        thread: projection.thread,
-        messages: projection.messages,
-        parentSubagents,
-      });
+    : resolveWorkflowOpening(
+        {
+          thread: projection.thread,
+          messages: projection.messages,
+          parentSubagents,
+        },
+        messages,
+      );
 }
 
 function memberRowSubagent(
@@ -84,9 +88,10 @@ export function ThreadWorkflowOpening(props: {
   readonly opening: WorkflowOpeningValue;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const openLinkedThread = useOpenLinkedThread();
   const { opening } = props;
-  const headline = workflowOpeningHeadline(opening);
+  const headline = workflowOpeningHeadline(opening, messages);
   const canListMembers = opening.driver !== null && opening.providerInstanceId !== null;
   const phases = (opening.group?.phases ?? []).filter((phase) => phase.members.length > 0);
   const unphased = opening.group?.unphasedMembers ?? [];

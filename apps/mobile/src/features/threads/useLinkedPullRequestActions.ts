@@ -24,6 +24,7 @@ import * as Clipboard from "expo-clipboard";
 import { useGT } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
@@ -97,11 +98,14 @@ export function useLinkedPullRequestActions(input: {
       initialValue: "",
       confirmText: gt("Link", { $context: "verb, confirms linking a pull request" }),
       onConfirm: (reference) => {
-        const resolved = resolveLinkPullRequestInput({
-          reference,
-          project: pullRequestLinkProject(project?.repositoryIdentity),
-          hasProject: () => true,
-        });
+        const resolved = resolveLinkPullRequestInput(
+          {
+            reference,
+            project: pullRequestLinkProject(project?.repositoryIdentity),
+            hasProject: () => true,
+          },
+          m,
+        );
         if (resolved === null) {
           Dialog.alert(
             gt("Couldn't link this {singular}", { singular }),

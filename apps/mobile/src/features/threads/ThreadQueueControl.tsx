@@ -132,13 +132,17 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const gt = useGT();
+  const m = useMessages();
   const workflow = useThreadQueueWorkflow(target);
   const threadKey = scopedThreadKey(target.environmentId, target.threadId);
   const editing = useQueuedRunEdit(threadKey);
   const pendingRequests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(target));
-  const editBlockedReason = queuedRunEditBlockedReason({
-    openQuestionCount: pendingRequests?.userInputs.length ?? 0,
-  });
+  const editBlockedReason = queuedRunEditBlockedReason(
+    {
+      openQuestionCount: pendingRequests?.userInputs.length ?? 0,
+    },
+    m,
+  );
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");

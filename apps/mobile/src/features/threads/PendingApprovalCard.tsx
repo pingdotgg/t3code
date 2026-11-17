@@ -8,7 +8,7 @@ import {
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -27,6 +27,7 @@ export interface PendingApprovalCardProps {
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const gt = useGT();
+  const m = useMessages();
   const options: ReadonlyArray<ProviderApprovalOption> = props.approval.options ?? [
     { decision: "accept", label: gt("Allow once") },
     { decision: "acceptForSession", label: gt("Allow session") },
@@ -64,11 +65,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           onPress={() => setExplanationOpen((open) => !open)}
         >
           <Text className="font-t3-bold text-xs text-foreground-secondary underline">
-            {FULL_ACCESS_OVERRIDE_QUESTION}
+            {m(FULL_ACCESS_OVERRIDE_QUESTION)}
           </Text>
           {explanationOpen ? (
             <Text className="mt-1 font-sans text-xs leading-normal text-foreground-muted">
-              {fullAccessOverrideExplanation(props.approval.fullAccessOverride)}
+              {fullAccessOverrideExplanation(props.approval.fullAccessOverride, m)}
             </Text>
           ) : null}
         </Pressable>

@@ -15,7 +15,7 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useMemo } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -53,18 +53,19 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const openInspector = useOpenThreadInspector();
   const insets = useSafeAreaInsets();
   const gt = useGT();
+  const messages = useMessages();
   const turn = useThreadTurnSubagents(target);
   const subagents = turn?.subagents ?? [];
   const hasLiveAgent = (turn?.liveCount ?? 0) > 0;
   const workflowGroups = useMemo(
     () =>
       new Map(
-        deriveWorkflowGroups(projectedSubagentsToRuntime(subagents)).map((group) => [
+        deriveWorkflowGroups(projectedSubagentsToRuntime(subagents), messages).map((group) => [
           group.workflow.id,
           group,
         ]),
       ),
-    [subagents],
+    [messages, subagents],
   );
 
   const openChildThread = (child: { environmentId: EnvironmentId; threadId: ThreadId }) => {

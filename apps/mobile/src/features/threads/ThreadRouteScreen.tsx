@@ -980,11 +980,14 @@ function ThreadRouteContent(
     connectionRetrying ? routeConnectionError : null,
     RECONNECT_ERROR_DELAY_MS,
   );
-  const connectionStatusLabel = connectionRetryLabel({
-    connectionError: retryConnectionError,
-    connectionState: routeConnectionState,
-    connectionAwaitingApproval: routeEnvironmentRuntime?.connectionAwaitingApproval === true,
-  });
+  const connectionStatusLabel = connectionRetryLabel(
+    {
+      connectionError: retryConnectionError,
+      connectionState: routeConnectionState,
+      connectionAwaitingApproval: routeEnvironmentRuntime?.connectionAwaitingApproval === true,
+    },
+    m,
+  );
   // A thread this client is creating has nothing older to sync.
   const threadSyncLabel =
     creationState === null
@@ -1042,6 +1045,7 @@ function ThreadRouteContent(
           screenTone={connectionTone(
             routeConnectionState,
             routeEnvironmentRuntime?.connectionAwaitingApproval === true,
+            m,
           )}
           connectionError={routeConnectionError}
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}

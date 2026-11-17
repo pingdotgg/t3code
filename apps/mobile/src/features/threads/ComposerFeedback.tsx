@@ -3,7 +3,7 @@ import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -18,7 +18,8 @@ export function ComposerFeedback({
   readonly onDismiss: () => void;
 }) {
   const gt = useGT();
-  const notice = codexFeedbackNotice(submission);
+  const m = useMessages();
+  const notice = codexFeedbackNotice(submission, m);
   if (!notice) return null;
   return (
     <View className="px-4 pb-3">

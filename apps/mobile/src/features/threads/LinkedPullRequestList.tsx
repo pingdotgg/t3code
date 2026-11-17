@@ -9,7 +9,7 @@ import {
   threadPullRequestKeyOf,
   type PullRequestListLine,
 } from "@t3tools/client-runtime/thread-pull-requests";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { memo, useMemo } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 
@@ -65,19 +65,23 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   readonly actions: LinkedPullRequestActions | null;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const { link, depth, stack } = props.line;
   const snapshot = link.snapshot;
-  const status = snapshot === null ? null : pullRequestStatus(snapshot);
-  const conflict = snapshot === null ? null : pullRequestConflict(snapshot);
+  const status = snapshot === null ? null : pullRequestStatus(snapshot, messages);
+  const conflict = snapshot === null ? null : pullRequestConflict(snapshot, messages);
   const open = snapshot === null || snapshot.state === "open";
   const checks =
     open && snapshot?.checksState ? pullRequestChecksStatus(snapshot.checksState) : null;
   const review =
     open && snapshot?.reviewDecision
-      ? pullRequestListReviewStatus({
-          reviewDecision: snapshot.reviewDecision,
-          viewerReviewRequested: false,
-        })
+      ? pullRequestListReviewStatus(
+          {
+            reviewDecision: snapshot.reviewDecision,
+            viewerReviewRequested: false,
+          },
+          messages,
+        )
       : null;
   const watching = open && link.watch !== undefined;
   const additions = snapshot?.additions ?? 0;
@@ -96,11 +100,21 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           title: snapshot?.title ?? gt("waiting for host state"),
         }),
         status?.label,
-        conflict?.label.toLowerCase(),
+        conflict === null || snapshot === null
+          ? undefined
+          : snapshot.baseBranch
+            ? gt("conflicts with {branch}", { branch: snapshot.baseBranch })
+            : gt("has conflicts"),
         link.repository,
         stack ? gt("stack of {size}", { size: stack.size }) : undefined,
         watching ? gt("watching") : undefined,
-        checks ? gt("checks {state}", { state: snapshot?.checksState }) : undefined,
+        checks === null
+          ? undefined
+          : snapshot?.checksState === "passing"
+            ? gt("checks passing")
+            : snapshot?.checksState === "failing"
+              ? gt("checks failing")
+              : gt("checks pending"),
         review?.accessibleLabel,
       ]
         .filter(Boolean)

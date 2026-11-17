@@ -4,7 +4,7 @@ import {
   type ManagedPolicySummary,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -26,6 +26,7 @@ export function ManagedRuntimeModeNotice(props: {
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const draftSettings = useComposerDraftSettings(props.threadKey);
   const runtimeMode = draftSettings.runtimeMode ?? props.threadRuntimeMode;
   const denial = managedRuntimeModeDenial(props.policy, runtimeMode);
@@ -44,7 +45,7 @@ export function ManagedRuntimeModeNotice(props: {
       </AppText>
       {target === undefined || targetLabel === undefined ? null : (
         <Button
-          label={gt("Switch to {mode}", { mode: targetLabel })}
+          label={gt("Switch to {mode}", { mode: messages(targetLabel) })}
           onPress={() => updateComposerDraftSettings(props.threadKey, { runtimeMode: target })}
         />
       )}

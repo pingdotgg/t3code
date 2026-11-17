@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -20,6 +20,7 @@ export function SubagentStopButton(props: {
   readonly className?: string;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const target = resolveSubagentStopTarget(props.subagent);
   const canStop = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
@@ -32,7 +33,8 @@ export function SubagentStopButton(props: {
 
   const workflow = target.kind === "workflow";
   const label =
-    props.subagent.workflow?.name ?? resolveSubagentRowPresentation(props.subagent).title;
+    props.subagent.workflow?.name ??
+    resolveSubagentRowPresentation(props.subagent, false, messages).title;
   const stop = async () => {
     setStopping(true);
     const result = await (

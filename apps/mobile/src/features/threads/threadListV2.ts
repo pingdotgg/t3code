@@ -84,13 +84,16 @@ export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooz
  * clock: the compiler keys a row's memo on its inputs, so a clock read inside
  * it would keep the times from the row's first render.
  */
-export function resolveThreadListV2SnoozePresets(input: {
-  readonly secondary: "snooze" | null;
-  readonly now: string;
-  readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
-}): ReadonlyArray<SnoozePreset> {
+export function resolveThreadListV2SnoozePresets(
+  input: {
+    readonly secondary: "snooze" | null;
+    readonly now: string;
+    readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<SnoozePreset> {
   return input.secondary === "snooze"
-    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
+    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets), resolve)
     : [];
 }
 
