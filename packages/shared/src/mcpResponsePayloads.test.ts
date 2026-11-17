@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import { responsePayloads } from "./mcpResponsePayloads.ts";
@@ -66,6 +67,57 @@ it.effect("reads SSE line endings across byte-chunk boundaries without splitting
         })).pipe(Stream.take(1)),
       );
       expect(Array.from(payloads)).toEqual([{ id: 4 }]);
+    }
+  }),
+);
+
+it.effect("picks the SSE reader from the media type alone, whatever its case", () =>
+  Effect.gen(function* () {
+    const response = new Response('data: {"id":1}\n\n', {
+      headers: { "content-type": "Text/Event-Stream; charset=utf-8" },
+    });
+    const payloads = yield* Stream.runCollect(
+      responsePayloads(response, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
+    );
+    expect(Array.from(payloads)).toEqual([{ id: 1 }]);
+
+    const json = new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+      headers: {
+        "content-type": 'application/json; profile="https://example.com/Text/Event-Stream"',
+      },
+    });
+    const jsonPayloads = yield* Stream.runCollect(
+      responsePayloads(json, (cause) => ({ _tag: "ResponsePayloadError" as const, cause })),
+    );
+    expect(Array.from(jsonPayloads)).toEqual([{ jsonrpc: "2.0", id: 1, result: {} }]);
+  }),
+);
+
+it.effect("releases a stalled SSE response body when its consumer is interrupted", () =>
+  Effect.gen(function* () {
+    const reading = Promise.withResolvers<void>();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        start(value) {
+          controller = value;
+        },
+        pull() {
+          reading.resolve();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const response = new Response(body, { headers: { "content-type": "text/event-stream" } });
+    const consumer = yield* Stream.runDrain(responsePayloads(response, String)).pipe(
+      Effect.forkChild,
+    );
+    yield* Effect.promise(() => reading.promise);
+    yield* Fiber.interrupt(consumer);
+    try {
+      expect(body.locked, "interrupted SSE response must release its body").toBe(false);
+    } finally {
+      if (body.locked) controller.close();
     }
   }),
 );

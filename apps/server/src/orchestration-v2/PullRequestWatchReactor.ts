@@ -137,8 +137,9 @@ interface WatchLife {
   readonly reads: number;
 }
 
-const lifeKey = ({ thread, link, watch }: WatchTarget) =>
-  `${thread.id} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+const lifeKeyOf = (threadId: string, link: ThreadPullRequestLink, watch: ThreadPullRequestWatch) =>
+  `${threadId} ${threadPullRequestKeyOf(link)} ${watch.startedAt}`;
+const lifeKey = ({ thread, link, watch }: WatchTarget) => lifeKeyOf(thread.id, link, watch);
 
 const minutes = (ms: number) => Math.max(0, Math.round(ms / 60_000));
 
@@ -151,6 +152,7 @@ const snapshotFingerprint = ({ link }: WatchTarget) => {
         snapshot.updatedAt,
         snapshot.checksState,
         snapshot.mergeability,
+        snapshot.rebaseRequired,
         snapshot.reviewDecision,
         snapshot.isDraft,
       ].join(" ");
@@ -165,11 +167,13 @@ function planRead(
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
   }
-  // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
+  // Nothing on the host changes when the no-checks deadline passes, or when a push to another
+  // branch clears a watch's answer, so either alone prompts a read.
   const checksDue = group.targets.some(
     ({ watch }) =>
-      watch.checksAwaitedSince != null &&
-      now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
+      watch.checksPending === undefined ||
+      (watch.checksAwaitedSince != null &&
+        now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS),
   );
   if (fingerprint === null) {
     const read =
@@ -184,10 +188,18 @@ function planRead(
     !last.remarksComplete ||
     now - last.at >= FINGERPRINT_REREAD_MS;
   return {
-    detail: activity || checksDue || last.status !== fingerprint.status || last.inFlight,
+    detail:
+      activity ||
+      checksDue ||
+      last.status !== fingerprint.status ||
+      (last.inFlight && fingerprint.coversDetail !== true),
     activity,
   };
 }
+
+// Lets the orchestrator tell that a push cleared the answer while this read was in flight.
+const checksPendingBeforeOf = ({ watch }: WatchTarget) =>
+  watch.checksPending === undefined ? {} : { checksPendingBefore: watch.checksPending };
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
@@ -202,8 +214,12 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
+    left.rebaseRequired === right.rebaseRequired &&
+    left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
     left.wakes === right.wakes &&
-    left.checksAwaitedSince === right.checksAwaitedSince
+    left.awaitingBaseline === right.awaitingBaseline &&
+    left.checksAwaitedSince === right.checksAwaitedSince &&
+    left.checksPending === right.checksPending
   );
 }
 
@@ -312,6 +328,7 @@ export const make = Effect.gen(function* () {
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
       watch: next,
+      ...checksPendingBeforeOf(target),
       ...(endedWatch === undefined ? {} : { endedWatch }),
       ...(wake === undefined
         ? {}
@@ -453,11 +470,13 @@ export const make = Effect.gen(function* () {
       ...identityOf(first.target.link),
       startedAt: first.target.watch.startedAt,
       watch: first.next,
+      ...checksPendingBeforeOf(first.target),
       ...(first.endedWatch === undefined ? {} : { endedWatch: first.endedWatch }),
       others: rest.map((item) => ({
         ...identityOf(item.target.link),
         startedAt: item.target.watch.startedAt,
         watch: item.next,
+        ...checksPendingBeforeOf(item.target),
         ...(item.endedWatch === undefined ? {} : { endedWatch: item.endedWatch }),
         ...(item.wake.includesRemarks === true ? { includesRemarks: true } : {}),
       })),
@@ -597,34 +616,26 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    // Activity failures must not cancel or hide a permanent detail failure.
-    // Activity is irrelevant once the pull request is closed or merged, so it cannot block ending.
-    const read = Exit.isFailure(detailRead)
-      ? Exit.failCause(detailRead.cause)
-      : detailRead.value.state !== "open"
-        ? Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const)
-        : Exit.isFailure(activityRead)
-          ? Exit.failCause(activityRead.cause)
-          : Exit.succeed([detailRead.value, activityRead.value] as const);
-    if (Exit.isFailure(read)) {
-      if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
+    if (Exit.isFailure(detailRead)) {
+      if (Cause.hasInterruptsOnly(detailRead.cause))
+        return yield* Effect.failCause(detailRead.cause);
       lastReads.delete(group.key);
-      const reason = providerFailureReason(read.cause);
+      const reason = providerFailureReason(detailRead.cause);
       if (reason === "rate-limited") return;
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
       if (reason === "failed") {
         readFailures.delete(group.key);
-        return yield* Effect.failCause(read.cause);
+        return yield* Effect.failCause(detailRead.cause);
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
       if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
         readFailures.delete(group.key);
       }
-      return yield* Effect.failCause(read.cause);
+      return yield* Effect.failCause(detailRead.cause);
     }
     readFailures.delete(group.key);
-    const [detail, activity] = read.value;
+    const detail = detailRead.value;
     for (const target of group.targets) {
       const life = lifeOf(target);
       const headSha = detail.headSha ?? life.headSha;
@@ -646,6 +657,20 @@ export const make = Effect.gen(function* () {
           : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
+
+    // A failed comments read leaves remarks incomplete, so the next pass reads them again;
+    // checks, head and conflicts from the detail still reach the evaluator.
+    if (Exit.isFailure(activityRead)) {
+      threadTails.delete(group.key);
+      if (providerFailureReason(activityRead.cause) !== "rate-limited") {
+        yield* logFailure("pull request watch activity read failed", { pullRequest: group.key })(
+          activityRead.cause,
+        );
+      }
+    }
+    const activity = Exit.isSuccess(activityRead)
+      ? activityRead.value
+      : Option.none<PullRequestActivity>();
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
     const remarks = Option.isSome(activity)
@@ -839,6 +864,20 @@ export const make = Effect.gen(function* () {
         );
       }
     });
+    // A watch's first read is its baseline, so it reads now: CI that finishes before the next
+    // sweep would otherwise be taken as old news and never wake the thread.
+    yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) => {
+        if (event.type !== "thread.pull-request-synced") return Effect.void;
+        const unread = visibleThreadPullRequests(event.payload.pullRequests ?? []).flatMap(
+          (link) =>
+            link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
+              ? []
+              : [threadPullRequestKeyOf(link)],
+        );
+        return Effect.forEach(new Set(unread), readOnChange, { discard: true });
+      }).pipe(Effect.catchCause(logFailure("pull request watch event stream failed", {}))),
+    );
     yield* forkParked(
       sweep.pipe(
         Effect.andThen(follow),

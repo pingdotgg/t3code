@@ -1,3 +1,5 @@
+import { parseMarkdownFileLink } from "./markdownLinks.ts";
+
 export interface CodexFileCitationLink {
   readonly path: string;
   readonly href: string;
@@ -19,7 +21,11 @@ function citationLabel(path: string): string {
 }
 
 function markdownDestinationPath(path: string): string {
-  return path.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
+  const destination = path.replaceAll("%", "%25").replaceAll("#", "%23").replaceAll("?", "%3F");
+  // Only disambiguate rejected relative paths; recognized links keep workspace lookup behavior.
+  return parseMarkdownFileLink(destination) || /^(?:[a-z][a-z\d+.-]*:|[\\/])/i.test(path)
+    ? destination
+    : `./${destination}`;
 }
 
 export function resolveCodexFileCitationLink(
@@ -45,6 +51,7 @@ function markdownLabel(value: string): string {
 function markdownDestination(value: string): string {
   return value
     .replaceAll("\\", "%5C")
+    .replaceAll("&", "%26")
     .replaceAll("<", "%3C")
     .replaceAll(">", "%3E")
     .replaceAll("\r", "%0D")
