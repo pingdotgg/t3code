@@ -17,6 +17,8 @@ const {
   execFileSyncMock,
   readFileSyncMock,
   symlinkSyncMock,
+  readdirSyncMock,
+  realpathSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -29,6 +31,8 @@ const {
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   symlinkSyncMock: vi.fn(),
+  readdirSyncMock: vi.fn(),
+  realpathSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -54,6 +58,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
   symlinkSync: symlinkSyncMock,
+  readdirSync: readdirSyncMock,
+  realpathSync: realpathSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -76,6 +82,8 @@ describe("DesktopPreReadyPlatform", () => {
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
     symlinkSyncMock.mockReset();
+    readdirSyncMock.mockReset().mockReturnValue([]);
+    realpathSyncMock.mockReset().mockImplementation((path: string) => path);
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
@@ -252,6 +260,77 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
+  it.effect.each([
+    { label: "a standalone AppImage", visible: true },
+    {
+      label: "a Gear Lever launcher that wraps the AppImage in env",
+      launcher: {
+        path: "/xdg/applications/t3_code.desktop",
+        entry: "Exec=env DESKTOPINTEGRATION=1 /Applications/current.AppImage %U\n",
+      },
+      visible: false,
+    },
+    {
+      label: "a system launcher that reaches the AppImage through a symlink",
+      launcher: {
+        path: "/usr/share/applications/t3code.desktop",
+        entry: 'Exec="/opt/t3 code/t3code" %U\n',
+      },
+      visible: false,
+    },
+    {
+      label: "a hidden entry naming the AppImage",
+      launcher: {
+        path: "/xdg/applications/other.desktop",
+        entry: "NoDisplay=true\nExec=/Applications/current.AppImage %U\n",
+      },
+      visible: true,
+    },
+    {
+      label: "a configured distribution launcher",
+      launcherPath: "/opt/T3 Code/t3code",
+      visible: false,
+    },
+  ])("shows the URL handler entry as the launcher only without another: $label", (input) => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    getSwitchValueMock.mockReturnValue("");
+    const entryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
+    const files = new Map([[entryPath, "Exec=/Applications/current.AppImage %U\n"]]);
+    if (input.launcher !== undefined) files.set(input.launcher.path, input.launcher.entry);
+    readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
+    readdirSyncMock.mockImplementation((dir: string) =>
+      [...files.keys()]
+        .filter((path) => path.startsWith(`${dir}/`))
+        .map((path) => path.slice(dir.length + 1)),
+    );
+    realpathSyncMock.mockImplementation((path: string) =>
+      path === "/opt/t3 code/t3code" ? "/Applications/current.AppImage" : path,
+    );
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      files.set(path, String(contents));
+    });
+
+    return Effect.gen(function* () {
+      const preReady = yield* DesktopPreReadyPlatform.make.pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provide(
+          DesktopConfig.layerTest({
+            XDG_DATA_HOME: "/xdg",
+            XDG_DATA_DIRS: "/usr/share",
+            APPIMAGE: "/Applications/current.AppImage",
+            ...(input.launcherPath === undefined
+              ? {}
+              : { T3CODE_DESKTOP_LAUNCHER_PATH: input.launcherPath }),
+          }),
+        ),
+      );
+      const entry = files.get(entryPath) ?? "";
+      assert.equal(preReady.linuxLauncherVisible, input.visible);
+      assert.equal(entry.includes("NoDisplay=true"), !input.visible);
+      assert.equal(entry.includes("StartupWMClass=com.t3tools.T3Code\n"), input.visible);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>
@@ -294,6 +373,7 @@ describe("DesktopPreReadyPlatform", () => {
           preReady: {
             linux: null,
             linuxPasswordStoreCommandLine: null,
+            linuxLauncherVisible: false,
           },
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);

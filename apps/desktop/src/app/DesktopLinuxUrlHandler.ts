@@ -10,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { DesktopPreReadyElectronOptions } from "./DesktopPreReadyPlatform.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 // AppImage integrators choose the .desktop filename, so setDesktopName cannot identify it for protocol registration.
@@ -74,13 +75,14 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     ? escapeDesktopEntryExecArgument(value)
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// An integrated AppImage's own launcher owns the window identity, so this entry stays hidden and
+// claims no StartupWMClass. A standalone AppImage has no other launcher for its app id to resolve to.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly launcherAppId?: string;
 }): string {
   return [
     "[Desktop Entry]",
@@ -89,11 +91,37 @@ export function renderUrlHandlerDesktopEntry(input: {
     `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
-    "NoDisplay=true",
+    ...(input.launcherAppId === undefined
+      ? ["NoDisplay=true"]
+      : ["Categories=Development;", `StartupWMClass=${input.launcherAppId}`]),
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${input.scheme};`,
     "",
   ].join("\n");
+}
+
+export const linuxAppId = (desktopEntryName: string): string =>
+  desktopEntryName.replace(/\.desktop$/u, "");
+
+const EXEC_ARGUMENT = /(?:[^\s"'\\]|\\.|"(?:[^"\\]|\\.)*"|'[^']*')+/gsu;
+
+// Integrators wrap the AppImage (Gear Lever writes `env VAR=1 <path> %U`), so a launcher is
+// recognised by any absolute Exec argument, not by the program alone.
+export function visibleLauncherExecPaths(entry: string): ReadonlyArray<string> {
+  if (/^(?:NoDisplay|Hidden)[ \t]*=[ \t]*true[ \t]*$/mu.test(entry)) return [];
+  const paths: Array<string> = [];
+  for (const [, exec = ""] of entry.matchAll(/^Exec[ \t]*=[ \t]*(.*)$/gmu)) {
+    const unescaped = exec.replace(/\\([\\nrts])/gu, (_, char: string) =>
+      char === "n" ? "\n" : char === "r" ? "\r" : char === "t" ? "\t" : char === "s" ? " " : char,
+    );
+    for (const [quoted] of unescaped.matchAll(EXEC_ARGUMENT)) {
+      const argument = quoted
+        .replace(/\\(.)|["']/gsu, (_, char: string | undefined) => char ?? "")
+        .replaceAll("%%", "%");
+      if (argument.startsWith("/")) paths.push(argument);
+    }
+  }
+  return paths;
 }
 
 function parseUrlHandlerExecTarget(entry: string): string | null {
@@ -132,7 +160,7 @@ export function replacedVersionedAppImagePath(input: {
 const LINUX_THEME_ICON_SIZE = "256x256";
 
 function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
-  const appId = desktopEntryName.replace(/\.desktop$/u, "");
+  const appId = linuxAppId(desktopEntryName);
   return [...new Set([appId.toLowerCase(), appId])];
 }
 
@@ -152,6 +180,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const assets = yield* DesktopAssets.DesktopAssets;
+  const { linuxLauncherVisible } = yield* DesktopPreReadyElectronOptions;
 
   const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
   const desktopEntryPath = environment.path.join(
@@ -177,6 +206,9 @@ export const make = Effect.gen(function* () {
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
+      ...(linuxLauncherVisible
+        ? { launcherAppId: linuxAppId(environment.linuxDesktopEntryName) }
+        : {}),
     });
     // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem

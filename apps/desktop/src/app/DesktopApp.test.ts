@@ -115,6 +115,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopPreReadyPlatform.DesktopPreReadyElectronOptions, {
           linux: null,
           linuxPasswordStoreCommandLine: "basic",
+          linuxLauncherVisible: false,
         }),
         Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
           installIntoProcess: Effect.succeed(true),

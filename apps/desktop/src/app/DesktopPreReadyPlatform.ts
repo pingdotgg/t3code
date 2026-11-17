@@ -15,8 +15,10 @@ import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
+  linuxAppId,
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
+  visibleLauncherExecPaths,
 } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
@@ -52,16 +54,59 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   {
     readonly linux: DesktopEarlyElectronStartup.EarlyLinuxElectronOptions | null;
     readonly linuxPasswordStoreCommandLine: string | null;
+    // True when the URL handler entry is the only launcher a standalone AppImage has.
+    readonly linuxLauncherVisible: boolean;
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
 const LinuxDesktopEntryConfig = Config.all({
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
+  xdgDataDirs: trimmedString("XDG_DATA_DIRS"),
   launcherPath: trimmedString("T3CODE_DESKTOP_LAUNCHER_PATH"),
   appImagePath: trimmedString("APPIMAGE"),
   // electron-updater sets this on the AppImage it relaunches after installing an update.
   relaunchedByUpdater: trimmedString("APPIMAGE_SILENT_INSTALL"),
 });
+
+const realPathOrSelf = (path: string): string => {
+  try {
+    return NodeFS.realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
+// AppImageLauncher, Gear Lever and hand-written entries all name the AppImage in Exec. APPIMAGE
+// has symlinks resolved, while a launcher may still go through one.
+function hasAppImageLauncher(input: {
+  readonly applicationsDirs: ReadonlyArray<string>;
+  readonly ownEntryName: string;
+  readonly appImagePath: string;
+}): boolean {
+  const appImagePath = realPathOrSelf(input.appImagePath);
+  for (const applicationsDir of new Set(input.applicationsDirs)) {
+    let names: ReadonlyArray<string>;
+    try {
+      names = NodeFS.readdirSync(applicationsDir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".desktop") || name === input.ownEntryName) continue;
+      try {
+        const entry = NodeFS.readFileSync(NodePath.posix.join(applicationsDir, name), "utf8");
+        if (
+          visibleLauncherExecPaths(entry).some(
+            (path) => path === input.appImagePath || realPathOrSelf(path) === appImagePath,
+          )
+        ) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+  return false;
+}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -75,6 +120,7 @@ export const make = Effect.gen(function* () {
         : null;
     const linux =
       platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
+    let linuxLauncherVisible = false;
 
     if (linux !== null) {
       DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
@@ -123,6 +169,23 @@ export const make = Effect.gen(function* () {
         }
         const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
         const { appImagePath } = linuxDesktopEntryConfig;
+        linuxLauncherVisible =
+          Option.isSome(appImagePath) &&
+          Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
+          !hasAppImageLauncher({
+            applicationsDirs: [
+              applicationsDir,
+              ...Option.getOrElse(
+                linuxDesktopEntryConfig.xdgDataDirs,
+                () => "/usr/local/share:/usr/share",
+              )
+                .split(":")
+                .filter((dir) => dir.startsWith("/"))
+                .map((dir) => NodePath.posix.join(dir, "applications")),
+            ],
+            ownEntryName: linux.linuxDesktopEntryName,
+            appImagePath: appImagePath.value,
+          });
         if (
           Option.isSome(appImagePath) &&
           Option.isNone(linuxDesktopEntryConfig.launcherPath) &&
@@ -155,6 +218,9 @@ export const make = Effect.gen(function* () {
               ) ?? process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
+            ...(linuxLauncherVisible
+              ? { launcherAppId: linuxAppId(linux.linuxDesktopEntryName) }
+              : {}),
           }),
           "utf8",
         );
@@ -183,7 +249,7 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    return { linux, linuxPasswordStoreCommandLine };
+    return { linux, linuxPasswordStoreCommandLine, linuxLauncherVisible };
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 

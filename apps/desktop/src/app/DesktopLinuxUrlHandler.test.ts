@@ -20,6 +20,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
+import { DesktopPreReadyElectronOptions } from "./DesktopPreReadyPlatform.ts";
 
 interface RecordedRegistration {
   readonly directories: string[];
@@ -73,6 +74,7 @@ const layerHandler = (
     readonly existingEntry?: string;
     readonly iconSource?: string;
     readonly iconWriteError?: PlatformError.PlatformError;
+    readonly linuxLauncherVisible?: boolean;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -85,6 +87,11 @@ const layerHandler = (
             Effect.provide(Path.layer),
           ),
         ),
+        Layer.succeed(DesktopPreReadyElectronOptions, {
+          linux: null,
+          linuxPasswordStoreCommandLine: null,
+          linuxLauncherVisible: input.linuxLauncherVisible ?? false,
+        }),
         Layer.succeed(DesktopAssets.DesktopAssets, {
           iconPaths: Effect.succeed({
             png: Option.fromUndefinedOr(input.iconSource),
@@ -205,6 +212,34 @@ describe("DesktopLinuxUrlHandler", () => {
   });
 
   it.each([
+    {
+      exec: "/home/alice/Applications/t3.AppImage %U",
+      paths: ["/home/alice/Applications/t3.AppImage"],
+    },
+    {
+      exec: "env DESKTOPINTEGRATION=1 /home/alice/Applications/t3_code.appimage %U",
+      paths: ["/home/alice/Applications/t3_code.appimage"],
+    },
+    {
+      exec: `${DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument('/home/al ice/My "100%" $Apps\\x/t3.AppImage')} --flag %U`,
+      paths: ['/home/al ice/My "100%" $Apps\\x/t3.AppImage'],
+    },
+    { exec: "'/home/al ice/t3.AppImage' %U", paths: ["/home/al ice/t3.AppImage"] },
+    { exec: "t3code %U", paths: [] },
+    { exec: "/home/alice/t3.AppImage %U", hidden: "NoDisplay=true", paths: [] },
+    { exec: "/home/alice/t3.AppImage %U", hidden: "Hidden=true", paths: [] },
+  ])("reads the paths a visible launcher runs from Exec=$exec", ({ exec, hidden, paths }) => {
+    const entry = [
+      "[Desktop Entry]",
+      "Type=Application",
+      hidden ?? "NoDisplay=false",
+      `Exec=${exec}`,
+      "",
+    ];
+    assert.deepEqual(DesktopLinuxUrlHandler.visibleLauncherExecPaths(entry.join("\n")), paths);
+  });
+
+  it.each([
     { from: "T3-Code-0.1.8-x86_64.AppImage", to: "T3-Code-x86_64.AppImage", restored: true },
     {
       from: "T3-Code-0.1.9-nightly.20261110.4449-arm64.AppImage",
@@ -265,6 +300,17 @@ describe("DesktopLinuxUrlHandler", () => {
       });
     },
   );
+
+  it.effect("keeps the launcher entry the pre-ready step decided on", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { linuxLauncherVisible: true });
+
+      assert.include(recorded.files[0]?.content, "StartupWMClass=com.t3tools.T3Code\n");
+      assert.notInclude(recorded.files[0]?.content, "NoDisplay=");
+    });
+  });
 
   it.effect("falls back to the process executable outside an AppImage", () => {
     const recorded = emptyRecording();
@@ -511,6 +557,11 @@ const registerWithRealFileSystem = (run: ThemeIconRun) =>
                 ),
               ),
             ),
+            Layer.succeed(DesktopPreReadyElectronOptions, {
+              linux: null,
+              linuxPasswordStoreCommandLine: null,
+              linuxLauncherVisible: false,
+            }),
             Layer.effect(
               DesktopAssets.DesktopAssets,
               Path.Path.pipe(
