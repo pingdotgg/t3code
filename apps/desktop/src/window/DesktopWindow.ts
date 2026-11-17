@@ -1233,11 +1233,7 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
         ...(pinned === undefined ? {} : { target: pinned }),
       });
-      // A failure without an id cannot name its capture, so no pin should outlive it.
-      if (captureId === undefined) {
-        if (event.type === "failed") snapShotTargets.clear();
-        return;
-      }
+      if (captureId === undefined) return;
       // A capture's later events go to the window that showed its first, even if focus moved.
       if (event.type === "ready" || event.type === "failed") snapShotTargets.delete(captureId);
       else if (Option.isSome(target)) snapShotTargets.set(captureId, target.value);

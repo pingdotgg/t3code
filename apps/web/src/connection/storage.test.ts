@@ -7,8 +7,10 @@ import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -67,6 +69,54 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       yield* secondWindow.update((document) => ({ ...document }));
 
       expect(decodeCatalog(stored).disabledEnvironmentIds).toEqual([removed]);
+    }),
+  );
+
+  it.effect("runs one window's catalog update at a time", () =>
+    Effect.gen(function* () {
+      let stored = encodeCatalog(emptyCatalog);
+      let reads = 0;
+      const firstRead = yield* Deferred.make<void>();
+      const resumeFirst = yield* Deferred.make<void>();
+      const backend = {
+        read: Effect.gen(function* () {
+          reads += 1;
+          const value = stored;
+          if (reads === 1) {
+            yield* Deferred.succeed(firstRead, undefined);
+            yield* Deferred.await(resumeFirst);
+          }
+          return value;
+        }),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            stored = raw;
+          }),
+      };
+      const crossWindowLock = yield* Semaphore.make(1);
+      const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
+        crossWindowLock.withPermits(1)(effect);
+      const firstWindow = yield* ConnectionStorage.makeCatalogStore(backend, { exclusive });
+      const secondWindow = yield* ConnectionStorage.makeCatalogStore(backend, { exclusive });
+      const disable = (id: EnvironmentId) => (document: ConnectionCatalogDocument) => ({
+        ...document,
+        disabledEnvironmentIds: [...document.disabledEnvironmentIds, id],
+      });
+      const first = EnvironmentId.make("disabled-in-first-window");
+      const second = EnvironmentId.make("disabled-in-second-window");
+
+      const firstUpdate = yield* Effect.forkChild(firstWindow.update(disable(first)), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(firstRead);
+      const secondUpdate = yield* Effect.forkChild(secondWindow.update(disable(second)), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(resumeFirst, undefined);
+      yield* Fiber.join(firstUpdate);
+      yield* Fiber.join(secondUpdate);
+
+      expect(decodeCatalog(stored).disabledEnvironmentIds).toEqual([first, second]);
     }),
   );
 
