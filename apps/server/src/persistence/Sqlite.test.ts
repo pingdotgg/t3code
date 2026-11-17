@@ -233,6 +233,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig",
     }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
   );
 
+  it.effect("does not run a pending Dulli migration behind a running server", () =>
+    Effect.gen(function* () {
+      const { dbPath } = yield* ServerConfig.ServerConfig;
+      yield* migrateTo();
+      const dulliRows = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* sql<{ readonly id: number }>`
+          SELECT migration_id AS id FROM dulli_sql_migrations
+        `;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DELETE FROM dulli_sql_migrations`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+      yield* ownT3Home();
+
+      const opened = yield* Effect.void.pipe(
+        Effect.provide(SqlitePersistence.layerCliConfig),
+        Effect.result,
+      );
+
+      assert.deepStrictEqual(yield* dulliRows, []);
+      assert.equal(opened._tag, "Failure");
+      if (opened._tag === "Failure") {
+        assert.instanceOf(opened.failure, SqlitePersistence.ServerOwnsDatabaseError);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
+  );
+
   it.effect("opens a current T3 home while a running server owns it", () =>
     Effect.gen(function* () {
       yield* migrateTo();

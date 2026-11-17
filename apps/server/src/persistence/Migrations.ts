@@ -268,7 +268,7 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
 const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
 
 // Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation.
-export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
+const hasPendingUpstreamMigrations = Effect.fn("hasPendingUpstreamMigrations")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql`
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
@@ -284,6 +284,24 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
   return (row?.latestId ?? 0) < latestMigrationId || (row?.previewRows ?? 0) > 0;
 });
 
+const latestDulliMigrationId = Math.max(...dulliMigrationEntries.map(([id]) => id));
+
+const hasPendingDulliMigrations = Effect.fn("hasPendingDulliMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dulli_sql_migrations'
+  `;
+  if (tables.length === 0) return true;
+  const rows = yield* sql<{ readonly latestId: number | null }>`
+    SELECT MAX(migration_id) AS latestId FROM dulli_sql_migrations
+  `;
+  return (rows[0]?.latestId ?? 0) < latestDulliMigrationId;
+});
+
+export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
+  return (yield* hasPendingUpstreamMigrations()) || (yield* hasPendingDulliMigrations());
+});
+
 const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
@@ -294,8 +312,11 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  const hasPending = yield* hasPendingMigrations();
-  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingUpstreamMigrations();
+  // The Dulli migrator takes the write lock even with nothing to run.
+  const hasPendingDulli =
+    toMigrationInclusive === undefined && (yield* hasPendingDulliMigrations());
+  if (hasPending || hasPendingDulli) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
@@ -332,17 +353,16 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     }
     executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
   }
-  const forkMigrations =
-    toMigrationInclusive === undefined
-      ? yield* run({
-          table: "dulli_sql_migrations",
-          loader: Migrator.fromRecord(
-            Object.fromEntries(
-              dulliMigrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
-            ),
+  const forkMigrations = hasPendingDulli
+    ? yield* run({
+        table: "dulli_sql_migrations",
+        loader: Migrator.fromRecord(
+          Object.fromEntries(
+            dulliMigrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
           ),
-        })
-      : [];
+        ),
+      })
+    : [];
   const migrations = [
     ...executedMigrations.map(([id, name]) => `${id}_${name}`),
     ...forkMigrations.map(([id, name]) => `dulli:${id}_${name}`),
