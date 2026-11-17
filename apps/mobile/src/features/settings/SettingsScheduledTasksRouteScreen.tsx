@@ -1132,7 +1132,9 @@ function TaskForm({
                         : id === "weekdays"
                           ? [1, 2, 3, 4, 5]
                           : (() => {
-                              const day = SCHEDULE_WEEKDAYS.find((item) => String(item.index) === id);
+                              const day = SCHEDULE_WEEKDAYS.find(
+                                (item) => String(item.index) === id,
+                              );
                               if (!day) return current.schedule.weekdays;
                               return current.schedule.weekdays.includes(day.index)
                                 ? current.schedule.weekdays.filter((index) => index !== day.index)

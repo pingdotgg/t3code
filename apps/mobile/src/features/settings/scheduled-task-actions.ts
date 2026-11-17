@@ -51,16 +51,14 @@ export function useScheduledTaskActions(environmentId: EnvironmentId) {
   >(() => new Map());
 
   const isEnabled = (task: ScheduledTask) =>
-    displayedScheduledTaskEnabled(task, requested.get(task.id) ?? null);
+    displayedScheduledTaskEnabled(task, requested.get(task.id));
   const act = async (task: ScheduledTask, action: ScheduledTaskAction) => {
     if (busyTaskId !== null || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
       return;
     setBusyTaskId(task.id);
     const enabled = !isEnabled(task);
     if (action === "toggle")
-      setRequested((current) =>
-        new Map(current).set(task.id, { taskId: task.id, enabled, since: task.updatedAt }),
-      );
+      setRequested((current) => new Map(current).set(task.id, { enabled, since: task.updatedAt }));
     const result =
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })

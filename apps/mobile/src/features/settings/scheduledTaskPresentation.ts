@@ -112,7 +112,6 @@ export function scheduledTaskRepeatLabel(weekdays: ReadonlyArray<number>): strin
 }
 
 export type RequestedScheduledTaskEnabled = {
-  readonly taskId: ScheduledTask["id"];
   readonly enabled: boolean;
   /** The task's `updatedAt` when the toggle was sent. */
   readonly since: string;
@@ -120,10 +119,8 @@ export type RequestedScheduledTaskEnabled = {
 
 /** A switch flips on tap; show the request until any newer version of the task arrives. */
 export function displayedScheduledTaskEnabled(
-  task: Pick<ScheduledTask, "id" | "enabled" | "updatedAt">,
-  requested: RequestedScheduledTaskEnabled | null,
+  task: Pick<ScheduledTask, "enabled" | "updatedAt">,
+  requested: RequestedScheduledTaskEnabled | undefined,
 ): boolean {
-  return requested?.taskId === task.id && requested.since === task.updatedAt
-    ? requested.enabled
-    : task.enabled;
+  return requested?.since === task.updatedAt ? requested.enabled : task.enabled;
 }
