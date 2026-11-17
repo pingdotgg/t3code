@@ -4985,6 +4985,11 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   }
 }
 
+/* Thread titles otherwise read a theme's text color, which is dark on a light theme. */
+:root.black-chrome [data-app-sidebar]:where([data-chrome-scope], [data-chrome-scope] *) {
+  --sidebar-thread-title-foreground: #f1f3f7;
+}
+
 /* Light surfaces the default theme derives from its chrome color keep the
    light value outside the chrome scope. */
 :root.black-chrome:not([data-theme-id]:not([data-theme-id=""])) {
