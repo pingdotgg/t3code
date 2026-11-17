@@ -39,9 +39,9 @@
     "usage": "用量"
   },
   "header": {
+    "clearSearch": "清除线程搜索",
     "dragToResizeSidebar": "拖动以调整侧边栏大小",
     "resizeSidebar": "调整侧边栏大小",
-    "clearSearch": "清除线程搜索",
     "searchPlaceholder": "搜索",
     "searchThreads": "搜索线程",
     "threads": "线程",

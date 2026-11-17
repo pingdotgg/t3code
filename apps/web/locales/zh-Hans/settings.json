@@ -941,10 +941,10 @@
     "customOption": "自定义选项",
     "customTag": "自定义",
     "default": "默认",
-    "disableAll": "全部停用",
-    "enableAll": "全部启用",
     "defaultChoiceAria": "默认选项值",
+    "disableAll": "全部停用",
     "displayName": "显示名称",
+    "enableAll": "全部启用",
     "idUsedTwice": "{{position}}：id「{{id}}」被使用了两次。",
     "labelPlaceholder": "标签",
     "modelCount_other": "{{count}} 个模型",
@@ -1817,13 +1817,13 @@
     "archiveDescription": "把项目从项目选择器中隐藏。会话和文件都会保留。",
     "archiveFailed": "归档项目失败",
     "cannotChange": "此连接无法更改该项目。",
-    "chooseNotice": "选择一个项目以管理它的名称、图标、检出和操作。",
     "checkouts": "检出",
     "checkoutUnavailable": "此检出在所选的项目和环境中已不可用。",
     "chooseFile": "选择文件",
     "chooseFileAria": "选择项目图标文件",
     "chooseIcon": "选择图标",
     "chooseIconAria": "选择项目图标",
+    "chooseNotice": "选择一个项目以管理它的名称、图标、检出和操作。",
     "danger": "危险操作",
     "environment": "环境",
     "findSettingHint": "找不到设置？在上方保持选中此项目，然后前往其他设置页面。",
@@ -1962,11 +1962,6 @@
     "pasteEmoji": "或粘贴任意 emoji",
     "saveIcon": "保存图标"
   },
-  "providerSettingText": {
-    "binaryPath": { "label": "二进制文件路径" },
-    "launchArgs": { "label": "启动参数" },
-    "shadowHomePath": { "label": "影子主目录路径" }
-  },
   "providerAdvisory": {
     "compatBroken": "已知损坏版本",
     "compatGraceful": "有限支持",
@@ -2080,6 +2075,17 @@
     "updateInstanceFailed": "无法更新服务商实例",
     "updateStartFailed": "无法启动服务商更新命令。",
     "waitingForConfig": "正在等待 {{label}} 的配置。"
+  },
+  "providerSettingText": {
+    "binaryPath": {
+      "label": "二进制文件路径"
+    },
+    "launchArgs": {
+      "label": "启动参数"
+    },
+    "shadowHomePath": {
+      "label": "影子主目录路径"
+    }
   },
   "providerSetup": {
     "aria": "Antigravity 设置",
@@ -2937,8 +2943,8 @@
     "allowCapture": "允许捕获",
     "allowTitle": "允许快照",
     "back": "上一步",
-    "captureWindowDescription": "截取一个窗口并附加到当前草稿。",
     "captureNeedsAttention": "捕获需要处理。返回检查访问权限。",
+    "captureWindowDescription": "截取一个窗口并附加到当前草稿。",
     "check": {
       "notReady": "尚未就绪。请先完成上面的步骤。",
       "readyContinue": "已就绪。继续选择你的快捷键。",
@@ -2951,8 +2957,8 @@
     "checkAgain": "再次检查",
     "checking": "检查中…",
     "close": "关闭",
-    "disableExtension": "停用扩展",
     "desktopOnly": "仅在桌面应用中可用。",
+    "disableExtension": "停用扩展",
     "enableExtension": "启用扩展",
     "enabling": "启用中…",
     "finishLater": "稍后完成",
@@ -3027,7 +3033,6 @@
     "description": "每个休眠菜单中的选项，按最早唤醒时间排序。工作日表示今天之后的下一个该工作日。",
     "duplicate": "与上方选项重复",
     "friday": "星期五",
-    "nextWeek": "下周",
     "hour": "小时",
     "hours": "小时",
     "in": "过",
@@ -3035,11 +3040,12 @@
     "maxOptions": "最多 {{count}} 个选项",
     "maxOptions_other": "最多 {{count}} 个选项",
     "menuNow": "当前菜单：{{items}}",
-    "nextWeekday": "下周{{day}}",
     "menusCustom": "菜单中仅提供「自定义」…",
     "minute": "分钟",
     "minutes": "分钟",
     "monday": "星期一",
+    "nextWeek": "下周",
+    "nextWeekday": "下周{{day}}",
     "option": "休眠选项 {{index}}",
     "passed": "今天已过",
     "remove": "移除休眠选项 {{index}}",
@@ -3050,8 +3056,6 @@
     "thisAfternoon": "今天下午",
     "thisEvening": "今天晚上",
     "thisMorning": "今天早上",
-    "thursday": "星期四",
-    "sunday": "星期日",
     "thursday": "星期四",
     "time": "时间",
     "today": "今天",
@@ -3690,7 +3694,6 @@
   "voiceOptions": {
     "builtIn": "内置",
     "cleanupInstructions": "清理指令",
-    "transcriptionOptions": "转写选项",
     "cleanupInstructionsDescription": "使用内置指令，或自己编写。",
     "cleanupSection": "清理",
     "cleanupTranscripts": "清理转写文本",
@@ -3707,7 +3710,8 @@
     "removeFillerWordsDescription": "从转写文本中移除「嗯」「呃」这类语气词。",
     "silenceFiltering": "静音过滤",
     "silenceFilteringDescription": "转写前跳过静音和其他非语音音频，并保留一小段缓冲，避免把词句切断。",
-    "silenceFilteringOpenai": "OpenAI 会自动处理静音。"
+    "silenceFilteringOpenai": "OpenAI 会自动处理静音。",
+    "transcriptionOptions": "转写选项"
   },
   "voiceTest": {
     "closeAria": "关闭模型测试",

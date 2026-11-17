@@ -950,12 +950,12 @@
     "copyFromModelAria": "Copy options from a built-in model",
     "custom": "Custom…",
     "customOption": "Custom option",
-    "disableAll": "Disable all",
-    "enableAll": "Enable all",
     "customTag": "custom",
     "default": "Default",
     "defaultChoiceAria": "Default choice",
+    "disableAll": "Disable all",
     "displayName": "Display name",
+    "enableAll": "Enable all",
     "idUsedTwice": "{{position}}: id \"{{id}}\" is used twice.",
     "labelPlaceholder": "Label",
     "modelCount_one": "{{count}} model",
@@ -1832,13 +1832,13 @@
     "archiveDescription": "Hides the project from project pickers. Threads and files are kept.",
     "archiveFailed": "Failed to archive project",
     "cannotChange": "This connection cannot change this project.",
-    "chooseNotice": "Choose a project to manage its name, icon, checkouts and actions.",
     "checkouts": "Checkouts",
     "checkoutUnavailable": "This checkout is no longer available in the selected project and environment.",
     "chooseFile": "Choose file",
     "chooseFileAria": "Choose a project icon file",
     "chooseIcon": "Choose icon",
     "chooseIconAria": "Choose a project icon",
+    "chooseNotice": "Choose a project to manage its name, icon, checkouts and actions.",
     "danger": "Danger",
     "environment": "Environment",
     "findSettingHint": "Can't find a setting? Keep this project picked above and hop to any other settings page.",
@@ -1980,11 +1980,6 @@
     "pasteEmoji": "Or paste any emoji",
     "saveIcon": "Save icon"
   },
-  "providerSettingText": {
-    "binaryPath": { "label": "Binary path" },
-    "launchArgs": { "label": "Launch arguments" },
-    "shadowHomePath": { "label": "Shadow home path" }
-  },
   "providerAdvisory": {
     "compatBroken": "Known broken version",
     "compatGraceful": "Limited support",
@@ -2098,6 +2093,17 @@
     "updateInstanceFailed": "Could not update provider instance",
     "updateStartFailed": "The provider update command could not be started.",
     "waitingForConfig": "Waiting for {{label}}'s configuration."
+  },
+  "providerSettingText": {
+    "binaryPath": {
+      "label": "Binary path"
+    },
+    "launchArgs": {
+      "label": "Launch arguments"
+    },
+    "shadowHomePath": {
+      "label": "Shadow home path"
+    }
   },
   "providerSetup": {
     "aria": "Antigravity setup",
@@ -2964,9 +2970,8 @@
     "allowCapture": "Allow capture",
     "allowTitle": "Allow snapshots",
     "back": "Back",
-    "captureWindowDescription": "Capture a window and attach it to your current draft.",
-    "desktopOnly": "Only available in the desktop app.",
     "captureNeedsAttention": "Capture needs attention. Go back to check access.",
+    "captureWindowDescription": "Capture a window and attach it to your current draft.",
     "check": {
       "notReady": "Not ready yet. Finish the step above.",
       "readyContinue": "Ready. Continue to choose your shortcut.",
@@ -2979,6 +2984,7 @@
     "checkAgain": "Check again",
     "checking": "Checking…",
     "close": "Close",
+    "desktopOnly": "Only available in the desktop app.",
     "disableExtension": "Disable extension",
     "enableExtension": "Enable extension",
     "enabling": "Enabling…",
@@ -3054,7 +3060,6 @@
     "description": "Choices in every snooze menu, listed soonest first. Weekdays mean the next one after today.",
     "duplicate": "Duplicate of an option above",
     "friday": "Friday",
-    "nextWeek": "Next week",
     "hour": "hour",
     "hours": "hours",
     "in": "In",
@@ -3064,10 +3069,11 @@
     "maxOptions_other": "Up to {{count}} options",
     "menuNow": "Menu now: {{items}}",
     "menusCustom": "Menus offer only Custom…",
-    "nextWeekday": "Next {{day}}",
     "minute": "minute",
     "minutes": "minutes",
     "monday": "Monday",
+    "nextWeek": "Next week",
+    "nextWeekday": "Next {{day}}",
     "option": "Snooze option {{index}}",
     "passed": "Passed for today",
     "remove": "Remove snooze option {{index}}",
@@ -3721,7 +3727,6 @@
   "voiceOptions": {
     "builtIn": "Built-in",
     "cleanupInstructions": "Cleanup instructions",
-    "transcriptionOptions": "Transcription options",
     "cleanupInstructionsDescription": "Use the built-in instructions or write your own.",
     "cleanupSection": "Cleanup",
     "cleanupTranscripts": "Clean up transcripts",
@@ -3738,7 +3743,8 @@
     "removeFillerWordsDescription": "Remove filler words like “um” and “uh” from transcripts.",
     "silenceFiltering": "Silence filtering",
     "silenceFilteringDescription": "Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off.",
-    "silenceFilteringOpenai": "OpenAI handles silence automatically."
+    "silenceFilteringOpenai": "OpenAI handles silence automatically.",
+    "transcriptionOptions": "Transcription options"
   },
   "voiceTest": {
     "closeAria": "Close model test",
