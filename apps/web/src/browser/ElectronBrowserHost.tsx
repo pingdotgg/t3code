@@ -5,10 +5,11 @@ import {
   type DesktopPreviewOpenLinkEvent,
   type EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useEffect, useState } from "react";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
@@ -29,7 +30,8 @@ import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
-import { rendersServerTabNatively } from "./previewRuntime";
+import { acquireDesktopTab } from "./desktopTabLifetime";
+import { hostsServerTabInBackground, rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
@@ -44,11 +46,17 @@ function hostedBrowserSessions(
           .filter(
             (snapshot) =>
               snapshot.runtime !== "server" ||
-              rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot),
+              rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot) ||
+              hostsServerTabInBackground(threadRef.environmentId, primaryEnvironmentId, snapshot),
           )
           .map((snapshot) => ({
             threadRef,
             snapshot,
+            background: hostsServerTabInBackground(
+              threadRef.environmentId,
+              primaryEnvironmentId,
+              snapshot,
+            ),
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
               previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
@@ -134,33 +142,88 @@ export function ElectronBrowserHost() {
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
-        const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-        return (
-          <AuthorizedBrowserWebview
-            key={runtimeTabId}
-            threadRef={threadRef}
-            tabId={snapshot.tabId}
-            runtimeTabId={runtimeTabId}
-            initialUrl={url}
-            viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
-            pictureInPicture={pictureInPicture}
-            profileId={snapshot.profileId}
-            zoomFactor={zoomFactor}
-            serverDriven={snapshot.runtime === "server"}
-            {...(snapshot.runtime === "server"
-              ? {
-                  serverRendering: {
-                    colorScheme: snapshot.colorScheme ?? "system",
-                    zoomFactor: snapshot.zoomFactor ?? 1,
-                  },
-                }
-              : {})}
-          />
-        );
-      })}
+      {sessions.map(
+        ({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor, background }) => {
+          const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+          if (background) {
+            return (
+              <BackgroundBrowserTab
+                key={runtimeTabId}
+                threadRef={threadRef}
+                tabId={snapshot.tabId}
+                runtimeTabId={runtimeTabId}
+                initialUrl={url}
+                profileId={snapshot.profileId}
+              />
+            );
+          }
+          return (
+            <AuthorizedBrowserWebview
+              key={runtimeTabId}
+              threadRef={threadRef}
+              tabId={snapshot.tabId}
+              runtimeTabId={runtimeTabId}
+              initialUrl={url}
+              viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+              pictureInPicture={pictureInPicture}
+              profileId={snapshot.profileId}
+              zoomFactor={zoomFactor}
+              serverDriven={snapshot.runtime === "server"}
+              {...(snapshot.runtime === "server"
+                ? {
+                    serverRendering: {
+                      colorScheme: snapshot.colorScheme ?? "system",
+                      zoomFactor: snapshot.zoomFactor ?? 1,
+                    },
+                  }
+                : {})}
+            />
+          );
+        },
+      )}
     </div>
   );
+}
+
+/** Holds the desktop tab open in its own window; the panel streams it from the server. */
+function BackgroundBrowserTab(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly tabId: string;
+  readonly runtimeTabId: string;
+  readonly initialUrl: string | null;
+  readonly profileId: string | undefined;
+}) {
+  const { tabId, runtimeTabId } = props;
+  const { environmentId, threadId } = props.threadRef;
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
+  const profileId = useTabProfileId(props.profileId);
+  const hydrated = useClientSettingsHydrated();
+  // Fixed at creation, like a webview's partition and first URL.
+  const [initialUrl] = useState(props.initialUrl);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leases the desktop's background window for this tab and releases it on cleanup
+  useEffect(() => {
+    if (!canOperatePreview || !hydrated) return;
+    const lease = acquireDesktopTab(
+      runtimeTabId,
+      { threadId, tabId },
+      {
+        environmentId,
+        ...(profileId === undefined ? {} : { profileId }),
+        ...(initialUrl === null ? {} : { url: initialUrl }),
+      },
+    );
+    return lease.release;
+  }, [
+    canOperatePreview,
+    hydrated,
+    environmentId,
+    threadId,
+    tabId,
+    runtimeTabId,
+    profileId,
+    initialUrl,
+  ]);
+  return null;
 }
 
 function AuthorizedBrowserWebview(props: ComponentProps<typeof HostedBrowserWebview>) {

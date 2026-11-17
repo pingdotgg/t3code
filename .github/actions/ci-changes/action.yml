@@ -21,6 +21,8 @@ outputs:
     value: ${{ steps.detect.outputs.release_smoke }}
   mobile_native:
     value: ${{ steps.detect.outputs.mobile_native }}
+  desktop_preview:
+    value: ${{ steps.detect.outputs.desktop_preview }}
 runs:
   using: composite
   steps:

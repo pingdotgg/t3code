@@ -22,6 +22,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
 
+// Server tabs render on the desktop only for its own environment.
+vi.mock(import("~/state/primaryEnvironment"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await original()),
+    primaryEnvironmentIdAtom: Atom.make(EnvironmentId.make("host-webview-order")),
+  };
+});
+
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   useEnvironmentScope: () => true,
@@ -58,6 +67,7 @@ import {
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { rendersServerTabNatively } from "./previewRuntime";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
@@ -89,6 +99,15 @@ function setup(): Disposable {
     [Symbol.dispose]() {
       resetPreviewStateForTests();
       __resetClientSettingsPersistenceForTests();
+    },
+  };
+}
+
+function stubDesktopWindowShown(shown: boolean): Disposable {
+  window.desktopBridge = { getWindowShown: () => shown, getWindowZoomFactor: () => 1 } as never;
+  return {
+    [Symbol.dispose]() {
+      delete window.desktopBridge;
     },
   };
 }
@@ -160,4 +179,55 @@ describe("ElectronBrowserHost", () => {
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
   });
+
+  it.each([
+    { shown: false, tabId: "tab_agent_hidden" },
+    { shown: true, tabId: "tab_agent_shown" },
+  ])(
+    "hosts an agent's tab in a background window only if the app window is hidden (shown $shown)",
+    async ({ shown, tabId }) => {
+      using _state = setup();
+      using _bridge = stubDesktopWindowShown(shown);
+      const agentTab: PreviewSessionSnapshot = {
+        ...snapshot(tabId, "2026-01-01T00:00:01.000Z"),
+        runtime: "server",
+        automationOwner: "agent-session",
+      };
+      reconcilePreviewServerSessions(threadRef, {
+        sessions: [agentTab],
+        serverEpoch: "server-a",
+        revision: 1,
+      });
+      await using screen = await renderHost();
+
+      await vi.waitFor(() =>
+        expect(mocks.createTab).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            serverTab: { threadId: threadRef.threadId, tabId },
+          }),
+        ),
+      );
+      const [, defaults] = mocks.createTab.mock.calls[0]!;
+      if (shown) {
+        expect(defaults?.background).toBeUndefined();
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(1);
+      } else {
+        expect(defaults?.background).toMatchObject({
+          environmentId: threadRef.environmentId,
+          url: `https://example.com/${tabId}`,
+        });
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
+        // Moving hosts would reload the agent's page, so it stays streamed once T3 is back.
+        window.desktopBridge = {
+          getWindowShown: () => true,
+          getWindowZoomFactor: () => 1,
+        } as never;
+        expect(
+          rendersServerTabNatively(threadRef.environmentId, threadRef.environmentId, agentTab),
+        ).toBe(false);
+        expect(screen.container.querySelectorAll("webview")).toHaveLength(0);
+      }
+    },
+  );
 });
