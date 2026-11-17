@@ -455,7 +455,10 @@ export function BranchToolbarBranchSelector({
           worktreePath: checkout.worktreePath,
           currentBranch:
             checkout.cwd === branchCwd
-              ? currentGitBranch
+              ? branchStatusQuery.data != null
+                ? branchStatusQuery.data.refName
+                : // Without status, assume the branch this thread expects rather than none.
+                  (currentGitBranch ?? activeThreadBranch)
               : checkout.cwd === activeProjectCwd
                 ? (projectStatusQuery.data?.refName ?? null)
                 : null,
