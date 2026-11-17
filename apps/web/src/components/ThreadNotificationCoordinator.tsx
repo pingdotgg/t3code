@@ -67,17 +67,18 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<
     string,
-    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification | null }
   >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
 
   const trackNotification = (
     environmentId: EnvironmentId,
     threadId: ThreadId,
-    notification: Notification,
+    tag: string,
+    notification: Notification | null,
   ) => {
-    pending.get(notification.tag)?.notification.close();
-    pending.set(notification.tag, { environmentId, threadId, notification });
+    pending.get(tag)?.notification?.close();
+    pending.set(tag, { environmentId, threadId, notification });
     setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding or opening a thread, or removing its environment, closes them.
@@ -117,13 +118,13 @@ export function startThreadNotifications(
     const count = pending.size;
     for (const [tag, entry] of pending) {
       if (!shouldClose(threadKey(entry))) continue;
-      entry.notification.close();
+      entry.notification?.close();
       pending.delete(tag);
     }
     if (count !== pending.size) setNotificationBadge(pending.size);
   };
   const clearPending = () => {
-    for (const { notification } of pending.values()) notification.close();
+    for (const { notification } of pending.values()) notification?.close();
     pending.clear();
     setNotificationBadge(0);
   };
@@ -200,22 +201,26 @@ export function startThreadNotifications(
       openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
       return;
     }
+    if (document.visibilityState === "visible" && document.hasFocus()) return;
+    const tag = threadNotificationTag(environmentId, thread.id);
+    // The badge counts unseen events even when system notifications are off or not permitted.
     if (
       !hasDesktopNotifications(mode) ||
-      (document.visibilityState === "visible" && document.hasFocus()) ||
       typeof Notification === "undefined" ||
       Notification.permission !== "granted"
-    )
+    ) {
+      trackNotification(environmentId, thread.id, tag, null);
       return;
+    }
     try {
       const notification = new Notification(title, {
         body: thread.title,
-        tag: threadNotificationTag(environmentId, thread.id),
+        tag,
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
-      trackNotification(environmentId, thread.id, notification);
+      trackNotification(environmentId, thread.id, tag, notification);
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();
@@ -227,6 +232,7 @@ export function startThreadNotifications(
       });
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
+      trackNotification(environmentId, thread.id, tag, null);
     }
   };
 
@@ -380,7 +386,7 @@ export function startThreadNotifications(
     const count = pending.size;
     for (const [tag, entry] of pending) {
       if (activeIds.has(entry.environmentId)) continue;
-      entry.notification.close();
+      entry.notification?.close();
       pending.delete(tag);
     }
     if (count !== pending.size) setNotificationBadge(pending.size);
@@ -396,15 +402,13 @@ export function startThreadNotifications(
     stopModeListeners();
     clearPending();
     const stops: Array<() => void> = [];
-    if (hasDesktopNotifications(nextMode)) {
-      const unsubscribeBadgeClear = window.desktopBridge?.onNotificationBadgeClear(clearPending);
-      window.addEventListener("focus", clearPending);
-      stops.push(() => {
-        unsubscribeBadgeClear?.();
-        window.removeEventListener("focus", clearPending);
-        clearPending();
-      });
-    }
+    const unsubscribeBadgeClear = window.desktopBridge?.onNotificationBadgeClear(clearPending);
+    window.addEventListener("focus", clearPending);
+    stops.push(() => {
+      unsubscribeBadgeClear?.();
+      window.removeEventListener("focus", clearPending);
+      clearPending();
+    });
     if (hasNotificationSound(nextMode)) {
       document.addEventListener("pointerdown", unlockNotificationAudio);
       document.addEventListener("keydown", unlockNotificationAudio);
