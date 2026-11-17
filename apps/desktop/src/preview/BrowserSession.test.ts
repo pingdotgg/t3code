@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as NodeEvents from "node:events";
@@ -499,11 +500,17 @@ describe("BrowserSession", () => {
       getMediaAccessStatus.mockImplementation((device) =>
         device === "camera" ? "granted" : "denied",
       );
+      const recoveryShown = yield* Deferred.make<void>();
+      showMessageBox.mockImplementation((options) => {
+        if (options.message.startsWith("macOS blocked")) {
+          Deferred.doneUnsafe(recoveryShown, Effect.void);
+        }
+        return 0;
+      });
       assert.isFalse(yield* requestMedia("https://second.test/", ["video", "audio"]));
       assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
-      yield* Effect.promise(() =>
-        vi.waitFor(() => assert.strictEqual(showMessageBox.mock.calls.length, 3)),
-      );
+      yield* Deferred.await(recoveryShown);
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
       assert.strictEqual(
         showMessageBox.mock.calls[1]?.[0].message,
         "https://second.test wants to use your camera and microphone",
@@ -556,6 +563,65 @@ describe("BrowserSession", () => {
       assert.isFalse(yield* requestCamera());
       assert.strictEqual(showMessageBox.mock.calls.length, 3);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("a reset while a camera prompt is open neither grants nor remembers", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      const requestCamera = () => {
+        const granted = Deferred.makeUnsafe<boolean>();
+        requestHandler(
+          null,
+          "media",
+          (value: boolean) => Deferred.doneUnsafe(granted, Effect.succeed(value)),
+          { requestingUrl: "https://page.test/", mediaTypes: ["video"], isMainFrame: true },
+        );
+        return Deferred.await(granted);
+      };
+      const checkCamera = (): boolean =>
+        checkHandler(null, "media", "https://page.test", { mediaType: "video" }) as boolean;
+
+      // The user answers Allow only after cookies were cleared.
+      const asked = yield* Deferred.make<void>();
+      const answer = Promise.withResolvers<number>();
+      showMessageBox.mockReset();
+      showMessageBox.mockImplementationOnce(() => {
+        Deferred.doneUnsafe(asked, Effect.void);
+        return answer.promise;
+      });
+      getMediaAccessStatus.mockReset();
+      getMediaAccessStatus.mockReturnValue("not-determined");
+      askForMediaAccess.mockReset();
+      askForMediaAccess.mockResolvedValue(true);
+
+      const pending = yield* Effect.forkChild(requestCamera());
+      yield* Deferred.await(asked);
+      yield* browserSessions.clearCookies([partition]);
+      answer.resolve(0);
+      assert.isFalse(yield* Fiber.join(pending));
+      assert.isFalse(checkCamera());
+      assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
+
+      // The macOS check is still running when cookies are cleared.
+      const systemAsked = yield* Deferred.make<void>();
+      const systemAnswer = Promise.withResolvers<boolean>();
+      showMessageBox.mockReturnValue(0);
+      askForMediaAccess.mockImplementationOnce(() => {
+        Deferred.doneUnsafe(systemAsked, Effect.void);
+        return systemAnswer.promise;
+      });
+      const pendingSystem = yield* Effect.forkChild(requestCamera());
+      yield* Deferred.await(systemAsked);
+      yield* browserSessions.clearCookies([partition]);
+      systemAnswer.resolve(true);
+      assert.isFalse(yield* Fiber.join(pendingSystem));
+      assert.isFalse(checkCamera());
+    }).pipe(Effect.provide(layerDarwin)),
   );
 
   it.effect("clears a partition whose session has not been opened yet", () =>

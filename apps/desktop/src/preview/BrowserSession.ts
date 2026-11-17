@@ -163,6 +163,13 @@ const ensureSystemMediaAccess = async (
   return systemPreferences.askForMediaAccess(device).catch(() => false);
 };
 
+/** The camera and microphone answers given in one preview Session. */
+interface MediaConsent {
+  readonly decisions: Map<string, boolean>;
+  /** Bumped by each reset, so an answer to an older prompt cannot restore a decision. */
+  resets: number;
+}
+
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
@@ -599,9 +606,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   });
 
   /** Camera and microphone answers by Session; clearing a profile's cookies forgets them too. */
-  const mediaDecisionsBySession = new WeakMap<Session, Map<string, boolean>>();
+  const mediaConsentBySession = new WeakMap<Session, MediaConsent>();
   const forgetMediaDecisions = (browserSession: Session): void => {
-    mediaDecisionsBySession.get(browserSession)?.clear();
+    const consent = mediaConsentBySession.get(browserSession);
+    if (consent === undefined) return;
+    consent.resets += 1;
+    consent.decisions.clear();
   };
 
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
@@ -671,8 +681,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             );
           };
           // Camera and microphone ask once per origin and device, like clipboard reads.
-          const mediaDecisions = new Map<string, boolean>();
-          mediaDecisionsBySession.set(browserSession, mediaDecisions);
+          const mediaConsent: MediaConsent = { decisions: new Map(), resets: 0 };
+          mediaConsentBySession.set(browserSession, mediaConsent);
+          const mediaDecisions = mediaConsent.decisions;
           const mediaKey = (origin: string, device: MediaDevice) => `${device} ${origin}`;
           const confirmMedia = (
             requester: WebContents,
@@ -688,8 +699,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(false);
               return;
             }
+            // A reset while a prompt or the macOS check is pending must not grant or remember.
+            const resets = mediaConsent.resets;
+            const isStale = () => mediaConsent.resets !== resets;
             const finish = (granted: boolean) => {
-              if (!granted) {
+              if (!granted || isStale()) {
                 callback(false);
                 return;
               }
@@ -697,6 +711,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 devices.map((device) => ensureSystemMediaAccess(platform, device)),
               ).then(
                 (results) => {
+                  if (isStale()) {
+                    callback(false);
+                    return;
+                  }
                   const systemGranted = results.every(Boolean);
                   if (!systemGranted) {
                     promptPermission(
@@ -733,7 +751,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 message: `${truncateForPrompt(origin)} wants to use your ${describeMediaDevices(devices)}`,
               },
               (answer) => {
-                if (answer !== undefined) {
+                if (answer !== undefined && !isStale()) {
                   for (const device of devices)
                     mediaDecisions.set(mediaKey(origin, device), answer);
                 }
