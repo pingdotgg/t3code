@@ -43,6 +43,7 @@ import {
 const KIRO_DRIVER_KIND = ProviderDriverKind.make("kiro");
 const KIRO_PRESENTATION = {
   displayName: "Kiro",
+  reportsContextWindow: true,
   showInteractionModeToggle: false,
   supportedRuntimeModes: KIRO_SUPPORTED_RUNTIME_MODES,
 } as const;

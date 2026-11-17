@@ -1,4 +1,9 @@
-export { KIRO_PROVIDER, makeKiroAdapterV2, type KiroAdapterV2Options } from "./server/adapter.ts";
+export {
+  KIRO_PROVIDER,
+  kiroContextUsage,
+  makeKiroAdapterV2,
+  type KiroAdapterV2Options,
+} from "./server/adapter.ts";
 export {
   kiroApprovalOptions,
   kiroAutopilotValue,

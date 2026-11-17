@@ -29,6 +29,10 @@ export function isToolLifecycleItemType(value: string): value is ToolLifecycleIt
 
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
+  /** Providers such as Kiro may report context usage as a percentage only. */
+  usedPercentage: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),

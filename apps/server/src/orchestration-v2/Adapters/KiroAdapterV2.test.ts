@@ -61,6 +61,7 @@ import {
   KIRO_PROVIDER,
   kiroApprovalOptions,
   kiroAutopilotValue,
+  kiroContextUsage,
   kiroPermissionDisposition,
   makeKiroAdapterV2,
 } from "@t3tools/provider-kiro/testing";
@@ -559,6 +560,40 @@ describe("KiroAdapterV2", () => {
               ? settled.providerTurn.creditUsage
               : undefined,
             { turn: 0.3724, elapsedMs: 4413, session: 1.205 },
+          );
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("projects Kiro's context percentage onto the provider thread", () =>
+    runKiroScript({
+      scenario: "context-usage",
+      frames: [
+        outbound("initialize"),
+        answer("initialize", KIRO_V3_INITIALIZE_WITHOUT_EXTENSIONS),
+        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+        answer("session/new", sessionSetup([modeOption])),
+        turnPrompt,
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } }),
+        update({
+          sessionUpdate: "session_info_update",
+          _meta: { kiro: { kind: "context_usage", usagePercentage: 8.8 } },
+        }),
+        answer("session/prompt", { stopReason: "end_turn" }),
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          const projected = (yield* collectTurn(events)).findLast(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextUsage !== null,
+          );
+          assert.deepStrictEqual(
+            projected?.type === "provider_thread.updated"
+              ? projected.providerThread.contextUsage
+              : undefined,
+            { usedTokens: 0, usedPercentage: 8.8 },
           );
         }),
     }).pipe(Effect.provide(testLayer), Effect.scoped),
@@ -1457,6 +1492,45 @@ describe("KiroAdapterV2 unknown model", () => {
       });
     }).pipe(Effect.provide(testLayer)),
   );
+});
+
+describe("Kiro context usage", () => {
+  it("maps Kiro's percentage-only context update to a snapshot", () => {
+    const notification = {
+      sessionId: SESSION_ID,
+      update: {
+        sessionUpdate: "session_info_update",
+        _meta: { kiro: { kind: "context_usage", usagePercentage: 8.8 } },
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    assert.deepStrictEqual(kiroContextUsage(notification), {
+      usedTokens: 0,
+      usedPercentage: 8.8,
+    });
+  });
+
+  it("keeps token counts when Kiro includes them", () => {
+    const notification = {
+      sessionId: SESSION_ID,
+      update: {
+        sessionUpdate: "session_info_update",
+        _meta: {
+          kiro: {
+            kind: "context_usage",
+            usagePercentage: 8.8,
+            contextUsage: { usedTokens: 8_800, maxTokens: 100_000 },
+          },
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    assert.deepStrictEqual(kiroContextUsage(notification), {
+      usedTokens: 8_800,
+      maxTokens: 100_000,
+      usedPercentage: 8.8,
+    });
+  });
 });
 
 describe("Kiro permission policy", () => {

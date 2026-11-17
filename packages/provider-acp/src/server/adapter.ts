@@ -400,6 +400,10 @@ export interface AcpAdapterV2Flavor {
   readonly turnCreditUsage?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => Partial<OrchestrationV2ProviderTurnCreditUsage> | undefined;
+  /** Provider-specific context usage updates that are not standard `usage_update` frames. */
+  readonly contextUsage?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => ThreadTokenUsageSnapshot | undefined;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -5331,6 +5335,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
+          const customContextUsage = flavor.contextUsage?.(notification);
+          if (customContextUsage !== undefined) {
+            yield* Ref.update(contextUsageBySessionId, (current) =>
+              new Map(current).set(notification.sessionId, customContextUsage),
+            );
+            if (context?.nativeThreadId === notification.sessionId) {
+              context.contextUsage = customContextUsage;
+            }
+            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+              notification.sessionId,
+            );
+            if (knownProviderThread !== undefined) {
+              const now = yield* DateTime.now;
+              const providerThread: OrchestrationV2ProviderThread = {
+                ...knownProviderThread,
+                contextUsage: customContextUsage,
+                nativeMetadata:
+                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
+                  knownProviderThread.nativeMetadata ??
+                  null,
+                updatedAt: now,
+              };
+              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                new Map(current).set(notification.sessionId, providerThread),
+              );
+              yield* emitProviderEvent({
+                type: "provider_thread.updated",
+                driver,
+                providerThread,
+              });
+            }
+            return;
+          }
           if (
             update.sessionUpdate === "usage_update" ||
             update.sessionUpdate === "session_info_update"

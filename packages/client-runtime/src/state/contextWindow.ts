@@ -125,7 +125,8 @@ export function deriveLatestContextWindowSnapshot(
     const maxTokens = asFiniteNumber(providerUsage.maxTokens);
     const usedTokens = providerUsage.usedTokens;
     const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+      asFiniteNumber(providerUsage.usedPercentage) ??
+      (maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null);
     return {
       usedTokens,
       totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),

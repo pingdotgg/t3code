@@ -86,7 +86,7 @@ export function ThreadDetailsUsage({
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
-    maxTokens !== null && usage.usedPercentage !== null
+    usage.usedPercentage !== null
       ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
       : null;
   const threshold = usage.autoCompactThreshold ?? null;
@@ -111,14 +111,21 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
           value={
             maxTokens !== null
               ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
+              : used !== null
+                ? `${used}% used · ${100 - used}% left`
+                : usedTokens
           }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
+          ariaValue={
+            used !== null ? `${used}% used · ${100 - used}% left` : `${usedTokens} tokens used`
+          }
           tooltip={
             <>
               <span className="text-foreground">
                 {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
               </span>
+              {maxTokens === null && used !== null ? (
+                <span className="text-muted-foreground">{100 - used}% remaining</span>
+              ) : null}
               {maxTokens !== null ? (
                 <span className="text-muted-foreground">
                   {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}

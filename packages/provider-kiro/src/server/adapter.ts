@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderTurnCreditUsage,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import { KiroSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -215,6 +216,60 @@ const decodeKiroUsageInfo = Schema.decodeUnknownOption(
     ]),
   }),
 );
+
+const decodeKiroContextUsageInfo = Schema.decodeUnknownOption(
+  Schema.Struct({
+    kiro: Schema.Struct({
+      kind: Schema.Literal("context_usage"),
+      usagePercentage: Schema.optional(Schema.Finite),
+      contextUsage: Schema.optional(Schema.Unknown),
+    }),
+  }),
+);
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function contextUsageField(value: unknown, names: ReadonlyArray<string>): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  for (const name of names) {
+    const result = nonNegativeNumber(record[name]);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+}
+
+/** Maps Kiro's percentage-based context event into T3's standard usage snapshot. */
+export function kiroContextUsage(
+  notification: EffectAcpSchema.SessionNotification,
+): ThreadTokenUsageSnapshot | undefined {
+  if (notification.update.sessionUpdate !== "session_info_update") return undefined;
+  const info = Option.getOrUndefined(decodeKiroContextUsageInfo(notification.update._meta))?.kiro;
+  if (info === undefined) return undefined;
+
+  const nested = info.contextUsage;
+  const usedTokens = contextUsageField(nested, ["usedTokens", "tokens", "used"]);
+  const maxTokens = contextUsageField(nested, [
+    "maxTokens",
+    "contextWindow",
+    "contextWindowTokens",
+  ]);
+  const rawPercentage =
+    nonNegativeNumber(info.usagePercentage) ?? contextUsageField(nested, ["usagePercentage"]);
+  const usedPercentage = rawPercentage === undefined ? undefined : Math.min(100, rawPercentage);
+  const derivedUsedTokens =
+    usedTokens === undefined || maxTokens === undefined || usedPercentage === undefined
+      ? usedTokens
+      : Math.round((maxTokens * usedPercentage) / 100);
+
+  return {
+    usedTokens: Math.round(derivedUsedTokens ?? 0),
+    ...(maxTokens === undefined ? {} : { maxTokens: Math.max(1, Math.round(maxTokens)) }),
+    ...(usedPercentage === undefined ? {} : { usedPercentage }),
+  };
+}
 
 /** Sums the amounts Kiro bills in credits; undefined when it reports none. */
 function kiroCredits(
@@ -649,6 +704,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     steering: kiroSteering,
     forkFromTurn: kiroForkFromTurn,
     turnCreditUsage: kiroTurnCreditUsage,
+    contextUsage: kiroContextUsage,
     ...(options.onAvailableCommandsUpdate === undefined
       ? {}
       : { onAvailableCommandsUpdate: options.onAvailableCommandsUpdate }),

@@ -93,6 +93,20 @@ describe("live provider-turn usage (#8144)", () => {
       "Compacts automatically at about 150,000 tokens.",
     );
   });
+
+  it("keeps percentage-only provider context usage", () => {
+    const updatedAt = DateTime.makeUnsafe("2026-08-27T00:00:00.000Z");
+    const snapshot = deriveLatestContextWindowSnapshot([], null, {
+      id: ProviderThreadId.make("kiro-context-thread"),
+      contextUsage: { usedTokens: 0, usedPercentage: 8.8 },
+      updatedAt,
+    });
+    expect(snapshot).toMatchObject({
+      usedPercentage: 8.8,
+      remainingPercentage: 91.2,
+      maxTokens: null,
+    });
+  });
 });
 
 describe("latestProviderTurnTokenUsage", () => {
