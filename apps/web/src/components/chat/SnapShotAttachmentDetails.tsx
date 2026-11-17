@@ -1,6 +1,6 @@
 import type { SnapShotSource } from "@t3tools/contracts";
-import { ImageIcon, TextIcon } from "lucide-react";
-import { Suspense } from "react";
+import { CheckIcon, CopyIcon, ImageIcon, TextIcon } from "lucide-react";
+import { Suspense, useRef, useState } from "react";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -8,6 +8,10 @@ import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  ANCHORED_COPY_TOAST_TIMEOUT_MS,
+  showAnchoredCopyErrorToast,
+} from "../ui/anchoredCopyToast";
 import { HighlightedTokens } from "./HighlightedTokens";
 
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
@@ -71,14 +75,64 @@ function snapShotIncludesAccessibility(source: SnapShotSource): boolean {
   return Boolean(source.accessibility || source.accessibleText?.trim());
 }
 
+export function SnapShotCopyButton({
+  onCopy,
+  side = "top",
+}: {
+  onCopy: () => Promise<void>;
+  side?: "top" | "right" | "bottom" | "left";
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            ref={ref}
+            aria-label="Copy snapshot"
+            disabled={copied}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onCopy().then(
+                () => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), ANCHORED_COPY_TOAST_TIMEOUT_MS);
+                },
+                (error: unknown) =>
+                  showAnchoredCopyErrorToast(
+                    ref,
+                    error instanceof Error ? error : new Error(String(error)),
+                  ),
+              );
+            }}
+            size="xs"
+            variant="ghost-muted"
+          />
+        }
+      >
+        {copied ? (
+          <CheckIcon className="size-3 text-primary" aria-hidden="true" />
+        ) : (
+          <CopyIcon className="size-3" aria-hidden="true" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side={side}>Copy snapshot</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function SnapShotContentsButton({
   source,
   className,
   side = "top",
+  onCopySnapshot,
 }: {
   source: SnapShotSource;
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
+  onCopySnapshot?: (() => Promise<void>) | undefined;
 }) {
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
@@ -111,7 +165,14 @@ export function SnapShotContentsButton({
       </Tooltip>
       <PopoverPopup side={side} align="center" width="md">
         <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
-          <PopoverTitle>Accessibility data</PopoverTitle>
+          <div className="flex items-center justify-between gap-2">
+            <PopoverTitle>Accessibility data</PopoverTitle>
+            {onCopySnapshot && (
+              <div className="-my-1.5">
+                <SnapShotCopyButton onCopy={onCopySnapshot} side={side} />
+              </div>
+            )}
+          </div>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
@@ -135,9 +196,11 @@ export function SnapShotContentsButton({
 
 export function SnapShotAttachmentDetails({
   source,
+  onCopySnapshot,
   className,
 }: {
   source: SnapShotSource;
+  onCopySnapshot?: (() => Promise<void>) | undefined;
   className?: string;
 }) {
   return (
@@ -157,7 +220,11 @@ export function SnapShotAttachmentDetails({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
           <span className="truncate">{source.appName}</span>
-          <SnapShotContentsButton source={source} className="pointer-events-auto" />
+          <SnapShotContentsButton
+            source={source}
+            className="pointer-events-auto"
+            onCopySnapshot={onCopySnapshot}
+          />
         </div>
         <div className="truncate text-3xs leading-3.5 text-white/70">
           {source.windowTitle || "Captured window"}
