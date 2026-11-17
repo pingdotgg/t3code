@@ -642,6 +642,7 @@ describe("background work kinds from older or newer servers", () => {
 
 describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
   const decode = Schema.decodeUnknownSync(OrchestrationV2WorkspacePreparation);
+  const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
   const strategy = { type: "worktree", baseRef: "HEAD", startFromOrigin: false } as const;
 
   it("round-trips full SHAs and rejects ref-like or option-like values", () => {
@@ -674,7 +675,7 @@ describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
         workspaceStrategy: { ...strategy, memberBaseCommits },
       },
     };
-    expect(Schema.decodeUnknownSync(OrchestrationV2Command)(command)).toEqual(command);
+    expect(decodeCommand(command)).toEqual(command);
   });
 });
 
