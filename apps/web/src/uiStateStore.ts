@@ -219,6 +219,26 @@ function pickUiState(state: UiState): UiState {
   };
 }
 
+// Two windows can expand different turns of one thread, so turns merge inside each thread.
+function mergeTurnExpansionChanges(
+  stored: UiState["threadChangedFilesExpandedById"],
+  local: UiState["threadChangedFilesExpandedById"],
+  baseline: UiState["threadChangedFilesExpandedById"],
+): UiState["threadChangedFilesExpandedById"] {
+  const merged = { ...stored };
+  for (const threadId of new Set([...Object.keys(local), ...Object.keys(baseline)])) {
+    if (Equal.equals(local[threadId], baseline[threadId])) continue;
+    const turns = mergeRecordChanges(
+      stored[threadId],
+      local[threadId] ?? {},
+      baseline[threadId] ?? {},
+    );
+    if (Object.keys(turns).length === 0) delete merged[threadId];
+    else merged[threadId] = turns;
+  }
+  return merged;
+}
+
 /** Applies what this window changed since `baseline` over what other windows stored since. */
 function mergeUiStates(stored: UiState, local: UiState, baseline: UiState): UiState {
   const pick = <K extends keyof UiState>(key: K): UiState[K] =>
@@ -235,7 +255,7 @@ function mergeUiStates(stored: UiState, local: UiState, baseline: UiState): UiSt
       local.threadLastVisitedAtById,
       baseline.threadLastVisitedAtById,
     ),
-    threadChangedFilesExpandedById: mergeRecordChanges(
+    threadChangedFilesExpandedById: mergeTurnExpansionChanges(
       stored.threadChangedFilesExpandedById,
       local.threadChangedFilesExpandedById,
       baseline.threadChangedFilesExpandedById,

@@ -64,7 +64,7 @@ const openNewWindow = Effect.fn("desktop.menu.openNewWindow")(function* (): Effe
 > {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   if (Option.isNone(yield* (yield* ElectronWindow.ElectronWindow).main)) {
-    yield* desktopWindow.ensureMain;
+    yield* desktopWindow.createMainIfBackendReady;
     return;
   }
   yield* desktopWindow.dispatchMenuAction("new-window");

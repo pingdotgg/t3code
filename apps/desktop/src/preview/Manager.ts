@@ -109,6 +109,25 @@ export type PreviewNavStatus =
       description: string;
     };
 
+/** Whether a tab other than the given guest's renders this server tab, as after a move between windows. */
+function rendersServerTabElsewhere(
+  tabs: Iterable<PreviewTabState>,
+  serverTab: NonNullable<PreviewTabState["serverTab"]>,
+  exceptWebContentsId: number | null,
+): boolean {
+  for (const other of tabs) {
+    if (
+      other.webContentsId !== null &&
+      other.webContentsId !== exceptWebContentsId &&
+      other.serverTab?.threadId === serverTab.threadId &&
+      other.serverTab.tabId === serverTab.tabId
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface PreviewTabState {
   tabId: string;
   webContentsId: number | null;
@@ -1892,12 +1911,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // Another window's tab may now render the same server tab; its state stays.
     if (
       serverTab &&
-      !Array.from((yield* SynchronizedRef.get(tabsRef)).values()).some(
-        (other) =>
-          other.webContentsId !== null &&
-          other.serverTab?.threadId === serverTab.threadId &&
-          other.serverTab.tabId === serverTab.tabId,
-      )
+      !rendersServerTabElsewhere((yield* SynchronizedRef.get(tabsRef)).values(), serverTab, null)
     ) {
       browserHost.setShown(serverTab, undefined);
       browserHost.setCaptureDrawn(serverTab, undefined);
@@ -2717,11 +2731,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
   // The renderer reports again once a new guest registers.
   const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
-    for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
-      if (tab.webContentsId === webContentsId && tab.serverTab) {
-        browserHost.setShown(tab.serverTab, false);
-        browserHost.setCaptureDrawn(tab.serverTab, false);
-      }
+    const tabs = Array.from((yield* SynchronizedRef.get(tabsRef)).values());
+    for (const tab of tabs) {
+      if (tab.webContentsId !== webContentsId || !tab.serverTab) continue;
+      if (rendersServerTabElsewhere(tabs, tab.serverTab, webContentsId)) continue;
+      browserHost.setShown(tab.serverTab, false);
+      browserHost.setCaptureDrawn(tab.serverTab, false);
     }
   });
 

@@ -286,6 +286,31 @@ describe("uiStateStore persistence", () => {
     });
   });
 
+  it("keeps another window's turn expansion in the same thread", () => {
+    const loaded = makeUiState();
+    persistState(loaded);
+    localStorageStub.setItem(
+      PERSISTED_STATE_KEY,
+      JSON.stringify({
+        ...loaded,
+        threadChangedFilesExpansionVersion: 2,
+        threadChangedFilesExpandedById: { "environment:thread-1": { "turn-a": true } },
+      }),
+    );
+
+    persistState({
+      ...loaded,
+      threadChangedFilesExpandedById: { "environment:thread-1": { "turn-b": true } },
+    });
+
+    const persisted = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
+    );
+    expect(persisted.threadChangedFilesExpandedById).toEqual({
+      "environment:thread-1": { "turn-a": true, "turn-b": true },
+    });
+  });
+
   it("keeps a pending change when another window writes during the debounce", () => {
     vi.useFakeTimers();
     useUiStateStore.getState().setProjectExpanded("mine", false);

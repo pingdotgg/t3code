@@ -106,7 +106,9 @@ const layerDesktopWindow = (
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
     openAppWindow: () => Effect.die("unexpected openAppWindow"),
     activate: Effect.void,
-    createMainIfBackendReady: Effect.void,
+    createMainIfBackendReady: Effect.sync(() => {
+      windowCalls?.push("createMainIfBackendReady");
+    }),
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
@@ -372,7 +374,10 @@ describe("DesktopApplicationMenu", () => {
 
         newWindow.click({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
         // With no app window the first one opens; asking a renderer as well would open a second.
-        assert.deepEqual(windowCalls, appWindowOpen ? ["dispatch:new-window"] : ["ensureMain"]);
+        assert.deepEqual(
+          windowCalls,
+          appWindowOpen ? ["dispatch:new-window"] : ["createMainIfBackendReady"],
+        );
       }
     }),
   );
