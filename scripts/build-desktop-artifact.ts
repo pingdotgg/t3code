@@ -1441,11 +1441,16 @@ export function resolveMergedStageDependencies(input: {
   readonly desktopDependencies: Record<string, string>;
   readonly arch: typeof BuildArch.Type;
   readonly fffNodeVersion: string;
-}) {
+  readonly electronWebAuthnMacosVersion?: string | undefined;
+}): Record<string, string> {
   return {
     ...selectCliRuntimeExternalDependencies(input.serverDependencies),
     ...input.desktopDependencies,
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
+    // Staged by name so its workspace patch survives createStagePatchedDependencies.
+    ...(input.platform === "mac" && input.electronWebAuthnMacosVersion
+      ? { "@electron-webauthn/macos": input.electronWebAuthnMacosVersion }
+      : {}),
   };
 }
 
@@ -3944,6 +3949,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
           desktopDependencies: resolvedDesktopRuntimeDependencies,
           arch: options.arch,
           fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
+          electronWebAuthnMacosVersion: workspaceCatalog["@electron-webauthn/macos"],
         });
   const stagePatchedDependencies = createStagePatchedDependencies(
     workspacePatchedDependencies,
