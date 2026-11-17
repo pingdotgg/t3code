@@ -212,7 +212,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           selectedEnvironmentId,
         })
       : null;
-  const canStartScratch = scratchOption?.ready === true;
+  const canStartScratch = scratchOption?.status === "ready";
+  const scratchSubtitle =
+    scratchOption?.status === "unavailable"
+      ? "Not available on this environment"
+      : scratchOption?.status === "pending"
+        ? "Waiting for your environment"
+        : "Start a task without a project";
   const scratchStartInFlightRef = useRef(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
@@ -357,7 +363,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 <NavigationRow
                   className="bg-grouped-card"
                   title="No project"
-                  subtitle="Start a task without a project"
+                  subtitle={scratchSubtitle}
                   disabled={!canStartScratch}
                   onPress={() => void startScratch()}
                   leading={
@@ -393,7 +399,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   <View className="min-w-0 flex-1">
                     <Text className="text-base font-t3-bold leading-snug">No project</Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
-                      Start a task without a project
+                      {scratchSubtitle}
                     </Text>
                   </View>
                   <SymbolView
