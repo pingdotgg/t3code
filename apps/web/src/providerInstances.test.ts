@@ -177,7 +177,10 @@ describe("deriveProviderEntriesByEnvironment", () => {
                 [instanceId]: {
                   driver: ProviderDriverKind.make("acpRegistry"),
                   enabled: true,
-                  config: { agentId, registryIconUrl: `https://example.com/${agentId}.svg` },
+                  config: {
+                    agentId,
+                    registryIconUrl: `https://cdn.agentclientprotocol.com/registry/icons/${agentId}.svg`,
+                  },
                 },
               },
               projectSettingsOverrides: {},
@@ -187,7 +190,7 @@ describe("deriveProviderEntriesByEnvironment", () => {
     );
     expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryAgentId).toBe("devin");
     expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryIconUrl).toBe(
-      "https://example.com/devin.svg",
+      "https://cdn.agentclientprotocol.com/registry/icons/devin.svg",
     );
     expect(byEnvironment.get("other-agent")?.get(instanceId)?.acpRegistryAgentId).toBe(
       "other-agent",
@@ -577,6 +580,24 @@ describe("provider icon metadata", () => {
     expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
     expect(localEntry?.enabled).toBe(false);
     expect(localEntry?.snapshot).toBe(snapshots[0]?.snapshot);
+
+    const customIconUrl = "https://example.com/hermes.png";
+    const [customEntry] = applyProviderInstanceSettings(
+      brandedEntries,
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver,
+            enabled: true,
+            config: { source: "local", commandPath: "hermes", iconUrl: customIconUrl },
+          },
+        },
+        projectSettingsOverrides: {},
+      },
+      null,
+    );
+    expect(customEntry?.acpRegistryIconUrl).toBe(customIconUrl);
+    expect(customEntry?.acpRegistryAgentId).toBeUndefined();
 
     const [restoredEntry] = applyProviderInstanceSettings(
       localEntry ? [localEntry] : [],

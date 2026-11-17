@@ -1,4 +1,9 @@
-import { CustomModelSetting, TrimmedString, makeProviderSettingsSchema } from "@t3tools/contracts";
+import {
+  CustomModelSetting,
+  TrimmedString,
+  makeProviderSettingsSchema,
+  resolveProviderIconUrl,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -41,6 +46,21 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
       }),
     ),
+    iconUrl: TrimmedString.check(
+      Schema.makeFilter((value) => value === "" || resolveProviderIconUrl(value) !== null, {
+        message: "Use an HTTPS image URL without embedded credentials.",
+      }),
+    ).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Icon URL",
+        description: "Optional HTTPS image URL. Clear it to restore the default agent icon.",
+        providerSettingsForm: {
+          placeholder: "https://example.com/icon.png",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     commandArgs: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -64,7 +84,7 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["source", "agentId", "commandPath", "authMethodId"],
+    order: ["source", "agentId", "commandPath", "iconUrl", "authMethodId"],
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;

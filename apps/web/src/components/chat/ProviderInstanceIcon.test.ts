@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveProviderInstanceAcpRegistryIconUrl } from "./ProviderInstanceIcon";
 
 describe("resolveProviderInstanceAcpRegistryIconUrl", () => {
-  it("uses allowlisted catalog metadata and rejects untrusted overrides", () => {
+  it("uses the configured HTTPS icon before the catalog fallback", () => {
     expect(
       resolveProviderInstanceAcpRegistryIconUrl({
         driverKind: ProviderDriverKind.make("acpRegistry"),
@@ -18,6 +18,6 @@ describe("resolveProviderInstanceAcpRegistryIconUrl", () => {
         agentId: "generic-agent",
         iconUrl: "https://example.com/not-official.svg",
       }),
-    ).toBe("https://cdn.agentclientprotocol.com/registry/v1/latest/generic-agent.svg");
+    ).toBe("https://example.com/not-official.svg");
   });
 });

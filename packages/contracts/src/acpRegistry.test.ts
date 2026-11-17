@@ -6,6 +6,7 @@ import {
   AcpRegistryManagedBinaryUninstallResult,
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
+  resolveProviderIconUrl,
 } from "./acpRegistry.ts";
 
 const decodeUninstallInput = Schema.decodeUnknownSync(AcpRegistryManagedBinaryUninstallInput);
@@ -32,6 +33,23 @@ describe("ACP Registry contracts", () => {
         "https://user@cdn.agentclientprotocol.com/registry/v1/latest/pi-acp.svg",
       ),
     ).toBeNull();
+  });
+
+  it("accepts custom HTTPS icon hosts while rejecting local and executable URLs", () => {
+    expect(resolveProviderIconUrl("https://example.com/hermes.png")).toBe(
+      "https://example.com/hermes.png",
+    );
+    for (const value of [
+      "",
+      "not a URL",
+      "file:///tmp/icon.png",
+      "javascript:alert(1)",
+      "http://example.com/icon.png",
+      "https://user:secret@example.com/icon.png",
+      "https://example.com/" + "x".repeat(2048),
+    ]) {
+      expect(resolveProviderIconUrl(value)).toBeNull();
+    }
   });
 
   it("decodes managed binary uninstall payloads and rejects unsafe agent IDs", () => {
