@@ -540,16 +540,22 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchInto = (worktreePath: string) =>
+    const launchInto = (worktreePath: string, clientRequestId?: string) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
           workspaceStrategy: { type: "existing_worktree", worktreePath },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({ projectId });
+    expect((yield* launchInto(worktree, "existing-checkout")).at(-1)?.result).toMatchObject({
+      projectId,
+    });
+    expect((yield* launchInto(outside, "existing-checkout")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
       expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
