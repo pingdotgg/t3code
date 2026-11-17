@@ -31,6 +31,24 @@ export interface InferenceFleetEnvironment extends InferenceConsumer {
   readonly serverConfig: EnvironmentServerConfig | null;
 }
 
+type InferenceAccount = InferenceProxyStatus["accounts"][number];
+
+const accountAvailabilityLabels = {
+  available: "Active",
+  authenticationError: "Authentication or access rejected",
+  rateLimited: "Rate limited",
+  unavailable: "Unavailable",
+  disabled: "Disabled",
+} as const;
+
+export function inferenceAccountStatus(account: InferenceAccount): string {
+  return accountAvailabilityLabels[account.availability];
+}
+
+export function inferenceAccountRetryAfter(account: InferenceAccount): string | null {
+  return account.availability === "rateLimited" ? (account.retryAfter ?? null) : null;
+}
+
 export function planInferenceFallbacks(
   host: InferenceFleetEnvironment,
   status: InferenceProxyStatus,
@@ -47,7 +65,7 @@ export function planInferenceFallbacks(
     if (consumer.connection.phase !== "connected" || !config) return [];
     if (host.environmentId !== consumer.environmentId && !status.sharing) return [];
     return INFERENCE_DRIVERS.flatMap((driver) => {
-      if (!status.availableDrivers?.includes(driver)) return [];
+      if (!status.availableDrivers.includes(driver)) return [];
       const instance =
         config.settings.providerInstances[
           defaultInstanceIdForDriver(ProviderDriverKind.make(driver))

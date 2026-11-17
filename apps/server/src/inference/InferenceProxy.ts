@@ -67,7 +67,13 @@ import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { claudeKeychainEntry } from "./claudeKeychain.ts";
 import { install, proxyVersion, resolveRelease, Release } from "./install.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
-import { modelsForDriver, openCodeRouteProblem, validateRouteUrl } from "./routes.ts";
+import {
+  modelsForDriver,
+  needsAccountModelLookup,
+  openCodeRouteProblem,
+  validateRouteUrl,
+} from "./routes.ts";
+import { makeCliproxyApi } from "../usage/cliproxyApi.ts";
 
 const SavedRouteCandidate = Schema.Struct({
   hostId: EnvironmentId,
@@ -103,6 +109,8 @@ const empty: Saved = { enabled: false, sharing: false, port: 0, grants: [] };
 const Files = Schema.Struct({
   files: Schema.Array(
     Schema.Struct({
+      id: Schema.optionalKey(Schema.String),
+      auth_index: Schema.optionalKey(Schema.String),
       name: Schema.String,
       provider: Schema.String,
       status: Schema.String,
@@ -111,6 +119,17 @@ const Files = Schema.Struct({
       status_message: Schema.optionalKey(Schema.NullOr(Schema.String)),
       next_retry_after: Schema.optionalKey(Schema.NullOr(Schema.String)),
       runtime_only: Schema.optionalKey(Schema.Boolean),
+      cooldowns: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Array(
+            Schema.Struct({
+              scope: Schema.String,
+              model_key: Schema.optionalKey(Schema.String),
+              retry_at: Schema.String,
+            }),
+          ),
+        ),
+      ),
     }),
   ),
 });
@@ -120,6 +139,7 @@ const Models = Schema.Struct({
     Schema.Struct({ id: Schema.String, owned_by: Schema.optional(Schema.String) }),
   ),
 });
+const AccountModels = Schema.Struct({ models: Schema.Array(Schema.Struct({ id: Schema.String })) });
 // Local CLI sign-ins T3 mirrors into the pool, keyed the way `removedLocalAccounts` records them.
 const LOCAL_ACCOUNT_PREFIX: Partial<Record<InferenceUpstream, string>> = {
   codex: "codex:",
@@ -179,7 +199,7 @@ const isProxyClaudeAuth = Schema.is(ProxyClaudeAuth);
 const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
-function accountAvailability(account: (typeof Files.Type)["files"][number], now: number) {
+function accountAvailability(account: (typeof Files.Type)["files"][number]) {
   if (account.disabled) return "disabled" as const;
   if (account.status === "active" && !account.unavailable) return "available" as const;
   const reason = account.status_message ?? "";
@@ -189,12 +209,22 @@ function accountAvailability(account: (typeof Files.Type)["files"][number], now:
     )
   )
     return "authenticationError" as const;
-  if (
-    /\b429\b|rate[_ -]?limit|quota|cooldown|exhausted/i.test(reason) ||
-    (account.next_retry_after && Date.parse(account.next_retry_after) > now)
-  )
-    return "rateLimited" as const;
+  if (/\b(?:408|5\d\d)\b|service[_ -]?overloaded|overload|transient/i.test(reason))
+    return "unavailable" as const;
+  if (/\b429\b|rate[_ -]?limit|quota|exhausted/i.test(reason)) return "rateLimited" as const;
   return "unavailable" as const;
+}
+
+interface ClaudeUsageCacheKey {
+  readonly baseUrl: string;
+  readonly management: string;
+  readonly id: string;
+  readonly authIndex: string;
+}
+interface AccountModelsCacheKey {
+  readonly baseUrl: string;
+  readonly management: string;
+  readonly id: string;
 }
 
 function availableDrivers(files: (typeof Files.Type)["files"]) {
@@ -290,6 +320,55 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serviceScope = yield* Scope.Scope;
+  const cliproxy = yield* makeCliproxyApi;
+  const quotaSemaphore = yield* Semaphore.make(4);
+  const claudeUsageCache = yield* Cache.make({
+    capacity: 128,
+    timeToLive: "30 seconds",
+    lookup: Effect.fn("InferenceProxy.readClaudeUsage")(function* (key: ClaudeUsageCacheKey) {
+      return yield* cliproxy
+        .readClaudeUsage(
+          { url: key.baseUrl, managementKey: key.management },
+          { id: key.id, auth_index: key.authIndex },
+        )
+        .pipe(
+          quotaSemaphore.withPermits(1),
+          Effect.orElseSucceed(() => undefined),
+        );
+    }),
+  });
+  const modelLookupSemaphore = yield* Semaphore.make(4);
+  const accountModelsCache = yield* Cache.make({
+    capacity: 128,
+    timeToLive: "30 seconds",
+    lookup: Effect.fn("InferenceProxy.readAccountModels")(function* (key: AccountModelsCacheKey) {
+      return yield* jsonRequest(
+        key.baseUrl + "/v0/management/auth-files/models?name=" + encodeURIComponent(key.id),
+        key.management,
+        AccountModels,
+      ).pipe(
+        modelLookupSemaphore.withPermits(1),
+        Effect.orElseSucceed(() => undefined),
+      );
+    }),
+  });
+  const cachedResults = Effect.fn("InferenceProxy.cachedResults")(function* <K, A>(
+    cache: Cache.Cache<K, A>,
+    keys: readonly K[],
+    wait?: Duration.Input,
+  ) {
+    yield* Effect.forEach(keys, (key) =>
+      Effect.gen(function* () {
+        if (!(yield* Cache.has(cache, key)))
+          yield* Cache.get(cache, key).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+      }),
+    );
+    if (wait !== undefined && keys.length)
+      yield* Effect.forEach(keys, (key) => Cache.get(cache, key), {
+        concurrency: "unbounded",
+      }).pipe(Effect.timeout(wait), Effect.ignore);
+    return yield* Effect.forEach(keys, (key) => Cache.getSuccess(cache, key));
+  });
   const net = yield* NetService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const store = yield* ServerSecretStore.ServerSecretStore;
@@ -338,6 +417,59 @@ const make = Effect.gen(function* () {
         management: string;
       }
     | undefined;
+  const claudeUsageEvidence = Effect.fn("InferenceProxy.claudeUsageEvidence")(function* (
+    runtime: NonNullable<typeof running>,
+    files: (typeof Files.Type)["files"],
+    waitForUsage: boolean,
+  ) {
+    const eligible = files
+      .filter(
+        (file) =>
+          file.provider === "claude" &&
+          file.status === "active" &&
+          !file.disabled &&
+          !file.unavailable &&
+          !file.runtime_only &&
+          !!file.id &&
+          !!file.auth_index,
+      )
+      .slice(0, 128);
+    const keys: ClaudeUsageCacheKey[] = eligible.map((file) => ({
+      baseUrl: runtime.baseUrl,
+      management: runtime.management,
+      id: file.id!,
+      authIndex: file.auth_index!,
+    }));
+    const results = yield* cachedResults(
+      claudeUsageCache,
+      keys,
+      waitForUsage ? "2 seconds" : undefined,
+    );
+    const now = yield* Clock.currentTimeMillis;
+    const evidence = new Map<string, string>();
+    for (const [index, file] of eligible.entries()) {
+      const cached = results[index]!;
+      if (Option.isNone(cached) || !cached.value || cached.value.unavailable) continue;
+      if (
+        cached.value.windows.some(
+          (window) => window.id === "monthly_spend" && window.usedPercent < 100,
+        )
+      )
+        continue;
+      const resets = cached.value.windows
+        .filter(
+          (window) =>
+            (window.id === "five_hour" || window.id === "seven_day") &&
+            window.usedPercent >= 100 &&
+            window.resetsAt &&
+            Date.parse(window.resetsAt) > now,
+        )
+        .map((window) => Date.parse(window.resetsAt!));
+      if (resets.length)
+        evidence.set(file.name, DateTime.formatIso(DateTime.makeUnsafe(Math.max(...resets))));
+    }
+    return evidence;
+  });
   const read = Effect.gen(function* () {
     if (cached) return cached;
     const raw = yield* store.get("inference-proxy-state");
@@ -876,7 +1008,7 @@ const make = Effect.gen(function* () {
           consumers: state.grants.map(({ environmentId, label }) => ({ environmentId, label })),
         };
         if (!state.enabled)
-          return { ...summary, running: false, accounts: [], problem: routeProblem };
+          return { status: { ...summary, running: false, accounts: [], problem: routeProblem } };
         return yield* Effect.gen(function* () {
           const runtime = yield* ensureWatched(state);
           const sync = yield* syncLocalAuth(runtime);
@@ -885,41 +1017,61 @@ const make = Effect.gen(function* () {
             runtime.management,
             Files,
           );
-          const now = yield* Clock.currentTimeMillis;
           return {
-            ...summary,
-            running: true,
-            availableDrivers: availableDrivers(files),
-            accounts: files
-              .filter((file) => !file.runtime_only)
-              .map((file) => {
-                const availability = accountAvailability(file, now);
-                return {
-                  name: file.name,
-                  provider: file.provider,
-                  status: file.status,
-                  availability,
-                  ...(availability === "rateLimited" &&
-                  file.next_retry_after &&
-                  Date.parse(file.next_retry_after) > now
-                    ? { retryAfter: file.next_retry_after }
-                    : {}),
-                };
-              }),
-            problem: routeProblem ?? sync.problem,
+            status: { ...summary, running: true, problem: routeProblem ?? sync.problem },
+            runtime,
+            files,
           };
         }).pipe(
           Effect.orElseSucceed((e) => ({
-            ...summary,
-            running: false,
-            accounts: [],
-            problem: safeFailure("CLIProxyAPI failed to start. Check its port or retry hosting.")(e)
-              .message,
+            status: {
+              ...summary,
+              running: false,
+              accounts: [],
+              problem: safeFailure("CLIProxyAPI failed to start. Check its port or retry hosting.")(
+                e,
+              ).message,
+            },
           })),
         );
       }),
     )
-    .pipe(Effect.mapError(safeFailure("Could not read inference host settings.")));
+    .pipe(
+      Effect.flatMap((snapshot) =>
+        Effect.gen(function* () {
+          if (!("files" in snapshot)) return snapshot.status;
+          const evidence = yield* claudeUsageEvidence(snapshot.runtime, snapshot.files, true);
+          const now = yield* Clock.currentTimeMillis;
+          return {
+            ...snapshot.status,
+            availableDrivers: availableDrivers(
+              snapshot.files.filter((file) => !evidence.has(file.name)),
+            ),
+            accounts: snapshot.files
+              .filter((file) => !file.runtime_only)
+              .map((file) => {
+                const availability = accountAvailability(file);
+                const retryAfter =
+                  availability === "available" ? evidence.get(file.name) : undefined;
+                return {
+                  name: file.name,
+                  provider: file.provider,
+                  status: file.status,
+                  availability: retryAfter ? ("rateLimited" as const) : availability,
+                  ...(retryAfter
+                    ? { retryAfter }
+                    : availability === "rateLimited" &&
+                        file.next_retry_after &&
+                        Date.parse(file.next_retry_after) > now
+                      ? { retryAfter: file.next_retry_after }
+                      : {}),
+                };
+              }),
+          };
+        }),
+      ),
+      Effect.mapError(safeFailure("Could not read inference host settings.")),
+    );
 
   const sharingUrls = Effect.gen(function* () {
     const active = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath).pipe(
@@ -1551,9 +1703,43 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     );
+    const evidence = yield* claudeUsageEvidence(runtime, files, false);
+    const now = yield* Clock.currentTimeMillis;
+    const excludedNames = new Set(evidence.keys());
+    const registeredModels = new Map<string, readonly string[]>();
+    if (needsAccountModelLookup(files, excludedNames, now)) {
+      const eligible = files
+        .filter(
+          (file) =>
+            file.status === "active" &&
+            !file.disabled &&
+            !file.unavailable &&
+            !excludedNames.has(file.name),
+        )
+        .slice(0, 128);
+      const keys: AccountModelsCacheKey[] = eligible.map((file) => ({
+        baseUrl: runtime.baseUrl,
+        management: runtime.management,
+        id: file.id || file.name,
+      }));
+      const results = yield* cachedResults(accountModelsCache, keys, "500 millis");
+      for (const [index, file] of eligible.entries()) {
+        const cached = results[index]!;
+        if (Option.isSome(cached) && cached.value)
+          registeredModels.set(
+            file.id || file.name,
+            cached.value.models.map((model) => model.id),
+          );
+      }
+    }
     return {
-      availableDrivers: availableDrivers(files),
-      models: data.map((model) => model.id),
+      availableDrivers: availableDrivers(files.filter((file) => !evidence.has(file.name))),
+      models: modelsForDriver(data, "opencode", {
+        accounts: files,
+        excludedNames,
+        registeredModels,
+        now,
+      }),
     };
   });
 

@@ -96,9 +96,20 @@ it.effect(
         let serving = false;
         let poolUnavailable = false;
         let keepRuntimeAvailable = false;
+        let runtimeOnlyUnavailable = false;
         let listedAccountRuntimeOnly = false;
         let poolStatusMessage: string | undefined;
         let poolRetryAfter: string | undefined;
+        let poolCooldowns: Array<Record<string, unknown>> | undefined;
+        let managedClaude = false;
+        let managedClaudeStatus = "active";
+        let managedClaudeDisabled = false;
+        let claudeUsageStatus = 200;
+        let claudeUsageCalls = 0;
+        let claudeUsage: Record<string, unknown> = {};
+        let blockClaudeUsage = false;
+        const claudeUsageStarted = yield* Deferred.make<void>();
+        const releaseClaudeUsage = yield* Deferred.make<void>();
         let lan = false;
         let rejectNextLaunch = false;
         let currentExit: Deferred.Deferred<void> | undefined;
@@ -167,6 +178,40 @@ it.effect(
         let activeCodexConfig: unknown;
         const remoteCatalogKeys: (string | undefined)[] = [];
         const http = HttpClient.make((request) => {
+          if (request.url.endsWith("/v0/management/api-call")) {
+            const body = request.body;
+            if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing usage request");
+            const call = JSON.parse(body.text) as Record<string, unknown>;
+            expect(call).toMatchObject({
+              auth_index: "claude-auth",
+              method: "GET",
+              url: "https://api.anthropic.com/api/oauth/usage",
+              header: { Authorization: "Bearer $TOKEN$" },
+            });
+            claudeUsageCalls++;
+            return Effect.gen(function* () {
+              if (blockClaudeUsage) {
+                yield* Deferred.succeed(claudeUsageStarted, undefined);
+                yield* Deferred.await(releaseClaudeUsage);
+              }
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  status_code: claudeUsageStatus,
+                  body: JSON.stringify(claudeUsage),
+                }),
+              );
+            });
+          }
+          if (new URL(request.url).pathname.endsWith("/v0/management/auth-files/models")) {
+            const name = new URL(request.url).searchParams.get("name");
+            const models = catalog.filter((model) =>
+              name === "claude.json"
+                ? model.owned_by === "anthropic"
+                : model.owned_by !== "anthropic",
+            );
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ models })));
+          }
           if (request.method === "POST" && request.url.includes("/v0/management/auth-files?")) {
             const body = request.body;
             if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing auth JSON");
@@ -266,11 +311,24 @@ it.effect(
                   : request.url.endsWith("auth-files")
                     ? {
                         files: [
+                          ...(managedClaude
+                            ? [
+                                {
+                                  id: "claude.json",
+                                  name: "claude.json",
+                                  auth_index: "claude-auth",
+                                  provider: "claude",
+                                  status: managedClaudeStatus,
+                                  disabled: managedClaudeDisabled,
+                                },
+                              ]
+                            : []),
                           {
                             name: "codex:api-key:fixture",
                             provider: "codex",
                             status: "active",
-                            unavailable: poolUnavailable && !keepRuntimeAvailable,
+                            unavailable:
+                              runtimeOnlyUnavailable || (poolUnavailable && !keepRuntimeAvailable),
                             runtime_only: true,
                           },
                           {
@@ -281,6 +339,7 @@ it.effect(
                             runtime_only: listedAccountRuntimeOnly,
                             status_message: poolStatusMessage,
                             next_retry_after: poolRetryAfter,
+                            cooldowns: poolCooldowns,
                             refresh_token: "must stay local",
                           },
                         ],
@@ -757,6 +816,11 @@ it.effect(
             expect((yield* proxy.status).accounts[0]).toMatchObject({
               availability: "authenticationError",
             });
+            poolStatusMessage = "service_overloaded (HTTP 529)";
+            expect((yield* proxy.status).accounts[0]).toMatchObject({
+              availability: "unavailable",
+            });
+            expect((yield* proxy.status).accounts[0]).not.toHaveProperty("retryAfter");
             poolStatusMessage = undefined;
             poolRetryAfter = "1960-01-01T00:00:00Z";
             expect((yield* proxy.status).accounts[0]).toMatchObject({
@@ -766,6 +830,131 @@ it.effect(
             poolUnavailable = false;
             poolStatusMessage = undefined;
             poolRetryAfter = undefined;
+            catalog = [
+              { id: "gpt-quota-fixture", owned_by: "openai" },
+              { id: "claude-quota-fixture", owned_by: "anthropic" },
+            ];
+            const claudeResetAt = DateTime.formatIso(
+              DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + 30 * 60_000),
+            );
+            managedClaude = true;
+            claudeUsage = {
+              five_hour: { utilization: 100, resets_at: claudeResetAt },
+              seven_day: { utilization: 84, resets_at: claudeResetAt },
+              extra_usage: {
+                is_enabled: false,
+                monthly_limit: null,
+                used_credits: null,
+                utilization: null,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "rateLimited", retryAfter: claudeResetAt });
+            expect((yield* proxy.status).availableDrivers).not.toContain("claudeAgent");
+            const hosted = yield* proxy.grant(peer);
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).not.toContain(
+              "claudeAgent",
+            );
+            expect((yield* proxy.health(hosted.key))?.models).toEqual(["gpt-quota-fixture"]);
+            expect(claudeUsageCalls).toBe(1);
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 50, resets_at: claudeResetAt },
+              seven_day: { utilization: 100, resets_at: claudeResetAt },
+              limits: [
+                {
+                  kind: "weekly_scoped",
+                  percent: 100,
+                  resets_at: claudeResetAt,
+                  scope: { model: { display_name: "Fable" } },
+                },
+              ],
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "rateLimited", retryAfter: claudeResetAt });
+            expect(claudeUsageCalls).toBe(2);
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 50, resets_at: claudeResetAt },
+              seven_day: { utilization: 70, resets_at: claudeResetAt },
+              limits: [
+                {
+                  kind: "weekly_scoped",
+                  percent: 100,
+                  resets_at: claudeResetAt,
+                  scope: { model: { display_name: "Fable" } },
+                },
+              ],
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 10,
+                used_credits: 10,
+                utilization: 100,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).toContain("claudeAgent");
+            expect((yield* proxy.health(hosted.key))?.models).toEqual([
+              "gpt-quota-fixture",
+              "claude-quota-fixture",
+            ]);
+            poolCooldowns = [
+              {
+                scope: "model",
+                model_key: "gpt-quota-fixture",
+                reason: "quota",
+                retry_at: claudeResetAt,
+                remaining_seconds: 1_800,
+              },
+            ];
+            runtimeOnlyUnavailable = true;
+            expect((yield* proxy.health(hosted.key))?.models).toEqual(["claude-quota-fixture"]);
+            poolCooldowns = undefined;
+            runtimeOnlyUnavailable = false;
+            yield* TestClock.adjust("31 seconds");
+            claudeUsage = {
+              five_hour: { utilization: 100, resets_at: claudeResetAt },
+              seven_day: { utilization: 100, resets_at: claudeResetAt },
+              extra_usage: {
+                is_enabled: true,
+                monthly_limit: 10,
+                used_credits: 1,
+                utilization: 10,
+              },
+            };
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            yield* TestClock.adjust("31 seconds");
+            claudeUsageStatus = 403;
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "available" });
+            yield* TestClock.adjust("31 seconds");
+            managedClaudeStatus = "error";
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "unavailable" });
+            expect(claudeUsageCalls).toBe(5);
+            managedClaudeStatus = "active";
+            managedClaudeDisabled = true;
+            expect(
+              (yield* proxy.status).accounts.find((account) => account.name === "claude.json"),
+            ).toMatchObject({ availability: "disabled" });
+            expect(claudeUsageCalls).toBe(5);
+            managedClaudeDisabled = false;
+            claudeUsageStatus = 200;
+            blockClaudeUsage = true;
+            expect((yield* proxy.health(hosted.key))?.availableDrivers).toContain("claudeAgent");
+            yield* Deferred.await(claudeUsageStarted);
+            yield* Deferred.succeed(releaseClaudeUsage, undefined);
+            blockClaudeUsage = false;
+            managedClaude = false;
+            catalog = [];
             yield* proxy.manage({ operation: "setRouting", strategy: "fill-first" });
             yield* proxy.manage({ operation: "setRouting", sessionAffinity: false });
             const readConfig = fs

@@ -64,6 +64,10 @@ T3 keeps a thread on the host that successfully handles its request after a swit
 host selects accounts independently, so a switch between hosts with multiple eligible
 accounts may use a different account even when the same login is present on both.
 
+In **Inference accounts**, a rate-limited Claude account shows its retry time when known.
+If two hosts share that login, its subscription limit applies on both. Another host can
+serve the request if it has an eligible account for the model.
+
 Configure account pooling on the host. Turn on round-robin routing to distribute
 requests across eligible accounts, or leave it off to use the first available account.
 Session affinity keeps a conversation on its credential while available. The model

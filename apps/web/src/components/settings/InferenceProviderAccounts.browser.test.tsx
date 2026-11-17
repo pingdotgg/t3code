@@ -29,7 +29,13 @@ function setup() {
           availability: "rateLimited",
           retryAfter: "2099-01-01T00:00:00Z",
         },
-        { name: "personal.json", provider: "claude", status: "active" },
+        {
+          name: "expired.json",
+          provider: "codex",
+          status: "error",
+          availability: "authenticationError",
+        },
+        { name: "personal.json", provider: "claude", status: "active", availability: "available" },
       ],
     },
   });
@@ -51,6 +57,9 @@ describe("inference provider accounts", () => {
     );
     await expect.element(screen.getByText("work.json")).toBeVisible();
     await expect.element(screen.getByText("codex · Rate limited")).toBeVisible();
+    await expect
+      .element(screen.getByText("codex · Authentication or access rejected"))
+      .toBeVisible();
     await expect.element(screen.getByText(/Retry after/)).toBeVisible();
     await expect.element(screen.getByText("personal.json")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Codex", exact: true }));
