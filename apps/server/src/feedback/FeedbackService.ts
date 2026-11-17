@@ -361,62 +361,66 @@ const make = Effect.fn("FeedbackService.make")(function* (
       createdAt: DateTime.formatIso(yield* DateTime.now),
     };
     const traceJson = yield* encodeTrace(preview.trace).pipe(Effect.mapError(storageError));
-    yield* lock.withPermit(
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const limited = yield* overLimit(context.runId, userRequested);
-            if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
-            // The projection shares this database and writer, so a stop that commits first is
-            // seen here and none can commit between this read and the insert.
-            if (context.card !== undefined) {
-              const [live] = yield* sql<{
-                readonly runStatus: string;
-                readonly cardStatus: string | null;
-              }>`
+    // Under the settings lock, so a switch to Off is either fully before this report or after
+    // it: a read cannot return the mode an update is replacing. Order: settings, feedback, SQL.
+    yield* settings
+      .withSettingsSnapshot((current) =>
+        lock.withPermit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const limited = yield* overLimit(context.runId, userRequested);
+              if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
+              // The projection shares this database and writer, so a stop that commits first is
+              // seen here and none can commit between this read and the insert.
+              if (context.card !== undefined) {
+                const [live] = yield* sql<{
+                  readonly runStatus: string;
+                  readonly cardStatus: string | null;
+                }>`
                 SELECT run.status AS "runStatus", card.status AS "cardStatus"
                 FROM orchestration_v2_projection_runs run
                 LEFT JOIN orchestration_v2_projection_turn_items card
                   ON card.turn_item_id = ${context.card.turnItemId}
                 WHERE run.run_id = ${context.card.runId}`;
-              if (
-                live === undefined ||
-                live.cardStatus !== "waiting" ||
-                !isRunStatus(live.runStatus) ||
-                Threads.isTerminalRunStatus(live.runStatus)
-              ) {
-                return yield* new FeedbackTurnEndedError({});
+                if (
+                  live === undefined ||
+                  live.cardStatus !== "waiting" ||
+                  !isRunStatus(live.runStatus) ||
+                  Threads.isTerminalRunStatus(live.runStatus)
+                ) {
+                  return yield* new FeedbackTurnEndedError({});
+                }
               }
-            }
-            // Last before the insert: the setting can turn Off while a requested report waits.
-            yield* requireOn;
-            yield* sql`INSERT INTO agent_feedback ${sql.insert({
-              id: report.id,
-              thread_id: report.threadId,
-              run_id: context.runId,
-              created_at: report.createdAt,
-              kind: report.kind,
-              subject: report.subject,
-              expected: report.expected,
-              actual: report.actual,
-              workaround: report.workaround,
-              user_requested: report.userRequested ? 1 : 0,
-              trace: traceJson,
-              source: report.source,
-              sent: 0,
-            })}`;
-          }),
-        )
-        .pipe(
-          Effect.mapError((error) =>
-            error._tag === "FeedbackLimitError" ||
-            error._tag === "FeedbackOffError" ||
-            error._tag === "FeedbackTurnEndedError"
-              ? error
-              : storageError(error),
+              // Last before the insert: the setting can turn Off while a requested report waits.
+              if (current.agentFeedback.mode === "off") return yield* new FeedbackOffError({});
+              yield* sql`INSERT INTO agent_feedback ${sql.insert({
+                id: report.id,
+                thread_id: report.threadId,
+                run_id: context.runId,
+                created_at: report.createdAt,
+                kind: report.kind,
+                subject: report.subject,
+                expected: report.expected,
+                actual: report.actual,
+                workaround: report.workaround,
+                user_requested: report.userRequested ? 1 : 0,
+                trace: traceJson,
+                source: report.source,
+                sent: 0,
+              })}`;
+            }),
           ),
         ),
-    );
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "FeedbackLimitError" ||
+          error._tag === "FeedbackOffError" ||
+          error._tag === "FeedbackTurnEndedError"
+            ? error
+            : storageError(error),
+        ),
+      );
     const sent = yield* analytics.record("agent.feedback", properties);
     if (sent) {
       yield* sql`UPDATE agent_feedback SET sent = 1 WHERE id = ${report.id}`.pipe(

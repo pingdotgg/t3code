@@ -14,11 +14,13 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -95,6 +97,18 @@ const turnItems = [
 
 const harness = Effect.gen(function* () {
   const mode = yield* Ref.make<AgentFeedbackMode>("auto");
+  // As in the service: updates and snapshots share one lock. A test can arm `reading` to learn
+  // when the next settings read begins.
+  const settingsLock = yield* Semaphore.make(1);
+  const reading = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
+  const readSettings = Ref.get(mode).pipe(
+    Effect.map((mode) => ({ ...DEFAULT_SERVER_SETTINGS, agentFeedback: { mode } })),
+  );
+  const readBegins = Ref.getAndSet(reading, undefined).pipe(
+    Effect.flatMap((armed) =>
+      armed === undefined ? Effect.void : Deferred.succeed(armed, undefined),
+    ),
+  );
   const items = yield* Ref.make(turnItems);
   const telemetry = yield* Ref.make(true);
   const runId = yield* Ref.make(RunId.make("run:1"));
@@ -208,9 +222,11 @@ const harness = Effect.gen(function* () {
       Layer.mergeAll(
         threads,
         Layer.mock(Settings.ServerSettingsService)({
-          getSettings: Ref.get(mode).pipe(
-            Effect.map((mode) => ({ ...DEFAULT_SERVER_SETTINGS, agentFeedback: { mode } })),
-          ),
+          getSettings: readBegins.pipe(Effect.andThen(readSettings)),
+          withSettingsSnapshot: (use) =>
+            readBegins.pipe(
+              Effect.andThen(settingsLock.withPermits(1)(readSettings.pipe(Effect.flatMap(use)))),
+            ),
         }),
         Layer.mock(Analytics.AnalyticsService)({
           record: (event, properties) =>
@@ -251,7 +267,7 @@ const harness = Effect.gen(function* () {
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
-  return { mode, items, telemetry, runId, events, cards, stopped, layer };
+  return { mode, settingsLock, reading, items, telemetry, runId, events, cards, stopped, layer };
 });
 
 type CardRecord = Extract<
@@ -686,6 +702,47 @@ it.effect("sends nothing when the turn stops after Send was accepted but before 
       yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" });
       expect(yield* Fiber.join(call)).toMatchObject({ approved: false, status: "cancelled" });
       expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+      expect(yield* listFeedbackReports).toEqual([]);
+      expect(yield* Ref.get(events)).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a switch to Off under way when an approved report is stored wins", () =>
+  Effect.gen(function* () {
+    const { mode, settingsLock, reading, events, cards, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const feedback = yield* Feedback.FeedbackService;
+      const approvals = yield* Approvals.FeedbackApprovals;
+      const call = yield* feedback
+        .submit({ ...input, userRequested: true }, fromThread)
+        .pipe(Effect.forkChild);
+      const shown = yield* Queue.take(cards);
+
+      // A switch to Off holds the settings lock and has not finished writing.
+      const gate = yield* Deferred.make<void>();
+      const updating = yield* Deferred.make<void>();
+      const update = yield* settingsLock
+        .withPermits(1)(
+          Deferred.succeed(updating, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.andThen(Ref.set(mode, "off")),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(updating);
+
+      // Send, wait until storing reads the settings, then let the switch finish.
+      const read = yield* Deferred.make<void>();
+      yield* Ref.set(reading, read);
+      yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" });
+      yield* Deferred.await(read);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(update);
+
+      expect((yield* Effect.flip(Fiber.join(call)))._tag).toBe("FeedbackOffError");
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+      yield* Ref.set(mode, "auto");
       expect(yield* listFeedbackReports).toEqual([]);
       expect(yield* Ref.get(events)).toEqual([]);
     }).pipe(Effect.provide(layer));
