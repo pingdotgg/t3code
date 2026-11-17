@@ -2631,13 +2631,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("leaves a worker for a turn start while other threads' captures queue", () => {
-    const commandId = CommandId.make("command:foundation-capture-cap");
-    const parentThreadId = ThreadId.make("thread:foundation-capture-cap:parent");
-    const childThreadIds = [1, 2, 3].map((index) =>
-      ThreadId.make(`thread:foundation-capture-cap:child-${index}`),
+  it.effect("claims a turn start ahead of other threads' checkpoint captures", () => {
+    const commandId = CommandId.make("command:foundation-capture-rank");
+    const parentThreadId = ThreadId.make("thread:foundation-capture-rank:parent");
+    const childThreadIds = [1, 2].map((index) =>
+      ThreadId.make(`thread:foundation-capture-rank:child-${index}`),
     );
-    const cap = { maxRunningSlowEffects: 2 };
     const capture = (id: string, threadId: ThreadId) => ({
       id,
       commandId,
@@ -2650,12 +2649,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     });
     return Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const parentCaptureId = "effect:foundation-capture-cap:a-parent-capture";
-      const turnStartId = "effect:foundation-capture-cap:z-turn-start";
+      const parentCaptureId = "effect:foundation-capture-rank:a-parent-capture";
+      const turnStartId = "effect:foundation-capture-rank:z-turn-start";
       yield* outbox.enqueue([
         capture(parentCaptureId, parentThreadId),
         ...childThreadIds.map((threadId, index) =>
-          capture(`effect:foundation-capture-cap:b-child-capture-${index + 1}`, threadId),
+          capture(`effect:foundation-capture-rank:b-child-capture-${index + 1}`, threadId),
         ),
       ]);
       yield* TestClock.adjust("1 second");
@@ -2666,27 +2665,26 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           threadId: parentThreadId,
           request: {
             type: "provider-turn.start",
-            runId: RunId.make("run:foundation-capture-cap:replacement"),
+            runId: RunId.make("run:foundation-capture-rank:replacement"),
           },
         },
       ]);
 
-      const parentCapture = yield* outbox.claimNext({ workerId: "cap-worker", ...cap });
+      const parentCapture = yield* outbox.claimNext({ workerId: "rank-worker" });
       assert.equal(Option.getOrUndefined(parentCapture)?.id, parentCaptureId);
-      yield* outbox.claimNext({ workerId: "cap-worker", ...cap });
-      assert.isTrue(
-        Option.isNone(yield* outbox.claimNext({ workerId: "cap-worker", ...cap })),
-        "turn start must wait for its own thread's capture, and captures for the cap",
+      const whileParentBusy = yield* outbox.claimNext({ workerId: "rank-worker" });
+      assert.notEqual(
+        Option.getOrUndefined(whileParentBusy)?.id,
+        turnStartId,
+        "turn start must wait for its own thread's earlier capture",
       );
 
-      yield* outbox.succeed({ effectId: parentCaptureId, workerId: "cap-worker" });
-      const refill = yield* outbox.claimNext({ workerId: "cap-worker", ...cap });
-      assert.equal(Option.getOrUndefined(refill)?.request.type, "checkpoint.capture");
-      const next = yield* outbox.claimNext({ workerId: "cap-worker", ...cap });
+      yield* outbox.succeed({ effectId: parentCaptureId, workerId: "rank-worker" });
+      const next = yield* outbox.claimNext({ workerId: "rank-worker" });
       assert.equal(
         Option.getOrUndefined(next)?.id,
         turnStartId,
-        "other threads' checkpoint captures took the worker a claimable turn start needed",
+        "claimable provider-turn.start queued behind other threads' checkpoint captures",
       );
     }).pipe(
       Effect.ensuring(
@@ -3221,55 +3219,34 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect(
-    "holds pending titles and captures at the slow-effect cap without waking idle workers",
-    () =>
-      Effect.gen(function* () {
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const cap = { maxRunningSlowEffects: 1 };
-        const title = (name: string) => ({
-          id: `effect:foundation-title-cap:${name}`,
-          commandId: CommandId.make(`command:foundation-title-cap:${name}`),
-          threadId: ThreadId.make(`thread:foundation-title-cap:${name}`),
-          request: {
-            type: "thread-title.generate" as const,
-            kind: { type: "regenerate" as const },
-          },
-        });
-        yield* outbox.enqueue([title("first"), title("second")]);
-        const first = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
-        assert.strictEqual(Option.getOrUndefined(first)?.id, title("first").id);
-        const captureId = "effect:foundation-title-cap:third-capture";
-        yield* outbox.enqueue([
-          {
-            id: captureId,
-            commandId: CommandId.make("command:foundation-title-cap:capture"),
-            threadId: ThreadId.make("thread:foundation-title-cap:capture"),
-            request: {
-              type: "checkpoint.capture",
-              runId: RunId.make("run:foundation-title-cap:capture"),
-              scopeId: CheckpointScopeId.make("scope:foundation-title-cap:capture"),
-            },
-          },
-        ]);
+  it.effect("holds pending titles at the running-title cap without waking idle workers", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const cap = { maxRunningTitleGenerations: 1 };
+      const title = (name: string) => ({
+        id: `effect:foundation-title-cap:${name}`,
+        commandId: CommandId.make(`command:foundation-title-cap:${name}`),
+        threadId: ThreadId.make(`thread:foundation-title-cap:${name}`),
+        request: { type: "thread-title.generate" as const, kind: { type: "regenerate" as const } },
+      });
+      yield* outbox.enqueue([title("first"), title("second")]);
+      const first = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
+      assert.strictEqual(Option.getOrUndefined(first)?.id, title("first").id);
 
-        assert.isTrue(
-          Option.isNone(yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap })),
-        );
-        assert.isTrue(
-          Option.isNone(yield* outbox.nextClaimableAt(cap)),
-          "a capped title must not report a past deadline, or idle workers re-poll every 25 ms",
-        );
-        assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt()));
+      assert.isTrue(
+        Option.isNone(yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap })),
+      );
+      assert.isTrue(
+        Option.isNone(yield* outbox.nextClaimableAt(cap)),
+        "a capped title must not report a past deadline, or idle workers re-poll every 25 ms",
+      );
+      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt()));
 
-        yield* outbox.succeed({ effectId: title("first").id, workerId: "title-cap-worker" });
-        const second = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
-        assert.strictEqual(Option.getOrUndefined(second)?.id, title("second").id);
-        yield* outbox.succeed({ effectId: title("second").id, workerId: "title-cap-worker" });
-        const capture = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
-        assert.strictEqual(Option.getOrUndefined(capture)?.id, captureId);
-        yield* outbox.succeed({ effectId: captureId, workerId: "title-cap-worker" });
-      }),
+      yield* outbox.succeed({ effectId: title("first").id, workerId: "title-cap-worker" });
+      const second = yield* outbox.claimNext({ workerId: "title-cap-worker", ...cap });
+      assert.strictEqual(Option.getOrUndefined(second)?.id, title("second").id);
+      yield* outbox.succeed({ effectId: title("second").id, workerId: "title-cap-worker" });
+    }),
   );
 
   it.effect("does not reclaim a running effect after its process-local lease expires", () =>
