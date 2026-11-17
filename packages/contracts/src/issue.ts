@@ -36,10 +36,10 @@ export const IssueLabel = PullRequestLabel;
 export type IssueLabel = typeof IssueLabel.Type;
 
 /**
- * Where an issue stands, in two parts: the category every tracker has, and the name this tracker
- * gives it. GitHub only has the two; Linear and Jira have a workflow of their own ("In Review",
- * "Backlog"), which `name` carries verbatim so the page can show the tracker's word while every
- * filter and badge keys off `category`.
+ * Where an issue stands: the tracker's own name for the state ("In Review", "Closed as not
+ * planned"), which is what people read and what a move is asked for by, and the category every
+ * tracker has, which only filters and colours key off. Nothing moves an issue to "open" or
+ * "closed": it moves to one of the states its `IssueDetail.states` lists.
  */
 export const IssueStateCategory = Schema.Literals(["open", "closed"]);
 export type IssueStateCategory = typeof IssueStateCategory.Type;
@@ -47,7 +47,7 @@ export type IssueStateCategory = typeof IssueStateCategory.Type;
 export const IssueState = Schema.Struct({
   category: IssueStateCategory,
   name: TrimmedNonEmptyString,
-  /** Why it was closed, where the tracker records one (GitHub: `completed` / `not-planned`). */
+  /** How a closed state ended, where the tracker says: `completed`, or its word for not done. */
   closeReason: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueState = typeof IssueState.Type;
@@ -193,14 +193,6 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
-  /**
-   * The states this tracker can be asked to move an issue into, by name. A git host offers
-   * `open` and `closed`; a workflow tracker offers its own columns. Empty means state cannot be
-   * changed from here.
-   */
-  states: Schema.Array(IssueState),
-  /** Reasons a close can carry. Empty means a close takes none. */
-  closeReasons: Schema.Array(TrimmedNonEmptyString),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -226,6 +218,11 @@ export const IssueDetail = Schema.Struct({
   writable: Schema.Boolean,
   capabilities: IssueCapabilities,
   viewerPermissions: IssueViewerPermissions,
+  /**
+   * Every state this issue can be in, in the tracker's workflow order, its current one included.
+   * Empty means its state cannot be changed from here.
+   */
+  states: Schema.Array(IssueState),
   /** The signed-in account, so a comment edit is offered only on the viewer's own remarks. */
   viewer: Schema.NullOr(TrimmedNonEmptyString),
   body: Schema.String,
@@ -360,9 +357,8 @@ export type IssueUpdateInput = typeof IssueUpdateInput.Type;
 /** Moves the issue to one of the states the tracker declared in `capabilities.states`. */
 export const IssueSetStateInput = Schema.Struct({
   ...IssueRef.fields,
+  /** The name of one of the issue's `states`. */
   state: TrimmedNonEmptyString,
-  /** Only meaningful for a closing state on a tracker that declared `closeReasons`. */
-  closeReason: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueSetStateInput = typeof IssueSetStateInput.Type;
 

@@ -5,6 +5,7 @@
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
+  IssueState,
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
@@ -82,6 +83,8 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly body: string;
   readonly viewer: string | null;
   readonly viewerPermissions: IssueViewerPermissions;
+  /** Every state the issue can be in, in workflow order; `setState` is asked for one by name. */
+  readonly states: ReadonlyArray<IssueState>;
   readonly reactions?: ReadonlyArray<IssueReaction>;
   readonly comments: ReadonlyArray<IssueComment>;
   /** Where older comments carry on; null once the conversation is whole. */
@@ -154,12 +157,12 @@ export interface IssueTrackerApi {
     },
   ) => Effect.Effect<void, IssueTrackerError>;
 
-  /** Only called with a state name from `capabilities.states`. */
+  /**
+   * Moves the issue to the state `getIssue` listed under that name, and refuses any other: the
+   * name comes from a client, so the tracker is what proves it.
+   */
   readonly setState?: (
-    input: IssueTarget & {
-      readonly state: string;
-      readonly closeReason?: string | undefined;
-    },
+    input: IssueTarget & { readonly state: string },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**

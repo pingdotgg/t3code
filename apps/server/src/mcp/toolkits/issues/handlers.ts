@@ -198,6 +198,7 @@ const make = Effect.gen(function* () {
           state: detail.state,
           writable: detail.writable,
           capabilities: detail.capabilities,
+          states: detail.states,
           author: detail.author?.login ?? null,
           assignees: detail.assignees.map((actor) => actor.login),
           labels: detail.labels.map((label) => label.name),
@@ -252,7 +253,6 @@ const make = Effect.gen(function* () {
         yield* issues.setState({
           ...refOf(target),
           state: input.state,
-          ...(input.closeReason === undefined ? {} : { closeReason: input.closeReason }),
         });
         return identityOf(target);
       }),

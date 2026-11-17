@@ -17,6 +17,7 @@ import type {
   IssueLabel,
   IssueLabelCandidate,
   IssueLinkedPullRequest,
+  IssueState,
   IssueTemplate,
   PullRequestState,
 } from "@t3tools/contracts";
@@ -128,6 +129,12 @@ function toLabels(raw: ReadonlyArray<string> | null | undefined): ReadonlyArray<
   });
 }
 
+const OPEN: IssueState = { category: "open", name: "Open" };
+const CLOSED: IssueState = { category: "closed", name: "Closed" };
+
+/** GitLab has exactly the two states and records no reason for a close. */
+export const ISSUE_STATES: ReadonlyArray<IssueState> = [OPEN, CLOSED];
+
 function toSummary(raw: typeof RawIssueSchema.Type): TrackerIssueSummary {
   return {
     key: String(raw.iid),
@@ -135,11 +142,8 @@ function toSummary(raw: typeof RawIssueSchema.Type): TrackerIssueSummary {
     title: raw.title,
     url: raw.web_url,
     author: toActor(raw.author),
-    // GitLab has exactly the two states, calls the open one `opened`, and records no reason.
-    state:
-      raw.state?.trim().toLowerCase() === "closed"
-        ? { category: "closed", name: "closed" }
-        : { category: "open", name: "open" },
+    // GitLab calls the open one `opened`.
+    state: raw.state?.trim().toLowerCase() === "closed" ? CLOSED : OPEN,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
     closedAt: trimmed(raw.closed_at),

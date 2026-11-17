@@ -120,11 +120,11 @@ export const LinearComment = Schema.Struct({
 export interface LinearComment extends Schema.Struct.Type<typeof LinearComment.fields> {}
 
 /** A team is the primary organizational unit in Linear. Issues belong to teams, and each team has its own workflow states, cycles, labels, and settings. Teams can be public (visible to all workspace members), private (visible only to team members), or restricted (visible only within an enclosing private-team boundary). Teams can also have sub-teams that inherit settings from their parent. */
-export const TeamTeam = Schema.Struct({
+export const LinearIssueTeamTeam = Schema.Struct({
   /** The team's unique key, used as a prefix in issue identifiers (e.g., 'ENG' in 'ENG-123') and in URLs. */
   key: Schema.String
 })
-export interface TeamTeam extends Schema.Struct.Type<typeof TeamTeam.fields> {}
+export interface LinearIssueTeamTeam extends Schema.Struct.Type<typeof LinearIssueTeamTeam.fields> {}
 
 export const LinearIssueLabelsIssueLabelConnection = Schema.Struct({
   nodes: Schema.Array(LinearLabel)
@@ -163,7 +163,7 @@ export const LinearIssue = Schema.Struct({
   /** The workflow state (issue status) that the issue is currently in. Workflow states represent the issue's progress through the team's workflow, such as Triage, Todo, In Progress, Done, or Canceled. */
   state: LinearWorkflowState,
   /** The team that the issue belongs to. Every issue must belong to exactly one team, which determines the available workflow states, labels, and other team-specific configuration. */
-  team: TeamTeam,
+  team: LinearIssueTeamTeam,
   /** The user who created the issue. Null if the creator's account has been deleted or if the issue was created by an integration or system process. */
   creator: Schema.NullOr(LinearUser),
   /** The bot that created the issue, if applicable. */
@@ -267,6 +267,20 @@ export declare namespace T3Issues {
   export type Result = typeof T3Issues.result.Type
 }
 
+export const TeamStatesWorkflowStateConnection = Schema.Struct({
+  nodes: Schema.Array(LinearWorkflowState)
+})
+export interface TeamStatesWorkflowStateConnection extends Schema.Struct.Type<typeof TeamStatesWorkflowStateConnection.fields> {}
+
+/** A team is the primary organizational unit in Linear. Issues belong to teams, and each team has its own workflow states, cycles, labels, and settings. Teams can be public (visible to all workspace members), private (visible only to team members), or restricted (visible only within an enclosing private-team boundary). Teams can also have sub-teams that inherit settings from their parent. */
+export const IssueTeamTeam = Schema.Struct({
+  /** The team's unique key, used as a prefix in issue identifiers (e.g., 'ENG' in 'ENG-123') and in URLs. */
+  key: Schema.String,
+  /** The states that define the workflow associated with the team. */
+  states: TeamStatesWorkflowStateConnection
+})
+export interface IssueTeamTeam extends Schema.Struct.Type<typeof IssueTeamTeam.fields> {}
+
 export const CommentConnection = Schema.Struct({
   nodes: Schema.Array(LinearComment),
   pageInfo: LinearPageInfo
@@ -327,7 +341,41 @@ export interface IssueHistoryConnection extends Schema.Struct.Type<typeof IssueH
 
 /** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
 export const T3IssueIssueIssue = Schema.Struct({
-  ...LinearIssue.fields,
+  /** The unique identifier of the entity. */
+  id: Shared.ID,
+  /** Issue's human readable identifier (e.g. ENG-123). */
+  identifier: Schema.String,
+  /** The issue's unique number, scoped to the issue's team. Together with the team key, this forms the issue's human-readable identifier (e.g., ENG-123). */
+  number: Shared.Float,
+  /** The issue's title. This is the primary human-readable summary of the work item. */
+  title: Schema.String,
+  /** Issue URL. */
+  url: Schema.String,
+  /** The issue's description in markdown format. */
+  description: Schema.NullOr(Schema.String),
+  /** The time at which the entity was created. */
+  createdAt: Shared.DateTime,
+  /**
+   * The last time at which the entity was meaningfully updated. This is the same as the creation time if the entity hasn't
+   *     been updated after creation.
+   */
+  updatedAt: Shared.DateTime,
+  /** The time at which the issue was moved into completed state. */
+  completedAt: Schema.NullOr(Shared.DateTime),
+  /** The time at which the issue was moved into canceled state. */
+  canceledAt: Schema.NullOr(Shared.DateTime),
+  /** The workflow state (issue status) that the issue is currently in. Workflow states represent the issue's progress through the team's workflow, such as Triage, Todo, In Progress, Done, or Canceled. */
+  state: LinearWorkflowState,
+  /** The team that the issue belongs to. Every issue must belong to exactly one team, which determines the available workflow states, labels, and other team-specific configuration. */
+  team: IssueTeamTeam,
+  /** The user who created the issue. Null if the creator's account has been deleted or if the issue was created by an integration or system process. */
+  creator: Schema.NullOr(LinearUser),
+  /** The bot that created the issue, if applicable. */
+  botActor: Schema.NullOr(LinearBot),
+  /** The user to whom the issue is assigned. Null if the issue is unassigned. */
+  assignee: Schema.NullOr(LinearUser),
+  /** Labels associated with this issue. */
+  labels: LinearIssueLabelsIssueLabelConnection,
   /** Comments associated with the issue, including inline comments on the issue's description. */
   comments: CommentConnection,
   /** Reactions associated with the issue. */
@@ -347,16 +395,16 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
       { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearReaction", body: ["on Reaction{id emoji user{...LinearUser}}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
       { name: "LinearBot", body: ["on ActorBot{name userDisplayName avatarUrl}"] },
-      { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearLabel", body: ["on IssueLabel{id name color}"] }
     ]
   },
@@ -415,11 +463,11 @@ export declare namespace T3Comments {
   export type Result = typeof T3Comments.result.Type
 }
 
-export const WorkflowStateConnection = Schema.Struct({
+export const NodesStatesWorkflowStateConnection = Schema.Struct({
   nodes: Schema.Array(LinearWorkflowState),
   pageInfo: LinearPageInfo
 })
-export interface WorkflowStateConnection extends Schema.Struct.Type<typeof WorkflowStateConnection.fields> {}
+export interface NodesStatesWorkflowStateConnection extends Schema.Struct.Type<typeof NodesStatesWorkflowStateConnection.fields> {}
 
 export const NodesLabelsIssueLabelConnection = Schema.Struct({
   nodes: Schema.Array(LinearTeamLabel),
@@ -466,7 +514,7 @@ export const T3TeamTeamsNodesTeam = Schema.Struct({
   /** The team's name. */
   name: Schema.String,
   /** The states that define the workflow associated with the team. */
-  states: WorkflowStateConnection,
+  states: NodesStatesWorkflowStateConnection,
   /** Labels associated with the team. */
   labels: NodesLabelsIssueLabelConnection,
   /** Users who are members of this team. Supports filtering and pagination. */

@@ -119,6 +119,13 @@ query T3Issues($first: Int!, $after: String, $filter: IssueFilter!, $orderBy: Pa
 query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
+    team {
+      states(first: 100) {
+        nodes {
+          ...LinearWorkflowState
+        }
+      }
+    }
     comments(first: $comments, orderBy: createdAt) {
       nodes {
         ...LinearComment

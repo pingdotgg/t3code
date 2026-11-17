@@ -1,4 +1,3 @@
-import { issueStateLabel } from "@t3tools/client-runtime/issue-presentation";
 import type { IssueState, IssueTrackerKind } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { CircleCheckIcon, CircleDotIcon, CircleSlashIcon, TicketIcon } from "lucide-react";
@@ -27,28 +26,28 @@ export function issueTrackerPresentation(tracker: IssueTrackerKind | string) {
 
 /**
  * Open and completed borrow the ink the pull-request states use for open and merged, so green
- * and violet mean the same thing on both pages; not planned wears a draft's grey, because work
- * that stopped must not look like work that finished. The tracker's own state name is the label,
+ * and violet mean the same thing on both pages; closed any other way than completed wears a
+ * draft's grey, because work that stopped must not look like work that finished. The tracker's own state name is the label,
  * so a workflow tracker's "In Review" reads as itself.
  */
 export function issueStatePresentation(state: IssueState) {
   if (state.category === "open") {
     return {
       ...PULL_REQUEST_STATE_PRESENTATION.open,
-      label: issueStateLabel(state),
+      label: state.name,
       Icon: CircleDotIcon,
     };
   }
-  if (state.closeReason === "not-planned") {
+  if (state.closeReason !== undefined && state.closeReason !== "completed") {
     return {
       ...PULL_REQUEST_STATE_PRESENTATION.draft,
-      label: issueStateLabel(state),
+      label: state.name,
       Icon: CircleSlashIcon,
     };
   }
   return {
     ...PULL_REQUEST_STATE_PRESENTATION.merged,
-    label: issueStateLabel(state),
+    label: state.name,
     Icon: CircleCheckIcon,
   };
 }

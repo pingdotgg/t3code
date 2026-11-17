@@ -25,6 +25,7 @@ import {
   ForgejoIssueRepository,
   ForgejoIssueTemplate,
   ForgejoTimelineEntry,
+  ISSUE_STATES,
   forgejoIssue,
   forgejoIssueComment,
   forgejoIssueEvent,
@@ -53,11 +54,6 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
-  states: [
-    { category: "open", name: "open" },
-    { category: "closed", name: "closed" },
-  ],
-  closeReasons: [],
 };
 
 /** Forgejo's own ceiling on a page, which a self-hosted server may lower. */
@@ -464,6 +460,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 body: issue.body ?? "",
                 viewer,
                 viewerPermissions: permissions(repository, issue, viewer),
+                states: ISSUE_STATES,
                 reactions: forgejoReactions(reactions, viewer),
                 comments: conversation.comments,
                 commentsCursor: conversation.nextCursor,
@@ -553,12 +550,17 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           Effect.asVoid,
         ),
 
-      setState: (input) =>
-        issueTarget("setState", input).pipe(
+      setState: (input) => {
+        const wanted = ISSUE_STATES.find((state) => state.name === input.state);
+        if (wanted === undefined) {
+          return Effect.fail(refused("setState", `A Forgejo issue has no "${input.state}" state.`));
+        }
+        return issueTarget("setState", input).pipe(
           Effect.flatMap(({ path }) =>
-            write(input, "setState", { path, method: "PATCH", body: { state: input.state } }),
+            write(input, "setState", { path, method: "PATCH", body: { state: wanted.category } }),
           ),
-        ),
+        );
+      },
 
       setReaction: (input) =>
         issueTarget("setReaction", input).pipe(
