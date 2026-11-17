@@ -662,6 +662,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
 }
 
 export interface ClaudeAgentSdkQuerySession {
+  /** The native identity used by the successful open attempt (including a fresh retry). */
+  readonly nativeSessionId?: string;
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (
     message: SDKUserMessage,
@@ -1697,6 +1699,7 @@ export const layerQueryRunner: Layer.Layer<
         );
 
         return {
+          nativeSessionId: input.options.sessionId ?? input.options.resume,
           messages: Stream.fromAsyncIterable(
             claudeQueryMessages(queryRuntime),
             (cause) => cause,
@@ -6271,11 +6274,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
           if (event.type === "provider_thread.updated") {
             const nativeThreadId = event.providerThread.nativeThreadRef?.nativeId ?? "";
+            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
+            // A fresh retry moves its attachment/title state to the new ID, while
+            // an in-process /clear can still hold the old ID's metadata.
+            const metadataNativeThreadId =
+              pdfBudgets.has(nativeThreadId) ? nativeThreadId : (nativeSessionId ?? nativeThreadId);
             event = {
               ...event,
-              providerThread: withAdapterNativeMetadata(event.providerThread, nativeThreadId),
+              providerThread: withAdapterNativeMetadata(event.providerThread, metadataNativeThreadId),
             };
-            const nativeSessionId = clearedNativeSessions.get(nativeThreadId);
             if (nativeSessionId !== undefined) {
               event = {
                 ...event,
@@ -12700,9 +12707,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-          nativeThreadId: string,
+          requestedNativeThreadId: string,
           queryPolicy: Effect.Success<ReturnType<typeof queryPolicyForTurn>>,
         ) {
+          // The first CLI can time out before accepting a prompt. Its successful retry
+          // uses a different native ID, which becomes this live process's canonical key.
+          let nativeThreadId = requestedNativeThreadId;
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           // Claude Code defers its goal Stop hook only for its own background tasks, so a goal
           // re-prompts in a loop while T3 work that will wake this thread is still running.
@@ -12919,6 +12929,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : Effect.void,
             ),
           );
+          const openedNativeThreadId = querySession.nativeSessionId ?? nativeThreadId;
+          if (openedNativeThreadId !== nativeThreadId) {
+            const oldNativeThreadId = nativeThreadId;
+            // There is no active turn yet, so these entries only hold pre-prompt setup
+            // state. Move it before the prompt or any background tasks can start.
+            const moveEntry = <Value>(map: Map<string, Value>) => {
+              if (!map.has(oldNativeThreadId)) return;
+              map.set(openedNativeThreadId, map.get(oldNativeThreadId)!);
+              map.delete(oldNativeThreadId);
+            };
+            const rekey = <Value>(current: Map<string, Value>): Map<string, Value> => {
+              if (!current.has(oldNativeThreadId)) return current;
+              const updated = new Map(current);
+              updated.set(openedNativeThreadId, current.get(oldNativeThreadId)!);
+              updated.delete(oldNativeThreadId);
+              return updated;
+            };
+            moveEntry(pdfBudgets);
+            moveEntry(goalsByNativeThread);
+            moveEntry(appliedSessionTitles);
+            yield* Ref.update(lastTurnRouteByNativeThread, rekey);
+            yield* Ref.update(lastProviderThreadByNativeThread, rekey);
+            yield* Ref.update(taskListsByNativeThread, rekey);
+            yield* Ref.update(pendingBackgroundTasksByNativeThread, rekey);
+            yield* Ref.update(awaitedBackgroundTasksByNativeThread, rekey);
+            yield* Ref.update(wakeEligibleBackgroundTasksByNativeThread, rekey);
+            yield* Ref.update(opaqueBackgroundTaskReplayTombstonesByNativeThread, rekey);
+            // Existing provider-thread records still use the allocated ID; map their
+            // emitted update to the ID actually running in Claude.
+            clearedNativeSessions.set(oldNativeThreadId, openedNativeThreadId);
+            nativeThreadId = openedNativeThreadId;
+          }
           // Mark only successful opens; retries must not resume sessions that failed to create.
           yield* Ref.update(openedNativeThreads, (current) => {
             if (current.has(nativeThreadId)) {
@@ -13082,7 +13124,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             modelCatalog = yield* loadModelCatalog;
             const startedAt = yield* DateTime.now;
-            const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+            let nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             // Use fresh uuids: native sessions can outlive this database, and Claude skips previously recorded prompts.
             const promptUuid = isClaudeProviderContinuationTurn(turnInput)
@@ -13163,7 +13205,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             const pdfReservation = yield* reserveClaudePdfBudget(
               pdfBudgets.get(nativeThreadId)!,
-              persistAttachmentBudget(nativeThreadId),
+              // Evaluate after open: a fresh retry can replace the native session ID.
+              Effect.suspend(() => persistAttachmentBudget(nativeThreadId)),
             );
             const promptText = applyClaudePromptEffortPrefix(
               turnInput.message.text,
@@ -13201,6 +13244,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       Effect.provideService(Path.Path, path),
                     );
             const querySession = yield* openQuery(turnInput, nativeThreadId, queryPolicy);
+            nativeThreadId = querySession.nativeThreadId;
             yield* applySessionTitle(querySession.query, nativeThreadId, turnInput.appThread.title);
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
