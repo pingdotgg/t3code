@@ -75,6 +75,7 @@ import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
+import { useLinkedIssueDetail } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
@@ -127,7 +128,7 @@ import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
-import { IssueGlyph } from "../issue/issuePresentation";
+import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1110,9 +1111,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) : null;
   const firstIssue = thread.issues?.[0];
   const issueCount = thread.issues?.length ?? 0;
+  const issueDetail = useLinkedIssueDetail(
+    thread.environmentId,
+    leaseLiveStatus && issueCount === 1 ? firstIssue : undefined,
+    "sidebar",
+  );
+  const issueStatus = issueDetail === null ? null : issueStatePresentation(issueDetail.state);
+  const IssueIcon = issueStatus?.Icon ?? IssueGlyph.issue;
   const issueLabel =
     issueCount === 1 && firstIssue
-      ? `Issue ${firstIssue.displayKey}: ${firstIssue.title}`
+      ? `Issue ${firstIssue.displayKey}: ${firstIssue.title}${issueStatus ? `, ${issueStatus.label}` : ""}`
       : `${issueCount} linked issues`;
   const issueBadge = firstIssue ? (
     <Tooltip>
@@ -1129,8 +1137,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         }
       >
-        <IssueGlyph.issue aria-hidden className="size-3 shrink-0" />
-        <span className="max-w-16 truncate text-xs tabular-nums">
+        <IssueIcon aria-hidden className={cn("size-3 shrink-0", issueStatus?.toneClassName)} />
+        <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
           {issueCount === 1 ? firstIssue.displayKey : issueCount}
         </span>
       </TooltipTrigger>

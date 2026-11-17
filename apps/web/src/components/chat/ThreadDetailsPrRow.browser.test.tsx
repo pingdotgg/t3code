@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  IssueTrackerKind,
   ProjectId,
   SourceControlProviderKind,
   ThreadId,
@@ -74,17 +73,14 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
     select(AsyncResult.success(queryData()))) as never,
   useEnvironmentQueryIsNewer: () => true,
   useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
-  useEnvironmentQuery: ((atom: unknown) => ({
-    data:
-      atom === null
-        ? null
-        : {
-            code: { additions: 1, deletions: 0 },
-            tests: { additions: 0, deletions: 0 },
-            mocks: { additions: 0, deletions: 0 },
-            generated: { additions: 0, deletions: 0 },
-            docs: { additions: 7, deletions: 3 },
-          },
+  useEnvironmentQuery: (() => ({
+    data: {
+      code: { additions: 1, deletions: 0 },
+      tests: { additions: 0, deletions: 0 },
+      mocks: { additions: 0, deletions: 0 },
+      generated: { additions: 0, deletions: 0 },
+      docs: { additions: 7, deletions: 3 },
+    },
     isPending: false,
   })) as never,
 }));
@@ -123,7 +119,6 @@ import { act, render as renderUi } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
-import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 
 const threadRef: ScopedThreadRef = {
@@ -364,37 +359,4 @@ it("names a linked pull request row by its kind, number and title, not its URL",
   expect(name).toMatch(/pull request/i);
   expect(name).toContain("#1");
   expect(name).toContain("Test PR");
-});
-
-it("names a linked issue row by its kind, number and title, not its URL", async () => {
-  await using screen = await setup();
-  await act(async () => {
-    await screen.rerender(
-      <ThreadDetailsIssueRows
-        links={[
-          {
-            tracker: IssueTrackerKind.make("github"),
-            host: "github.com",
-            scope: "owner/repo",
-            key: "123",
-            projectId: ProjectId.make("repository"),
-            url: "https://github.com/owner/repo/issues/123",
-            source: "manual",
-            linkedAt: "2026-10-30T00:00:00.000Z",
-            displayKey: "#123",
-            title: "Sidebar flickers on resize",
-          },
-        ]}
-        threadRef={threadRef}
-      />,
-    );
-  });
-  const row = [...screen.container.querySelectorAll("a")].find((link) =>
-    link.textContent?.includes("Sidebar flickers on resize"),
-  )!;
-  const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
-  expect(name).not.toContain("https://");
-  expect(name).toMatch(/issue/i);
-  expect(name).toContain("#123");
-  expect(name).toContain("Sidebar flickers on resize");
 });

@@ -4,9 +4,7 @@ import type { MouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useServerConfigs } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
-import { useEnvironmentQuery } from "~/state/query";
+import { useLinkedIssueDetail } from "~/state/issues";
 
 import {
   IssueGlyph,
@@ -20,6 +18,7 @@ import {
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function LinkedIssueRow({
   link,
@@ -32,15 +31,8 @@ function LinkedIssueRow({
   compact: boolean;
   onOpen: (() => void) | undefined;
 }) {
-  const { environmentId } = threadRef;
-  const configs = useServerConfigs();
-  const { projectId, tracker, host, scope, key } = link;
-  const detail = useEnvironmentQuery(
-    configs.get(environmentId)?.environment.capabilities.issues === true
-      ? issueEnvironment.detail({ environmentId, input: { projectId, tracker, host, scope, key } })
-      : null,
-  ).data;
-  const trackerPresentation = issueTrackerPresentation(tracker);
+  const detail = useLinkedIssueDetail(threadRef.environmentId, link);
+  const trackerPresentation = issueTrackerPresentation(link.tracker);
   const state = detail === null ? null : issueStatePresentation(detail.state);
   const Icon = state?.Icon ?? IssueGlyph.issue;
   const title = detail?.title ?? link.title;
@@ -57,40 +49,46 @@ function LinkedIssueRow({
       onOpen?.();
     },
   };
+  const glyph = (
+    <Icon
+      aria-hidden={state === null ? true : undefined}
+      role={state === null ? undefined : "img"}
+      aria-label={state?.label}
+      className={cn("size-4 shrink-0", state?.toneClassName ?? "text-muted-foreground")}
+    />
+  );
+  const comments =
+    detail !== null && detail.commentCount > 0 ? (
+      <span
+        role="img"
+        aria-label={`${detail.commentCount} comments`}
+        className="inline-flex shrink-0 items-center gap-0.5 tabular-nums"
+      >
+        <MessageSquareIcon aria-hidden className="size-3" />
+        <span aria-hidden>{detail.commentCount}</span>
+      </span>
+    ) : null;
+  const trackerIcon = (
+    <trackerPresentation.Icon
+      role="img"
+      aria-label={trackerPresentation.providerName}
+      className="size-3 shrink-0"
+    />
+  );
   const lines = (
     <>
-      <Icon
-        aria-hidden={state === null ? true : undefined}
-        role={state === null ? undefined : "img"}
-        aria-label={state?.label}
-        className={cn("size-4 shrink-0", state?.toneClassName ?? "text-muted-foreground")}
-      />
+      {glyph}
       <PullRequestRowLines
         number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{link.displayKey}</span>}
         title={title}
-        status={
-          detail !== null && detail.commentCount > 0 ? (
-            <span
-              role="img"
-              aria-label={`${detail.commentCount} comments`}
-              className="inline-flex items-center gap-0.5 tabular-nums"
-            >
-              <MessageSquareIcon aria-hidden className="size-3" />
-              <span aria-hidden>{detail.commentCount}</span>
-            </span>
-          ) : null
-        }
+        status={comments}
         meta={
           <>
             {detail?.author ? (
               <PullRequestActorLabel actor={detail.author} tooltip={false} />
             ) : null}
-            <trackerPresentation.Icon
-              role="img"
-              aria-label={trackerPresentation.providerName}
-              className="size-3 shrink-0"
-            />
-            <span className="truncate">{scope}</span>
+            {trackerIcon}
+            <span className="truncate">{link.scope}</span>
           </>
         }
         updatedAt={detail?.updatedAt ?? link.linkedAt}
@@ -98,9 +96,29 @@ function LinkedIssueRow({
     </>
   );
   return compact ? (
-    <ThreadDetailsControl part="row" multiline render={<a {...anchorProps} />}>
-      {lines}
-    </ThreadDetailsControl>
+    <div className="pb-1.5">
+      <Tooltip>
+        <TooltipTrigger
+          render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
+        >
+          {glyph}
+          <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
+        </TooltipTrigger>
+        <TooltipPopup
+          side="top"
+          align="start"
+          variant="glass"
+          className="w-80 max-w-[calc(100vw-2rem)]"
+        >
+          <div className="flex min-w-0 items-center gap-2">{lines}</div>
+        </TooltipPopup>
+      </Tooltip>
+      <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
+        <span className="shrink-0 tabular-nums">{link.displayKey}</span>
+        {trackerIcon}
+        {comments}
+      </div>
+    </div>
   ) : (
     <a
       {...anchorProps}

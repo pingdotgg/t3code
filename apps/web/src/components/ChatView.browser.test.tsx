@@ -8,6 +8,7 @@ import {
   ThreadId,
   WS_METHODS,
   type IssueDetail,
+  type IssueRef,
   type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -113,29 +114,33 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-it("opens a linked issue from an inactive thread's sidebar badge", async () => {
+it("opens a linked Linear issue from an inactive thread's sidebar badge", async () => {
   const style = document.createElement("style");
   style.textContent = stylesheet;
   document.head.append(style);
   using _style = { [Symbol.dispose]: () => style.remove() };
   const first = threadWithHistory("issue-first", 1);
   const linked = threadWithHistory("issue-linked", 1);
-  const issue: ThreadIssueLink = {
+  const issueRef = {
     projectId: PROJECT_ID,
-    tracker: IssueTrackerKind.make("github"),
-    host: "github.com",
-    scope: "example/project",
-    key: "123",
-    url: "https://github.com/example/project/issues/123",
+    tracker: IssueTrackerKind.make("linear"),
+    host: "linear.app",
+    scope: "WEB",
+    key: "WEB-123",
+  } satisfies IssueRef;
+  const issue: ThreadIssueLink = {
+    ...issueRef,
+    url: "https://linear.app/example/issue/WEB-123/add-keyboard-support",
     source: "manual",
     linkedAt: "2026-01-01T00:00:00.000Z",
-    displayKey: "#123",
+    displayKey: issueRef.key,
     title: "Add keyboard support",
   };
   using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
-  using _detail = answerRpc(WS_METHODS.issuesDetail, () =>
-    Effect.succeed({
+  using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
+    expect(input).toEqual(issueRef);
+    return Effect.succeed({
       ...issue,
       title: liveTitle,
       author: { login: "sam", name: null, avatarUrl: null },
@@ -174,8 +179,8 @@ it("opens a linked issue from an inactive thread's sidebar badge", async () => {
       commentsCursor: null,
       events: [],
       linkedPullRequests: [],
-    } satisfies IssueDetail),
-  );
+    } satisfies IssueDetail);
+  });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -189,10 +194,14 @@ it("opens a linked issue from an inactive thread's sidebar badge", async () => {
     // AppRoot brings its own router.
     router: false,
   });
-  const name = "Issue #123: Add keyboard support";
-  const badge = page.getByRole("button", { name });
+  const badge = page.getByRole("button", {
+    name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
+  });
+  await expect.element(badge).toBeVisible();
+  expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
   await userEvent.hover(badge);
-  const previewLink = page.getByRole("link", { name: `Issue #123: ${liveTitle}` });
+  const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
+  const previewLink = page.getByRole("link", { name: issueName });
   await userEvent.hover(previewLink.getByText("sam", { exact: true }));
   await expect.element(previewLink).toBeVisible();
   const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
@@ -201,13 +210,23 @@ it("opens a linked issue from an inactive thread's sidebar badge", async () => {
   await userEvent.click(badge);
   const issueRow = page
     .getByRole("region", { name: "Linked issues" })
-    .getByRole("link", { name: `Issue #123: ${liveTitle}` });
+    .getByRole("link", { name: issueName });
   await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
   await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
-  await expect.element(issueRow.getByText("example/project")).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "Linear" })).toBeVisible();
+  await expect.element(issueRow.getByText(issue.scope, { exact: true })).toBeVisible();
   await userEvent.click(issueRow);
   expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
   await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+  await act(() => useRightPanelStore.getState().close(scopeThreadRef(ENVIRONMENT_ID, linked.id)));
+  await expect
+    .element(
+      page.getByRole("region", { name: "Thread details" }).getByRole("link", {
+        name: issueName,
+        exact: true,
+      }),
+    )
+    .toBeVisible();
 });
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
