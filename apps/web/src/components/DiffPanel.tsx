@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -222,6 +222,7 @@ export default function DiffPanel({
   visible,
 }: DiffPanelProps) {
   const gt = useGT();
+  const messages = useMessages();
   const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
@@ -527,6 +528,7 @@ export default function DiffPanel({
       compactPartialHunkOffsets: isGitSelection,
       ...(toolCallSelection ? { ignoreWhitespace: diffIgnoreWhitespace } : {}),
     },
+    messages,
   );
   const recordedToolCallFileCount =
     toolCallSelection && toolCallItem?.type === "file_change"
@@ -901,7 +903,7 @@ export default function DiffPanel({
             </DropdownMenuRadioGroup>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
-                <T $context="agent turn">Turn</T>
+                <T context="agent turn">Turn</T>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 <DropdownMenuRadioGroup value={selectedTurnValue} onValueChange={selectScopeValue}>
@@ -971,7 +973,7 @@ export default function DiffPanel({
                             <span className="flex items-center gap-3">
                               <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
                               <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                                {formatRelativeTimeLabel(commit.committedAt)}
+                                {formatRelativeTimeLabel(commit.committedAt, undefined, messages)}
                               </span>
                             </span>
                           </TooltipTrigger>
@@ -1100,10 +1102,10 @@ export default function DiffPanel({
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
                     <span>
-                      <T $context="git branch">Branch</T>
+                      <T context="git branch">Branch</T>
                     </span>
                     <span className="text-right">
-                      <T $context="git remote">Remote</T>
+                      <T context="git remote">Remote</T>
                     </span>
                   </div>
                 </div>
@@ -1116,7 +1118,7 @@ export default function DiffPanel({
                     value={AUTOMATIC_BASE_REF}
                   >
                     <span className="block min-w-0 truncate">
-                      <T $context="compare against the default base ref">Automatic</T>
+                      <T context="compare against the default base ref">Automatic</T>
                     </span>
                   </ComboboxItem>
                   {baseRefChoices.map((choice) => {

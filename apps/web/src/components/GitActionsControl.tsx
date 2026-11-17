@@ -279,8 +279,13 @@ function GitQuickActionIcon({
     }
     return <SourceControlIcon className={className} />;
   }
-  if (quickAction.label === messages(msg("Commit"))) return <GitCommitIcon className={className} />;
-  if (quickAction.label === messages(msg("Push"))) return <CloudUploadIcon className={className} />;
+  // show_hint carries no action, so match the label resolveQuickAction gave it.
+  if (quickAction.label === messages(msg("Commit", { $context: "verb, git action" }))) {
+    return <GitCommitIcon className={className} />;
+  }
+  if (quickAction.label === messages(msg("Push", { $context: "verb, git action" }))) {
+    return <CloudUploadIcon className={className} />;
+  }
   return <InfoIcon className={className} />;
 }
 
@@ -792,7 +797,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <label className="space-y-1.5" htmlFor="publish-remote-name">
                     <span className="text-xs font-medium text-foreground">
-                      <T $context="git remote name">Remote</T>
+                      <T context="git remote name">Remote</T>
                     </span>
                     <Input
                       id="publish-remote-name"
@@ -939,7 +944,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       <T>Publishing...</T>
                     </>
                   ) : (
-                    <T $context="verb">Publish</T>
+                    <T context="verb">Publish</T>
                   )}
                 </Button>
               )}
@@ -1841,7 +1846,7 @@ export default function GitActionsControl({
             <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">
-                  <T $context="git branch">Branch</T>
+                  <T context="git branch">Branch</T>
                 </span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
@@ -1886,13 +1891,13 @@ export default function GitActionsControl({
                       size="xs"
                       onClick={() => setIsEditingFiles((prev) => !prev)}
                     >
-                      {isEditingFiles ? <T>Done</T> : <T $context="verb">Edit</T>}
+                      {isEditingFiles ? <T>Done</T> : <T context="verb">Edit</T>}
                     </Button>
                   )}
                 </div>
                 {!gitStatusForActions || allFiles.length === 0 ? (
                   <p className="font-medium">
-                    <T $context="no files">none</T>
+                    <T context="no files">none</T>
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -2008,7 +2013,7 @@ export default function GitActionsControl({
               disabled={!canWriteSourceControl || noneSelected}
               onClick={runDialogAction}
             >
-              <T $context="verb">Commit</T>
+              <T context="verb">Commit</T>
             </Button>
           </DialogFooter>
         </DialogPopup>

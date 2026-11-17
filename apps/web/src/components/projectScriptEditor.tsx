@@ -592,7 +592,7 @@ function ProjectScriptEditorForm({
             disabled={isSaving || !canEditActions}
             onClick={() => onRequestDelete(name)}
           >
-            <T $context="verb, delete the action">Delete</T>
+            <T context="verb, delete the action">Delete</T>
           </Button>
         )}
         <Button type="button" variant="outline" onClick={close}>

@@ -97,7 +97,7 @@ export function useCommandPaletteThemeItems() {
             <span className="flex shrink-0 items-center gap-2">
               {(themeHalves?.[resolvedTheme] ?? getThemeDefinition(theme)?.id ?? null) === id ? (
                 <span className="text-xs text-muted-foreground/70">
-                  <T $context="the theme or mode in use now">Current</T>
+                  <T context="the theme or mode in use now">Current</T>
                 </span>
               ) : null}
               <span className="flex items-center gap-1" aria-hidden>
@@ -145,7 +145,7 @@ export function useCommandPaletteThemeItems() {
           titleTrailingContent:
             appearanceMode === mode ? (
               <span className="text-xs text-muted-foreground/70">
-                <T $context="the theme or mode in use now">Current</T>
+                <T context="the theme or mode in use now">Current</T>
               </span>
             ) : undefined,
           run: async () => {

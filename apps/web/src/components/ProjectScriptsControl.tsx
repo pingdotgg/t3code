@@ -398,7 +398,7 @@ export default function ProjectScriptsControl({
             >
               <WrenchIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
               <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                <T $context="project actions menu">Actions</T>
+                <T context="project actions menu">Actions</T>
               </span>
             </ThreadDetailsControl>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
@@ -439,7 +439,7 @@ export default function ProjectScriptsControl({
             >
               <WrenchIcon className="size-3.5" />
               <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                <T $context="project actions menu">Actions</T>
+                <T context="project actions menu">Actions</T>
               </span>
               <ChevronDownIcon className="size-3.5" />
             </MenuTrigger>

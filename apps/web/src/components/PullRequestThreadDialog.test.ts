@@ -37,7 +37,8 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
-vi.mock("gt-react", () => ({
+vi.mock("gt-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("gt-react")>()),
   useGT:
     () =>
     (text: string, values: Record<string, unknown> = {}) =>

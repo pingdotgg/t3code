@@ -219,7 +219,7 @@ export function useCommandPaletteThreadItems(input: {
         ...rest,
         // When the matching message was written, not when the thread last moved.
         ...(match.messageCreatedAt
-          ? { timestamp: formatRelativeTimeLabel(match.messageCreatedAt) }
+          ? { timestamp: formatRelativeTimeLabel(match.messageCreatedAt, undefined, messages) }
           : {}),
         threadContentMatch: {
           source: match.source,

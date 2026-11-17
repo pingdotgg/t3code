@@ -17,7 +17,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { msg, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -129,6 +129,7 @@ export function useThreadDisplayedPullRequest(
   branchPr: ThreadPr = null,
   branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"],
 ) {
+  const m = useMessages();
   const supportsLinks = useSupportsMultiplePullRequests(environmentId);
   const linkedStatus = useLinkedThreadPullRequest(
     environmentId,
@@ -148,6 +149,7 @@ export function useThreadDisplayedPullRequest(
     status: prStatusIndicator(
       pr,
       linkedStatus?.sourceControlProvider ?? branchSourceControlProvider,
+      m,
     ),
     number: currentLink?.number ?? pr?.number,
     url: currentLink?.url ?? pr?.url,
@@ -199,6 +201,80 @@ export interface ThreadPullRequestBadgePresentation {
   readonly text: string | number;
 }
 
+type PullRequestBadgeState = ThreadPullRequestBadge["state"];
+
+function stackBadgeLabel(
+  state: PullRequestBadgeState,
+  count: number,
+  items: string,
+  resolve: MessageResolver,
+): string {
+  switch (state) {
+    case "open":
+      return resolve(msg("Stack of {count} {items}, open", { count, items }));
+    case "draft":
+      return resolve(msg("Stack of {count} {items}, draft", { count, items }));
+    case "closed":
+      return resolve(msg("Stack of {count} {items}, closed", { count, items }));
+    case "merged":
+      return resolve(msg("Stack of {count} {items}, merged", { count, items }));
+  }
+}
+
+function moreLinkedBadgeLabel(
+  state: PullRequestBadgeState,
+  tooltip: string,
+  others: number,
+  resolve: MessageResolver,
+): string {
+  switch (state) {
+    case "open":
+      return resolve(msg("{tooltip}, and {others} more linked; overall open", { tooltip, others }));
+    case "draft":
+      return resolve(
+        msg("{tooltip}, and {others} more linked; overall draft", { tooltip, others }),
+      );
+    case "closed":
+      return resolve(
+        msg("{tooltip}, and {others} more linked; overall closed", { tooltip, others }),
+      );
+    case "merged":
+      return resolve(
+        msg("{tooltip}, and {others} more linked; overall merged", { tooltip, others }),
+      );
+  }
+}
+
+function prStatusLabels(
+  state: PullRequestBadgeState,
+  shortLabel: string,
+  number: number,
+  resolve: MessageResolver,
+): { readonly label: string; readonly tooltipLead: string } {
+  switch (state) {
+    case "open":
+      return {
+        label: resolve(msg("{shortLabel} open", { shortLabel })),
+        tooltipLead: resolve(msg("{shortLabel} #{number} - Open", { shortLabel, number })),
+      };
+    case "draft":
+      return {
+        label: resolve(msg("{shortLabel} draft", { shortLabel })),
+        tooltipLead: resolve(msg("{shortLabel} #{number} - Draft", { shortLabel, number })),
+      };
+    case "closed":
+      return {
+        label: resolve(msg("{shortLabel} closed", { shortLabel })),
+        tooltipLead: resolve(msg("{shortLabel} #{number} - Closed", { shortLabel, number })),
+      };
+    case "merged":
+      return {
+        label: resolve(msg("{shortLabel} merged", { shortLabel })),
+        tooltipLead: resolve(msg("{shortLabel} #{number} - Merged", { shortLabel, number })),
+      };
+  }
+}
+
 function resolveThreadPullRequestBadgePresentation(
   {
     badge,
@@ -219,13 +295,7 @@ function resolveThreadPullRequestBadgePresentation(
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: resolve(
-        msg("Stack of {count} {items}, {state}", {
-          count: badge.layers,
-          items: terminology.plural,
-          state: aggregate.label.toLowerCase(),
-        }),
-      ),
+      label: stackBadgeLabel(badge.state, badge.layers, terminology.plural, resolve),
       text: badge.layers,
     };
   }
@@ -239,13 +309,7 @@ function resolveThreadPullRequestBadgePresentation(
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: resolve(
-        msg("{tooltip}, and {others} more linked; overall {state}", {
-          tooltip,
-          others: badge.others,
-          state: aggregate.label.toLowerCase(),
-        }),
-      ),
+      label: moreLinkedBadgeLabel(badge.state, tooltip, badge.others, resolve),
       text: `+${badge.others + 1}`,
     };
   }
@@ -408,7 +472,12 @@ export function ThreadPullRequestsMiniList({
           >
             {line.stack ? (
               <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                {line.stack.kind === "native" ? (
+                  <T context="a native stack of pull requests">stack</T>
+                ) : (
+                  <T context="a chain of pull requests based on each other">chain</T>
+                )}{" "}
+                · {line.stack.size}
               </span>
             ) : null}
           </ThreadPullRequestMiniListItem>
@@ -470,14 +539,19 @@ function ThreadPullRequestMiniListItem({
 export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  resolve: MessageResolver = m,
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
-
-  const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }, resolve);
+  const { label, tooltipLead } = prStatusLabels(
+    pr.state === "open" && pr.isDraft === true ? "draft" : pr.state,
+    shortLabel,
+    pr.number,
+    resolve,
+  );
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
+    label,
     colorClass: state.toneClassName,
     Icon: state.Icon,
     tooltip: `${tooltipLead}: ${pr.title}`,
@@ -714,6 +788,7 @@ function ThreadStatusLabel({
 
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const gt = useGT();
+  const m = useMessages();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
   // A new ref callback would detach and reattach the row, and each reattach sets lease state.
   const statusRef = useStableCallback((node: HTMLSpanElement | null) =>
@@ -759,6 +834,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const prStatus = prStatusIndicator(
     pr,
     linkedPullRequest?.sourceControlProvider ?? resolveDisplayedThreadPrProvider(displayedPrInput),
+    m,
   );
   const threadStatus = resolveThreadStatusPill({
     thread: {
@@ -932,7 +1008,7 @@ export function ThreadSearchPullRequestNumber({
       badge,
       number: pr?.number ?? stored?.number,
       url: pr?.url ?? stored?.url,
-      status: prStatusIndicator(pr, linked?.sourceControlProvider),
+      status: prStatusIndicator(pr, linked?.sourceControlProvider, m),
     },
     m,
   );

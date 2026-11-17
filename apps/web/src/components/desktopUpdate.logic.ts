@@ -127,9 +127,9 @@ export function getDesktopUpdateButtonTooltip(
     );
   }
   if (state.status === "available") {
-    return state.availableVersion
-      ? resolve(msg("Update {version} ready to download", { version: state.availableVersion }))
-      : resolve(msg("Update available ready to download"));
+    return state.availableVersion === null
+      ? resolve(msg("Update available ready to download"))
+      : resolve(msg("Update {version} ready to download", { version: state.availableVersion }));
   }
   if (state.status === "downloading") {
     return typeof state.downloadPercent === "number"
@@ -140,9 +140,9 @@ export function getDesktopUpdateButtonTooltip(
   }
   if (state.status === "downloaded") {
     const version = state.downloadedVersion ?? state.availableVersion;
-    return version
-      ? resolve(msg("Update {version} downloaded. Click to restart and install.", { version }))
-      : resolve(msg("Update ready downloaded. Click to restart and install."));
+    return version === null
+      ? resolve(msg("Update ready downloaded. Click to restart and install."))
+      : resolve(msg("Update {version} downloaded. Click to restart and install.", { version }));
   }
   if (state.status === "error") {
     if (state.errorContext === "install" && state.downloadedVersion) {
