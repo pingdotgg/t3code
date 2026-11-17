@@ -3249,7 +3249,7 @@ export function ChatComposer(props: ChatComposerProps) {
           composerBlurFrameRef.current = null;
         }
         flushSync(() => setIsComposerFocused(true));
-        const shell = composerFormRef.current?.closest('[data-slot="composer-shell"]');
+        const shell = composerFormRef.current?.closest('[data-slot="composer-host"]');
         const trigger = Array.from(
           shell?.querySelectorAll<HTMLButtonElement>(
             `button[data-composer-shortcut~="${command}"]:not(:disabled)`,
@@ -3588,7 +3588,7 @@ export function ChatComposer(props: ChatComposerProps) {
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}
-      className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
+      className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width) rounded-[inherit]"
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
@@ -3619,7 +3619,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerBanner.Dock>
         <ComposerBannerStack items={shelfItems} />
       </ComposerBanner.Dock>
-      <div className="relative">
+      <div className="relative rounded-[inherit]">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           className={composerProviderState.composerFrameClassName}
