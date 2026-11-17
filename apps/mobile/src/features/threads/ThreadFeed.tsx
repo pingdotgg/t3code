@@ -107,7 +107,7 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
-import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -3742,7 +3742,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     presentedFeed,
     props.anchorMessageId,
     (entry) => (entry.type === "message" ? entry.id : null),
-    { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
+    // Must match the feed's top padding: any slack becomes end-alignment padding, which drops
+    // for a frame whenever a row is added.
+    { anchorOffset: anchorTopInset + FEED_PADDING_TOP },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
   const terminalAssistantMessageIds = (() => {
