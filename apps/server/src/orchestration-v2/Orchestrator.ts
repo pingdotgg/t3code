@@ -14507,7 +14507,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentTurnItem = parentTask.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
-      // Steers join the task's run, so every message on its runs says who asked.
+      // Steers join the task's run, so its runs started on their own only if every message is a notification.
       const taskRunIds = new Set(taskRuns.map((run) => run.id));
       const taskMessages = childControls.messages.filter(
         (message) => message.runId !== null && taskRunIds.has(message.runId),
@@ -14521,9 +14521,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !cancelled &&
         task.id !== forkedFrom.nodeId &&
         taskMessages.length > 0 &&
-        taskMessages.every(
-          (message) => message.createdBy !== "user" && message.senderThreadId !== parentThreadId,
-        );
+        taskMessages.every((message) => message.notification !== undefined);
       const priorResults = unprompted
         ? (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
             subagentChildThreadIds: [childThreadId],
@@ -14556,7 +14554,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cancelledRunId: childRun.id,
               completionDelivery: { state: "disposed" as const, observedByRunId: null },
             }
-          : repeatsUnprompted
+          : repeatsUnprompted &&
+              (task.completionDelivery === undefined ||
+                task.completionDelivery.state === "pending" ||
+                task.completionDelivery.state === "claimed")
             ? { completionDelivery: { state: "delivered" as const, observedByRunId: null } }
             : {}),
       };
