@@ -23,7 +23,7 @@ If no argument provided, find the next issue on the frontier: open, specified fo
 open blocker, and not claimed:
 
 ```bash
-gh issue list --label ready-for-agent --state open --search "-is:blocked -label:in-progress -label:needs-help sort:created-asc"
+gh issue list --label ready-for-agent --state open --search "-is:blocked -label:in-progress -label:needs-help -label:ready-for-human sort:created-asc"
 ```
 
 Pick the first (oldest, highest priority) issue from the list. Run `gh issue view <id>` on it.
@@ -98,7 +98,7 @@ gh issue edit <id> --add-label in-progress
 **Files:** [list of files you'll touch]
 ```
 
-3. **Start implementing immediately.** No planning round, no ceremony. Just code.
+3. **Start implementing immediately.** No planning round, no ceremony. Just code, then ship it with the `full-send` skill; its merge closes the issue.
 
 ## Step 4B: needs planning, plan first
 
@@ -128,7 +128,7 @@ gh issue edit <id> --add-label in-progress
 
 4. Before you present the plan, use the `replan` skill to audit coverage.
 
-5. Get the user's approval of the audited plan, then begin implementation.
+5. Get the user's approval of the audited plan, then implement it and ship it with the `full-send` skill.
 
 ## Rules
 

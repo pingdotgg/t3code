@@ -21,7 +21,8 @@ If neither exists, ask the user for the plan or its path. Do not go looking for 
 elsewhere.
 
 If the plan has not been through the `replan` audit yet, run that first, so the issues start
-from a plan with full coverage.
+from a plan with full coverage. If the audit changed the plan, show the user what changed and get
+their approval, as a structured question if your harness offers one, before creating anything.
 
 ## Step 2: parse the plan
 
@@ -85,6 +86,8 @@ dashboard, get `ready-for-human` instead of `ready-for-agent`, whether blocked o
 maestro daemon never claims or requeues them.
 
 ## Step 5: report
+
+If a `maestro <owner/repo>` thread exists (`t3_thread_list` with `titleContains`), send it `dispatch now` with `t3_thread_send`, so a paused maestro picks the new issues up.
 
 Output a clear summary:
 

@@ -94,6 +94,7 @@ flowchart LR
   automate_me --> unslop
   automate_me --> writing_for_agents
   babysit_pr --> leaving_pr_comments
+  bcheck --> full_send
   bcheck --> replan
   benchmark_checklist --> principles
   blast_radius --> how

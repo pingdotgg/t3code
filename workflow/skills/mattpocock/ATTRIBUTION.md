@@ -66,6 +66,11 @@ and `writing-for-agents`.
   pointed at `diff-review`. `validate-change` runs checks, simplify, a test-quality pass,
   `no-comments`, and the harness's own reviewer, and still runs `diff-review` for its Spec axis
   when the change implements an issue or spec.
+- Fixes from the pipeline model (`ak/ak-help/model/`): `to-spec` labels its spec `epic` instead of
+  `ready-for-agent`, so the maestro never hands a whole spec to one worker; `to-tickets` nudges a
+  `maestro <owner/repo>` thread after publishing; `implement-spec` skips `in-progress` tickets;
+  `wayfinder` unassigns week-old abandoned claims and asks the user what to do with fog left after
+  the last ticket.
 - `wayfinder` ends a finished map by filing implementation tickets with `to-tickets` and handing them
   to `maestro`, so charting runs straight into dispatch. One added step under "Work through the map".
 

@@ -28,7 +28,7 @@ To run an issue on another provider, label it `provider:<instanceId>`, for examp
 
 ### needs-help
 
-The only message the maestro sends you is `#<n> needs-help: <reason> <issue url>`. The issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
+The maestro sends you two kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
 
 ## Labels
 
@@ -59,7 +59,7 @@ Runs only in the maestro thread. There are no loops and no sleeps: each tick run
 1. Create the labels: `for l in ready-for-agent ready-for-human in-progress needs-help task epic; do gh label create "$l" --force --color ededed; done`
 2. Call `orchestrator_capabilities` once.
 3. Find your own thread id: `t3_thread_list` with `titleContains: "maestro <owner/repo>"`.
-4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue with no running child is an orphan. With `needs-help` too, its worker asked for help before this thread restarted: remove `in-progress` and notify the master (below). Otherwise treat it under Requeue.
+4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue whose last claim comment is `maestro: claimed` and that has no running child is an orphan; other `in-progress` issues belong to another session, so leave them alone. With `needs-help` too, its worker asked for help before this thread restarted: remove `in-progress` and notify the master (below). Otherwise treat it under Requeue.
 5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 300000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
 
 ### Each tick
@@ -88,7 +88,7 @@ gh issue view <n> --json state,labels \
   --jq '.state == "OPEN" and (any(.labels[]; .name == "in-progress" or .name == "needs-help" or .name == "ready-for-human") | not)'
 ```
 
-On `true`, `gh issue edit <n> --add-label in-progress`, then delegate to a subagent (in T3 Code: `delegate_task`) with `isolation: "worktree"`, `mode: "async"`, `role: "implementation"`, `title: "mw-<n> <short title>"`, and the task:
+On `true`, `gh issue edit <n> --add-label in-progress` and `gh issue comment <n> --body "maestro: claimed"`, then delegate to a subagent (in T3 Code: `delegate_task`) with `isolation: "worktree"`, `mode: "async"`, `role: "implementation"`, `title: "mw-<n> <short title>"`, and the task:
 
 ```
 Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <your thread id>.
@@ -96,7 +96,11 @@ Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <
 
 Name the skill; never paste its body. Use your own provider and model unless the issue has a `provider:<instanceId>` label, then set `target.providerInstanceId` to it. If that instance is not in `orchestrator_capabilities`, label `needs-help` with the reason.
 
-**4. Heartbeat.** Pause it (`schedule_task` with the id and `enabled: false`) when the frontier is empty, no worker runs, and no open issue is `needs-help` or blocked by an open issue, since finishing either can refill the frontier without anyone nudging you; re-enable it on the next nudge. Delete it with `delete_scheduled_task` when no `ready-for-agent` issue is left open, then end.
+**4. Epics.** Close an open `epic` whose sub-issues are all closed: `gh issue close <n> --comment "maestro: every sub-issue is closed."`
+
+**5. Human tasks.** When an open `ready-for-human` issue has just become unblocked, send the master one line, once: `#<n> ready-for-human unblocked <issue url>`.
+
+**6. Heartbeat.** Pause it (`schedule_task` with the id and `enabled: false`) when the frontier is empty, no worker runs, and no open issue is `needs-help` or blocked by an open issue, since finishing either can refill the frontier without anyone nudging you; re-enable it on the next nudge. Delete it with `delete_scheduled_task` when no `ready-for-agent` issue is left open, then end.
 
 ### Labelling needs-help
 
@@ -105,4 +109,4 @@ gh issue edit <n> --add-label needs-help --remove-label in-progress
 gh issue comment <n> --body "maestro: needs help. <reason>"
 ```
 
-Every time an issue gains `needs-help`, from a worker or from you, `t3_thread_send` the master exactly one line, once per occurrence: `#<n> needs-help: <reason> <issue url>`. Default `mode: "auto"` queues it if the master is busy. Never send the master anything else.
+Every time an issue gains `needs-help`, from a worker or from you, `t3_thread_send` the master exactly one line, once per occurrence: `#<n> needs-help: <reason> <issue url>`. Default `mode: "auto"` queues it if the master is busy. Besides these, send the master only the `ready-for-human unblocked` line from step 5.

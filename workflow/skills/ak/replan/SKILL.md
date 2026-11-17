@@ -101,6 +101,7 @@ Hard rules:
 - Change as little as possible. Minimal edit to the plan in plan mode, minimal edit to the
   delivered work in delivered mode
 - Ask when in doubt
+- Run at most 3 audit-and-rewrite rounds. If gaps remain after the third, stop and show the user what is still uncovered
 
 ## Next step
 

@@ -65,6 +65,8 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 Do NOT close or modify any parent issue.
 
+If a `maestro <owner/repo>` thread exists (`t3_thread_list` with `titleContains`), send it `dispatch now` with `t3_thread_send`, so a paused maestro picks the new issues up.
+
 <local-ticket-template>
 
 # <NN>: <Ticket title>

@@ -119,10 +119,10 @@ User invokes with a loose idea.
 User invokes with a map (URL or number). A ticket is **optional**: without one, you pick the next decision, not the user.
 
 1. Load the **map**: the low-res view, not every ticket body.
-2. Choose the ticket. If the user named one, use it. Otherwise take the first frontier ticket in order. **Claim it**: assign it to yourself before any work.
+2. Choose the ticket. A ticket assigned to the user with no comment or linked activity for a week is an abandoned claim: unassign it first. If the user named one, use it. Otherwise take the first frontier ticket in order. **Claim it**: assign it to yourself before any work.
 3. Resolve it as the type its `wayfinder:<type>` label names (see [Ticket Types](#ticket-types)). Read the label, not just the body: the body never states the type. **Zoom as needed**: fetch the full body of any related or closed ticket on demand; use whichever skills the `## Notes` block names. If in doubt, use the "grilling" and "domain-modeling" skills.
 4. Record the resolution: post the answer as a **resolution comment**, **close** the issue, and **append a context pointer** to the map's Decisions-so-far.
 5. Add newly-surfaced tickets (create-then-wire); graduate any fog the answer has made specifiable, clearing each graduated patch from **Not yet specified** so it lives only as its new ticket. If the answer reveals that a ticket (this one or another) sits beyond the destination, **rule it out of scope** rather than resolving it on the route. If the decision invalidates other parts of the map, update or delete those tickets.
-6. If no tickets remain and the fog is clear, the way to the destination is charted: break the destination into implementation tickets with the "to-tickets" skill, then hand them to the "maestro" skill to dispatch.
+6. If no tickets remain but **Not yet specified** still holds fog, ask the user, as a structured question if your harness offers one, whether to graduate it into tickets or rule it out of scope. If no tickets remain and the fog is clear, the way to the destination is charted: break the destination into implementation tickets with the "to-tickets" skill, then hand them to the "maestro" skill to dispatch.
 
 The user may run unblocked tickets in parallel, so expect other sessions to be editing the tracker concurrently.
