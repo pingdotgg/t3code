@@ -1224,6 +1224,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
+      Layer.provide(ServerEnvironment.layerIdentity),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

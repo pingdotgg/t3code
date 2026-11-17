@@ -151,7 +151,12 @@ with a bounded error that does not print the token. Keep this file out of Git.
 
 T3 sends JSON with `Authorization: Bearer YOUR_WEBHOOK_TOKEN` and an
 `Idempotency-Key` header equal to `deliveryId`. The version 1 payload includes
-`eventId`, `sequence`, `occurredAt`, `projectId`, `threadId`, and `runId`.
+`environmentId`, `eventId`, `sequence`, `occurredAt`, `projectId`, `threadId`, and `runId`.
+New callbacks include the host's persistent `environmentId`. Use it to route MCP
+reads and responses when the bot works across several environments. Version 1
+callbacks already queued by an older build can omit it; their payloads and
+delivery IDs are preserved on retry. For those callbacks, use the endpoint's
+known environment instead of guessing from the thread ID.
 `runId` can be null if the request has no associated run. Event types are:
 
 - `thread.user-input.requested`, with `requestId` and `status: "pending"`.
@@ -169,7 +174,8 @@ whole thread have settled. A question and a permission approval are different
 requests. Store these bot instructions with the bot so each callback can resume
 the same process:
 
-1. Deduplicate by `deliveryId`, then read the thread with `t3_thread_read`.
+1. Deduplicate by environment and `deliveryId`, then read the thread with
+   `t3_thread_read`, passing `environmentId` when it is present.
 2. For a user-input request, use `t3_pending_request` to read it and submit an
    answer through its response action. For an approval request, ask a human to
    approve or reject it in T3 Code. MCP cannot approve permissions.

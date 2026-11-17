@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  EnvironmentId,
   ProjectId,
   RunId,
   ThreadId,
@@ -21,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const Endpoint = Schema.Struct({
@@ -54,6 +56,7 @@ type Notification<E = ThreadWebhookEvent> = E extends ThreadWebhookEvent
   ? Omit<
       E,
       | "schemaVersion"
+      | "environmentId"
       | "deliveryId"
       | "eventId"
       | "sequence"
@@ -63,10 +66,13 @@ type Notification<E = ThreadWebhookEvent> = E extends ThreadWebhookEvent
     >
   : never;
 
-export class Configuration extends Context.Reference<ReadonlyArray<typeof Endpoint.Type>>(
-  "t3/orchestration-v2/ThreadWebhooks/Configuration",
-  { defaultValue: () => [] },
-) {}
+export class Configuration extends Context.Reference<
+  | {
+      readonly environmentId: EnvironmentId;
+      readonly endpoints: ReadonlyArray<typeof Endpoint.Type>;
+    }
+  | undefined
+>("t3/orchestration-v2/ThreadWebhooks/Configuration", { defaultValue: () => undefined }) {}
 
 export class ThreadWebhookConfigError extends Schema.TaggedError<ThreadWebhookConfigError>()(
   "ThreadWebhookConfigError",
@@ -128,7 +134,8 @@ const make = Effect.gen(function* () {
       }),
     )
     .pipe(Effect.orDie);
-  const endpoints = yield* Configuration;
+  const configuration = yield* Configuration;
+  const endpoints = configuration?.endpoints ?? [];
   const http = yield* HttpClient.HttpClient;
   const available = yield* Queue.dropping<void>(1);
   const lane = yield* Semaphore.make(1);
@@ -140,7 +147,7 @@ const make = Effect.gen(function* () {
   // Capture runs before every projection update, including streamed provider items. The write owns the span.
   const capture = Effect.fnUntraced(
     function* (events: ReadonlyArray<OrchestrationV2StoredEvent>) {
-      if (endpoints.length === 0) return;
+      if (configuration === undefined) return;
       for (const stored of events) {
         const event = stored.event;
         let notification: Notification;
@@ -240,6 +247,7 @@ const make = Effect.gen(function* () {
           const deliveryId = `${endpoint.id}:${event.id}`;
           const payload: ThreadWebhookEvent = {
             schemaVersion: 1,
+            environmentId: configuration.environmentId,
             deliveryId,
             eventId: event.id,
             sequence: stored.sequence,
@@ -380,7 +388,7 @@ export const layerConfiguration = Layer.effect(
     const exists = yield* fs
       .exists(filename)
       .pipe(Effect.mapError(() => new ThreadWebhookConfigError({ reason: "read" })));
-    if (!exists) return [];
+    if (!exists) return undefined;
     const stat = yield* fs
       .stat(filename)
       .pipe(Effect.mapError(() => new ThreadWebhookConfigError({ reason: "read" })));
@@ -396,6 +404,8 @@ export const layerConfiguration = Layer.effect(
     if (new Set(endpoints.map((endpoint) => endpoint.id)).size !== endpoints.length) {
       return yield* new ThreadWebhookConfigError({ reason: "invalid" });
     }
-    return endpoints;
+    if (endpoints.length === 0) return undefined;
+    const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    return { environmentId: yield* identity.getEnvironmentId, endpoints };
   }),
 );
