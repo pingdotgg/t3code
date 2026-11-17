@@ -833,7 +833,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
 
       DispatchQueue.main.async {
-        ref.view?.emitInput(input)
+        ref.view?.emitInput(input, returnToBottom: false)
       }
     }, userdata)
   }
@@ -917,9 +917,19 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     textInputModeDidChange()
   }
 
-  private func emitInput(_ data: String) {
+  // Typing returns a scrolled-back view to the prompt; replies and mouse reports from Ghostty do not.
+  private func emitInput(_ data: String, returnToBottom: Bool = true) {
     guard !readOnly, !data.isEmpty else { return }
+    if returnToBottom { scrollToBottom() }
     onInput(["data": data])
+  }
+
+  func scrollToBottom() {
+    guard let surface else { return }
+    let action = "scroll_to_bottom"
+    if ghostty_surface_binding_action(surface, action, UInt(action.utf8.count)) {
+      redrawSurface()
+    }
   }
 
   private func emitPaste() {

@@ -45,6 +45,8 @@ export interface TerminalSurfaceHandle {
   readonly focusKeyboard: () => void;
   /** Drops the native field's IME context after input that bypassed it. */
   readonly resetInput: () => void;
+  /** Returns a scrolled-back view to the prompt before input that bypassed the native field. */
+  readonly scrollToBottom: () => void;
 }
 
 interface TerminalSurfaceProps extends ViewProps {
@@ -110,6 +112,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
       requestAnimationFrame(() => inputRef.current?.focus());
     },
     resetInput: () => {},
+    scrollToBottom: () => {},
   }));
 
   return (
@@ -239,6 +242,11 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
     resetInput: () => {
       void nativeRef.current?.resetInput?.().catch((error: unknown) => {
         console.error("Terminal input reset failed", error);
+      });
+    },
+    scrollToBottom: () => {
+      void nativeRef.current?.scrollToBottom?.().catch((error: unknown) => {
+        console.error("Terminal scroll to bottom failed", error);
       });
     },
   }));

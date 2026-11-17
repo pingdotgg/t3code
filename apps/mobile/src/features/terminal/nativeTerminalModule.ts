@@ -52,6 +52,8 @@ export interface NativeTerminalSurfaceHandle {
   readonly writeOutput: (data: string, reset: boolean) => Promise<void>;
   /** Absent on native builds that predate it. */
   readonly resetInput?: () => Promise<void>;
+  /** Absent on native builds that predate it. */
+  readonly scrollToBottom?: () => Promise<void>;
 }
 
 let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;

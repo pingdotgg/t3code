@@ -761,12 +761,14 @@ function ThreadTerminal(props: {
       return;
     }
 
+    surfaceRef.current?.scrollToBottom();
     writeModifiedInput(action.data);
   };
 
   const handlePaste = (readText: () => Promise<string>) => {
     // Pasted text bypasses the native field, so a syllable it holds must not be recomposed.
     surfaceRef.current?.resetInput();
+    surfaceRef.current?.scrollToBottom();
     setPendingModifier(null);
     void pasteText(readText);
   };

@@ -274,6 +274,23 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeScroll(JNIEnv*, jclass, jlong h
   ghostty_terminal_scroll_viewport(session->terminal, scroll);
 }
 
+// Returns whether the viewport moved, so the caller redraws only then.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeScrollToBottom(JNIEnv*, jclass, jlong handle) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return JNI_FALSE;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  bool active = true;
+  if (ghostty_terminal_get(session->terminal, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, &active) ==
+          GHOSTTY_SUCCESS &&
+      active) {
+    return JNI_FALSE;
+  }
+  GhosttyTerminalScrollViewport scroll = {.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM};
+  ghostty_terminal_scroll_viewport(session->terminal, scroll);
+  return JNI_TRUE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_expo_modules_t3terminal_GhosttyBridge_nativeSetTheme(
     JNIEnv* env, jclass, jlong handle, jint foreground, jint background, jint cursor,

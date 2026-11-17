@@ -22,6 +22,8 @@ class T3TerminalModule : Module() {
       // The Android input field already clears after every change.
       AsyncFunction("resetInput") { _: T3TerminalView -> }
 
+      AsyncFunction("scrollToBottom") { view: T3TerminalView -> view.scrollToBottom() }
+
       Prop("terminalKey") { view: T3TerminalView, terminalKey: String ->
         view.terminalKey = terminalKey
       }
