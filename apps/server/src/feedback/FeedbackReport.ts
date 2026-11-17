@@ -62,11 +62,13 @@ export const FEEDBACK_NOT_APPROVED_NOTE = {
     "The user did not approve this report, so nothing was sent. Do not send it, or any part of it, another way.",
   timed_out:
     "The user did not answer in time, so nothing was sent. Do not send it another way; ask again only if the user wants to.",
+  cancelled:
+    "The turn ended or agent feedback was turned off before the report was sent, so nothing was sent. Do not send it another way.",
 } as const;
 
 export const FeedbackNotApproved = Schema.Struct({
   approved: Schema.Literal(false),
-  status: Schema.Literals(["declined", "timed_out"]),
+  status: Schema.Literals(["declined", "timed_out", "cancelled"]),
   note: Schema.String,
 });
 export type FeedbackNotApproved = typeof FeedbackNotApproved.Type;

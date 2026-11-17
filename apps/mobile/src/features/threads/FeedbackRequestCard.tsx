@@ -16,6 +16,7 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 
@@ -72,6 +73,9 @@ function PendingFeedbackRequest(props: {
     label: "answer feedback request",
     reportFailure: false,
   });
+  const canAnswer = useAtomValue(
+    serverEnvironment.answerFeedbackRequest.permissionAtom(props.environmentId),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Two taps can land before a re-render; this guard is synchronous.
@@ -108,18 +112,22 @@ function PendingFeedbackRequest(props: {
         <Text accessibilityRole="alert" className="font-sans text-sm text-danger-foreground">
           {error}
         </Text>
+      ) : !canAnswer ? (
+        <Text className="font-sans text-xs text-foreground-muted">
+          Only someone who can run agents on this machine can send or decline it.
+        </Text>
       ) : null}
       <Button
         label="Send"
         tone="primary"
         fullWidth
-        disabled={submitting}
+        disabled={submitting || !canAnswer}
         onPress={() => void send("send")}
       />
       <Button
         label="Don't send"
         tone="text"
-        disabled={submitting}
+        disabled={submitting || !canAnswer}
         onPress={() => void send("decline")}
       />
     </View>

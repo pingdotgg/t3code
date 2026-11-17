@@ -17,6 +17,7 @@ import type {
   OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, LockIcon, MessageSquareIcon, MinusIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
@@ -75,6 +76,9 @@ function PendingFeedbackRequest(props: {
     label: "answer feedback request",
     reportFailure: false,
   });
+  const canAnswer = useAtomValue(
+    serverEnvironment.answerFeedbackRequest.permissionAtom(props.environmentId),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Two clicks can land before a render.
@@ -116,18 +120,27 @@ function PendingFeedbackRequest(props: {
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
+      ) : !canAnswer ? (
+        <p className="text-xs text-muted-foreground">
+          Only someone who can run agents on this machine can send or decline it.
+        </p>
       ) : null}
       <div className="flex items-center justify-end gap-2">
         <Button
           type="button"
           size="sm"
           variant="ghost-muted"
-          disabled={submitting}
+          disabled={submitting || !canAnswer}
           onClick={() => void send("decline")}
         >
           Don't send
         </Button>
-        <Button type="button" size="sm" disabled={submitting} onClick={() => void send("send")}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={submitting || !canAnswer}
+          onClick={() => void send("send")}
+        >
           Send
         </Button>
       </div>

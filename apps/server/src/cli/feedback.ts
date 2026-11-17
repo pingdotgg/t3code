@@ -1,15 +1,15 @@
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { listFeedbackReports } from "../feedback/FeedbackList.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { readFeedbackReports } from "../feedback/FeedbackList.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -17,6 +17,7 @@ import {
   FEEDBACK_CLI_CLIENT_LABEL,
   FEEDBACK_OFF_MESSAGE,
   FeedbackInput,
+  FeedbackOffError,
   FeedbackSubmitResult,
 } from "../feedback/FeedbackReport.ts";
 import {
@@ -57,24 +58,20 @@ const listReports = Effect.fn("cli.feedback.listReports")(function* (flags: CliA
   const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
     quietLogs: true,
   });
-  return yield* listFeedbackReports.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        SqlitePersistence.layerCliConfig,
-        ServerSettings.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              ServerSecretStore.layer,
-              SqlitePersistence.layerCliConfig,
-              ManagedPolicy.layer,
-            ),
-          ),
-        ),
-      ).pipe(
-        Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
-      ),
-    ),
+  return yield* Effect.gen(function* () {
+    // Settings first, from the file alone, so Off never opens the database.
+    const { agentFeedback } = yield* ServerSettings.readServerSettingsFromDisk;
+    if (agentFeedback.mode === "off") return yield* new FeedbackOffError({});
+    const { dbPath } = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(dbPath))) return [];
+    // Read-only: no setup, no migrations, no writes, whether or not a server runs.
+    return yield* readFeedbackReports.pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })),
+    );
+  }).pipe(
+    Effect.provide(ManagedPolicy.layer.pipe(Layer.provideMerge(ServerConfig.layer(config)))),
+    Effect.provideService(References.MinimumLogLevel, "Error"),
   );
 });
 

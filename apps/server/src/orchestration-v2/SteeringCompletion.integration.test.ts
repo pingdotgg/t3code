@@ -1301,6 +1301,27 @@ it.effect("restarts the turn for an image when native steering takes text only",
       const before = yield* orchestrator.getThreadProjection(threadId);
       const originalStart = before.runs[0]!.startedAt;
       assert.isNotNull(originalStart);
+      // A feedback card the run showed before the restart, from a tool call still waiting.
+      const card = {
+        type: "feedback_request.record" as const,
+        threadId,
+        runId: before.runs[0]!.id,
+        nodeId: before.runs[0]!.rootNodeId!,
+        turnItemId: TurnItemId.make("turn-item:feedback-request:steer"),
+        preview: {
+          kind: "bug" as const,
+          subject: "general",
+          expected: "a",
+          actual: "b",
+          workaround: "",
+          trace: null,
+        },
+      };
+      yield* orchestrator.dispatch({
+        ...card,
+        commandId: CommandId.make("feedback-pending"),
+        feedbackStatus: "pending",
+      });
       yield* TestClock.adjust("10 seconds");
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -1341,6 +1362,21 @@ it.effect("restarts the turn for an image when native steering takes text only",
           ["look at this", 1],
         ],
       );
+      // The restart replaced the root, and the waiting call can still close its card.
+      assert.notEqual(after.runs[0]?.rootNodeId, card.nodeId);
+      yield* orchestrator.dispatch({
+        ...card,
+        commandId: CommandId.make("feedback-sent"),
+        feedbackStatus: "sent",
+      });
+      const closed = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+        (item) => item.id === card.turnItemId,
+      );
+      assert.deepInclude(closed, {
+        status: "completed",
+        feedbackStatus: "sent",
+        nodeId: card.nodeId,
+      });
     }).pipe(Effect.provide(layer));
   }),
 );

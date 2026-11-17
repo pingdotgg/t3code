@@ -298,6 +298,25 @@ const make = Effect.fn("FeedbackService.make")(function* (
       if (status === "declined") yield* record("declined").pipe(Effect.ignore);
       return { approved: false, status, note: FEEDBACK_NOT_APPROVED_NOTE[status] } as const;
     }
+    // The answer can come long after the call: Off or a stopped turn since then sends nothing.
+    const turnEnded = yield* threads
+      .getThreadRecords(card.threadId, ["runs"], { runIds: [card.runId] })
+      .pipe(
+        Effect.map(({ runs }) => {
+          const current = runs.find((candidate) => candidate.id === card.runId);
+          return current === undefined || Threads.isTerminalRunStatus(current.status);
+        }),
+        Effect.mapError(storageError),
+        Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
+      );
+    if (turnEnded) {
+      yield* record("cancelled").pipe(Effect.ignore);
+      return {
+        approved: false,
+        status: "cancelled",
+        note: FEEDBACK_NOT_APPROVED_NOTE.cancelled,
+      } as const;
+    }
     return yield* store(preview, { caller, runId, id, dimensions, userRequested: true }).pipe(
       Effect.tap(() => record("sent").pipe(Effect.ignore)),
       Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
@@ -336,6 +355,8 @@ const make = Effect.fn("FeedbackService.make")(function* (
       sql
         .withTransaction(
           Effect.gen(function* () {
+            // Read again here: the setting can turn Off while a requested report waits.
+            yield* requireOn;
             const limited = yield* overLimit(context.runId, userRequested);
             if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
             yield* sql`INSERT INTO agent_feedback ${sql.insert({
@@ -357,7 +378,9 @@ const make = Effect.fn("FeedbackService.make")(function* (
         )
         .pipe(
           Effect.mapError((error) =>
-            error._tag === "FeedbackLimitError" ? error : storageError(error),
+            error._tag === "FeedbackLimitError" || error._tag === "FeedbackOffError"
+              ? error
+              : storageError(error),
           ),
         ),
     );

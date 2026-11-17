@@ -17,6 +17,7 @@ import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { FEEDBACK_OFF_MESSAGE, T3_CLI_COMMANDS } from "../feedback/FeedbackReport.ts";
 import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
 import {
@@ -126,24 +127,53 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
 
       yield* expectOneLine(args, baseDir, stderr);
     }
-    // A damaged database is one line too.
+    // Off is read from the settings file alone: listing opened no database, so none exists.
+    const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+    expect(yield* fs.exists(dbPath)).toBe(false);
+    const turnOn = (dir: string) =>
+      fs.writeFileString(
+        path.join(dir, "userdata", "settings.json"),
+        JSON.stringify({ agentFeedback: { mode: "auto" } }),
+      );
+    const listJson = (dir: string) =>
+      Command.runWith(feedbackCommand, { version: "0.0.0" })([
+        "list",
+        "--json",
+        "--base-dir",
+        dir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => JSON.parse(String(lines.at(-1)))),
+      );
+
+    // On, a damaged database is one line too.
     const damaged = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-cli-" });
     yield* fs.makeDirectory(path.join(damaged, "userdata"), { recursive: true });
+    yield* turnOn(damaged);
     yield* fs.writeFileString(path.join(damaged, "userdata", "statev2.sqlite"), "not a database");
     yield* expectOneLine(["list"], damaged, "Could not read this machine's feedback reports: ");
 
-    // On, the list prints each stored report whole, trace included, with no server running.
-    yield* fs.writeFileString(
-      path.join(baseDir, "userdata", "settings.json"),
-      JSON.stringify({ agentFeedback: { mode: "auto" } }),
+    // A database from before agent feedback, with no table for it, lists nothing.
+    const older = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-cli-" });
+    yield* fs.makeDirectory(path.join(older, "userdata"), { recursive: true });
+    yield* turnOn(older);
+    const olderDatabase = new NodeSqlite.DatabaseSync(
+      path.join(older, "userdata", "statev2.sqlite"),
     );
+    olderDatabase.exec("CREATE TABLE projection_projects (project_id TEXT)");
+    olderDatabase.close();
+    expect(yield* listJson(older)).toEqual([]);
+
+    // On, the list prints each stored report whole, trace included, with no server running.
+    yield* turnOn(baseDir);
+    yield* Effect.scoped(Layer.build(SqlitePersistence.layerFromPath(dbPath)));
     const trace = {
       turns: 1,
       textTurns: 0,
       truncated: false,
       entries: [{ turn: 1, type: "user", length: 4 }],
     };
-    const database = new NodeSqlite.DatabaseSync(path.join(baseDir, "userdata", "statev2.sqlite"));
+    const database = new NodeSqlite.DatabaseSync(dbPath);
     database
       .prepare(
         `INSERT INTO agent_feedback (id, thread_id, run_id, created_at, kind, subject, expected,
@@ -153,13 +183,7 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
       )
       .run(JSON.stringify(trace));
     database.close();
-    yield* Command.runWith(feedbackCommand, { version: "0.0.0" })([
-      "list",
-      "--json",
-      "--base-dir",
-      baseDir,
-    ]);
-    expect(JSON.parse(String((yield* TestConsole.logLines).at(-1)))).toEqual([
+    expect(yield* listJson(baseDir)).toEqual([
       {
         id: "r1",
         threadId: "t1",

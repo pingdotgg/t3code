@@ -1,5 +1,5 @@
-// `t3 feedback list` reads the local table directly, as `t3 environment list` reads links, so the
-// list needs no agent tool. SQLite allows this read beside a running server.
+// `t3 feedback list` reads the local table directly through a read-only connection, so the list
+// needs no agent tool and never writes. SQLite allows this read beside a running server.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -15,14 +15,17 @@ import {
 const LIST_LIMIT = 50;
 const decodeTrace = Schema.decodeUnknownEffect(Schema.NullOr(Schema.fromJsonString(FeedbackTrace)));
 
-/** The most recent reports saved on this machine, newest first, exactly as stored. */
-export const listFeedbackReports = Effect.gen(function* () {
-  const settings = yield* Settings.ServerSettingsService;
+/**
+ * The most recent reports in this database, newest first, exactly as stored. A database from
+ * before agent feedback has no table yet, and so no reports.
+ */
+export const readFeedbackReports = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const { agentFeedback } = yield* settings.getSettings.pipe(
+  const [table] = yield* sql<{ readonly count: number }>`
+    SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'agent_feedback'`.pipe(
     Effect.mapError((cause) => new FeedbackStorageError({ cause })),
   );
-  if (agentFeedback.mode === "off") return yield* new FeedbackOffError({});
+  if ((table?.count ?? 0) === 0) return [];
   const rows = yield* sql<
     Omit<FeedbackReport, "sent" | "userRequested" | "trace"> & {
       readonly sent: number;
@@ -46,4 +49,14 @@ export const listFeedbackReports = Effect.gen(function* () {
       })),
     ),
   );
-}).pipe(Effect.withSpan("FeedbackList.listFeedbackReports"));
+}).pipe(Effect.withSpan("FeedbackList.readFeedbackReports"));
+
+/** The reports, or the Labs line while agent feedback is off. */
+export const listFeedbackReports = Effect.gen(function* () {
+  const settings = yield* Settings.ServerSettingsService;
+  const { agentFeedback } = yield* settings.getSettings.pipe(
+    Effect.mapError((cause) => new FeedbackStorageError({ cause })),
+  );
+  if (agentFeedback.mode === "off") return yield* new FeedbackOffError({});
+  return yield* readFeedbackReports;
+});

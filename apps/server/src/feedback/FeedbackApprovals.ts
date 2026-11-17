@@ -52,13 +52,9 @@ const make = Effect.gen(function* () {
       "orchestration_v2.thread_id": input.threadId,
       "agent_feedback.answer": input.answer,
     });
-    const pending = waiting.get(input.turnItemId);
-    if (pending !== undefined && pending.threadId === input.threadId) {
-      if (yield* Deferred.succeed(pending.decision, input.answer)) return;
-      return yield* new AgentFeedbackRequestError({ reason: "already_answered" });
-    }
+    // Resolve only a live card of a live turn: a stopped turn can leave its call waiting a moment.
     const records = yield* threads
-      .getThreadRecords(input.threadId, ["turnItems"], {
+      .getThreadRecords(input.threadId, ["runs", "turnItems"], {
         turnItemTypes: ["feedback_request"],
         messageRoles: [],
       })
@@ -69,9 +65,22 @@ const make = Effect.gen(function* () {
     if (item?.type !== "feedback_request") {
       return yield* new AgentFeedbackRequestError({ reason: "not_found" });
     }
-    return yield* new AgentFeedbackRequestError({
-      reason: item.feedbackStatus === "pending" ? "agent_stopped" : "already_answered",
-    });
+    if (item.feedbackStatus !== "pending") {
+      return yield* new AgentFeedbackRequestError({ reason: "already_answered" });
+    }
+    const run = records.runs.find((candidate) => candidate.id === item.runId);
+    const pending = waiting.get(input.turnItemId);
+    if (
+      run === undefined ||
+      Threads.isTerminalRunStatus(run.status) ||
+      pending === undefined ||
+      pending.threadId !== input.threadId
+    ) {
+      return yield* new AgentFeedbackRequestError({ reason: "agent_stopped" });
+    }
+    if (!(yield* Deferred.succeed(pending.decision, input.answer))) {
+      return yield* new AgentFeedbackRequestError({ reason: "already_answered" });
+    }
   });
 
   return FeedbackApprovals.of({ open, answer });

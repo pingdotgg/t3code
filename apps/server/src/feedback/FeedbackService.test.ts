@@ -100,27 +100,57 @@ const harness = Effect.gen(function* () {
   const events = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
   // Every feedback card the service records, in order.
   const cards = yield* Queue.unbounded<CardRecord>();
+  // The cards as the thread stores them, and the runs a stop has ended.
+  const shown = yield* Ref.make(new Map<string, CardRecord>());
+  const stopped = yield* Ref.make(new Set<string>());
   const threads = Layer.mock(Threads.ThreadManagementService)({
-    dispatch: (command) => Queue.offer(cards, command as CardRecord).pipe(Effect.as({} as never)),
+    dispatch: (command) =>
+      Ref.update(shown, (cards) => {
+        const card = command as CardRecord;
+        const existing = cards.get(card.turnItemId);
+        // A decided card stays decided, as the orchestrator keeps it.
+        return existing === undefined || existing.feedbackStatus === "pending"
+          ? new Map(cards).set(card.turnItemId, card)
+          : cards;
+      }).pipe(Effect.andThen(Queue.offer(cards, command as CardRecord)), Effect.as({} as never)),
     getThreadRecords: (_threadId, fields, filter) =>
-      Ref.get(items).pipe(
-        Effect.map((stored) =>
-          (fields as ReadonlyArray<string>).includes("runs")
+      Effect.gen(function* () {
+        const stored = yield* Ref.get(items);
+        const ended = yield* Ref.get(stopped);
+        const wanted = fields as ReadonlyArray<string>;
+        const selected =
+          filter?.runIds === undefined
+            ? filter?.latestRunLimit === undefined
+              ? runs
+              : runs.slice(-filter.latestRunLimit)
+            : runs.filter((run) => filter.runIds?.includes(run.id));
+        return {
+          ...(wanted.includes("runs")
             ? {
-                runs:
-                  filter?.runIds === undefined
-                    ? runs.slice(-(filter?.latestRunLimit ?? runs.length))
-                    : runs.filter((run) => filter.runIds?.includes(run.id)),
+                runs: selected.map((run) => ({
+                  ...run,
+                  status: ended.has(run.id) ? "interrupted" : "running",
+                })),
               }
-            : {
-                turnItems: stored.filter(
-                  (item) =>
-                    filter?.turnItemRunIds?.includes(item.runId) === true &&
-                    filter.turnItemTypes?.includes(item.type) === true,
-                ),
-              },
-        ),
-      ) as never,
+            : {}),
+          ...(wanted.includes("turnItems")
+            ? {
+                turnItems: filter?.turnItemTypes?.includes("feedback_request")
+                  ? [...(yield* Ref.get(shown)).values()].map((card) => ({
+                      type: "feedback_request",
+                      id: card.turnItemId,
+                      runId: card.runId,
+                      feedbackStatus: card.feedbackStatus,
+                    }))
+                  : stored.filter(
+                      (item) =>
+                        filter?.turnItemRunIds?.includes(item.runId) === true &&
+                        filter.turnItemTypes?.includes(item.type) === true,
+                    ),
+              }
+            : {}),
+        };
+      }) as never,
     getThreadShell: () =>
       Ref.get(runId).pipe(
         Effect.map((activeRunId) => ({
@@ -180,7 +210,7 @@ const harness = Effect.gen(function* () {
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
-  return { mode, items, telemetry, runId, events, cards, layer };
+  return { mode, items, telemetry, runId, events, cards, stopped, layer };
 });
 
 type CardRecord = Extract<
@@ -554,4 +584,45 @@ it.effect(
         yield* Ref.set(runId, RunId.make("run:2"));
       }).pipe(Effect.provide(layer));
     }),
+);
+
+it.effect("sends nothing approved after the turn stopped or feedback was turned off", () =>
+  Effect.gen(function* () {
+    const { mode, events, cards, stopped, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const feedback = yield* Feedback.FeedbackService;
+      const approvals = yield* Approvals.FeedbackApprovals;
+      const requested = { ...input, userRequested: true };
+      const nothingKept = Effect.gen(function* () {
+        yield* Ref.set(mode, "auto");
+        expect(yield* listFeedbackReports).toEqual([]);
+        expect(yield* Ref.get(events)).toEqual([]);
+      });
+
+      // The turn stops while the call still waits: Send is refused, and the card times out.
+      const call = yield* feedback.submit(requested, fromThread).pipe(Effect.forkChild);
+      const shown = yield* Queue.take(cards);
+      yield* Ref.update(stopped, (runs) => new Set(runs).add(shown.runId));
+      const refused = yield* Effect.flip(
+        approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" }),
+      );
+      expect(refused.message).toBe(
+        "The agent that asked has stopped, so this report can't be sent.",
+      );
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Fiber.join(call)).toMatchObject({ approved: false, status: "timed_out" });
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+      yield* nothingKept;
+      yield* Ref.set(stopped, new Set());
+
+      // Off between showing the card and Send: nothing is stored or sent, and the card closes.
+      const turnedOff = yield* feedback.submit(requested, fromThread).pipe(Effect.forkChild);
+      const second = yield* Queue.take(cards);
+      yield* Ref.set(mode, "off");
+      yield* approvals.answer({ threadId, turnItemId: second.turnItemId, answer: "send" });
+      expect((yield* Effect.flip(Fiber.join(turnedOff)))._tag).toBe("FeedbackOffError");
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+      yield* nothingKept;
+    }).pipe(Effect.provide(layer));
+  }),
 );

@@ -10567,28 +10567,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
-      const run = projection.runs.find((candidate) => candidate.id === command.runId);
-      if (run === undefined || run.rootNodeId !== command.nodeId) {
-        return yield* new OrchestratorDispatchError({
+      const fail = (cause: string) =>
+        new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+          cause,
         });
-      }
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
       const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
       if (
         existing !== undefined &&
         (existing.type !== "feedback_request" || existing.runId !== command.runId)
       ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Turn item ${command.turnItemId} is not a feedback report of run ${command.runId}.`,
-        });
+        return yield* fail(
+          `Turn item ${command.turnItemId} is not a feedback report of run ${command.runId}.`,
+        );
       }
       // A decided card stays decided, so a late close cannot reopen or relabel it.
       if (existing !== undefined && existing.feedbackStatus !== "pending") return;
       if (existing !== undefined && command.feedbackStatus === "pending") return;
+      if (run === undefined) return yield* fail(`Run ${command.runId} does not exist.`);
+      // Only a new card must sit on the run's current root. A steering restart replaces the
+      // root while the asking call still waits, and that call must still be able to close it.
+      if (existing === undefined && run.rootNodeId !== command.nodeId) {
+        return yield* fail(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
+      }
+      const nodeId = existing?.nodeId ?? command.nodeId;
       const now = yield* DateTime.now;
       const pending = command.feedbackStatus === "pending";
       yield* emit(
@@ -10598,16 +10602,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "turn-item.updated",
         threadId: command.threadId,
         runId: command.runId,
-        nodeId: command.nodeId,
+        ...(nodeId === null ? {} : { nodeId }),
         providerInstanceId: run.providerInstanceId,
         occurredAt: now,
         payload: {
           id: command.turnItemId,
           threadId: command.threadId,
           runId: command.runId,
-          nodeId: command.nodeId,
-          providerThreadId: run.providerThreadId,
-          providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+          nodeId,
+          providerThreadId: existing?.providerThreadId ?? run.providerThreadId,
+          providerTurnId:
+            existing === undefined
+              ? (providerTurnForRun(projection, run)?.id ?? null)
+              : existing.providerTurnId,
           nativeItemRef: null,
           parentItemId: null,
           ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
