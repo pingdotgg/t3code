@@ -138,6 +138,10 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
+  // A code redeemed for a connection that cannot be saved is spent for nothing.
+  yield* (yield* EnvironmentRegistry.EnvironmentRegistry).assertCanRegister(
+    descriptor.environmentId,
+  );
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
