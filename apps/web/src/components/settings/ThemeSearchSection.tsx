@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
@@ -136,7 +137,11 @@ export function createThemeSearch(
           if (controller.signal.aborted) return;
           view.setResults(null);
           shownKey = null;
-          view.setError(cause instanceof Error ? cause.message : m(msg("Open VSX search failed.")));
+          view.setError(
+            cause instanceof Error
+              ? (errorDisplayMessage(cause, m) ?? cause.message)
+              : m(msg("Open VSX search failed.")),
+          );
         },
       )
       .then(() => {
@@ -267,7 +272,11 @@ export function ThemeSearchSection({
     try {
       installedCollection = getStoredCustomThemeCollection(extension.collectionId);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : gt("Installed themes could not be read."));
+      setError(
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Installed themes could not be read."),
+      );
       return;
     }
     const updated = installedCollection.length > 0;
@@ -288,7 +297,11 @@ export function ThemeSearchSection({
       }
     } catch (cause) {
       if (!installSignal.aborted) {
-        setError(cause instanceof Error ? cause.message : gt("That theme could not be added."));
+        setError(
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            : gt("That theme could not be added."),
+        );
       }
     }
     if (themeSearch.endInstall(installSignal)) setInstallingId(null);

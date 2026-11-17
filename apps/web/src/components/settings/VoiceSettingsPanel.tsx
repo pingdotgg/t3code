@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -692,7 +694,10 @@ function useVoiceModels(prepared: PreparedConnection | null) {
         toastManager.add({
           type: "error",
           title: gt("Could not load transcription models"),
-          description: error instanceof Error ? error.message : String(error),
+          description:
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : String(error),
         });
       }
     },
@@ -736,7 +741,10 @@ function useVoiceModels(prepared: PreparedConnection | null) {
         toastManager.add({
           type: "error",
           title: label,
-          description: error instanceof Error ? error.message : String(error),
+          description:
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : String(error),
         });
     }
     if (current === epoch.current) {

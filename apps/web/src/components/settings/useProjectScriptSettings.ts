@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import {
@@ -43,7 +44,10 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
     toastManager.add({
       type: "error",
       title: m(msg("Failed to save project actions")),
-      description: error instanceof Error ? error.message : m(msg("An error occurred.")),
+      description:
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : m(msg("An error occurred.")),
     });
   }
   return mapAtomCommandResult(result, () => undefined);

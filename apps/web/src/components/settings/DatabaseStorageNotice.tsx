@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -165,7 +167,10 @@ function ReclaimRow({
     toastManager.add({
       type: "error",
       title: gt("Could not reclaim space on {environment}", { environment: label }),
-      description: error instanceof Error ? error.message : gt("An error occurred."),
+      description:
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("An error occurred."),
     });
   };
   return (

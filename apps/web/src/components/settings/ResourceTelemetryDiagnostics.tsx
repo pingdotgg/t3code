@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -209,9 +210,8 @@ function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
       <T>
         Updated{" "}
         <span className="font-mono tabular-nums">
-          <Var>{relative.value}</Var>
+          <Var>{relative.label}</Var>
         </span>
-        <Var>{relative.suffix ? ` ${relative.suffix}` : ""}</Var>
       </T>
     </span>
   );
@@ -946,7 +946,9 @@ function ResourceTelemetryDiagnosticsBody({
           type: "error",
           title: gt("Could not confirm signal"),
           description:
-            error instanceof Error ? error.message : gt("Failed to send {signal}.", { signal }),
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
         return;
       }
@@ -989,7 +991,9 @@ function ResourceTelemetryDiagnosticsBody({
           type: "error",
           title: gt("Could not send {signal}", { signal }),
           description:
-            error instanceof Error ? error.message : gt("Failed to send {signal}.", { signal }),
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
       })
       .finally(() => {
@@ -1022,7 +1026,9 @@ function ResourceTelemetryDiagnosticsBody({
           type: "error",
           title: gt("Could not restart resource monitor"),
           description:
-            error instanceof Error ? error.message : gt("The resource monitor retry failed."),
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : gt("The resource monitor retry failed."),
         });
       })
       .finally(() => {

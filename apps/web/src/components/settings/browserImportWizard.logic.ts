@@ -159,7 +159,7 @@ export function formatSkippedDomains(
       }),
     );
   return resolve(
-    msg("{domains} and {count} more", {
+    msg("{count, plural, one {{domains} and {count} more} other {{domains} and {count} more}}", {
       domains: domains.slice(0, 3).join(", "),
       count: domains.length - 3,
     }),

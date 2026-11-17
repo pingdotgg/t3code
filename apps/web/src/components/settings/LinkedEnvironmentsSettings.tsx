@@ -45,6 +45,7 @@ import { LinkAccessPicker } from "./LinkAccessPicker";
 import { LinkAddressWarning, LinkMachineSelect } from "./LinkMachineSelect";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
+import { m as resolveMessage } from "../../i18n/messages";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -249,7 +250,10 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
     const minted = await mintPairingCodeOn(targetId, access);
     if (Result.isSuccess(minted)) return minted.success;
     setMintFailed((failed) => new Set(failed).add(targetId));
-    failureToast(gt("Could not link the environment"), linkRequestFailureMessage(minted.failure));
+    failureToast(
+      gt("Could not link the environment"),
+      linkRequestFailureMessage(minted.failure, resolveMessage),
+    );
     return null;
   };
   const submit = async () => {

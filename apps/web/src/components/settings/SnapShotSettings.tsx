@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
@@ -231,7 +233,10 @@ export function SnapShotSettings() {
         savedShortcut,
         availability: {
           available: false,
-          message: error instanceof Error ? error.message : gt("Could not check this shortcut."),
+          message:
+            error instanceof Error
+              ? (errorDisplayMessage(error, m) ?? error.message)
+              : gt("Could not check this shortcut."),
         },
       });
     }

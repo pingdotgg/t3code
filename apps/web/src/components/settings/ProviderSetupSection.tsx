@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -184,7 +186,11 @@ function ProviderSetupActions({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
-        setError(failure instanceof Error ? failure.message : gt("Provider setup failed."));
+        setError(
+          failure instanceof Error
+            ? (errorDisplayMessage(failure, m) ?? failure.message)
+            : gt("Provider setup failed."),
+        );
       }
       return false;
     }

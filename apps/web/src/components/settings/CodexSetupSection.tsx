@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
@@ -408,7 +410,9 @@ function ManagedCodexSetup({
         if (!isAtomCommandInterrupted(result)) {
           const failure = squashAtomCommandFailure(result);
           setError(
-            failure instanceof Error ? failure.message : gt("Codex setup failed. Try again."),
+            failure instanceof Error
+              ? (errorDisplayMessage(failure, resolveMessage) ?? failure.message)
+              : gt("Codex setup failed. Try again."),
           );
         }
       } else {

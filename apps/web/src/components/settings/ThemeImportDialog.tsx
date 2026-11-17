@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -132,6 +133,7 @@ function ThemeJsonEditor({
         onChange={(event) => onChange(event.currentTarget.value)}
         onScroll={syncScroll}
         placeholder={
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- example theme JSON
           '{\n  "version": 1,\n  "name": "Aurora",\n  "appearance": "light",\n  "colors": { ... }\n}'
         }
         spellCheck={false}
@@ -271,7 +273,7 @@ function ThemeImportBody({
         });
       } catch (cause) {
         failures.push(
-          `${file.name}: ${cause instanceof Error ? cause.message : gt("not a theme file")}`,
+          `${file.name}: ${cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : gt("not a theme file")}`,
         );
       }
     }
@@ -287,7 +289,7 @@ function ThemeImportBody({
         installed.push(installCustomTheme(theme));
       } catch (cause) {
         failures.push(
-          `${theme.label}: ${cause instanceof Error ? cause.message : gt("could not install")}`,
+          `${theme.label}: ${cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : gt("could not install")}`,
         );
       }
     }
@@ -386,7 +388,7 @@ function ThemeImportBody({
         );
       } catch (cause) {
         failures.push(
-          `${theme.label}: ${cause instanceof Error ? cause.message : gt("failed", { $context: "theme import result" })}`,
+          `${theme.label}: ${cause instanceof Error ? (errorDisplayMessage(cause, m) ?? cause.message) : gt("failed", { $context: "theme import result" })}`,
         );
       }
     }
@@ -419,7 +421,11 @@ function ThemeImportBody({
       }
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : gt("That theme file is invalid."));
+      setError(
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("That theme file is invalid."),
+      );
     }
   };
 

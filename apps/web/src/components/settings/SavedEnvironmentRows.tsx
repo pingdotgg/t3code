@@ -1,3 +1,4 @@
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { SessionPermissions } from "./SessionPermissions";
 import {
   ChevronRightIcon,
@@ -12,12 +13,12 @@ import {
   type EnvironmentId,
   connectReachabilityHelpUrl,
   formatConnectReachable,
-  managedCapabilityDenial,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
   connectionRoutes,
   hasSavedBearerRoute,
+  connectionErrorText,
   connectionStatusText,
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
@@ -90,6 +91,7 @@ function savedBackendStatus(
   if (!environment.entry.enabled && environment.connection.phase !== "unsupported")
     return { text: resolve(msg("Off", { $context: "environment switched off" })), tone: "muted" };
   const { connection } = environment;
+  const error = connectionErrorText(connection, resolve);
   switch (connection.phase) {
     case "connected":
       return { text: resolve(msg("Connected")), tone: "muted" };
@@ -97,11 +99,11 @@ function savedBackendStatus(
       return { text: resolve(msg("Connecting")), tone: "muted" };
     case "reconnecting":
       if (connection.awaitingApproval) {
-        return { text: connection.error ?? resolve(msg("Waiting for approval")), tone: "muted" };
+        return { text: error ?? resolve(msg("Waiting for approval")), tone: "muted" };
       }
       return {
-        text: connection.error
-          ? resolve(msg("Reconnecting: {error}", { error: connection.error }))
+        text: error
+          ? resolve(msg("Reconnecting: {error}", { error }))
           : resolve(msg("Reconnecting")),
         tone: "error",
       };
@@ -109,8 +111,8 @@ function savedBackendStatus(
       return { text: resolve(msg("Client not supported")), tone: "muted" };
     case "error":
       return {
-        text: connection.error
-          ? resolve(msg("Connection failed: {error}", { error: connection.error }))
+        text: error
+          ? resolve(msg("Connection failed: {error}", { error }))
           : resolve(msg("Connection failed")),
         tone: "error",
       };
@@ -237,7 +239,8 @@ export function SavedBackendListRow({
 
   const statusTooltip = `${
     unsupported
-      ? (environment.connection.error ?? connectionStatusText(environment.connection, messages))
+      ? (connectionErrorText(environment.connection, messages) ??
+        connectionStatusText(environment.connection, messages))
       : enabled
         ? connectionStatusText(environment.connection, messages)
         : gt("Switched off")
@@ -569,7 +572,12 @@ function ConfiguredCloudLinkRow({
   } = useCloudLinkController(environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // The server unlinks and refuses relay changes under such a policy; unlinking stays possible.
-  const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
+  const messages = useMessages();
+  const connectDenial = managedCapabilityDenial(
+    useManagedPolicy(environmentId),
+    "connect",
+    messages,
+  );
   const turnOn = useT3ConnectTurnOn(environmentId);
   // Turning on links from this desktop's own backend only; turning off works from anywhere.
   const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);

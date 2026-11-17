@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -47,7 +49,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 
 import { formatRelativeTime } from "../../timestampFormat";
@@ -82,11 +84,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
-import {
-  AuthOrchestrationOperateScope,
-  clampManagedRuntimeMode,
-  managedCapabilityDenial,
-} from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, clampManagedRuntimeMode } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
@@ -108,7 +106,7 @@ import {
   scheduleFromDraft,
   scheduleLabel,
   scheduledTaskDefaultModel,
-  WEEKDAY_LABELS,
+  weekdayShortLabel,
   taskToDraft,
   unbindDraftFromThread,
   type DraftState,
@@ -304,6 +302,7 @@ function WebhookFiltersField({
               <div className="grid min-w-0 flex-1 grid-cols-1">
                 <Input
                   aria-label={gt("Filter {number} value", { number: index + 1 })}
+                  // oxlint-disable-next-line t3code/no-untranslated-copy -- webhook action values, matched literally
                   placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
                   value={filter.value}
                   onChange={(event) => update(index, { value: event.target.value })}
@@ -357,7 +356,7 @@ function relativeLabel(value: string | null, nowMs: number, resolve: MessageReso
   if (diffMs <= 0) {
     const relative = formatRelativeTime(value, nowMs, resolve);
     if (!relative) return resolve(msg("Not scheduled"));
-    return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+    return relative.label;
   }
   const minutes = Math.ceil(diffMs / 60_000);
   if (minutes < 2) return resolve(msg("in under a minute"));
@@ -788,6 +787,7 @@ function ScheduledTaskRow({
   readonly onEdit: () => void;
 }) {
   const messages = useMessages();
+  const locale = useLocale();
   const gt = useGT();
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
@@ -838,7 +838,7 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule, timeZone, task.nextRunAt, messages)} ·{" "}
+            {scheduleLabel(task.schedule, timeZone, task.nextRunAt, messages, locale)} ·{" "}
             {task.blockedByPolicy !== undefined ? (
               task.blockedByPolicy
             ) : !task.enabled ? (
@@ -1456,6 +1456,7 @@ function ScheduledTaskEditorForm({
   readonly onClose: () => void;
 }) {
   const messages = useMessages();
+  const locale = useLocale();
   const gt = useGT();
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
@@ -1486,7 +1487,11 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
-  const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
+  const webhookDenial = managedCapabilityDenial(
+    useManagedPolicy(environmentId),
+    "webhookTasks",
+    messages,
+  );
   const [draft, setDraft] = useState<DraftState>(() =>
     task
       ? taskToDraft(task)
@@ -1553,7 +1558,8 @@ function ScheduledTaskEditorForm({
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : String(error),
+        description:
+          error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error),
       }),
     );
   };
@@ -1581,7 +1587,7 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters, m);
     if (draft.scheduleMode === "webhook" && "error" in parsedFilters) {
       reportFailure(gt("Invalid filter"), parsedFilters.error);
       return;
@@ -2251,7 +2257,7 @@ function ScheduledTaskEditorForm({
                     <Toggle
                       key={day}
                       value={String(day)}
-                      aria-label={messages(WEEKDAY_LABELS[day])}
+                      aria-label={weekdayShortLabel(day, locale)}
                     >
                       {messages(WEEKDAY_SHORT[day])}
                     </Toggle>

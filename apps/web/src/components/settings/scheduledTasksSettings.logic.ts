@@ -30,20 +30,18 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
-import { m, type MessageResolver } from "../../i18n/messages";
+import { getActiveLocale, m, type MessageResolver } from "../../i18n/messages";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
-export const WEEKDAY_LABELS = [
-  msg("Sun"),
-  msg("Mon"),
-  msg("Tue"),
-  msg("Wed"),
-  msg("Thu"),
-  msg("Fri"),
-  msg("Sat"),
-] as const;
+/** Abbreviated weekday name, 0 = Sunday. */
+export function weekdayShortLabel(day: number, locale: string = getActiveLocale()): string {
+  // 2024-01-07 was a Sunday.
+  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2024, 0, 7 + day)),
+  );
+}
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -55,6 +53,7 @@ export function scheduleLabel(
   timeZone?: string,
   runAt?: string | null,
   resolve: MessageResolver = m,
+  locale: string = getActiveLocale(),
 ): string {
   if (schedule.type === "webhook") return resolve(msg("On webhook"));
   if (schedule.type === "once") {
@@ -67,16 +66,24 @@ export function scheduleLabel(
       : resolve(msg("Every {seconds} sec", { seconds: Math.round(schedule.everyMs / 1000) }));
   }
   const weekdays = schedule.weekdays ?? [];
-  const days =
-    weekdays.length === 0
-      ? resolve(msg("Daily"))
-      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? resolve(msg("Weekdays"))
-        : weekdays.map((day) => resolve(WEEKDAY_LABELS[day] ?? "")).join(", ");
+  const time = schedule.timeOfDay;
   const zone = scheduleTimeZoneLabel(timeZone, runAt);
+  if (weekdays.length === 0) {
+    return zone === undefined
+      ? resolve(msg("Daily at {time}", { time }))
+      : resolve(msg("Daily at {time} {zone}", { time, zone }));
+  }
+  if (weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)) {
+    return zone === undefined
+      ? resolve(msg("Weekdays at {time}", { time }))
+      : resolve(msg("Weekdays at {time} {zone}", { time, zone }));
+  }
+  const days = weekdays
+    .map((day) => (day >= 0 && day <= 6 ? weekdayShortLabel(day, locale) : ""))
+    .join(", ");
   return zone === undefined
-    ? resolve(msg("{days} at {time}", { days, time: schedule.timeOfDay }))
-    : resolve(msg("{days} at {time} {zone}", { days, time: schedule.timeOfDay, zone }));
+    ? resolve(msg("{days} at {time}", { days, time }))
+    : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
 }
 
 export function matchesScheduledTaskScope(

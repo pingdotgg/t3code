@@ -1,7 +1,7 @@
 import {
   type ConnectionTarget,
   connectionRouteId,
-  connectionRouteLabel,
+  connectionRouteLabelText,
   connectionRoutes,
 } from "@t3tools/client-runtime/connection";
 import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
@@ -39,8 +39,8 @@ export function environmentTransportLabel(
             (route) => connectionRouteId(route.target) === connectionRouteId(activeTarget),
           );
     return active === undefined
-      ? resolve(connectionRouteLabel(routes[0]!))
-      : resolve(msg("via {route}", { route: resolve(connectionRouteLabel(active)) }));
+      ? connectionRouteLabelText(routes[0]!, resolve)
+      : resolve(msg("via {route}", { route: connectionRouteLabelText(active, resolve) }));
   }
   if (environment.relayManaged) return T3_CONNECT_NAME;
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";

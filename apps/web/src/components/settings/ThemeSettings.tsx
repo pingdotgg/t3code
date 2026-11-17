@@ -929,11 +929,11 @@ export function ThemeLibrary({
         onImportedMany={(importedThemes, { updated }) => {
           if (updated) refreshTheme();
           const title = updated
-            ? gt("{count, plural, one {{label} updated} other {{count} themes updated}}", {
+            ? gt("{count, plural, =1 {{label} updated} other {{count} themes updated}}", {
                 count: importedThemes.length,
                 label: importedThemes[0]!.label,
               })
-            : gt("{count, plural, one {{label} added} other {{count} themes added}}", {
+            : gt("{count, plural, =1 {{label} added} other {{count} themes added}}", {
                 count: importedThemes.length,
                 label: importedThemes[0]!.label,
               });

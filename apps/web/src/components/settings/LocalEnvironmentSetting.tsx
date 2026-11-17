@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
@@ -34,7 +36,11 @@ export function LocalEnvironmentSetting() {
     try {
       await setEnabled(!enabled);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : gt("Couldn't change this setting."));
+      setError(
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Couldn't change this setting."),
+      );
       setIsUpdating(false);
     }
   };

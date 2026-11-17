@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -58,7 +59,9 @@ const deviceHostStatesAtom = environmentAtomList("web-device-host-states", (envi
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof Error
+    ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+    : String(error);
 };
 
 /** Something on one environment that is in progress or needs a fix; a working source has none. */
@@ -255,7 +258,10 @@ export function DeviceSourcesSettings(props: {
       toastManager.add({
         type: "error",
         title: gt("Device host not saved"),
-        description: error instanceof Error ? error.message : String(error),
+        description:
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            : String(error),
       });
     }
   };

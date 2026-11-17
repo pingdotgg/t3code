@@ -43,7 +43,7 @@ const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<string, string> = {
   balanced: msg("Balanced"),
   performance: msg("Performance"),
   "battery-saver": msg("Battery saver"),
-  custom: msg("Advanced"),
+  custom: msg("Advanced", { $context: "background activity power profile" }),
 };
 
 function formatValue(

@@ -36,6 +36,11 @@ export function SourceControlTokenSettings({
   readonly onSaved: () => void;
 }) {
   const gt = useGT();
+  // Mirrors hostTokenAccess in source-control-definitions/client, which web does not depend on.
+  const tokenAccess =
+    definition.kind === "github"
+      ? gt("read and write access to pull requests and contents")
+      : credentials.tokenAccess;
   const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
@@ -100,7 +105,7 @@ export function SourceControlTokenSettings({
               <Var>{credentials.cliName}</Var>
             </code>{" "}
             login, so <Var>{definition.label}</Var> works without the{" "}
-            <Var>{credentials.cliLabel}</Var>. Give it <Var>{credentials.tokenAccess}</Var>.
+            <Var>{credentials.cliLabel}</Var>. Give it <Var>{tokenAccess}</Var>.
           </T>{" "}
           {normalizedHost || defaultHost ? (
             <InlineButton

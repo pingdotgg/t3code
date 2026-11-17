@@ -20,7 +20,7 @@ import {
   type ConnectionRoute,
   connectionRouteAddress,
   connectionRouteId,
-  connectionRouteLabel,
+  connectionRouteLabelText,
   connectionRoutes,
   isLearned,
   pendingRouteOrder,
@@ -73,9 +73,9 @@ export function EnvironmentRoutesList({
     const address = connectionRouteAddress(route);
     const confirmed = await requestConfirmDialog(
       address === null
-        ? gt("Remove {route} route?", { route: messages(connectionRouteLabel(route)) })
+        ? gt("Remove {route} route?", { route: connectionRouteLabelText(route, messages) })
         : gt("Remove {route} route?\n{address}", {
-            route: messages(connectionRouteLabel(route)),
+            route: connectionRouteLabelText(route, messages),
             address,
           }),
       { variant: "destructive" },
@@ -156,7 +156,7 @@ function SortableRouteRow({
   const gt = useGT();
   const messages = useMessages();
   const id = connectionRouteId(route.target);
-  const label = messages(connectionRouteLabel(route));
+  const label = connectionRouteLabelText(route, messages);
   const address = connectionRouteAddress(route);
   const {
     attributes,

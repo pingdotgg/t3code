@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -121,7 +123,9 @@ export function ProviderAuthenticationSection({
       else if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(
-          failure instanceof Error ? failure.message : gt("Provider sign-in failed. Try again."),
+          failure instanceof Error
+            ? (errorDisplayMessage(failure, m) ?? failure.message)
+            : gt("Provider sign-in failed. Try again."),
         );
       }
     } catch {

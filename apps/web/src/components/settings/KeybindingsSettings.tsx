@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
@@ -1442,7 +1444,9 @@ export function KeybindingsSettingsPanel() {
       toastManager.add({
         title: gt("Unable to open keybindings file"),
         description:
-          error instanceof Error ? error.message : gt("The keybindings file was not opened."),
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("The keybindings file was not opened."),
         type: "error",
       });
     })();
@@ -1479,7 +1483,10 @@ export function KeybindingsSettingsPanel() {
         const error = squashAtomCommandFailure(failed);
         toastManager.add({
           title: gt("Unable to save keybinding"),
-          description: error instanceof Error ? error.message : gt("The keybinding was not saved."),
+          description:
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              : gt("The keybinding was not saved."),
           type: "error",
         });
       }
@@ -1511,7 +1518,9 @@ export function KeybindingsSettingsPanel() {
         toastManager.add({
           title: gt("Unable to remove keybinding"),
           description:
-            error instanceof Error ? error.message : gt("The keybinding was not removed."),
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              : gt("The keybinding was not removed."),
           type: "error",
         });
       }

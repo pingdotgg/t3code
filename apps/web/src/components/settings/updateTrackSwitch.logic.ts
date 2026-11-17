@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { DesktopBridge, DesktopUpdateChannel, DesktopUpdateState } from "@t3tools/contracts";
 import { acceptsTrackSwitchRelease } from "@t3tools/shared/cliRelease";
 import { msg } from "gt-react";
@@ -31,7 +32,10 @@ export async function prepareLocalTrackSwitch(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : m(msg("The update track did not change.")),
+      message:
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : m(msg("The update track did not change.")),
     };
   }
   if (!input.reinstall) return { ok: true, local: null };

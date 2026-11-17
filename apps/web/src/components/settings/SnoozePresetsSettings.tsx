@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { PlusIcon, XIcon } from "lucide-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -45,18 +45,35 @@ const UNIT_LABELS: Record<DurationUnit, string> = {
   days: msg("{count, plural, one {day} other {days}}"),
 };
 
-const WHEN_LABELS: Record<"after" | SnoozePresetDay, string> = {
+const WHEN_LABELS: Record<"after" | "today" | "tomorrow", string> = {
   after: msg("In", { $context: "snooze for a duration, as in: In 2 hours" }),
   today: msg("Today"),
   tomorrow: msg("Tomorrow"),
-  monday: msg("Monday"),
-  tuesday: msg("Tuesday"),
-  wednesday: msg("Wednesday"),
-  thursday: msg("Thursday"),
-  friday: msg("Friday"),
-  saturday: msg("Saturday"),
-  sunday: msg("Sunday"),
 };
+// 2024-01-01 was a Monday.
+const WEEKDAY_DATES: Record<Exclude<SnoozePresetDay, "today" | "tomorrow">, Date> = {
+  monday: new Date(Date.UTC(2024, 0, 1)),
+  tuesday: new Date(Date.UTC(2024, 0, 2)),
+  wednesday: new Date(Date.UTC(2024, 0, 3)),
+  thursday: new Date(Date.UTC(2024, 0, 4)),
+  friday: new Date(Date.UTC(2024, 0, 5)),
+  saturday: new Date(Date.UTC(2024, 0, 6)),
+  sunday: new Date(Date.UTC(2024, 0, 7)),
+};
+
+function whenLabel(
+  value: "after" | SnoozePresetDay,
+  resolve: (message: string) => string,
+  locale: string,
+): string {
+  if (value === "after" || value === "today" || value === "tomorrow") {
+    return resolve(WHEN_LABELS[value]);
+  }
+  const name = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(
+    WEEKDAY_DATES[value],
+  );
+  return name.charAt(0).toLocaleUpperCase(locale) + name.slice(1);
+}
 const WHEN_VALUES = ["after", ...SnoozePresetDay.literals] as const;
 
 // Offered in order when adding, skipping any already in the list.
@@ -341,6 +358,7 @@ function SnoozePresetFields(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const { preset, onChange } = props;
   const when = preset.kind === "after" ? "after" : preset.day;
   // Switching between a duration and a set time keeps the other kind's last value, so a
@@ -350,7 +368,7 @@ function SnoozePresetFields(props: {
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Select
         value={when}
-        items={Object.fromEntries(WHEN_VALUES.map((value) => [value, m(WHEN_LABELS[value])]))}
+        items={Object.fromEntries(WHEN_VALUES.map((value) => [value, whenLabel(value, m, locale)]))}
         onValueChange={(value) => {
           const next = value === null ? null : withWhen(preset, value, memory);
           if (!next) return;
@@ -370,7 +388,7 @@ function SnoozePresetFields(props: {
         <SelectPopup>
           {WHEN_VALUES.map((value) => (
             <SelectItem hideIndicator key={value} value={value}>
-              {m(WHEN_LABELS[value])}
+              {whenLabel(value, m, locale)}
             </SelectItem>
           ))}
         </SelectPopup>

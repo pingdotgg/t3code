@@ -7,8 +7,8 @@ import {
 } from "@t3tools/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
-import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { connectionErrorText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
+import { errorDisplayMessage, safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -207,9 +207,8 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
         <T>
           Checked{" "}
           <span className="font-mono tabular-nums">
-            <Var>{lastCheckedRelative.value}</Var>
-          </span>{" "}
-          <Var>{lastCheckedRelative.suffix}</Var>
+            <Var>{lastCheckedRelative.label}</Var>
+          </span>
         </T>
       ) : (
         gt("Checked {time}", { time: lastCheckedRelative.value })
@@ -296,7 +295,7 @@ function EnvironmentUnavailablePlaceholder({
       ? gt("Checking what this session is allowed to change.")
       : gt("Waiting for {environment}''s configuration.", { environment: environment.label })
     : connectionStatusTitle(environment.connection, m);
-  const error = isLoading ? null : environment.connection.error;
+  const error = isLoading ? null : connectionErrorText(environment.connection, m);
   // Wedged devices can remain here indefinitely; a spinner would continuously repaint.
   return (
     <ProviderSettingsPlaceholder
@@ -634,7 +633,9 @@ export function EnvironmentProviderSettings({
             type: "error",
             title: gt("Could not continue authentication"),
             description:
-              error instanceof Error ? error.message : gt("The authentication request expired."),
+              error instanceof Error
+                ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+                : gt("The authentication request expired."),
           });
         }
       });
@@ -711,7 +712,7 @@ export function EnvironmentProviderSettings({
             }),
             description:
               error instanceof Error
-                ? error.message
+                ? (errorDisplayMessage(error, resolveNow) ?? error.message)
                 : gt("The provider update command could not be started."),
           }),
         );
@@ -833,7 +834,10 @@ export function EnvironmentProviderSettings({
       toastManager.add({
         type: "error",
         title: gt("Could not update provider instance"),
-        description: error instanceof Error ? error.message : gt("The settings update failed."),
+        description:
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            : gt("The settings update failed."),
       });
     }
     return result._tag !== "Failure";
@@ -880,7 +884,10 @@ export function EnvironmentProviderSettings({
         toastManager.add({
           type: "error",
           title: gt("Could not delete provider instance"),
-          description: error instanceof Error ? error.message : gt("The settings update failed."),
+          description:
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+              : gt("The settings update failed."),
         });
         return;
       }
@@ -901,7 +908,9 @@ export function EnvironmentProviderSettings({
           type: "warning",
           title: gt("Provider deleted, but managed files remain"),
           description:
-            error instanceof Error ? error.message : gt("Managed binary cleanup failed."),
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+              : gt("Managed binary cleanup failed."),
         });
       }
     },
@@ -926,7 +935,10 @@ export function EnvironmentProviderSettings({
       toastManager.add({
         type: "error",
         title: gt("Could not reset provider instance"),
-        description: error instanceof Error ? error.message : gt("The settings update failed."),
+        description:
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveNow) ?? error.message)
+            : gt("The settings update failed."),
       });
     }
   });

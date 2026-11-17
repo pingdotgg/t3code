@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { environmentSession } from "../../state/session";
@@ -59,7 +61,7 @@ function formatCount(value: number): string {
 function RelativeTimeNoWrap(props: { value: DateTime.Utc }) {
   const relative = useRelativeTimeState(DateTime.formatIso(props.value));
   if (relative.status !== "relative") return null;
-  return relative.suffix ? `${relative.value}\u00a0${relative.suffix}` : relative.value;
+  return relative.label.replaceAll(" ", "\u00a0");
 }
 
 function shortenTraceId(traceId: string): string {
@@ -728,9 +730,8 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
         <T>
           Checked{" "}
           <span className="font-mono tabular-nums">
-            <Var>{relative.value}</Var>
-          </span>{" "}
-          <Var>{relative.suffix}</Var>
+            <Var>{relative.label}</Var>
+          </span>
         </T>
       ) : (
         gt("Checked {time}", { time: relative.value })
@@ -858,7 +859,9 @@ function DiagnosticsSettingsBody() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : gt("Unable to open logs folder."),
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("Unable to open logs folder."),
         );
       }
     })();
@@ -908,7 +911,9 @@ function DiagnosticsSettingsBody() {
           type: "error",
           title: gt("Could not confirm signal"),
           description:
-            error instanceof Error ? error.message : gt("Failed to send {signal}.", { signal }),
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
         return;
       }
@@ -936,7 +941,9 @@ function DiagnosticsSettingsBody() {
           type: "error",
           title: gt("Could not send {signal}", { signal }),
           description:
-            error instanceof Error ? error.message : gt("Failed to send {signal}.", { signal }),
+            error instanceof Error
+              ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
       }
       return;

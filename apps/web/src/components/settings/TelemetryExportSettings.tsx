@@ -270,14 +270,25 @@ function TelemetryExportForm() {
               {(saved[key] !== (running?.[key] ?? "") || override?.variable) && (
                 <p className="break-all text-xs text-muted-foreground">
                   {override?.variable ? (
-                    <T>
-                      Running: <Var>{running?.[key] || gt("Disabled")}</Var> from{" "}
-                      <code className="font-mono">
-                        <Var>{override.variable}</Var>
-                      </code>
-                    </T>
+                    running?.[key] ? (
+                      <T>
+                        Running: <Var>{running[key]}</Var> from{" "}
+                        <code className="font-mono">
+                          <Var>{override.variable}</Var>
+                        </code>
+                      </T>
+                    ) : (
+                      <T>
+                        Running: Disabled from{" "}
+                        <code className="font-mono">
+                          <Var>{override.variable}</Var>
+                        </code>
+                      </T>
+                    )
+                  ) : running?.[key] ? (
+                    gt("Running: {url}", { url: running[key] })
                   ) : (
-                    gt("Running: {url}", { url: running?.[key] || gt("Disabled") })
+                    gt("Running: Disabled")
                   )}
                 </p>
               )}

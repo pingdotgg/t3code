@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
@@ -688,7 +689,7 @@ async function persistScopedSettingsPlan(
         ...environment,
         message:
           error instanceof Error
-            ? error.message
+            ? (errorDisplayMessage(error, m) ?? error.message)
             : m(msg("The save failed. Try reconnecting and saving again.")),
       },
     ];

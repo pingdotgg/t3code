@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   MousePointer2Icon,
   PaintbrushIcon,
@@ -914,7 +915,7 @@ export function ThemeEditorPanel({
     } catch (cause) {
       setError(
         cause instanceof Error
-          ? cause.message
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
           : isEditing
             ? gt("Could not save the theme.")
             : gt("Could not create the theme."),

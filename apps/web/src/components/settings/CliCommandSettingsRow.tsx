@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useMessages } from "gt-react";
 import { useState } from "react";
 
@@ -35,7 +36,10 @@ export function useDesktopCliCommand() {
           stackedThreadToast({
             type: "error",
             title: m(FAILURE_TITLES[action]),
-            description: error instanceof Error ? error.message : m(msg("Something went wrong.")),
+            description:
+              error instanceof Error
+                ? (errorDisplayMessage(error, m) ?? error.message)
+                : m(msg("Something went wrong.")),
           }),
         );
       })

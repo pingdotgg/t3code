@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
@@ -46,7 +47,10 @@ function reportFailure(title: string, result: AtomCommandResult<unknown, unknown
   toastManager.add({
     type: "error",
     title,
-    description: error instanceof Error ? error.message : m(msg("The ACP operation failed.")),
+    description:
+      error instanceof Error
+        ? (errorDisplayMessage(error, m) ?? error.message)
+        : m(msg("The ACP operation failed.")),
   });
 }
 
@@ -62,7 +66,10 @@ function parseProviderHeaders(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : m(msg("Headers must be valid JSON.")),
+      error:
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : m(msg("Headers must be valid JSON.")),
     };
   }
   if (

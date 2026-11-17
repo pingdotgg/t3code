@@ -247,12 +247,21 @@ export function SourceControlAccountSettings({
                 key={entry.account}
                 className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground/70"
               >
-                <RedactedLogin revealed={revealed} account={entry.account} />
-                <span>
-                  {entry.error
-                    ? gt("can't be used: {error}", { error: entry.error })
-                    : gt("can't be used: {cliName} reports this login as invalid.", { cliName })}
-                </span>
+                {entry.error ? (
+                  <T>
+                    <RedactedLogin revealed={revealed} account={entry.account} />{" "}
+                    <span>
+                      can&apos;t be used: <Var>{entry.error}</Var>
+                    </span>
+                  </T>
+                ) : (
+                  <T>
+                    <RedactedLogin revealed={revealed} account={entry.account} />{" "}
+                    <span>
+                      can&apos;t be used: <Var>{cliName}</Var> reports this login as invalid.
+                    </span>
+                  </T>
+                )}
               </p>
             ))}
             {group.environmentVariable ? (

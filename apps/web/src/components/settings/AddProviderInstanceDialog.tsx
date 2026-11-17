@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
@@ -414,7 +416,10 @@ export function AddProviderInstanceDialog({
       toastManager.add({
         type: "error",
         title: gt("Could not add provider instance"),
-        description: error instanceof Error ? error.message : gt("The settings update failed."),
+        description:
+          error instanceof Error
+            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+            : gt("The settings update failed."),
       });
       return;
     }

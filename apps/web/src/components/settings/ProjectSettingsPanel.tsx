@@ -1,4 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
+import { m as resolveMessage } from "../../i18n/messages";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
@@ -105,7 +107,10 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
             stackedThreadToast({
               type: "error",
               title: gt("Could not save grouping rule"),
-              description: error instanceof Error ? error.message : gt("An error occurred."),
+              description:
+                error instanceof Error
+                  ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                  : gt("An error occurred."),
             }),
           );
         });
@@ -353,14 +358,17 @@ function ProjectDetail({
     const api = readLocalApi();
     if (!api) return;
 
-    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval({
-      members,
-      groupMemberCount: group.memberProjects.length,
-      hasOtherMembers,
-      displayName: group.displayName,
-      threads,
-      unloadedThreadCount: readUnloadedThreadCount(members, threads),
-    });
+    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval(
+      {
+        members,
+        groupMemberCount: group.memberProjects.length,
+        hasOtherMembers,
+        displayName: group.displayName,
+        threads,
+        unloadedThreadCount: readUnloadedThreadCount(members, threads),
+      },
+      resolveMessage,
+    );
     const confirmed = await settlePromise(() =>
       api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
     );

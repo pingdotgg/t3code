@@ -1,5 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { cloudSpeechDisclosure } from "@t3tools/shared/speech";
+import { cloudSpeechDisclosure } from "@t3tools/shared/speechCopy";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   configuredSecretSources,
@@ -30,7 +30,7 @@ import * as Schema from "effect/Schema";
 import type { HttpClient } from "effect/http";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { isSecretsFeatureEnabled } from "../../env";
 import {
   inEnvironmentSpeechRuntime,
@@ -167,6 +167,7 @@ export function CloudVoiceConfiguration({
   close: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const id = environment.environmentId;
   const name = CLOUD_SPEECH_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
@@ -350,7 +351,7 @@ export function CloudVoiceConfiguration({
                 ? gt("Anyone with dictation access to {environment} can use this API key.", {
                     environment: environment.label,
                   })
-                : cloudSpeechDisclosure(provider, environment.label)}
+                : cloudSpeechDisclosure(provider, environment.label, messages)}
           </DialogDescription>
         </DialogHeader>
         {!remove && (

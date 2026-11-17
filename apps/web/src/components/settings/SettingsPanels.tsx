@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -10,8 +12,6 @@ import {
   IDLE_COMPACTION_MODES,
   type IdleCompactionMode,
   globalIdleCompaction,
-  managedUpdatesDenial,
-  managedUpdatesMessage,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -27,6 +27,10 @@ import {
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
+import {
+  managedUpdatesDenial,
+  managedUpdatesMessage,
+} from "@t3tools/client-runtime/contract-labels";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { resolvePastedPath } from "@t3tools/shared/path";
@@ -184,7 +188,9 @@ function AboutVersionSection() {
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   // The desktop updates this machine, whose policy the primary environment reports.
   const primaryPolicy = usePrimaryManagedPolicy();
-  const updatesDenial = hasDesktopBridge ? managedUpdatesDenial(primaryPolicy) : undefined;
+  const updatesDenial = hasDesktopBridge
+    ? managedUpdatesDenial(primaryPolicy, messages)
+    : undefined;
   const nightlyDeniedBy =
     hasDesktopBridge && primaryPolicy?.limits?.updates?.allowNightly === false
       ? primaryPolicy.organization
@@ -237,7 +243,10 @@ function AboutVersionSection() {
           stackedThreadToast({
             type: "error",
             title: gt("Could not confirm update"),
-            description: error instanceof Error ? error.message : gt("Update confirmation failed."),
+            description:
+              error instanceof Error
+                ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                : gt("Update confirmation failed."),
           }),
         );
         return;
@@ -253,7 +262,10 @@ function AboutVersionSection() {
             stackedThreadToast({
               type: "error",
               title: gt("Could not install update"),
-              description: error instanceof Error ? error.message : gt("Install failed."),
+              description:
+                error instanceof Error
+                  ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                  : gt("Install failed."),
             }),
           );
         })
@@ -284,7 +296,10 @@ function AboutVersionSection() {
           stackedThreadToast({
             type: "error",
             title: gt("Could not check for updates"),
-            description: error instanceof Error ? error.message : gt("Update check failed."),
+            description:
+              error instanceof Error
+                ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+                : gt("Update check failed."),
           }),
         );
       });
@@ -345,11 +360,11 @@ function AboutVersionSection() {
               selectedUpdateChannel === "nightly" ? (
                 gt(
                   "{policy} Nightly builds are not available; switch to Stable to keep getting updates.",
-                  { policy: managedUpdatesMessage(nightlyDeniedBy) },
+                  { policy: managedUpdatesMessage(nightlyDeniedBy, messages) },
                 )
               ) : (
                 gt("{policy} Nightly builds are not available.", {
-                  policy: managedUpdatesMessage(nightlyDeniedBy),
+                  policy: managedUpdatesMessage(nightlyDeniedBy, messages),
                 })
               )
             ) : unswitchedMachines > 0 ? (
@@ -2453,7 +2468,7 @@ export function AboutSettingsPanel() {
             description={gt("See your agents, import projects, and set up your phone.")}
             control={
               <Button size="sm" variant="outline" render={<Link to="/welcome" />}>
-                <T>Open</T>
+                <T context="verb, opens a page">Open</T>
               </Button>
             }
           />

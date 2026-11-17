@@ -1,7 +1,7 @@
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
-import { managedCapabilityDenial } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -113,6 +113,7 @@ function GuestLinksRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const gt = useGT();
+  const messages = useMessages();
   const scope = useOptionalSettingsScope();
   const primaryPolicy = usePrimaryManagedPolicy();
   // Guests arrive through T3 Connect, so a policy that turns Connect off turns this off too.
@@ -120,7 +121,7 @@ function GuestLinksRow() {
     scope
       ? scope.connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy)
       : [primaryPolicy],
-    (policy) => managedCapabilityDenial(policy, "connect"),
+    (policy) => managedCapabilityDenial(policy, "connect", messages),
   );
   return (
     <SettingsRow
