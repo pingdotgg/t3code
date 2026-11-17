@@ -1,8 +1,9 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { Button } from "./ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
 import { cn } from "~/lib/utils";
+import { nextFindAnnouncement, type FindAnnouncement } from "./FindBar.logic";
 
 interface FindBarProps {
   readonly label: string;
@@ -13,6 +14,10 @@ interface FindBarProps {
   readonly status: "loading" | "error" | null;
   readonly onRetry: () => void;
   readonly activeIndex: number;
+  /** Bumped by each user search or step; background refreshes keep it. */
+  readonly navigationId: number;
+  /** Whether the label shows the outcome of `navigationId`: a count or a failure. */
+  readonly settled: boolean;
   readonly focusRequestId: number;
   readonly onQueryChange: (query: string) => void;
   readonly onNext: () => void;
@@ -40,8 +45,6 @@ export function FindBar(props: FindBarProps) {
     props.open,
   ]);
 
-  if (!props.open) return null;
-
   const hasQuery = props.query.trim().length > 0;
   const noResults = hasQuery && !props.status && props.matchCount === 0;
   let label = "";
@@ -50,6 +53,17 @@ export function FindBar(props: FindBarProps) {
   }
   if (props.status === "loading") label = "Searching…";
   if (props.status === "error") label = "Search failed";
+  const [storedAnnouncement, setAnnouncement] = useState<FindAnnouncement | null>(null);
+  const announcement = nextFindAnnouncement(storedAnnouncement, {
+    navigationId: props.navigationId,
+    text: label,
+    settled: props.settled || props.status === "loading",
+    provisional: props.status !== null,
+  });
+  if (announcement !== storedAnnouncement) setAnnouncement(announcement);
+
+  if (!props.open) return null;
+
   const navigationDisabled =
     props.matchCount === 0 || props.status === "loading" || props.counting === true;
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -90,8 +104,11 @@ export function FindBar(props: FindBarProps) {
           onKeyDown={handleKeyDown}
         />
         <InputGroupAddon align="inline-end" inset="pill">
+          <span aria-live="polite" className="sr-only">
+            {announcement.text}
+          </span>
           <span
-            aria-live="polite"
+            aria-hidden
             className={cn(
               "min-w-10 text-center text-xs tabular-nums",
               noResults ? "text-destructive" : "text-muted-foreground",

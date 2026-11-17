@@ -1,4 +1,10 @@
 import {
+  isFileDiffCollapsed,
+  withFileDiffFold,
+  type DiffFoldOverride,
+  type FileDiffFoldChoices,
+} from "@t3tools/client-runtime/pull-request-diff-fold";
+import {
   parsePullRequestAnchor,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
@@ -91,6 +97,7 @@ import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildDiffReviewComment,
+  diffReviewSelectionId,
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
@@ -132,14 +139,7 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import {
-  getFileViewedRange,
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  withFileDiffFold,
-  type DiffFoldOverride,
-  type FileDiffFoldChoices,
-} from "./pullRequestDiff.logic";
+import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
@@ -439,8 +439,7 @@ function PullRequestCodeTab({
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
+  const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
@@ -652,11 +651,7 @@ function PullRequestCodeTab({
     parsedSlices,
     loadedFiles: pagedFiles,
     sourceFileStats,
-  } = diffModel(
-    loadedSlices,
-    `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
-    ignoreWhitespace,
-  );
+  } = diffModel(loadedSlices, `pull-request:${scopeKey}:${ignoreWhitespace}`, ignoreWhitespace);
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(
       JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
@@ -685,7 +680,7 @@ function PullRequestCodeTab({
         nextCursor: null,
         omittedFileStats: [],
       },
-      `pull-request:${scopeKey}:${resolvedTheme}:withheld:${path}`,
+      `pull-request:${scopeKey}:withheld:${path}`,
       // Cut lines can match up to the cut and differ after it; hiding them would drop changes.
       false,
     );
@@ -932,9 +927,8 @@ function PullRequestCodeTab({
       </div>
     );
 
-  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
-    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
@@ -1007,7 +1001,11 @@ function PullRequestCodeTab({
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
     setFoldChoices((current) =>
-      range.reduce((next, file) => withFileDiffFold(next, file.fileKey, viewed), current),
+      range.reduce(
+        (next, file) =>
+          withFileDiffFold(next, file.fileKey, effectiveFoldOverride === null ? undefined : viewed),
+        current,
+      ),
     );
   };
   const fileViewedToggle = {
@@ -1075,7 +1073,7 @@ function PullRequestCodeTab({
       file === undefined
         ? null
         : buildDiffReviewComment({
-            id: `pull-request-selection:${anchor.fileKey}:${anchor.range.start}:${anchor.range.end}`,
+            id: `pull-request-selection:${diffReviewSelectionId(anchor.fileKey, anchor.range)}`,
             sectionId: `pull-request:${detail.number}`,
             sectionTitle: `PR #${detail.number} review`,
             filePath: anchor.path,

@@ -77,8 +77,13 @@ it("reveals folded Markdown and refreshes matches when the rendered text changes
     expect(highlighted()).toEqual(["needle"]);
     expect(screen.container.querySelector("[data-markdown-details-open=true]")).not.toBeNull();
   });
+  const announcement = screen.container.querySelector('[aria-live="polite"]')!;
+  expect(announcement.textContent).toBe("1/1");
   await screen.rerender(content("Updated needle and needle"));
   await vi.waitFor(() => expect(highlighted("t3-markdown-find")).toEqual(["needle"]));
+  expect(announcement.textContent).toBe("1/1");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(announcement.textContent).toBe("2/2"));
   await userEvent.fill(screen.getByRole("searchbox"), "missing");
   await vi.waitFor(() => expect(highlighted()).toEqual([]));
 });

@@ -44,6 +44,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -728,6 +729,31 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       .join("\n");
     assert.notInclude(runPlan, "orchestration_v2_projection_runs_thread_ordinal_idx");
     assert.match(runPlan, /SEARCH orchestration_v2_projection_runs USING INDEX \w*status\w*/);
+    // The newest runs by ordinal, whatever their status, plus older runs the statuses match.
+    for (const [filter, expected] of [
+      [{ latestRunLimit: 2 }, [4, 5]],
+      [{ latestRunLimit: 2, runStatuses: ["rolled_back"] as const }, [1, 4, 5]],
+    ] as const) {
+      const traced = traceSqlStatements();
+      const recent = yield* store
+        .getThreadRecords(threadId, ["runs"], filter)
+        .pipe(Effect.withTracer(traced.tracer));
+      assert.deepEqual(
+        recent.runs.map((run) => run.ordinal),
+        [...expected],
+      );
+      const recentQuery = traced.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_runs"),
+      );
+      assert.isDefined(recentQuery);
+      // Fetches the chosen runs by key instead of walking every run of the thread.
+      assert.match(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${recentQuery}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        /^SEARCH orchestration_v2_projection_runs USING INDEX \w+ \(run_id=\?\)/,
+      );
+    }
     // An id filter reads by primary key, not every row of the thread.
     const byId = traceSqlStatements();
     const found = yield* store
@@ -4327,13 +4353,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ordinalsFrom(915, 75),
         );
         assert.strictEqual(decodeThreadHistoryCursor(page.nextCursor!).p, 914);
-        // A jump to an entry reads the full index and leaves it cached. With work, it scans
-        // payloads for inline output only in its page's runs, not in a run after its cursor.
+        // A jump to an entry reads the full index and leaves it cached. With work, it looks for
+        // inline output only in its page's runs, not in a run after its cursor.
         const scannedRuns: Array<string> = [];
         yield* read("turn-item:bounded-sql-history:950").pipe(
           Effect.provideService(Statement.CurrentTransformer, (statement) => {
             const [query, params] = statement.compile();
-            if (query.includes("LIKE '%htmlRender%'")) scannedRuns.push(String(params[0]));
+            if (query.includes("item.inline_work_output = 1")) scannedRuns.push(String(params[0]));
             return Effect.succeed(statement);
           }),
         );
@@ -4558,17 +4584,49 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         workCursor = page.nextCursor;
       }
       assert.strictEqual(workIds.size, 999);
-      for (const [toolName, output] of [
-        ["t3-code.delegate_task", null],
-        ["mcp__t3_code__delegate_task", null],
-        ["mcp__t3-code__send_to_user", null],
+      const secondItemId = TurnItemId.make("turn-item:bounded-sql-history:2");
+      const secondItem = {
+        id: secondItemId,
+        threadId,
+        runId: (yield* projectionStore.getTurnItem({ threadId, itemId: secondItemId }))!.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed" as const,
+        title: "command 2",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const writeSecondItem = (item: OrchestrationV2TurnItem) =>
+        projectionStore.apply({
+          id: EventId.make(`event:bounded-sql-history:item-2:${item.type}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: secondItem.runId ?? undefined,
+          driver,
+          occurredAt: now,
+          payload: item,
+        });
+      for (const inline of [
+        { toolName: "t3-code.delegate_task" },
+        { toolName: "mcp__t3_code__delegate_task" },
+        { toolName: "mcp__docs__search", output: { next: "Delegate-Task" } },
+        { toolName: "view_image", viewedImagePath: "/repo/screenshot.png" },
+        { toolName: "mcp__docs__chart", output: { [MCP_APP_OUTPUT_KEY]: { uri: "ui://chart" } } },
+        { toolName: "mcp__t3-code__send_to_user" },
         // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
-        ["execute", JSON.stringify({ sentMessage: "Draft" })],
-      ] as const) {
-        yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-          payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', ${toolName},
-            '$.output', ${output})
-          WHERE thread_id = ${threadId} AND ordinal = 2`;
+        { toolName: "execute", output: JSON.stringify({ sentMessage: "Draft" }) },
+      ]) {
+        yield* writeSecondItem({
+          ...secondItem,
+          type: "dynamic_tool",
+          input: {},
+          ...inline,
+        });
         const window = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: sqlPageLimit,
           userTurnLimit: 10,
@@ -4590,8 +4648,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         const page = yield* historyPage(threadId, newestCursor, undefined, false, "deferred");
         assert.isUndefined(page.items.find((row) => row.item.ordinal === 2)?.item.deferredWork);
-        // Tool payloads hold megabytes, so a page that reads the full index, as a jump to an
-        // entry does, looks for inline output only in its own runs.
+        // A page that reads the full index, as a jump to an entry does, looks for inline output
+        // only in its own runs.
         const pageRead = traceSqlStatements();
         yield* historyPage(
           threadId,
@@ -4601,15 +4659,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           "deferred",
         ).pipe(Effect.withTracer(pageRead.tracer));
         const payloadScans = pageRead.statements.filter((statement) =>
-          statement.includes("LIKE '%htmlRender%'"),
+          statement.includes("item.inline_work_output = 1"),
         );
         assert.lengthOf(payloadScans, 1);
         assert.include(payloadScans[0], "item.run_id IS json_extract(wanted.value, '$.id')");
       }
       // Until its run is scanned, a cursor on inline output is hidden inside a work group.
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
-        WHERE thread_id = ${threadId} AND ordinal = 4`;
+        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task'),
+        inline_work_output = 1 WHERE thread_id = ${threadId} AND ordinal = 4`;
       const sharedRunId = "run:bounded-sql-history:1";
       // A work page of rows that have no run leaves their inline output out too.
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = NULL
@@ -4670,8 +4728,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             '$.runId', CASE WHEN ordinal <= 700 THEN 'run:bounded-sql-history:300' ELSE ${sharedRunId} END)
         WHERE thread_id = ${threadId} AND ordinal >= 100`;
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
-        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
-        WHERE thread_id = ${threadId} AND ordinal = 720`;
+        payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task'),
+        inline_work_output = 1 WHERE thread_id = ${threadId} AND ordinal = 720`;
       const beforeMissingCursor = yield* historyPage(
         threadId,
         encodeThreadHistoryCursor({
@@ -4690,7 +4748,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload_json = json_set(payload_json, '$.status', 'completed', '$.runId', ${sharedRunId})
         WHERE thread_id = ${threadId} AND ordinal >= 100`;
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
-        payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal IN (2, 4, 720)`;
+        payload_json = json_set(payload_json, '$.type', 'command_execution'), inline_work_output = 0
+        WHERE thread_id = ${threadId} AND ordinal IN (4, 720)`;
+      yield* writeSecondItem({
+        ...secondItem,
+        type: "command_execution",
+        input: "echo 2",
+        output: "ok",
+        exitCode: 0,
+      });
       for (const [ordinal, status] of [
         [0, "completed"],
         [1, "superseded"],
@@ -4727,6 +4793,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         const oldWork = window.projection.visibleTurnItems.find((row) => row.item.deferredWork);
         assert.strictEqual(oldWork?.item.deferredWork?.itemCount, 987);
+        // A jump to an entry reads the full index, which folds the same group.
+        const jump = yield* historyPage(
+          threadId,
+          encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: threadId,
+            sourceItemId: "turn-item:bounded-sql-history:1000",
+            position: 1000,
+          }),
+          oldWork!.sourceItemId,
+          false,
+          "deferred",
+        );
+        assert.strictEqual(
+          jump.items.find((row) => row.item.deferredWork)?.item.deferredWork?.itemCount,
+          987,
+        );
         let cursor: string | null = oldWork!.item.deferredWork!.cursor;
         const loaded = new Set<TurnItemId>();
         for (let pages = 0; cursor !== null; pages += 1) {

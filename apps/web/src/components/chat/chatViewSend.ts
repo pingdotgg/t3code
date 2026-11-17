@@ -46,7 +46,7 @@ import {
   waitForRevertedMessage,
 } from "../ChatView.logic";
 import { readPreparedConnection } from "../../state/session";
-import { recallableComposerPrompt } from "./composerPromptHistory";
+import { recallComposerMessage } from "./composerPromptHistory";
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
 // ChatView remounting while the user navigates.
@@ -151,8 +151,8 @@ export async function startFanoutThread(input: {
 }
 
 /**
- * Reverts the thread to before `message` and puts that message's text and
- * attachments back in the composer draft. Returns the restored prompt, or the
+ * Reverts the thread to before `message` and puts that message's text, mentions
+ * and attachments back in the composer draft. Returns the restored prompt, or the
  * error to show; on error the draft is untouched.
  */
 export async function rewindToMessage(input: {
@@ -221,7 +221,7 @@ export async function rewindToMessage(input: {
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     });
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
-    const restoredPrompt = recallableComposerPrompt(message.text);
+    const { prompt: restoredPrompt, mentions } = recallComposerMessage(message);
     const nextPrompt =
       restoredPrompt.length === 0
         ? currentPrompt
@@ -229,6 +229,11 @@ export async function rewindToMessage(input: {
           ? `${currentPrompt}\n\n${restoredPrompt}`
           : restoredPrompt;
     store.setPrompt(draftTarget, nextPrompt);
+    // The restored prompt already carries the chips; these add only their records.
+    store.addThreadContexts(draftTarget, mentions.threadContexts, { appendReference: false });
+    store.addEnvironmentContexts(draftTarget, mentions.environmentContexts, {
+      appendReference: false,
+    });
     const images: ComposerImageAttachment[] = [];
     const restoredFiles: ComposerFileAttachment[] = [];
     files.forEach((file, index) => {

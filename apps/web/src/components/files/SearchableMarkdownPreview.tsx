@@ -25,6 +25,8 @@ export function SearchableMarkdownPreview({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [focusRequestId, setFocusRequestId] = useState(0);
+  const [navigationId, setNavigationId] = useState(0);
+  const [settled, setSettled] = useState(false);
   const [result, setResult] = useState({ matchCount: 0, activeIndex: 0 });
   const find = useRef<ReturnType<typeof createMarkdownFind> | null>(null);
   const close = () => {
@@ -35,6 +37,7 @@ export function SearchableMarkdownPreview({
   };
   const readQuery = useEffectEvent(() => query);
   const updateResult = useEffectEvent((next: typeof result) => {
+    setSettled(true);
     setResult((current) =>
       current.matchCount === next.matchCount && current.activeIndex === next.activeIndex
         ? current
@@ -49,6 +52,7 @@ export function SearchableMarkdownPreview({
       if (!CSS.highlights || typeof Highlight === "undefined") return;
       event.preventDefault();
       setOpen(true);
+      setNavigationId((id) => id + 1);
       setFocusRequestId((value) => value + 1);
     };
     preview.addEventListener(MARKDOWN_FIND_OPEN_EVENT, show);
@@ -108,13 +112,23 @@ export function SearchableMarkdownPreview({
         activeIndex={result.activeIndex}
         status={null}
         focusRequestId={focusRequestId}
+        navigationId={navigationId}
+        settled={settled}
         onRetry={() => {}}
         onQueryChange={(value) => {
+          setNavigationId((id) => id + 1);
+          setSettled(false);
           setQuery(value);
           setResult({ matchCount: 0, activeIndex: 0 });
         }}
-        onNext={() => find.current?.step(1)}
-        onPrevious={() => find.current?.step(-1)}
+        onNext={() => {
+          setNavigationId((id) => id + 1);
+          find.current?.step(1);
+        }}
+        onPrevious={() => {
+          setNavigationId((id) => id + 1);
+          find.current?.step(-1);
+        }}
         onClose={close}
       />
       <ScrollArea className="min-h-0 flex-1" onKeyDown={onContentKeyDown}>
