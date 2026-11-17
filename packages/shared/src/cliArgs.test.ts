@@ -19,7 +19,7 @@ describe("tokenizeCliArgs", () => {
     ]);
   });
 
-  it("preserves quoted values and escaped spaces", () => {
+  it("preserves values and escaped spaces", () => {
     expect(
       tokenizeCliArgs(
         String.raw`--config model="gpt 5" --enable foo\ bar --config=profile='work profile'`,
@@ -32,6 +32,15 @@ describe("tokenizeCliArgs", () => {
       expect(tokenizeCliArgs(`${args} --verbose`)).toEqual([
         "--add-dir",
         `/tmp/project${whitespace}`,
+        "--verbose",
+      ]);
+    }
+
+    for (const whitespace of ["\u00a0", "\u2003", "\u2028", "\u2029"]) {
+      const path = `/tmp/project${whitespace}name`;
+      expect(tokenizeCliArgs(`--add-dir ${path} --verbose`)).toEqual([
+        "--add-dir",
+        path,
         "--verbose",
       ]);
     }
