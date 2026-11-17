@@ -13,6 +13,8 @@ describe("safeErrorLogAttributes", () => {
     error.stack = [
       "ProjectRemovalError: outer-error-secret-sentinel",
       "    at removeProject (https://user:password@example.com/project.ts?token=secret#fragment)",
+      "    at loadSettings (http://localhost:5173/src/useSettings.ts?t=1730700000000:162:7)",
+      "removeAll@https://example.com/app.js?token=secret:12:5",
     ].join("\n");
 
     const attributes = safeErrorLogAttributes(error);
@@ -22,7 +24,11 @@ describe("safeErrorLogAttributes", () => {
       errorName: "Error",
       errorTag: "ProjectRemovalError",
       traceId: "trace-safe-123",
-      stack: "    at removeProject (https://example.com/project.ts)",
+      stack: [
+        "    at removeProject (https://example.com/project.ts)",
+        "    at loadSettings (http://localhost:5173/src/useSettings.ts:162:7)",
+        "removeAll@https://example.com/app.js:12:5",
+      ].join("\n"),
     });
     const diagnosticText = Object.values(attributes).map(String).join("\n");
     expect(diagnosticText).not.toContain("outer-error-secret-sentinel");

@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Option from "effect/Option";
-import { assert, describe, it } from "@effect/vitest";
+import { afterAll, assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -20,6 +20,7 @@ import {
   defaultConcurrency,
   docReaderTests,
   gitLines,
+  ignoredCheckInputs,
   runSteps,
   splitTests,
   type Step,
@@ -198,6 +199,32 @@ describe("check:changed", () => {
     });
   });
 
+  it("opens the built desktop app only for startup, settlement, and sidebar changes", () => {
+    const packages = readWorkspace();
+    const launches = (file: string) => decide([file], packages, false).outputs.desktop_launch;
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
+      "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+      "apps/desktop/src/backend/DesktopBackendManager.ts",
+      "apps/desktop/src/electron/ElectronProtocol.ts",
+      "packages/contracts/src/settings.ts",
+      "scripts/fixtures/desktop-launch/statev2.sqlite",
+    ]) {
+      assert.isTrue(launches(file), file);
+    }
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts",
+      "apps/web/src/components/chat/ChatView.tsx",
+      "apps/desktop/src/updates/DesktopRemoteUpdates.ts",
+      "packages/contracts/src/orchestration.ts",
+    ]) {
+      assert.isFalse(launches(file), file);
+    }
+    // A script-only change still builds the app it opens.
+    assert.isTrue(decide(["scripts/smoke-desktop-app.ts"], packages, false).outputs.build);
+  });
+
   it.each([
     "packages/shared/src/testing/longTempDir.ts",
     "packages/shared/src/testing/providerEnv.ts",
@@ -208,14 +235,21 @@ describe("check:changed", () => {
 
 // Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
 // ~/.config/git/ignore can ignore or sign fixture files.
+// Git for Windows rejects the null device as a config path, so use an empty file.
+const emptyConfigDir = NodeFS.mkdtempSync(
+  NodePath.join(NodeOS.tmpdir(), "t3-check-changed-config-"),
+);
+const emptyConfig = NodePath.join(emptyConfigDir, "empty.gitconfig");
+NodeFS.writeFileSync(emptyConfig, "");
+afterAll(() => NodeFS.rmSync(emptyConfigDir, { recursive: true, force: true }));
 const fixtureConfig = {
-  "core.excludesFile": NodeOS.devNull,
+  "core.excludesFile": emptyConfig,
   "user.name": "Fixture",
   "user.email": "fixture@example.invalid",
 };
 const env = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
-  GIT_CONFIG_GLOBAL: NodeOS.devNull,
+  GIT_CONFIG_GLOBAL: emptyConfig,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
   ...Object.fromEntries(
@@ -264,16 +298,17 @@ function fixture(remotes: Record<string, "A" | "B">) {
   };
 }
 
-const compare = (root: string, ref: Option.Option<string>) =>
+const inFixture = <A, E>(effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* comparisonBase(root, ref).pipe(
+    return yield* effect.pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make((command) => spawner.spawn(ChildProcess.setEnv(command, env))),
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+const compare = (root: string, ref: Option.Option<string>) => inFixture(comparisonBase(root, ref));
 
 it.each(["upstream", "team/upstream"])(
   "compares against %s/main when the fork's origin/main lags it",
@@ -290,6 +325,44 @@ it("compares against an explicit ref instead of the closest remote main", async 
   const result = await compare(project.root, Option.some("origin/main"));
   assert.strictEqual(result.base, project.commits.A);
   assert.strictEqual(result.ref, "origin/main");
+});
+
+it("lists the ignored inputs that main's pathspecs list, without entering node_modules", async () => {
+  using project = fixture({});
+  const git = (...args: Array<string>) =>
+    NodeChildProcess.execFileSync("git", args, { cwd: project.root, encoding: "utf8", env });
+  const write = (file: string, content = "") => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(project.root, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(project.root, file), content);
+  };
+  write(".gitignore", "node_modules/\ndist/\n.generated/\n.env*\n*.gen.d.ts\nreplaced/\nskipped/");
+  for (const file of ["replaced", "skipped"]) write(file);
+  git("add", ".");
+  git("commit", "-m", "files that directories replace");
+  git("update-index", "--skip-worktree", "skipped");
+  for (const file of ["replaced", "skipped"]) NodeFS.rmSync(NodePath.join(project.root, file));
+  for (const file of [
+    ".env.local",
+    "src/types.gen.d.ts",
+    "src/.generated/routes.ts",
+    "dist/index.d.ts",
+    "dist/node_modules/pkg/index.d.ts",
+    "node_modules/pkg/index.d.ts",
+    // A package folder left behind by a branch switch.
+    "old/dist/a.d.ts",
+    "old/node_modules/pkg/index.d.ts",
+    "replaced/sub/a.d.ts",
+    "skipped/a.d.ts",
+  ])
+    write(file);
+  const command =
+    "ls-files -o -i --exclude-standard -- :(glob)**/.generated/** :(glob)**/.astro/** :(glob)**/*.d.ts :(glob)**/.env* :(exclude,glob)**/node_modules/**";
+  const old = git(...command.split(" "))
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+  assert.includeMembers(old, ["old/dist/a.d.ts", "replaced/sub/a.d.ts", "skipped/a.d.ts"]);
+  assert.deepStrictEqual(await inFixture(ignoredCheckInputs(project.root)), old);
 });
 
 function launcherFixture() {
@@ -312,7 +385,13 @@ function launcherFixture() {
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
-    JSON.stringify({ type: "module", scripts: { "knip:check": "knip --include files" } }),
+    JSON.stringify({
+      type: "module",
+      scripts: {
+        "knip:check:files": "knip --include files",
+        "knip:check:exports": "knip --exports",
+      },
+    }),
   );
   write("packages/example/package.json", JSON.stringify({ name: "example" }));
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
@@ -419,7 +498,9 @@ it("lints an Astro component and runs knip when only it changed", () => {
     "--no-error-on-unmatched-pattern",
     page,
   ]);
-  expect(calls.some(({ args }) => args[0] === "exec" && args[1] === "knip")).toBe(true);
+  const commands = calls.map(({ args }) => args);
+  expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
+  expect(commands).toContainEqual(["exec", "knip", "--exports"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {

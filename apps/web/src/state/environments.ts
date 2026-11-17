@@ -61,6 +61,12 @@ export function useEnvironmentProviders() {
   return useAtomValue(environmentPresentations.providersByEnvironmentAtom);
 }
 
+export function readEnvironmentProviders(environmentId: EnvironmentId) {
+  return appAtomRegistry
+    .get(environmentPresentations.providersByEnvironmentAtom)
+    .get(environmentId);
+}
+
 export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
 }
@@ -113,8 +119,4 @@ export function useEnvironmentMachines() {
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
-}
-
-export function useEnvironmentConnectionSummaries() {
-  return useAtomValue(environmentSummaries.environmentsAtom);
 }
