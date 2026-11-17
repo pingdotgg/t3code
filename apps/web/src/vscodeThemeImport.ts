@@ -7,6 +7,7 @@ import {
   isReservedThemeId,
   parseThemeFile,
   readableThemeColorOn,
+  renameTheme,
   themeColorToHex,
   themeIdFromName,
   THEME_FILE_VERSION,
@@ -441,14 +442,7 @@ export function resolveThemeLabelCollisions(
 ): ReadonlyArray<ThemeDefinition> {
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
-      return parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: name.slice(0, 48),
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
+      return renameTheme(theme, name.slice(0, 48));
     } catch {
       return null;
     }
