@@ -10,6 +10,7 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import de from "./translations/de.json";
 import es from "./translations/es.json";
 import fr from "./translations/fr.json";
+import it from "./translations/it.json";
 import ja from "./translations/ja.json";
 import ko from "./translations/ko.json";
 import ptBR from "./translations/pt-BR.json";
@@ -22,6 +23,7 @@ const TRANSLATIONS: Readonly<Record<string, Record<string, string>>> = {
   zh,
   "pt-BR": ptBR,
   fr,
+  it,
   de,
   ja,
   ko,
