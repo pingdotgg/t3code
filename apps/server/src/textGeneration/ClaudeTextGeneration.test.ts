@@ -203,27 +203,45 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("extracts memory without checkout instructions or customizations", () =>
-    withFakeClaudeEnv(
-      {
-        output: JSON.stringify({ structured_output: { candidates: [] } }),
+  it.effect("extracts and checks memory without checkout instructions or customizations", () =>
+    Effect.gen(function* () {
+      const isolation = {
         cwdMustNotBe: process.cwd(),
         argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
         argsMustNotContain: "--bare",
-      },
-      (textGeneration) =>
-        textGeneration.generateKnowledgeCandidates({
-          cwd: process.cwd(),
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("claudeAgent"),
-            model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
-          },
-          runOutcome: "completed",
-          messages: [
-            { ref: "M1", role: "user", text: "Use concise explanations in this project." },
-          ],
-        }),
-    ),
+      };
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      };
+      yield* withFakeClaudeEnv(
+        { ...isolation, output: JSON.stringify({ structured_output: { candidates: [] } }) },
+        (textGeneration) =>
+          textGeneration.generateKnowledgeCandidates({
+            cwd: process.cwd(),
+            modelSelection,
+            runOutcome: "completed",
+            messages: [
+              { ref: "M1", role: "user", text: "Use concise explanations in this project." },
+            ],
+          }),
+      );
+      const checked = yield* withFakeClaudeEnv(
+        {
+          ...isolation,
+          output: JSON.stringify({
+            structured_output: { results: [{ ref: 1, verdict: "standing", selfContained: true }] },
+          }),
+        },
+        (textGeneration) =>
+          textGeneration.checkFactStanding({
+            cwd: process.cwd(),
+            modelSelection,
+            statements: [{ kind: "convention", content: "Use concise explanations in Acme." }],
+          }),
+      );
+      expect(checked.verdicts).toEqual(["standing"]);
+    }),
   );
 
   it.effect("isolates blind evaluation without disabling subscription authentication", () =>

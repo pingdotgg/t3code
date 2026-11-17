@@ -561,21 +561,38 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps checkout instructions out of automatic memory extraction", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({ candidates: [] }),
+  it.effect("keeps checkout instructions out of automatic memory extraction and checks", () =>
+    Effect.gen(function* () {
+      const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
+      const isolation = {
         requireArg: "--config project_doc_max_bytes=0",
         requiredCwd: process.cwd(),
-      },
-      (textGeneration) =>
-        textGeneration.generateKnowledgeCandidates({
-          cwd: process.cwd(),
-          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna"),
-          runOutcome: "completed",
-          messages: [{ ref: "M1", role: "user", text: "Use the shared test runner." }],
-        }),
-    ),
+      };
+      yield* withFakeCodexEnv(
+        { ...isolation, output: JSON.stringify({ candidates: [] }) },
+        (textGeneration) =>
+          textGeneration.generateKnowledgeCandidates({
+            cwd: process.cwd(),
+            modelSelection,
+            runOutcome: "completed",
+            messages: [{ ref: "M1", role: "user", text: "Use the shared test runner." }],
+          }),
+      );
+      yield* withFakeCodexEnv(
+        {
+          ...isolation,
+          output: JSON.stringify({
+            results: [{ ref: 1, verdict: "standing", selfContained: true }],
+          }),
+        },
+        (textGeneration) =>
+          textGeneration.checkFactStanding({
+            cwd: process.cwd(),
+            modelSelection,
+            statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+          }),
+      );
+    }),
   );
 
   it.effect("preserves custom PR instructions while allowing checkout inspection", () =>

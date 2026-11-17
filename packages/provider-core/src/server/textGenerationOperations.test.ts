@@ -181,3 +181,33 @@ it.effect("fails a thread title reply that is only the schema key", () =>
     assert.strictEqual(outcome.operation, "generateThreadTitle");
   }),
 );
+
+it.effect("sets aside every statement the standing check does not clearly keep", () =>
+  Effect.gen(function* () {
+    const check = (reply: string) =>
+      fromRunner("Stub", (request) => decodeJsonReply(request, "Stub", reply)).checkFactStanding({
+        cwd: process.cwd(),
+        modelSelection,
+        statements: ["one", "two", "three", "four", "five"].map((content) => ({
+          kind: "convention" as const,
+          content: `Acme rule ${content}.`,
+        })),
+      });
+    const { verdicts } = yield* check(
+      JSON.stringify({
+        results: [
+          { ref: 1, verdict: "standing", selfContained: true },
+          { ref: 2, verdict: "standing", selfContained: false },
+          { ref: 3, verdict: "code", selfContained: true },
+          { ref: 4, verdict: "standing", selfContained: true },
+          { ref: 4, verdict: "standing", selfContained: true },
+          { ref: 9, verdict: "standing", selfContained: true },
+        ],
+      }),
+    );
+    // Statement 5 is unanswered; 4 is answered twice; 9 does not exist.
+    assert.deepStrictEqual(verdicts, ["standing", "task", "code", "task", "task"]);
+    const offSchema = yield* check('{"results":[{"ref":1,"verdict":"keep"}]}').pipe(Effect.flip);
+    assert.strictEqual(offSchema.operation, "checkFactStanding");
+  }),
+);

@@ -2286,6 +2286,91 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("recall skips facts the check set aside, which search still finds", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-set-aside");
+    yield* createProject(projectId);
+    const [standing, setAside, unchecked] = ["standing", "set-aside", "unchecked"].map((id) =>
+      ProjectFactId.make(id),
+    );
+    for (const factId of [standing, setAside, unchecked])
+      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
+    for (const [factId, verdict] of [
+      [standing, "standing"],
+      [setAside, "task"],
+    ] as const)
+      yield* sql`UPDATE project_knowledge_facts
+        SET verdict = ${verdict}, verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
+        WHERE id = ${factId}`;
+    const recall = (id: string, query: string) =>
+      knowledge.recall({
+        projectId,
+        threadId: ThreadId.make(id),
+        requestId: CommandId.make(id),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      });
+    const tenantQuery = "Change cache keys to include tenant IDs.";
+    assert.deepEqual(attachedFactIds(yield* recall("recall-set-aside", tenantQuery)).toSorted(), [
+      standing,
+      unchecked,
+    ]);
+    const searched = yield* knowledge.search({
+      projectId,
+      query: "tenant cache",
+      requestId: CommandId.make("search-set-aside"),
+    });
+    assert.deepEqual(
+      searched.facts.state === "available"
+        ? searched.facts.matches.map((match) => match.fact.id).toSorted()
+        : [],
+      [setAside, standing, unchecked],
+    );
+    // The verdict judged the old text, so an edit leaves the fact unchecked and recallable.
+    const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, setAside),
+        action: "edit",
+        commandId: CommandId.make("edit-set-aside"),
+        expectedRevision: fact.revision,
+        content: "Cache keys include tenant IDs and region codes.",
+      },
+      { kind: "user" },
+    );
+    assert.isUndefined((yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict);
+    assert.deepEqual(
+      attachedFactIds(yield* recall("recall-after-edit", "Add region codes to cache keys.")),
+      [setAside],
+    );
+  }).pipe(
+    Effect.provide(
+      knowledgeTestLayer(
+        Layer.succeed(HolographicMemory.HolographicMemory, {
+          scoreCandidates: (input) =>
+            Effect.succeed(
+              input.candidates.map((candidate) => ({
+                id: candidate.id,
+                rawCosine: 1,
+                holographic: 1,
+                decay: 1,
+                reinforcement: 0,
+                score: 1,
+                scoreMillionths: 1_000_000,
+                tokenOverlap: 1,
+                fts: 1,
+                coverage: 1,
+              })),
+            ),
+        }),
+      ),
+    ),
+  ),
+);
+
 it.effect("recall does not score with the holographic kernel", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
@@ -3379,8 +3464,10 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       runOutcome: "completed" as const,
     };
     const candidate = { ...createFact(projectId, "automatic"), sources: [citation.source] };
-    assert.equal((yield* knowledge.saveAutomatic(candidate, actor)).outcome, "duplicate");
+    assert.equal((yield* knowledge.saveAutomatic(candidate, actor, "task")).outcome, "duplicate");
     const merged = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
+    // A verdict is written once: a duplicate's check does not reclassify the fact it joins.
+    assert.isUndefined(merged.verdict);
     assert.deepEqual(merged.sources, [...original.sources, citation.source]);
     assert.equal(merged.content, original.content);
     assert.deepEqual(merged.origin, original.origin);
@@ -3388,6 +3475,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-repeat") },
       actor,
+      "standing",
     );
     assert.deepEqual((yield* knowledge.readFact({ projectId, factId: original.id })).fact, merged);
     const invalid = yield* knowledge
@@ -3398,6 +3486,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
           sources: [{ ...citation.source, runId: RunId.make("fabricated") }],
         },
         actor,
+        "standing",
       )
       .pipe(Effect.result);
     assert.equal(invalid._tag, "Failure");
@@ -3411,6 +3500,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-cap"), sources: extraSources },
       actor,
+      "standing",
     );
     const capped = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
     assert.equal(capped.sources.length, 16);
@@ -3425,7 +3515,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       },
       { kind: "user" },
     );
-    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor);
+    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor, "standing");
     assert.equal(
       (yield* knowledge.readFact({ projectId, factId: original.id })).fact.status,
       "forgotten",

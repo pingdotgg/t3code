@@ -15,7 +15,8 @@
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir .",
-    "memory-capture": "node --env-file-if-exists=../.env memory-capture/run.ts"
+    "memory-capture": "node --env-file-if-exists=../.env memory-capture/run.ts",
+    "memory-standing-check": "node --env-file-if-exists=../.env memory-standing-check/run.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

@@ -1170,6 +1170,7 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
         projectKnowledge: true,
         projectKnowledgeHistory: true,
         projectKnowledgeAssistedLearning: true,
+        projectKnowledgeStandingCheck: true,
         projectSettingsOverrides: true,
       },
     },
@@ -1204,6 +1205,11 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
   await expect.element(toggle).toBeChecked();
   await expect.element(page.getByText("Last run: saved 1.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Set aside", exact: true }).click();
+  expect(state.listRequest).toHaveBeenLastCalledWith({
+    environmentId: scope.environmentId,
+    input: { projectId: scope.projectId, status: "saved", verdict: "set_aside" },
+  });
   await page.getByRole("button", { name: "Automatic", exact: true }).click();
   expect(state.listRequest).toHaveBeenLastCalledWith({
     environmentId: scope.environmentId,
