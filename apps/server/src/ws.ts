@@ -16,6 +16,7 @@ import * as PushRegistrations from "./push/PushRegistrations.ts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as Fiber from "effect/Fiber";
@@ -153,6 +154,7 @@ import {
 import {
   buildBoundedThreadStreamSnapshot,
   decideThreadResume,
+  invalidatesInheritedRows,
   isThreadReplayRawPayloadSafe,
   threadReplayEncodedBytes,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
@@ -854,6 +856,31 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         .pipe(
           Stream.map(threadStreamEventItem),
           coalesceThreadLiveStream,
+          // Rows this fork inherits were trimmed at their source: send what it shows now.
+          // Per array, so an ordinary batch passes through as one message.
+          Stream.mapArrayEffect(
+            (
+              items,
+            ): Effect.Effect<
+              Arr.NonEmptyReadonlyArray<OrchestrationV2ThreadStreamItem>,
+              OrchestrationV2GetThreadProjectionError
+            > => {
+              const invalidates = (item: OrchestrationV2ThreadStreamItem) =>
+                item.kind === "event" && invalidatesInheritedRows(item.event, input.threadId);
+              if (!items.some(invalidates)) return Effect.succeed(items);
+              return Effect.forEach(
+                items,
+                (
+                  item,
+                ): Effect.Effect<
+                  OrchestrationV2ThreadStreamItem,
+                  OrchestrationV2GetThreadProjectionError
+                > => (invalidates(item) ? loadSnapshotItem() : Effect.succeed(item)),
+              ).pipe(
+                Effect.map((mapped) => (Arr.isReadonlyArrayNonEmpty(mapped) ? mapped : items)),
+              );
+            },
+          ),
           Stream.mapError(
             (cause) =>
               new OrchestrationV2GetThreadProjectionError({
@@ -897,7 +924,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ? Stream.make({ kind: "synchronized" as const })
         : Stream.empty;
 
-    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
+    const loadSnapshotItem = Effect.fn("ws.orchestrationV2.loadThreadSnapshotItem")(function* () {
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
       const snapshot = yield* (
         useBoundedSnapshot
@@ -933,9 +960,13 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               projection: dedupeBodies ? dedupeSnapshotBodies(projection) : projection,
             };
           })();
+      return snapshotItem;
+    });
+    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
+      const snapshotItem = yield* loadSnapshotItem();
       return rpcInitialItems([snapshotItem]).pipe(
         Stream.concat(completionMarker),
-        Stream.concat(eventStreamFrom(snapshotSequence)),
+        Stream.concat(eventStreamFrom(snapshotItem.snapshotSequence)),
         withLiveDedupe,
       );
     });
@@ -1026,6 +1057,13 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         return yield* snapshotThenLive();
       }
       const replay = coalesceLiveUpdatedEvents(replayed);
+      if (
+        replay.some(
+          (item) => item.kind === "event" && invalidatesInheritedRows(item.event, input.threadId),
+        )
+      ) {
+        return yield* snapshotThenLive();
+      }
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,

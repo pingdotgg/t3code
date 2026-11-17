@@ -1,5 +1,7 @@
 import type {
+  OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
+  ThreadId,
   OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 
@@ -115,4 +117,12 @@ export function decideThreadResume(input: {
     afterSequence: input.afterSequence,
     throughSequence: input.highWater,
   };
+}
+
+/** A fork's copy of its source's history trim, which names no rows: read a fresh snapshot. */
+export function invalidatesInheritedRows(
+  event: OrchestrationV2DomainEvent,
+  threadId: ThreadId,
+): boolean {
+  return event.type === "thread.history-trimmed" && event.payload.sourceThreadId !== threadId;
 }

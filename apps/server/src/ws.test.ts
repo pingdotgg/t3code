@@ -35,6 +35,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -481,6 +482,74 @@ it.effect("coalesces streaming replay before synchronization and the live tail",
         [completed!.sequence + 1, "Next"],
       ],
     );
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+it.effect("a fork reads a fresh snapshot when its source's history is trimmed", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const threadId = ThreadId.make("thread:trimmed-fork");
+    const now = "2026-11-17T00:00:00.000Z";
+    const insert = (version: number, type: string, payload: object) =>
+      sql<{ sequence: number }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`trimmed-fork:${version}`}, 'thread', ${threadId}, ${version}, ${type},
+        ${now}, 'server', ${JSON.stringify(payload)}, '{}', 2
+      ) RETURNING sequence
+    `.pipe(Effect.map(([row]) => row!.sequence));
+    const forkCopy = { sourceThreadId: "thread:trimmed-source", turnItemIds: [], nodeIds: [] };
+    const seen = yield* insert(0, "provider-session.detached", {
+      providerSessionId: "session:trimmed-fork",
+      detachedAt: now,
+    });
+    const replayed = yield* insert(1, "thread.history-trimmed", forkCopy);
+    let snapshotSequence = replayed;
+    const snapshots: Array<number> = [];
+    const items = yield* subscribeOrchestrationV2Thread({
+      threadId,
+      afterSequence: seen,
+      requestCompletionMarker: true,
+    }).pipe(
+      Effect.flatMap(Stream.runCollect),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        getThreadSnapshot: () =>
+          Effect.sync(() => {
+            snapshots.push(snapshotSequence);
+            return {
+              schemaVersion: 1,
+              snapshotSequence,
+              projection: {
+                checkpoints: [],
+                contextHandoffs: [],
+                turnItems: [],
+                visibleTurnItems: [],
+              } as unknown as OrchestrationV2ThreadProjection,
+            };
+          }),
+        streamStoredEventsFrom: () =>
+          Stream.unwrap(
+            insert(2, "thread.history-trimmed", forkCopy).pipe(
+              Effect.map((live) => {
+                snapshotSequence = live;
+                return store.readAgentEvents({ threadId, afterSequence: replayed });
+              }),
+            ),
+          ),
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    // Replay and the live tail each answer the fork's copy with what the fork shows now.
+    assert.deepEqual(
+      items.map((item) =>
+        item.kind === "snapshot" ? [item.kind, item.snapshotSequence] : [item.kind],
+      ),
+      [["snapshot", replayed], ["synchronized"], ["snapshot", replayed + 1]],
+    );
+    assert.lengthOf(snapshots, 2);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
