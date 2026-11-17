@@ -16,6 +16,13 @@ struct ReviewDiffCodeLineStarts: RandomAccessCollection {
 
 /// ASCII uses fixed-pitch columns. TextKit handles shaping, tabs, and Unicode highlights.
 /// Pass `unboundedWidth` to lay a row out on one line for horizontal scrolling.
+/** A cut line's note, drawn in its own colors. */
+struct ReviewDiffCodeNote {
+  let range: NSRange
+  let color: UIColor
+  let background: UIColor
+}
+
 final class ReviewDiffCodeLayout: NSObject {
   static let unboundedWidth = CGFloat.greatestFiniteMagnitude
 
@@ -84,7 +91,14 @@ final class ReviewDiffCodeLayout: NSObject {
     return layout
   }
 
-  func decorate(text: NSAttributedString, highlights: [NSRange], color: UIColor, version: Int) {
+  // A cut line's note is not code, so it takes the warning colors over any token color.
+  func decorate(
+    text: NSAttributedString,
+    highlights: [NSRange],
+    color: UIColor,
+    note: ReviewDiffCodeNote? = nil,
+    version: Int
+  ) {
     guard usesNativeLayout else { return }
     let layout = nativeLayout()
     guard layout.decorationVersion != version else { return }
@@ -103,6 +117,13 @@ final class ReviewDiffCodeLayout: NSObject {
       let intersection = NSIntersectionRange(range, fullRange)
       if intersection.length > 0 {
         storage.addAttribute(.backgroundColor, value: color, range: intersection)
+      }
+    }
+    if let note {
+      let intersection = NSIntersectionRange(note.range, fullRange)
+      if intersection.length > 0 {
+        storage.addAttribute(.foregroundColor, value: note.color, range: intersection)
+        storage.addAttribute(.backgroundColor, value: note.background, range: intersection)
       }
     }
     storage.endEditing()

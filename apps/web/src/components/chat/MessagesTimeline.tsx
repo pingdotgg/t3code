@@ -81,7 +81,7 @@ import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
-  isTimelineMinimapRowVisible,
+  isTimelineMinimapTurnVisible,
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
   TIMELINE_MINIMAP_TARGET_OFFSET,
@@ -676,9 +676,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     citationHistory._tag !== "failed"
       ? timelineEntries.find(
           (entry) =>
-            entry.kind === "message" &&
-            entry.message.role === "assistant" &&
-            entry.message.id === citationRequest.citation.messageId,
+            (entry.kind === "message" &&
+              entry.message.role === "assistant" &&
+              entry.message.id === citationRequest.citation.messageId) ||
+            (entry.kind === "sent-message" && entry.id === citationRequest.citation.messageId),
         )
       : undefined;
   if (citationRequest && citedEntry) {
@@ -933,10 +934,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
           firstBufferedRow.getBoundingClientRect().top
         : state.scroll;
     const visibleRange = resolveTimelineMinimapVisibleRange({ ...state, scroll });
-    for (const item of minimapItems) {
+    for (const [index, item] of minimapItems.entries()) {
       const strip = minimapStripMap.get(item.id);
-      const inView = isTimelineMinimapRowVisible(
+      const inView = isTimelineMinimapTurnVisible(
         item.rowIndex,
+        minimapItems[index + 1]?.rowIndex,
         visibleRange.start,
         visibleRange.end,
       );

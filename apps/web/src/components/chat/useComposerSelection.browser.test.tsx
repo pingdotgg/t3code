@@ -139,6 +139,7 @@ it("switches back to the thread's stored model while the session runs on another
     expect(
       deriveEffectiveComposerModelState({
         draft,
+        threadStarted: true,
         providers,
         selectedProvider: ProviderDriverKind.make("cursor"),
         selectedInstanceId: cursor,
@@ -174,4 +175,34 @@ it("saves a re-picked model again when its first save failed", async () => {
     },
   });
   await vi.waitFor(() => expect(setModelSelection.mock.calls).toEqual([[autoSave], [autoSave]]));
+});
+
+it("saves a pick of a seeded model the started thread does not show", async () => {
+  const { setModelSelection } = setup();
+  setModelSelection.mockResolvedValue(AsyncResult.success(undefined));
+  const thread = cursorThread("thread-cursor-seeded");
+  appAtomRegistry.set(shellAtom(thread.id), thread);
+  useComposerDraftStore
+    .getState()
+    .setModelSelection(
+      scopeThreadRef(environmentId, thread.id),
+      createModelSelection(cursor, "auto-smart"),
+    );
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <Picker thread={thread} runtime={null} model="auto-smart" />
+    </AppAtomRegistryProvider>,
+  );
+  await page.getByRole("button", { name: "Pick the model" }).click();
+
+  await vi.waitFor(() =>
+    expect(setModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          threadId: thread.id,
+          modelSelection: expect.objectContaining({ instanceId: cursor, model: "auto-smart" }),
+        },
+      }),
+    ),
+  );
 });

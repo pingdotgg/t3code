@@ -7,6 +7,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
   repositoryUrlFromPagePath,
   projectChangeRequestHost,
@@ -100,6 +101,8 @@ export const definition = defineSourceControl({
   parseCommitUrl: (url, known) =>
     known || isGitHubHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  // `/issues/` is too generic a path to believe from a host that is not GitHub's.
+  parseIssueUrl: (url) => (isGitHubHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null),
   repositoryUrlFromPage: (url) =>
     isGitHubHost(url.hostname) ? repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH) : null,
   // GitHub writes every bare reference through `/issues/`, including pull requests.

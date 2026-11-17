@@ -1,18 +1,20 @@
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import {
-  ANCHORED_COPY_TOAST_TIMEOUT_MS,
-  showAnchoredCopyErrorToast,
-  showAnchoredCopySuccessToast,
-} from "./ui/anchoredCopyToast";
+import { ANCHORED_COPY_TOAST_TIMEOUT_MS, showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
+export function DiffFilePathCopyButton({
+  filePath,
+  workspaceRoot,
+}: {
+  filePath: string;
+  workspaceRoot: string | undefined;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => showAnchoredCopySuccessToast(ref),
     onError: (error) => showAnchoredCopyErrorToast(ref, error),
     timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
@@ -26,7 +28,9 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
             size="icon-micro"
             variant="ghost-muted"
             aria-label="Copy file path"
-            onClick={() => copyToClipboard(filePath, undefined)}
+            onClick={() =>
+              copyToClipboard(formatFilePathForClipboard(filePath, workspaceRoot), undefined)
+            }
           />
         }
       >
