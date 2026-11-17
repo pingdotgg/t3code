@@ -22,6 +22,10 @@ export interface WorktreeLightPathsInput {
   readonly isIgnored: (relativePath: string) => Effect.Effect<boolean>;
 }
 
+/** One flat folder per shared path, so clearing it never strands another path's links. */
+export const sharedPathFolder = (path: Path.Path, sharedRoot: string, relativePath: string) =>
+  path.join(sharedRoot, encodeURIComponent(relativePath));
+
 const reflinkCopy = (source: string, destination: string) =>
   Effect.tryPromise({
     try: () =>
@@ -94,7 +98,7 @@ export const prepareWorktreeLightPaths = Effect.fn("GitVcsDriver.prepareWorktree
           { relativePath },
         );
       }
-      const target = path.join(input.sharedRoot, toNative(relativePath));
+      const target = sharedPathFolder(path, input.sharedRoot, relativePath);
       if (!(yield* isDirectory(target))) {
         yield* seedShared(path.join(input.sourcePath, toNative(relativePath)), target);
       }

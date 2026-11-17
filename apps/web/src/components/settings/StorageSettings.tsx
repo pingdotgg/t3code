@@ -294,11 +294,59 @@ function lastRunSummary(
   return entries.map((entry) => `${entry.label}: ${entry.counts}`).join(" · ");
 }
 
+// The server names each shared folder with encodeURIComponent of its repository path.
+function sharedPathName(path: string | null) {
+  const name = path?.split(/[\\/]/).findLast(Boolean) ?? "Shared folder";
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+function ClearSharedPathButton({
+  environmentId,
+  path,
+}: {
+  environmentId: EnvironmentId;
+  path: string;
+}) {
+  const clear = useAtomCommand(serverEnvironment.clearWorktreeSharedPath);
+  const allowed = useAtomValue(
+    serverEnvironment.clearWorktreeSharedPath.permissionAtom(environmentId),
+  );
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={pending || !allowed}
+      onClick={() => {
+        setPending(true);
+        void clear({ environmentId, input: { path } })
+          .then((result) => {
+            if (result._tag !== "Success" && !isAtomCommandInterrupted(result))
+              toastManager.add({
+                type: "error",
+                title: "Could not clear the shared folder",
+                description: String(squashAtomCommandFailure(result)),
+              });
+          })
+          .finally(() => setPending(false));
+      }}
+    >
+      {pending ? "Clearing…" : "Clear"}
+    </Button>
+  );
+}
+
 function CleanupResults({
   report,
+  environmentId,
   environmentLabel,
 }: {
   report: StorageCleanupReport;
+  environmentId: EnvironmentId;
   environmentLabel: string;
 }) {
   return (
@@ -309,9 +357,11 @@ function CleanupResults({
             ? ((entry.threadId === null
                 ? entry.path
                 : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
-            : entry.kind === "logs"
-              ? "Rotated logs"
-              : "Browser artifacts";
+            : entry.kind === "worktree-shared"
+              ? sharedPathName(entry.path)
+              : entry.kind === "logs"
+                ? "Rotated logs"
+                : "Browser artifacts";
         return (
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
@@ -347,8 +397,9 @@ function CleanupResults({
             }
             control={
               (entry.outcome === "removed" ||
-                (entry.outcome === "kept" && entry.bytes !== null)) && (
-                <span className="text-xs text-muted-foreground">
+                (entry.outcome === "kept" && entry.bytes !== null) ||
+                entry.kind === "worktree-shared") && (
+                <span className="flex items-center gap-3 text-xs text-muted-foreground">
                   {[
                     entry.kind !== "worktree" && entry.files !== null
                       ? `${entry.files.toLocaleString()} ${entry.files === 1 ? "file" : "files"}`
@@ -357,6 +408,9 @@ function CleanupResults({
                   ]
                     .filter(Boolean)
                     .join(" · ")}
+                  {entry.kind === "worktree-shared" && entry.outcome === "kept" && entry.path && (
+                    <ClearSharedPathButton environmentId={environmentId} path={entry.path} />
+                  )}
                 </span>
               )
             }
@@ -520,6 +574,7 @@ function CleanupSection() {
                 <CleanupResults
                   key={environment.environmentId}
                   report={report}
+                  environmentId={environment.environmentId}
                   environmentLabel={label}
                 />
               ),

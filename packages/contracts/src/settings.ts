@@ -1487,7 +1487,7 @@ export function databaseReclaimMinutes(status: DatabaseStorageStatus): number {
 }
 
 export const StorageCleanupReportEntry = Schema.Struct({
-  kind: Schema.Literals(["worktree", "browser-artifacts", "logs"]),
+  kind: Schema.Literals(["worktree", "worktree-shared", "browser-artifacts", "logs"]),
   outcome: Schema.Literals(["removed", "kept", "failed"]),
   reason: Schema.String,
   path: Schema.NullOr(Schema.String),
@@ -1508,6 +1508,15 @@ export const StorageCleanupReport = Schema.Struct({
   bytesFreed: Schema.Number.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
 });
 export type StorageCleanupReport = typeof StorageCleanupReport.Type;
+
+export class WorktreeSharedPathClearError extends Schema.TaggedError<WorktreeSharedPathClearError>()(
+  "WorktreeSharedPathClearError",
+  { path: Schema.String, reason: Schema.String },
+) {
+  override get message() {
+    return `Could not clear ${this.path}: ${this.reason}`;
+  }
+}
 
 export const StorageCleanupSettings = Schema.Struct({
   worktreeKeepWhen: WorktreeKeepWhen.pipe(

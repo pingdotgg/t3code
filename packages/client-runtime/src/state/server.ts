@@ -1387,6 +1387,10 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRunStorageCleanup,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    clearWorktreeSharedPath: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:clear-worktree-shared-path",
+      tag: WS_METHODS.serverClearWorktreeSharedPath,
+    }),
     prepareTriage: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:prepare-triage",
       tag: WS_METHODS.serverPrepareTriage,

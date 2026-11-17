@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   CheckpointScopeId,
   GitCommandError,
+  WorktreeSharedPathClearError,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -345,6 +346,8 @@ export class StorageCleanup extends Context.Service<
     readonly latestReport: Effect.Effect<StorageCleanupReport | null>;
     readonly reports: Stream.Stream<StorageCleanupReport | null>;
     readonly drain: Effect.Effect<void>;
+    /** Empties one folder from `worktree-shared` entries; worktree links to it stay valid. */
+    readonly clearSharedPath: (target: string) => Effect.Effect<void, WorktreeSharedPathClearError>;
   }
 >()("t3/storageCleanup") {}
 
@@ -1807,6 +1810,75 @@ const make = Effect.gen(function* () {
   let stopReleasableWorktrees: ReadonlyArray<string> = [];
   let deletions = 0;
   let sweptDeletions = 0;
+  const sharedPathsDir = path.resolve(config.worktreeSharedPathsDir);
+  const reportSharedPaths = Effect.fn("StorageCleanup.reportSharedPaths")(function* (
+    entries: StorageCleanupReportEntry[],
+  ) {
+    const children = (directory: string) =>
+      fs.readDirectory(directory).pipe(Effect.orElseSucceed((): string[] => []));
+    for (const repository of yield* children(sharedPathsDir)) {
+      const repositoryPath = path.join(sharedPathsDir, repository);
+      if (repository.startsWith(".trash-")) {
+        yield* fs.remove(repositoryPath, { recursive: true }).pipe(Effect.ignore);
+        continue;
+      }
+      const name = repository.replace(/-[0-9a-f]{16}$/, "");
+      for (const folder of yield* children(repositoryPath)) {
+        if (folder.startsWith(".seed-")) continue;
+        const target = path.join(repositoryPath, folder);
+        entries.push({
+          kind: "worktree-shared",
+          outcome: "kept",
+          reason: `Shared by every ${name} worktree. A build running in one of them may fail while you clear it.`,
+          path: target,
+          projectPath: null,
+          threadId: null,
+          threadTitle: null,
+          bytes: (yield* measureWorktree(target)).bytes,
+          files: null,
+        });
+      }
+    }
+  });
+
+  const clearSharedPath = Effect.fn("StorageCleanup.clearSharedPath")(function* (target: string) {
+    const resolved = path.resolve(target);
+    const fail = (reason: string) => new WorktreeSharedPathClearError({ path: target, reason });
+    if (path.dirname(path.dirname(resolved)) !== sharedPathsDir)
+      return yield* fail("it is not a shared worktree folder");
+    const staging = yield* fs
+      .makeTempDirectory({ directory: sharedPathsDir, prefix: ".trash-" })
+      .pipe(Effect.mapError((cause) => fail(cause.message)));
+    const trash = path.join(staging, "cleared");
+    // Renamed first so the empty folder replaces it at once and links never dangle.
+    yield* fs.rename(resolved, trash).pipe(Effect.mapError((cause) => fail(cause.message)));
+    yield* fs
+      .makeDirectory(resolved, { recursive: true })
+      .pipe(Effect.mapError((cause) => fail(cause.message)));
+    const freed = (yield* measureWorktree(trash)).bytes;
+    yield* fs
+      .remove(staging, { recursive: true })
+      .pipe(Effect.mapError((cause) => fail(cause.message)));
+    yield* SubscriptionRef.update(reportRef, (report) =>
+      report === null
+        ? null
+        : {
+            ...report,
+            entries: report.entries.map((entry) =>
+              entry.kind === "worktree-shared" && entry.path === target
+                ? { ...entry, outcome: "removed" as const, reason: "Cleared", bytes: freed }
+                : entry,
+            ),
+            counts: {
+              ...report.counts,
+              kept: report.counts.kept - 1,
+              removed: report.counts.removed + 1,
+            },
+            bytesFreed: report.bytesFreed + (freed ?? 0),
+          },
+    );
+  });
+
   const sweep = Effect.fn("StorageCleanup.sweep")(function* (
     trigger: StorageCleanupReport["trigger"],
   ) {
@@ -1837,6 +1909,7 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+    yield* reportSharedPaths(entries);
     deletedWorktreeWaits = deletedWorktrees.waiting;
     stopReleasableWorktrees = deletedWorktrees.kept;
     sweptDeletions = deletionsAtStart;
@@ -2016,6 +2089,7 @@ const make = Effect.gen(function* () {
     latestReport: SubscriptionRef.get(reportRef),
     reports: SubscriptionRef.changes(reportRef),
     drain: worker.drain,
+    clearSharedPath,
   });
 });
 

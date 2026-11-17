@@ -339,8 +339,11 @@ worktree. Two `t3.json` fields keep worktrees small:
 
 Both take Git-ignored, repository-relative folders. `.git`, `.t3`, and `.env` files are refused.
 Ada keeps shared links out of `git status`, and removing or reclaiming a worktree leaves the
-shared folder in place. A settle script that deletes build output must not delete a shared path,
-because the cache belongs to every worktree.
+shared folder in place, so it only grows. Each shared folder is listed with its size under
+**Settings → Maintenance → Cleanup → Last run**; **Clear** empties it, and the next build fills it
+again. A build running in one of the repository's worktrees may fail while you clear it. A settle
+script that deletes build output must not delete a shared path, because the cache belongs to every
+worktree.
 
 Examples by toolchain:
 
