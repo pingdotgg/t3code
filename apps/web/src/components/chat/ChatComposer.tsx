@@ -224,6 +224,7 @@ import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerP
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import { mentionableComposerModels } from "./composerModelMentions";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
@@ -2141,24 +2142,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               }))
             : []),
           // The thread's own provider wins when two offer a model of the same name.
-          ...[...modelOptionsByInstance]
-            .toSorted(([left], [right]) =>
-              left === selectedInstanceId ? -1 : right === selectedInstanceId ? 1 : 0,
+          ...mentionableComposerModels({
+            instanceEntries: providerInstanceEntries,
+            modelOptionsByInstance,
+          })
+            // "Default" and "Auto" are ordinary words first, and name no particular model.
+            .filter(({ option }) => !/^(?:default|auto)$/iu.test(option.name))
+            .toSorted(({ entry: left }, { entry: right }) =>
+              left.instanceId === selectedInstanceId
+                ? -1
+                : right.instanceId === selectedInstanceId
+                  ? 1
+                  : 0,
             )
-            .flatMap(([instanceId, options]) =>
-              options
-                // "Default" and "Auto" are ordinary words first, and name no particular model.
-                .filter(
-                  (option) =>
-                    option.isUnavailable !== true && !/^(?:default|auto)$/iu.test(option.name),
-                )
-                .map((option) => ({
-                  kind: "model" as const,
-                  instanceId,
-                  model: option.slug,
-                  label: option.name,
-                })),
-            ),
+            .map(({ entry, option }) => ({
+              kind: "model" as const,
+              instanceId: entry.instanceId,
+              model: option.slug,
+              label: option.name,
+            })),
         ]);
   const matchInlineSuggestionStable = useStableCallback(matchInlineSuggestion);
 
