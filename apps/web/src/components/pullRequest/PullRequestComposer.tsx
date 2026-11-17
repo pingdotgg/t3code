@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "../ui/button";
@@ -40,6 +41,7 @@ export function PullRequestComposer({
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
 }) {
+  const gt = useGT();
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
@@ -81,10 +83,13 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="glass" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? gt(
+                "{count, plural, one {Review {term}, {count} comment pending} other {Review {term}, {count} comments pending}}",
+                { count: pendingComments.length, term },
+              )
             : reviewStarted || !canComment
-              ? `Review ${term}`
-              : `Comment on ${term}`
+              ? gt("Review {term}", { term })
+              : gt("Comment on {term}", { term })
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -104,12 +109,12 @@ export function PullRequestComposer({
         sideOffset={8}
         width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
-        aria-label={`${capitalizeTerm(term)} composer`}
+        aria-label={gt("{term} composer", { term: capitalizeTerm(term) })}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           {canComment && verdicts.length > 0 ? (
             <ToggleGroup
-              aria-label="Composer mode"
+              aria-label={gt("Composer mode")}
               variant="segmented"
               value={[mode]}
               onValueChange={(next) => {
@@ -117,14 +122,20 @@ export function PullRequestComposer({
                 if (value === "comment" || value === "review") setRequestedMode(value);
               }}
             >
-              <Toggle value="comment">Comment</Toggle>
+              <Toggle value="comment">
+                <T context="noun, composer mode">Comment</T>
+              </Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingComments.length > 0
+                  ? gt("Review ({count})", { count: pendingComments.length })
+                  : gt("Review", { $context: "noun, composer mode" })}
               </Toggle>
             </ToggleGroup>
           ) : (
             <PopoverTitle>
-              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
+              {mode === "review"
+                ? gt("Review {term}", { term })
+                : gt("Comment on {term}", { term })}
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
@@ -132,8 +143,8 @@ export function PullRequestComposer({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="Discard pending line comments"
-                title="Discard pending line comments"
+                aria-label={gt("Discard pending line comments")}
+                title={gt("Discard pending line comments")}
                 disabled={reviewPending}
                 onClick={() => clearComments(reviewKey)}
               >
@@ -142,7 +153,7 @@ export function PullRequestComposer({
             ) : null}
             <PopoverClose
               render={<Button size="icon-xs" variant="ghost" />}
-              aria-label="Close composer"
+              aria-label={gt("Close composer")}
             >
               <XIcon className="size-3.5" />
             </PopoverClose>

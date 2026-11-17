@@ -48,13 +48,16 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
-  "fast-forward": "Fast-forward merge",
+  merge: msg("Merge"),
+  squash: msg("Squash and merge"),
+  rebase: msg("Rebase and merge"),
+  "fast-forward": msg("Fast-forward merge"),
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -248,18 +251,18 @@ export function threadPullRequestPanelTarget(thread: {
   return legacy ?? thread.branchPullRequest ?? null;
 }
 
-export function pullRequestHandoffLabels(inThisThread: boolean) {
+export function pullRequestHandoffLabels(inThisThread: boolean, resolve: MessageResolver = m) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixCheck: resolve(msg("Fix in this thread")),
+        fixFindings: resolve(msg("Fix findings in this thread")),
       }
     : {
-        fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFinding: resolve(msg("Fix in a thread")),
+        fixCheck: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixFindings: resolve(msg("Fix findings in a thread")),
       };
 }
 
@@ -330,8 +333,11 @@ export function classifyPullRequestChecks(
   return "passing";
 }
 
-export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+export function describePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+): string {
+  if (checks.length === 0) return resolve(msg("No checks reported"));
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -339,13 +345,24 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  const total = checks.length;
+  if (pending > 0) parts.push(resolve(msg("{pending} of {total} running", { pending, total })));
+  if (actionRequired > 0) {
+    parts.push(
+      resolve(msg("{actionRequired} of {total} awaiting action", { actionRequired, total })),
+    );
+  }
   if (failed > 0) {
-    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+    parts.push(
+      parts.length > 0
+        ? resolve(msg("{failed} failed", { failed }))
+        : resolve(msg("{failed} of {total} failing", { failed, total })),
+    );
   }
   if (parts.length === 0) {
-    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+    return passed === total
+      ? resolve(msg("All checks passed"))
+      : resolve(msg("{passed} of {total} passing", { passed, total }));
   }
   return parts.join(" · ");
 }
@@ -791,6 +808,7 @@ export function buildPullRequestTimeline(
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
   > &
     Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   return [
@@ -798,7 +816,7 @@ export function buildPullRequestTimeline(
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: `opened this ${term}`,
+      title: resolve(msg("opened this {term}", { term })),
       body: null,
       markdown: false,
       url: null,
@@ -814,7 +832,7 @@ export function buildPullRequestTimeline(
       id: commit.oid,
       at: commit.committedDate,
       kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
+      title: resolve(msg("Commit {sha}", { sha: commit.oid.slice(0, 7) })),
       body: commit.messageHeadline || null,
       markdown: false,
       url: null,
@@ -853,7 +871,7 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: `${capitalizeTerm(term)} merged`,
+            title: resolve(msg("{term} merged", { term: capitalizeTerm(term) })),
             body: null,
             markdown: false,
             url: null,
@@ -873,7 +891,7 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: `${capitalizeTerm(term)} closed`,
+            title: resolve(msg("{term} closed", { term: capitalizeTerm(term) })),
             body: null,
             markdown: false,
             url: null,
@@ -1445,7 +1463,7 @@ export function checkoutFailureDescription(failure: unknown): string {
     : failure;
   return readableFailure(
     description,
-    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+    m(msg("Check that the branch still exists and is not checked out elsewhere, then try again.")),
   );
 }
 
