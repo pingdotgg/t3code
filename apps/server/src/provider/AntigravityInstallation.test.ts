@@ -700,6 +700,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
   );
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "explains the 4 KiB page requirement when the runtime aborts before T3 writes to it",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          String(command.command).endsWith(executableName)
+            ? realSpawner.spawn(
+                ChildProcess.make(
+                  "sh",
+                  [
+                    "-c",
+                    // Closing stdin first makes T3's first write fail with EPIPE before the abort.
+                    "exec 0<&-; echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; sleep 1; kill -ABRT $$",
+                  ],
+                  { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+                ),
+              )
+            : realSpawner.spawn(command),
+        );
+        const { installation } = yield* makeHarness({
+          arch: "arm64",
+          useDefaultValidation: true,
+          spawner,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/page/i);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
     () =>
       Effect.gen(function* () {
