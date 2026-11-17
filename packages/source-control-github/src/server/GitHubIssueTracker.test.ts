@@ -626,6 +626,18 @@ Redact secrets before uploading.`);
           closesIssue: true,
         },
       ]);
+      const lockedResponse = DETAIL_RESPONSE.replace(
+        '"viewerPermission":"TRIAGE"',
+        '"viewerPermission":"WRITE"',
+      ).replace('"locked":false', '"locked":true');
+      const writerApi = yield* tracker(() => {}, undefined, lockedResponse);
+      const lockedIssue = yield* writerApi.getIssue({
+        cwd: "/w",
+        host: "github.com",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(lockedIssue.viewerPermissions.comment).toBe(true);
       // An event kind this page has no vocabulary for is dropped rather than guessed at.
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
