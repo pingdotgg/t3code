@@ -65,7 +65,9 @@ export async function loadLocalAttachmentPreview(
   } catch (cause) {
     release();
     if (signal.aborted) return null;
-    throw new Error("This attachment is no longer available. Attach the file again.", { cause });
+    throw new Error(m(msg("This attachment is no longer available. Attach the file again.")), {
+      cause,
+    });
   }
 }
 

@@ -1,14 +1,13 @@
 import * as Hash from "effect/Hash";
 import { File, Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
-import { msg, T, useGT, Var } from "gt-react-native";
+import { T, useGT, Var } from "gt-react-native";
 import type { DiagramType } from "pele/lazy";
 import { Suspense, use, useRef, useState } from "react";
 import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { parse, Svg, SvgXml } from "react-native-svg";
 
 import { FilePreviewModal } from "../components/ui/FilePreviewModal";
-import { m } from "../i18n/messages";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { mermaidSvgForNative, withDiagramBackground } from "../lib/mermaidSvg";
 import { themeColorWithAlpha } from "../lib/mobileTheme";
@@ -23,7 +22,8 @@ type Diagram =
       readonly width: number;
       readonly height: number;
     }
-  | { readonly status: "error"; readonly message: string };
+  | { readonly status: "error"; readonly reason: "load" }
+  | { readonly status: "error"; readonly reason: "render"; readonly message: string | null };
 
 let peleLoad: Promise<Pele | null> | null = null;
 // Each diagram type is its own chunk, so a thread with one flowchart only
@@ -57,7 +57,7 @@ async function renderDiagram(source: string): Promise<Diagram> {
     // Not cached, so the next mount tries again.
     peleLoad = null;
     diagramLoads.delete(source);
-    return { status: "error", message: m(msg("The diagram renderer failed to load.")) };
+    return { status: "error", reason: "load" };
   }
   let type: DiagramType | null = null;
   try {
@@ -77,7 +77,7 @@ async function renderDiagram(source: string): Promise<Diagram> {
     if (!(await load)) {
       typeLoads.delete(type);
       diagramLoads.delete(source);
-      return { status: "error", message: m(msg("The diagram renderer failed to load.")) };
+      return { status: "error", reason: "load" };
     }
   }
   try {
@@ -91,8 +91,8 @@ async function renderDiagram(source: string): Promise<Diagram> {
   } catch (error) {
     return {
       status: "error",
-      message:
-        error instanceof Error ? error.message : m(msg("The diagram could not be rendered.")),
+      reason: "render",
+      message: error instanceof Error ? error.message : null,
     };
   }
 }
@@ -139,6 +139,12 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
   const exportSvg = useRef<Svg>(null);
   const secondaryColor = themeColorWithAlpha(textStyle.codeColor, 0.6);
   const codeFontSize = textStyle.fontSize * 0.9;
+  const diagramError =
+    diagram?.status !== "error"
+      ? null
+      : diagram.reason === "load"
+        ? gt("The diagram renderer failed to load.")
+        : (diagram.message ?? gt("The diagram could not be rendered."));
   const svg =
     diagram?.status === "ready"
       ? mermaidSvgForNative(diagram.svg, {
@@ -222,7 +228,7 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
         {diagram?.status === "error" ? (
           <Text style={[styles.error, { color: secondaryColor, fontSize: codeFontSize * 0.85 }]}>
             <T>
-              Unable to render diagram: <Var>{diagram.message}</Var>
+              Unable to render diagram: <Var>{diagramError}</Var>
             </T>
           </Text>
         ) : null}

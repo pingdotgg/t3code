@@ -7,13 +7,35 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { msg } from "gt-react-native";
 
-import { m } from "../i18n/messages";
+import { m, type MessageResolver } from "../i18n/messages";
 
 import type { WidgetTheme } from "./widgetTheme";
+
+/**
+ * Copy for the widget, which runs without the app's catalogs. `{name}` tokens are filled in by the
+ * widget; `moreInApp` is keyed by count.
+ */
+export interface SubscriptionUsageText {
+  refresh: string;
+  noSessionLimit: string;
+  noWeeklyLimit: string;
+  subscriptionRemaining: string;
+  percentLeft: string;
+  windowPercentLeft: string;
+  notApplicable: string;
+  openApp: string;
+  noLimits: string;
+  asOf: string;
+  tapToConnect: string;
+  providerAccessibility: string;
+  windowAccessibility: string;
+  moreInApp: Record<string, string>;
+}
 
 export interface SubscriptionUsageSnapshot {
   theme?: WidgetTheme;
   url?: string;
+  text?: SubscriptionUsageText;
   checkedAt: number;
   providers: Array<{
     name: string;
@@ -60,11 +82,56 @@ const resetTime = (at: number) =>
     minute: "2-digit",
   });
 
+function subscriptionUsageText(
+  resolve: MessageResolver,
+  maxHiddenWindows: number,
+): SubscriptionUsageText {
+  return {
+    refresh: resolve(msg("Open {app} to refresh", { app: "T3" })),
+    noSessionLimit: resolve(msg("No session limit reported")),
+    noWeeklyLimit: resolve(msg("No weekly limit reported")),
+    subscriptionRemaining: resolve(msg("Subscription remaining")),
+    percentLeft: resolve(msg("{remaining}% left", { remaining: "{remaining}" })),
+    windowPercentLeft: resolve(
+      msg("{window} · {remaining}% left", { window: "{window}", remaining: "{remaining}" }),
+    ),
+    notApplicable: resolve(msg("N/A", { $context: "no usage limit for the chosen period" })),
+    openApp: resolve(msg("Open {app}", { app: "T3" })),
+    noLimits: resolve(msg("No subscription limits available.")),
+    asOf: resolve(msg("As of {time}", { time: "{time}" })),
+    tapToConnect: resolve(msg("Tap to connect in {app}", { app: "T3" })),
+    providerAccessibility: resolve(
+      msg("{provider}. {detail}.", { provider: "{provider}", detail: "{detail}" }),
+    ),
+    windowAccessibility: resolve(
+      msg("{provider}, {window}, {remaining} percent remaining. {reset}. {detail}.", {
+        provider: "{provider}",
+        window: "{window}",
+        remaining: "{remaining}",
+        reset: "{reset}",
+        detail: "{detail}",
+      }),
+    ),
+    moreInApp: Object.fromEntries(
+      Array.from({ length: maxHiddenWindows }, (_, index) => [
+        String(index + 1),
+        resolve(
+          msg("{count, plural, one {{count} more in {app}} other {{count} more in {app}}}", {
+            count: index + 1,
+            app: "T3",
+          }),
+        ),
+      ]),
+    ),
+  };
+}
+
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
   now: number,
   configuredDrivers: ReadonlySet<string>,
   maxWindowsPerProvider: number,
+  resolve: MessageResolver,
 ): SubscriptionUsageSnapshot {
   const pools = collectLimitPools(accounts, now);
   const checked = accounts
@@ -83,7 +150,7 @@ function subscriptionUsageProps(
         if (!pool)
           return {
             name,
-            detail: m(msg("No limits available")),
+            detail: resolve(msg("No limits available")),
             windows: [],
             expiresAt: 0,
             totalWindows: 0,
@@ -112,9 +179,9 @@ function subscriptionUsageProps(
         return {
           name,
           detail: !fresh
-            ? m(msg("Open {app} to refresh", { app: "T3" }))
+            ? resolve(msg("Open {app} to refresh", { app: "T3" }))
             : pool.accounts.length > 1
-              ? m(
+              ? resolve(
                   msg(
                     "{count, plural, one {{count} account · pooled} other {{count} accounts · pooled}}",
                     {
@@ -122,7 +189,7 @@ function subscriptionUsageProps(
                     },
                   ),
                 )
-              : "Subscription remaining",
+              : resolve(msg("Subscription remaining")),
           expiresAt: fresh ? expiresAt : 0,
           totalWindows: fresh ? pool.windows.length : 0,
           windows: fresh
@@ -132,9 +199,9 @@ function subscriptionUsageProps(
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
                   ? isUpcoming(window.resets[0])
-                    ? m(msg("Next reset {time}", { time: resetTime(window.resets[0].at) }))
-                    : m(msg("Reset {time}", { time: resetTime(window.resets[0].at) }))
-                  : m(msg("Reset time unavailable")),
+                    ? resolve(msg("Next reset {time}", { time: resetTime(window.resets[0].at) }))
+                    : resolve(msg("Reset {time}", { time: resetTime(window.resets[0].at) }))
+                  : resolve(msg("Reset time unavailable")),
               }))
             : [],
         };
@@ -146,6 +213,7 @@ export function buildSubscriptionUsageSnapshot(
   presentations: LimitPresentations,
   url: string,
   maxWindowsPerProvider = 6,
+  resolve: MessageResolver = m,
 ): SubscriptionUsageSnapshot {
   const configuredDrivers = new Set(
     [...presentations.values()].flatMap((presentation) =>
@@ -160,14 +228,20 @@ export function buildSubscriptionUsageSnapshot(
         .map((provider) => provider.driver),
     ),
   );
+  const props = subscriptionUsageProps(
+    collectLimitAccounts(presentations),
+    0,
+    configuredDrivers,
+    maxWindowsPerProvider,
+    resolve,
+  );
   return {
-    ...subscriptionUsageProps(
-      collectLimitAccounts(presentations),
-      0,
-      configuredDrivers,
-      maxWindowsPerProvider,
-    ),
+    ...props,
     url,
+    text: subscriptionUsageText(
+      resolve,
+      Math.max(0, ...props.providers.map((provider) => provider.totalWindows)),
+    ),
   };
 }
 
@@ -183,7 +257,7 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
         provider.windows.length > 0 && provider.expiresAt <= date
           ? {
               ...provider,
-              detail: m(msg("Open {app} to refresh", { app: "T3" })),
+              detail: snapshot.text?.refresh ?? m(msg("Open {app} to refresh", { app: "T3" })),
               windows: [],
               totalWindows: 0,
             }

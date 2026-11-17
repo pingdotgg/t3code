@@ -63,7 +63,7 @@ export function writeComposerContextClipboard(
   const encoded = encodeComposerContextFragment(fragment);
   if (!encoded)
     return Promise.reject(
-      new Error("This context selection is too large to copy. Select fewer items."),
+      new Error(m(msg("This context selection is too large to copy. Select fewer items."))),
     );
   return nativeClipboard().writeContextClipboard(text, encoded);
 }

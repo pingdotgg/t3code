@@ -138,7 +138,9 @@ function supportedImageWireMimeType(
   const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
     (type) => type === attachment.mimeType.toLowerCase() || type === inferred,
   );
-  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
+  if (!mimeType) {
+    throw new Error(m(msg("Unsupported image type for ''{name}''.", { name: attachment.name })));
+  }
   return mimeType;
 }
 

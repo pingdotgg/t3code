@@ -12,7 +12,7 @@ import {
   useNavigation,
 } from "@react-navigation/native";
 import { createNativeStackScreen } from "@react-navigation/native-stack";
-import { msg, T, useGT } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
 import { useResolveClassNames } from "uniwind";
@@ -143,12 +143,13 @@ import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
 import { workspaceDetailRouter } from "./features/layout/workspace/workspace-detail-selection";
-import { m } from "./i18n/messages";
 
 const settingsPage = () => pageRoute({ itemStyle: "standard" });
 
-// Resolved in screenOptions so each header title follows the UI language; route options stay
-// plain objects because registerPresentedRoutes reads them at load.
+const { title: _compactBrandTitle, ...compactBrandHeaderOptions } = getCompactBrandHeaderOptions();
+
+// Resolved in the rendered Navigator's screenOptions so each header title follows the UI language;
+// route options stay plain objects because registerPresentedRoutes reads them at load.
 const ROUTE_TITLES: Readonly<Record<string, string>> = {
   Settings: msg("Settings"),
   SettingsEnvironments: msg("Environments"),
@@ -531,10 +532,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
   UNSTABLE_router: workspaceDetailRouter,
   // React Navigation calls layouts inline; compiled components would share the navigator's memo cache.
   layout: (props) => <RootStackLayout {...props} />,
-  screenOptions: ({ route }) => {
-    const title = ROUTE_TITLES[route.name];
-    return { headerShown: false, ...(title === undefined ? undefined : { title: m(title) }) };
-  },
+  screenOptions: { headerShown: false },
   screens: {
     ...(__DEV__
       ? {
@@ -555,7 +553,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         ...pageRoute({ duoMinimize: "never", root: true }),
         contentStyle: { backgroundColor: "transparent" },
-        ...getCompactBrandHeaderOptions(),
+        ...compactBrandHeaderOptions,
       },
     }),
     PullRequest: createNativeStackScreen({
@@ -840,22 +838,32 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   const { width, height } = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
+  const resolve = useMessages();
 
   /* oxlint-disable react/no-unstable-nested-components -- React Navigation invokes screenLayout as a render callback. */
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenOptions={({ route, navigation }) =>
-        Platform.OS === "android"
-          ? {
-              animation: androidWorkspaceDestinationAnimation(
-                route,
-                navigation.getState().routes,
-                usesSplitView,
-              ),
-            }
-          : {}
-      }
+      screenOptions={({ route, navigation }) => {
+        const title =
+          route.name === "Home"
+            ? getCompactBrandHeaderOptions(undefined, resolve).title
+            : ROUTE_TITLES[route.name] === undefined
+              ? undefined
+              : resolve(ROUTE_TITLES[route.name]);
+        return {
+          ...(title === undefined ? {} : { title }),
+          ...(Platform.OS === "android"
+            ? {
+                animation: androidWorkspaceDestinationAnimation(
+                  route,
+                  navigation.getState().routes,
+                  usesSplitView,
+                ),
+              }
+            : {}),
+        };
+      }}
     />
   );
 

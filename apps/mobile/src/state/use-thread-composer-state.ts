@@ -304,6 +304,7 @@ export function useThreadComposerState(input: {
       nodes: selectedThreadNodes,
       checkpointSummaries,
       cache: feedCache,
+      resolve,
     });
     const pendingAcknowledgments = selectPendingAcknowledgedMessages(acknowledgedMessages, {
       threadKey: selectedThreadKey,

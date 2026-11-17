@@ -40,6 +40,14 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
       }
     : getMaterialColors({ scheme: appearance });
   const muted = colors.onSurfaceVariant;
+  // English until the app publishes its first snapshot in the UI language.
+  const text = props.text ?? {
+    refresh: "Open T3 to refresh",
+    windowPercentLeft: "{window} · {remaining}% left",
+    asOf: "As of {time}",
+    tapToConnect: "Tap to connect in T3",
+    moreInApp: {} as Record<string, string>,
+  };
   const providers = props.providers ?? [
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
     { name: "Claude", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
@@ -71,7 +79,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
               </Text>
               {shown.length === 0 ? (
                 <Text color={muted} maxLines={1} style={{ fontSize: 11 }}>
-                  {stale ? "Open T3 to refresh" : provider.detail}
+                  {stale ? text.refresh : provider.detail}
                 </Text>
               ) : null}
               {shown.map((window) => {
@@ -83,7 +91,9 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
                       maxLines={1}
                       style={{ fontSize: 11 }}
                     >
-                      {`${window.label} · ${window.remaining}% left`}
+                      {text.windowPercentLeft
+                        .replace("{window}", window.label)
+                        .replace("{remaining}", String(window.remaining))}
                     </Text>
                     <Column modifiers={[fillMaxWidth(), padding(0, 3, 0, 3)]}>
                       <LinearProgressIndicator
@@ -101,7 +111,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
               })}
               {hidden > 0 ? (
                 <Text color={muted} maxLines={1} style={{ fontSize: 10 }}>
-                  {`${hidden} more in T3`}
+                  {text.moreInApp[String(hidden)] ?? `${hidden} more in T3`}
                 </Text>
               ) : null}
             </Column>
@@ -114,8 +124,16 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
           modifiers={[padding(0, 10, 0, 0)]}
         >
           {props.checkedAt
-            ? `As of ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`
-            : "Tap to connect in T3"}
+            ? text.asOf.replace(
+                "{time}",
+                new Date(props.checkedAt).toLocaleString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  month: "short",
+                  day: "numeric",
+                }),
+              )
+            : text.tapToConnect}
         </Text>
       </Column>
     </Button>
