@@ -123,6 +123,7 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly holdOpenSession?: Deferred.Deferred<void>;
   /** A tool call the held turn reports running before it holds. */
   readonly heldRunningToolCall?: {
     readonly id: TurnItemId;
@@ -141,6 +142,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
+        if (input.holdOpenSession !== undefined) yield* Deferred.await(input.holdOpenSession);
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         if (input.closedSessions !== undefined) {
           const closedSessions = input.closedSessions;
@@ -2499,6 +2501,7 @@ describe("orchestration v2 provider switching", () => {
 
   const steerProviderSwitchHarness = Effect.fn("steerProviderSwitchHarness")(function* (
     key: string,
+    holdOpenSession?: Deferred.Deferred<void>,
   ) {
     const cwd = yield* checkpointWorkspace(`steer-provider-switch-${key}`);
     const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -2515,6 +2518,7 @@ describe("orchestration v2 provider switching", () => {
         capturedTurns,
         holdFirstTurn: started,
         releaseFirstTurn: release,
+        ...(holdOpenSession === undefined ? {} : { holdOpenSession }),
       }),
       makeTestAdapter({
         instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -2633,8 +2637,11 @@ describe("orchestration v2 provider switching", () => {
     "runs a provider switch steered into a Claude turn that %s after that turn",
     (phase) =>
       Effect.gen(function* () {
+        const sessionGate = yield* Deferred.make<void>();
+        if (phase === "is running") yield* Deferred.succeed(sessionGate, undefined);
         const harness = yield* steerProviderSwitchHarness(
           phase === "is running" ? "running" : "before-session",
+          sessionGate,
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2668,6 +2675,7 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(queued?.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
           assert.isUndefined(queued?.steerWhenReadyRunId);
 
+          yield* Deferred.succeed(sessionGate, undefined);
           yield* Deferred.await(harness.started);
           yield* Deferred.succeed(harness.release, undefined);
           yield* waitForRun(1);
