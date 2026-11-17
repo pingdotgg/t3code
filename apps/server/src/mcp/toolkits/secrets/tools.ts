@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as AgentSecrets from "../../../secrets/AgentSecrets.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -25,7 +25,8 @@ export const SecretsToolkit = Toolkit.make(
     success: Schema.Struct({ items: Schema.Array(AgentSecrets.SecretItem) }),
   })
     .annotate(Tool.Readonly, true)
-    .annotate(Tool.Destructive, false),
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("secret_run", {
     ...shared,
     description:
@@ -39,5 +40,6 @@ export const SecretsToolkit = Toolkit.make(
     success: AgentSecrets.SecretRunResult,
   })
     .annotate(Tool.Destructive, true)
-    .annotate(Tool.OpenWorld, true),
+    .annotate(Tool.OpenWorld, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
 );
