@@ -1,0 +1,88 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { requireNativeModule, requireNativeView } from "expo";
+import type { Ref } from "react";
+import { StyleSheet, View, type NativeSyntheticEvent, type ViewProps } from "react-native";
+
+import { readPreviewTunnelUrl } from "../../state/previewTunnel";
+
+export interface TunnelNavigation {
+  readonly url: string;
+  readonly title: string;
+  readonly loading: boolean;
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
+}
+
+export interface TunnelWebViewRef {
+  readonly loadUrl: (url: string) => Promise<void>;
+  readonly goBack: () => Promise<void>;
+  readonly goForward: () => Promise<void>;
+  readonly reload: () => Promise<void>;
+}
+
+const PreviewTunnel = requireNativeModule<{
+  resolveAccess(requestId: string, url: string | null): void;
+}>("T3PreviewTunnel");
+
+const NativeTunnelWebView = requireNativeView<
+  ViewProps & {
+    readonly ref?: Ref<TunnelWebViewRef>;
+    readonly environmentId: string;
+    readonly url: string;
+    readonly onAccessRequest: (event: NativeSyntheticEvent<{ requestId: string }>) => void;
+    readonly onNavigationChange: (event: NativeSyntheticEvent<TunnelNavigation>) => void;
+    readonly onLoadError: (
+      event: NativeSyntheticEvent<{ code: number; description: string; url: string }>,
+    ) => void;
+  }
+>("T3PreviewTunnel");
+
+/** A native webview whose localhost is the environment's loopback, reached through its tunnel. */
+export function TunnelWebView({
+  environmentId,
+  url,
+  ref,
+  onNavigationChange,
+  onLoadError,
+  ...props
+}: ViewProps & {
+  readonly environmentId: EnvironmentId;
+  readonly url: string;
+  readonly ref?: Ref<TunnelWebViewRef>;
+  readonly onNavigationChange: (navigation: TunnelNavigation) => void;
+  /**
+   * `url` is the address that failed, or empty when the platform does not report it.
+   * `unsupported` means this device's webview cannot route localhost at all.
+   */
+  readonly onLoadError: (failure: {
+    readonly url: string;
+    readonly unsupported: boolean;
+    readonly description: string;
+  }) => void;
+}) {
+  // Styling goes on a plain View: a native view from `requireNativeView` ignores className.
+  return (
+    <View {...props}>
+      <NativeTunnelWebView
+        style={StyleSheet.absoluteFill}
+        ref={ref}
+        environmentId={environmentId}
+        url={url}
+        onAccessRequest={({ nativeEvent }) => {
+          void readPreviewTunnelUrl(environmentId).then((tunnelUrl) =>
+            PreviewTunnel.resolveAccess(nativeEvent.requestId, tunnelUrl),
+          );
+        }}
+        onNavigationChange={({ nativeEvent }) => onNavigationChange(nativeEvent)}
+        onLoadError={({ nativeEvent }) =>
+          onLoadError({
+            url: nativeEvent.url,
+            // The view reports a setup failure with no URL and code -1, before any page loads.
+            unsupported: nativeEvent.code === -1 && nativeEvent.url === "",
+            description: nativeEvent.description,
+          })
+        }
+      />
+    </View>
+  );
+}
