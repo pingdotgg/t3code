@@ -31,7 +31,7 @@ describe("buildThreadTitlePrompt", () => {
       expect(prompt).toContain("Title instructions from the user:\nPrefix every title");
     }
     expect(buildThreadTitlePrompt({ message: "Fix login", instructions: " " }).prompt).toContain(
-      "3-8 words, fewer than 40 characters.",
+      "Prefer 3-5 plain words, fewer than 40 characters.",
     );
   });
 });
