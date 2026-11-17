@@ -44,6 +44,7 @@ import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import { makeIsSharedPathLink } from "./vcs/worktreeLightPaths.ts";
 import { scratchFolderRoot } from "./project/ManagedProjectFolders.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -362,6 +363,7 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const isSharedPathLink = yield* makeIsSharedPathLink;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
@@ -908,9 +910,12 @@ const make = Effect.gen(function* () {
       appendTruncationMarker: true,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
-    const file = ignored.stdout
+    const candidates = ignored.stdout
       .split("\0")
-      .find((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry));
+      .filter((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry));
+    const [file] = yield* Effect.filter(candidates, (entry) =>
+      isSharedPathLink(cwd, entry).pipe(Effect.map((shared) => !shared)),
+    );
     return file === undefined ? null : `has ignored files (${file})`;
   });
 

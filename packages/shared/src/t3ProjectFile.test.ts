@@ -30,3 +30,34 @@ describe("parseT3ProjectFile", () => {
     ).toEqual({ defaultThreadEnvMode: "worktree" });
   });
 });
+
+describe("worktree paths", () => {
+  it("normalizes trailing slashes and keeps nested folders", () => {
+    expect(
+      parseT3ProjectFile(`{
+        "worktreeSharedPaths": [" .zig-cache/ ", "app/.next/cache"],
+        "worktreeClonePaths": ["node_modules//"]
+      }`),
+    ).toEqual({
+      worktreeSharedPaths: [".zig-cache", "app/.next/cache"],
+      worktreeClonePaths: ["node_modules"],
+    });
+  });
+
+  it.each([
+    "/abs/cache",
+    "../outside",
+    "a/../../b",
+    "./cache",
+    ".",
+    ".t3",
+    ".git/objects",
+    ".env",
+    "app/.env.local",
+    "C:/cache",
+    "back\\slash",
+    "",
+  ])("rejects %j", (entry) => {
+    expect(parseT3ProjectFile(JSON.stringify({ worktreeClonePaths: [entry] }))).toBeNull();
+  });
+});

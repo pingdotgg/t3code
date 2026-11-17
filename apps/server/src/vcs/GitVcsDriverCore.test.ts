@@ -7228,6 +7228,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }).pipe(withGitFileProtocol),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "links t3.json shared paths to one folder per repository, kept out of Git status",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const { worktreeSharedPathsDir } = yield* ServerConfig.ServerConfig;
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, ".gitignore", ".zig-cache/\n");
+          yield* writeTextFile(cwd, "t3.json", `{ "worktreeSharedPaths": [".zig-cache/"] }`);
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "share the zig cache"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const worktreesDir = yield* makeTmpDir("git-worktrees-");
+
+          const caches: string[] = [];
+          for (const branch of ["light-a", "light-b"]) {
+            const worktreePath = pathService.join(worktreesDir, branch);
+            yield* driver.createWorktree({
+              cwd,
+              path: worktreePath,
+              refName: initialBranch,
+              newRefName: branch,
+            });
+            caches.push(yield* fileSystem.readLink(pathService.join(worktreePath, ".zig-cache")));
+            assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+          }
+          assert.equal(caches[0], caches[1]);
+          assert.isTrue(caches[0]!.startsWith(worktreeSharedPathsDir));
+          yield* writeTextFile(pathService.join(worktreesDir, "light-a"), ".zig-cache/o/1", "x");
+          assert.isTrue(
+            yield* fileSystem.exists(pathService.join(worktreesDir, "light-b", ".zig-cache/o/1")),
+          );
+        }),
+    );
+
     it.effect("still creates the worktree when the base-ref config stays locked", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

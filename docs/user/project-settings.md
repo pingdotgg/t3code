@@ -322,6 +322,45 @@ or newer. Git's normal checkout is also used for worktrees on a different drive 
 directory, sparse checkouts, repositories whose attributes use filters such as Git LFS, and
 repositories whose checkout settings changed.
 
+## Light worktrees
+
+Build caches inside a checkout, such as `.zig-cache`, are rebuilt and stored again in every new
+worktree. Two `t3.json` fields keep worktrees small:
+
+- `worktreeSharedPaths` links each listed folder in every new worktree to one folder per
+  repository in the `caches` folder of the Ada home directory. The first link starts from a
+  copy-on-write clone of the source checkout's folder when the filesystem supports it. Builds in
+  any worktree reuse what the others compiled, whether they run from Ada, an agent, or your own
+  terminal. List only caches whose tool allows several builds at once.
+- `worktreeClonePaths` clones each listed folder from the source checkout into a new worktree
+  before its setup script runs. Clones share disk blocks until a file changes, so they take
+  almost no space. They need APFS on macOS or a filesystem with reflinks on Linux, such as Btrfs
+  or XFS; elsewhere Ada skips them.
+
+Both take Git-ignored, repository-relative folders. `.git`, `.t3`, and `.env` files are refused.
+Ada keeps shared links out of `git status`, and removing or reclaiming a worktree leaves the
+shared folder in place. A settle script that deletes build output must not delete a shared path,
+because the cache belongs to every worktree.
+
+Examples by toolchain:
+
+- **Zig:** share the local cache. Zig locks its manifests, so concurrent builds are safe.
+  `{ "worktreeSharedPaths": [".zig-cache"] }`. Compiled Zig modules are reused across worktrees.
+  As of Zig 0.17, steps that run external commands (`addSystemCommand`) are cached per checkout
+  folder, so anything built from their output is rebuilt in each worktree.
+- **Rust:** clone `target`, so the first build is incremental:
+  `{ "worktreeClonePaths": ["target"] }`. Don't share `target`, because each build replaces the
+  binaries another worktree runs. To share compiled crates, use
+  [sccache](https://github.com/mozilla/sccache), whose cache is already global.
+- **Go:** nothing to add. Go's build and module caches are already shared across checkouts.
+- **uv:** nothing to add. uv's cache is global and new environments link to it, so a setup script
+  running `uv sync` is fast and small.
+- **Next.js:** clone the build cache: `{ "worktreeClonePaths": [".next/cache"] }`. Next.js does
+  not document concurrent builds in one cache, so don't share it.
+- **pnpm or npm:** clone `node_modules`, then keep `pnpm install` in the setup script. Some links
+  in a cloned `node_modules/.bin` still point at the source checkout until the install fixes
+  them.
+
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected

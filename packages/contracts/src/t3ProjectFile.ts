@@ -22,6 +22,48 @@ const trimmedNonEmpty = (annotations: { readonly description: string }, maxLengt
   return encoded.pipe(Schema.decodeTo(encoded, SchemaTransformation.trim()));
 };
 
+const T3_PROJECT_FILE_MAX_WORKTREE_PATHS = 32;
+
+const isWorktreeSeedablePath = (value: string) =>
+  value.split("/").every((part) => {
+    const lower = part.toLowerCase();
+    return (
+      part.length > 0 &&
+      part !== "." &&
+      part !== ".." &&
+      !/[\\\u0000-\u001f\u007f:]/.test(part) &&
+      lower !== ".git" &&
+      lower !== ".t3" &&
+      !lower.startsWith(".env")
+    );
+  });
+
+const worktreePath = (description: string) => {
+  const decoded = Schema.String.check(
+    Schema.isMaxLength(T3_PROJECT_FILE_PATH_MAX_LENGTH),
+    Schema.makeFilter(isWorktreeSeedablePath, {
+      message:
+        "Expected a relative path with forward slashes, outside .git, .t3 and .env files, without . or .. segments",
+    }),
+  );
+  return Schema.String.annotate({ description }).pipe(
+    Schema.decodeTo(
+      decoded,
+      SchemaTransformation.transform({
+        decode: (value) => value.trim().replace(/\/+$/, ""),
+        encode: (value) => value,
+      }),
+    ),
+  );
+};
+
+const worktreePaths = (description: string, item: string) =>
+  Schema.optionalKey(
+    Schema.Array(worktreePath(item))
+      .annotate({ description })
+      .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_WORKTREE_PATHS)),
+  );
+
 export const T3ProjectFileScript = Schema.Struct({
   name: trimmedNonEmpty({
     description: "Display name for the script, shown in the Ada scripts menu.",
@@ -101,6 +143,14 @@ export const T3ProjectFile = Schema.Struct({
       description:
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in Ada overrides this.',
     }),
+  ),
+  worktreeSharedPaths: worktreePaths(
+    'Git-ignored cache folders that every worktree of this repository shares (e.g. ".zig-cache"). Ada links each one to a single folder under its home, seeded from the source checkout when possible. Only list caches whose tool tolerates concurrent builds.',
+    "Repository-relative folder shared by all worktrees.",
+  ),
+  worktreeClonePaths: worktreePaths(
+    'Git-ignored folders copied from the source checkout into each new worktree before setup runs (e.g. "node_modules" or "target"). Ada uses copy-on-write clones, which take almost no space, and skips this where the filesystem cannot clone.',
+    "Repository-relative folder cloned into new worktrees.",
   ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)

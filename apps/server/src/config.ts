@@ -43,6 +43,7 @@ export interface ServerDerivedPaths {
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly worktreeCheckoutCacheDir: string;
+  readonly worktreeSharedPathsDir: string;
   readonly attachmentsDir: string;
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
@@ -164,6 +165,7 @@ export const deriveServerPaths = Effect.fn(function* (
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
+    worktreeSharedPathsDir: join(providerStatusCacheDir, "worktree-shared"),
     attachmentsDir,
     browserArtifactsDir: join(stateDir, "browser-artifacts"),
     logsDir,

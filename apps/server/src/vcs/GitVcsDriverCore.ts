@@ -53,6 +53,7 @@ import {
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
+import { prepareWorktreeLightPaths } from "./worktreeLightPaths.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
@@ -1019,7 +1020,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const ioGate = yield* WorkspaceIoGate.WorkspaceIoGate;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir, worktreeCheckoutCacheDir } = yield* ServerConfig.ServerConfig;
+  const { worktreesDir, worktreeCheckoutCacheDir, worktreeSharedPathsDir } =
+    yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const random = yield* SecureRandom.SecureRandom;
@@ -5286,24 +5288,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
+    const projectFile = yield* Effect.cached(
+      fileSystem.readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME)).pipe(
+        Effect.flatMap((contents) => {
+          const file = parseT3ProjectFile(contents);
+          return file === null
+            ? Effect.logWarning("t3.json is invalid; using default worktree settings", {
+                worktreePath,
+              }).pipe(Effect.as(null))
+            : Effect.succeed(file);
+        }),
+        Effect.orElseSucceed(() => null),
+      ),
+    );
     const submoduleMode = !hasSubmodules
       ? { value: "none" as const, source: "environment" as const }
       : resolveProjectFileBackedSetting(
           "worktreeSubmodules",
           options?.submodules ?? null,
-          options?.submodules != null
-            ? null
-            : yield* fileSystem.readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME)).pipe(
-                Effect.flatMap((contents) => {
-                  const file = parseT3ProjectFile(contents);
-                  return file === null
-                    ? Effect.logWarning("t3.json is invalid; initializing submodules recursively", {
-                        worktreePath,
-                      }).pipe(Effect.as(null))
-                    : Effect.succeed(file);
-                }),
-                Effect.orElseSucceed(() => null),
-              ),
+          options?.submodules != null ? null : yield* projectFile,
         );
     if (hasSubmodules && submoduleMode.value === "none" && progress?.onSubmodulesDisabled) {
       yield* progress.onSubmodulesDisabled({
@@ -5406,6 +5409,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               : Effect.void,
         }),
       );
+    }
+
+    const lightPaths = yield* projectFile;
+    const sharedPaths = lightPaths?.worktreeSharedPaths ?? [];
+    const clonePaths = lightPaths?.worktreeClonePaths ?? [];
+    if (sharedPaths.length > 0 || clonePaths.length > 0) {
+      const [commonDir, sourcePath] = yield* Effect.all(
+        [readGitCommonDir(input.cwd), readWorktreeRoot(input.cwd)],
+        { concurrency: "unbounded" },
+      );
+      if (commonDir !== null && sourcePath !== null) {
+        const repositoryHash = yield* digest.digest(
+          Digest.sha256,
+          new TextEncoder().encode(commonDir),
+        );
+        yield* prepareWorktreeLightPaths({
+          sourcePath,
+          worktreePath,
+          sharedRoot: path.join(
+            worktreeSharedPathsDir,
+            `${repoName}-${Hex.encode(repositoryHash).slice(0, 16)}`,
+          ),
+          excludeFile: path.join(commonDir, "info", "exclude"),
+          sharedPaths,
+          clonePaths,
+          isIgnored: (relativePath) =>
+            executeGit(
+              "GitVcsDriver.createWorktree.checkIgnore",
+              worktreePath,
+              ["check-ignore", "-q", "--", relativePath],
+              { allowNonZeroExit: true },
+            ).pipe(
+              Effect.map((result) => result.exitCode === 0),
+              Effect.orElseSucceed(() => false),
+            ),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+      }
     }
 
     // Before the worktree is returned: a refresh holds index.lock, so running it in the
