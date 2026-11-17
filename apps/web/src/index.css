@@ -2709,3 +2709,7 @@ code {
   font-size: 0.9em;
   line-height: 1;
 }
+
+.messages-timeline-scroll:focus-visible {
+  outline: none;
+}

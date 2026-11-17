@@ -11,7 +11,6 @@ import {
   contextChipVariables,
   getThemeDefinition,
   getThemeColorsForMode,
-  getThemeDefinition,
   getThemeModes,
   getCustomThemes,
   getStandardThemeColors,

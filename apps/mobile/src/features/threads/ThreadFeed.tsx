@@ -167,7 +167,7 @@ import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./mar
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
-import { flattenThemeColor } from "../../lib/mobileTheme";
+import { flattenThemeColor, themeColorWithContrast } from "../../lib/mobileTheme";
 import { getMobileReplyTypography, getMobileUserTypography } from "../../lib/typography";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
@@ -1454,6 +1454,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
     theme["--color-user-bubble"],
   );
   const markdownUserBodyColor = theme["--color-user-bubble-foreground"];
+  const userLinkColor = themeColorWithContrast(markdownLinkColor, theme["--color-user-bubble"]);
   const markdownUserCodeBg = theme["--color-md-user-code-bg"];
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
@@ -1471,7 +1472,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
           color: markdownUserBodyColor,
           strongColor: markdownUserBodyColor,
           mutedColor: markdownUserBodyColor,
-          linkColor: markdownUserBodyColor,
+          linkColor: userLinkColor,
           inlineCodeColor: markdownUserInlineCodeText,
           codeColor: markdownUserCodeText,
           codeBackgroundColor: markdownUserCodeBg,
@@ -1528,6 +1529,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
     markdownLinkColor,
     markdownStrongColor,
     markdownUserBodyColor,
+    userLinkColor,
     markdownUserCodeBg,
     markdownUserCodeText,
     markdownUserFenceBg,
