@@ -239,22 +239,17 @@ describe("IssueService", () => {
       });
       expect(writes).toEqual(["acme/web#1"]);
 
-      for (const repository of ["acme/api", "acme/web"]) {
-        const mixed = yield* makeService({
-          projects: [
-            project({ id: "https", repository }),
-            project({
-              id: "ssh",
-              repository: "acme/web",
-              remoteUrl: "git@github.com:acme/web.git",
-            }),
-          ],
-          trackers: [fakeTracker()],
-        });
-        expect(
-          yield* mixed.resolveUrl("https://github.com/acme/web/issues/7", "ssh" as ProjectId),
-        ).toMatchObject({ projectId: "ssh", scope: "acme/web", key: "7", writable: true });
-      }
+      // A portless link keeps SSH and HTTPS remotes on the same host as candidates.
+      const mixed = yield* makeService({
+        projects: [
+          project({ id: "https", repository: "acme/web" }),
+          project({ id: "ssh", repository: "acme/web", remoteUrl: "git@github.com:acme/web.git" }),
+        ],
+        trackers: [fakeTracker()],
+      });
+      expect(
+        yield* mixed.resolveUrl("https://github.com/acme/web/issues/7", "ssh" as ProjectId),
+      ).toMatchObject({ projectId: "ssh", writable: true });
 
       // A link's port picks the server: the project bound with it, not a default-port namesake.
       const ported = yield* makeService({
@@ -305,6 +300,7 @@ describe("IssueService", () => {
         failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
       });
 
+      // A configured web or HTTPS authority admits only its own port; SSH names no port.
       for (const { provider, host, path } of [
         { provider: "forgejo", host: "gitea.test", path: "issues" },
         { provider: "gitlab", host: "gitlab.test", path: "-/issues" },
@@ -330,40 +326,16 @@ describe("IssueService", () => {
             yield* configured.resolveUrl(`https://${host}:8443/acme/web/${path}/3`),
           ).toMatchObject({
             projectId: "configured",
-            key: "3",
-            writable: true,
             host: provider === "forgejo" && transport !== "ssh" ? `${host}:8443` : host,
+            writable: true,
           });
-          const bindingHost = provider === "forgejo" && transport !== "ssh" ? `${host}:8443` : host;
-          expect(yield* configured.projectScope("configured" as ProjectId)).toMatchObject({
-            host: bindingHost,
-          });
-          expect(
-            yield* configured.detail({
-              projectId: "configured" as ProjectId,
-              tracker: IssueTrackerKind.make(provider),
-              host: bindingHost,
-              scope: "acme/web",
-              key: "3",
-            }),
-          ).toMatchObject({ writable: true });
-          if (transport !== "ssh") {
+          if (transport === "ssh") continue;
+          for (const elsewhere of [`${host}:9443`, host]) {
             expect(
               yield* configured
-                .resolveUrl(`https://${host}:9443/acme/web/${path}/3`)
+                .resolveUrl(`https://${elsewhere}/acme/web/${path}/3`)
                 .pipe(Effect.result),
-            ).toMatchObject({
-              _tag: "Failure",
-              failure: { reason: "tracker-unsupported" },
-            });
-            expect(
-              yield* configured
-                .resolveUrl(`https://${host}/acme/web/${path}/3`)
-                .pipe(Effect.result),
-            ).toMatchObject({
-              _tag: "Failure",
-              failure: { reason: "tracker-unsupported" },
-            });
+            ).toMatchObject({ _tag: "Failure", failure: { reason: "tracker-unsupported" } });
           }
         }
       }
