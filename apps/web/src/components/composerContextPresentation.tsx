@@ -10,6 +10,8 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
 import { createContext, type ReactElement, type ReactNode, use } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "../i18n/messages";
 import { ComposerContextActionsContext } from "./composerContextActions";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
@@ -140,13 +142,15 @@ function ContextChip(props: {
   detailsMode: ContextPresentationCapability["details"];
   kind: ContextChipKind;
 }) {
+  const m = useMessages();
+  const kindLabel = m(props.kindLabel);
   if (props.detailsMode === "popover") {
     return (
       <ContextChipPopover
         kind={props.kind}
         icon={props.icon}
         label={props.label}
-        accessibleLabel={props.kindLabel + ", " + props.label}
+        accessibleLabel={kindLabel + ", " + props.label}
       >
         {props.details}
       </ContextChipPopover>
@@ -157,9 +161,7 @@ function ContextChip(props: {
       kind={props.kind}
       icon={props.icon}
       label={props.label}
-      aria-label={
-        props.detailsMode === "tooltip" ? `${props.kindLabel}, ${props.label}` : undefined
-      }
+      aria-label={props.detailsMode === "tooltip" ? `${kindLabel}, ${props.label}` : undefined}
       tooltip={props.detailsMode === "tooltip" ? props.details : undefined}
     />
   );
@@ -169,8 +171,9 @@ function useUploadStatusSuffix(
   key: string,
   upload: AttachmentUploadState | undefined,
 ): string | null {
+  const gt = useGT();
   const progress = useAttachmentUploadProgress(key, upload);
-  if (upload?.status === "failed") return "upload failed";
+  if (upload?.status === "failed") return gt("upload failed");
   return progress;
 }
 
@@ -213,11 +216,12 @@ function FileContextChip(props: {
   record: ComposerFileAttachment;
   upload: AttachmentUploadState | undefined;
 }) {
+  const gt = useGT();
   const actions = use(ComposerContextActionsContext);
   const { resolvedTheme } = useTheme();
   const needsReattach = composerFileNeedsReattach(props.record);
   const uploadSuffix = useUploadStatusSuffix(props.record.id, props.upload);
-  const suffix = needsReattach ? "attach again" : uploadSuffix;
+  const suffix = needsReattach ? gt("attach again") : uploadSuffix;
   const size = formatAttachmentSize(props.record.sizeBytes);
   const isVideo = videoMimeType(props.record) !== null;
   return (
@@ -238,7 +242,11 @@ function FileContextChip(props: {
       error={props.upload?.status === "failed"}
       unresolved={needsReattach}
       suffix={suffix}
-      accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
+      accessibleLabel={
+        isVideo && !needsReattach
+          ? gt("Preview video attachment, {name}, {size}", { name: props.record.name, size })
+          : gt("File attachment, {name}, {size}", { name: props.record.name, size })
+      }
       onOpen={
         !needsReattach
           ? () =>
@@ -247,7 +255,9 @@ function FileContextChip(props: {
       }
       tooltip={
         needsReattach
-          ? `${props.record.name} was not saved with this draft. Attach it again to send it.`
+          ? gt("{name} was not saved with this draft. Attach it again to send it.", {
+              name: props.record.name,
+            })
           : attachmentTooltip(props.record, props.upload)
       }
     />
@@ -270,16 +280,49 @@ function PullRequestContextChip(props: { record: ReviewCommentContext; kind: Con
   );
 }
 
-function previewAnnotationTooltip(annotation: PreviewAnnotationPayload): string {
+function previewAnnotationTooltip(
+  annotation: PreviewAnnotationPayload,
+  resolve: MessageResolver,
+): string {
   const lines = [annotation.pageTitle?.trim() || annotation.pageUrl];
   if (annotation.comment.trim()) lines.push("", annotation.comment.trim());
   const targets: string[] = [];
-  const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-  if (annotation.elements.length > 0) targets.push(plural(annotation.elements.length, "element"));
-  if (annotation.regions.length > 0) targets.push(plural(annotation.regions.length, "region"));
-  if (annotation.strokes.length > 0) targets.push(plural(annotation.strokes.length, "drawing"));
-  if (annotation.styleChanges.length > 0) {
-    targets.push(plural(annotation.styleChanges.length, "style change"));
+  const { elements, regions, strokes, styleChanges } = annotation;
+  if (elements.length > 0) {
+    targets.push(
+      resolve(
+        msg("{count, plural, one {{count} element} other {{count} elements}}", {
+          count: elements.length,
+        }),
+      ),
+    );
+  }
+  if (regions.length > 0) {
+    targets.push(
+      resolve(
+        msg("{count, plural, one {{count} region} other {{count} regions}}", {
+          count: regions.length,
+        }),
+      ),
+    );
+  }
+  if (strokes.length > 0) {
+    targets.push(
+      resolve(
+        msg("{count, plural, one {{count} drawing} other {{count} drawings}}", {
+          count: strokes.length,
+        }),
+      ),
+    );
+  }
+  if (styleChanges.length > 0) {
+    targets.push(
+      resolve(
+        msg("{count, plural, one {{count} style change} other {{count} style changes}}", {
+          count: styleChanges.length,
+        }),
+      ),
+    );
   }
   if (targets.length > 0) lines.push("", targets.join(", "));
   return lines.join("\n");
@@ -311,19 +354,21 @@ function ComposerPreviewAnnotationDetails({
   annotation: PreviewAnnotationPayload;
   screenshot: ComposerImageAttachment | undefined;
 }) {
-  const summary = previewAnnotationTooltip(annotation);
+  const gt = useGT();
+  const m = useMessages();
+  const summary = previewAnnotationTooltip(annotation, m);
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {screenshotUrl ? (
         <img
           src={screenshotUrl}
-          alt="Annotated preview crop"
+          alt={gt("Annotated preview crop")}
           className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"
         />
       ) : (
         <div className="border-border/70 border-b bg-muted/40 px-3 py-2 text-secondary-label text-xs">
-          Screenshot unavailable
+          <T>Screenshot unavailable</T>
         </div>
       )}
       <div className="whitespace-pre-wrap wrap-break-word px-3 py-2.5 text-sm text-foreground">
@@ -349,10 +394,11 @@ function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
 }
 
 function UnresolvedContextChip(props: { label: string }) {
+  const gt = useGT();
   return (
     <UnresolvedChip
       label={props.label}
-      tooltip="This context is no longer available. Remove it or attach it again."
+      tooltip={gt("This context is no longer available. Remove it or attach it again.")}
     />
   );
 }
@@ -430,7 +476,9 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           <ContextChip
             icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
             label={reviewCommentContextLabel(entry.record)}
-            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            kindLabel={
+              isPullRequest ? pullRequestContextKindLabel(entry.record) : msg("Review comment")
+            }
             details={<ComposerReviewCommentDetails comment={entry.record} />}
             detailsMode={definition.capabilities.details}
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
@@ -446,7 +494,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           <ContextChip
             icon={<MousePointerClickIcon />}
             label={previewAnnotationContextLabel(entry.record)}
-            kindLabel="Preview annotation"
+            kindLabel={msg("Preview annotation")}
             details={
               <ComposerPreviewAnnotationDetails
                 annotation={entry.record}

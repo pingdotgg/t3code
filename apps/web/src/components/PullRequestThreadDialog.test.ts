@@ -37,6 +37,14 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
+vi.mock("gt-react", () => ({
+  useGT:
+    () =>
+    (text: string, values: Record<string, unknown> = {}) =>
+      text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key])),
+  T: ({ children }: { children: ReactNode }) => children,
+  Var: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("@tanstack/react-pacer", () => ({
   useDebouncedValue: (value: unknown) => [value, { state: { isPending: false } }],
 }));

@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useRef, useState } from "react";
+import { T, useGT, Var } from "gt-react";
 
 import {
   readCachedPullRequestResolution,
@@ -72,6 +73,7 @@ export function PullRequestThreadDialog({
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
+  const gt = useGT();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
@@ -156,7 +158,7 @@ export function PullRequestThreadDialog({
         setPrepareErrorMessage(
           error instanceof Error
             ? error.message
-            : `Failed to prepare ${terminology.singular} thread.`,
+            : gt("Failed to prepare {kind} thread.", { kind: terminology.singular }),
         );
       }
       return;
@@ -175,9 +177,11 @@ export function PullRequestThreadDialog({
   const validationMessage = !referenceDirty
     ? null
     : reference.trim().length === 0
-      ? `Paste a ${terminology.singular} URL, checkout command, or enter 123 / #123.`
+      ? gt("Paste a {kind} URL, checkout command, or enter 123 / #123.", {
+          kind: terminology.singular,
+        })
       : parsedReference === null
-        ? `Use a ${terminology.singular} URL, checkout command, 123, or #123.`
+        ? gt("Use a {kind} URL, checkout command, 123, or #123.", { kind: terminology.singular })
         : null;
   const errorMessage =
     validationMessage ??
@@ -187,7 +191,7 @@ export function PullRequestThreadDialog({
       : preparePullRequestThreadAction.error instanceof Error
         ? preparePullRequestThreadAction.error.message
         : preparePullRequestThreadAction.error
-          ? `Failed to prepare ${terminology.singular} thread.`
+          ? gt("Failed to prepare {kind} thread.", { kind: terminology.singular })
           : null);
 
   return (
@@ -210,11 +214,16 @@ export function PullRequestThreadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <SourceControlIcon className="me-2 size-4" />
-            Checkout {terminology.singular}
+            <T>
+              Checkout <Var>{terminology.singular}</Var>
+            </T>
           </DialogTitle>
           <DialogDescription>
-            Resolve a {sourceControlPresentation.providerName} {terminology.singular}, then create
-            the draft thread in the main repo or in a dedicated worktree.
+            <T>
+              Resolve a <Var>{sourceControlPresentation.providerName}</Var>{" "}
+              <Var>{terminology.singular}</Var>, then create the draft thread in the main repo or in
+              a dedicated worktree.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -224,7 +233,9 @@ export function PullRequestThreadDialog({
             </span>
             <Input
               ref={referenceInputRef}
-              placeholder={`${terminology.shortLabel} URL, checkout command, or #42`}
+              placeholder={gt("{kind} URL, checkout command, or #42", {
+                kind: terminology.shortLabel,
+              })}
               value={reference}
               onChange={(event) => {
                 setReferenceDirty(true);
@@ -251,8 +262,11 @@ export function PullRequestThreadDialog({
                 <div className="min-w-0">
                   <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
                   <p className="truncate text-muted-foreground text-xs">
-                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                    {resolvedPullRequest.baseBranch}
+                    <T>
+                      #<Var>{resolvedPullRequest.number}</Var> ·{" "}
+                      <Var>{resolvedPullRequest.headBranch}</Var> to{" "}
+                      <Var>{resolvedPullRequest.baseBranch}</Var>
+                    </T>
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>
@@ -265,7 +279,9 @@ export function PullRequestThreadDialog({
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <Spinner size="sm" />
-              Resolving {terminology.singular}...
+              <T>
+                Resolving <Var>{terminology.singular}</Var>...
+              </T>
             </div>
           ) : null}
 
@@ -279,7 +295,7 @@ export function PullRequestThreadDialog({
             onClick={() => onOpenChange(false)}
             disabled={preparePullRequestThreadAction.isPending}
           >
-            Cancel
+            {gt("Cancel")}
           </Button>
           <Button
             type="button"
@@ -294,7 +310,9 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "local" ? "Preparing local..." : "Local"}
+            {preparingMode === "local"
+              ? gt("Preparing local...")
+              : gt("Local", { $context: "checkout in the main repo" })}
           </Button>
           <Button
             type="button"
@@ -309,7 +327,9 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {preparingMode === "worktree"
+              ? gt("Preparing worktree...")
+              : gt("Worktree", { $context: "checkout in a new git worktree" })}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -17,7 +17,9 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -70,7 +72,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: string;
   colorClass: string;
   pulse: boolean;
 }
@@ -197,36 +199,53 @@ export interface ThreadPullRequestBadgePresentation {
   readonly text: string | number;
 }
 
-function resolveThreadPullRequestBadgePresentation({
-  badge,
-  number,
-  url,
-  status,
-}: {
-  readonly badge: ThreadPullRequestBadge | null;
-  readonly number?: number | undefined;
-  readonly url?: string | undefined;
-  readonly status: PrStatusIndicator | null;
-}): ThreadPullRequestBadgePresentation | null {
+function resolveThreadPullRequestBadgePresentation(
+  {
+    badge,
+    number,
+    url,
+    status,
+  }: {
+    readonly badge: ThreadPullRequestBadge | null;
+    readonly number?: number | undefined;
+    readonly url?: string | undefined;
+    readonly status: PrStatusIndicator | null;
+  },
+  resolve: MessageResolver = m,
+): ThreadPullRequestBadgePresentation | null {
   const terminology = changeRequestTerminologyForUrl(url);
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} ${terminology.plural}, ${aggregate.label.toLowerCase()}`,
+      label: resolve(
+        msg("Stack of {count} {items}, {state}", {
+          count: badge.layers,
+          items: terminology.plural,
+          state: aggregate.label.toLowerCase(),
+        }),
+      ),
       text: badge.layers,
     };
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `${terminology.shortLabel} #${number}, status pending`;
+  const tooltip =
+    status?.tooltip ??
+    resolve(msg("{kind} #{number}, status pending", { kind: terminology.shortLabel, number }));
   if (badge?.kind === "pull-request" && badge.others > 0) {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
+      label: resolve(
+        msg("{tooltip}, and {others} more linked; overall {state}", {
+          tooltip,
+          others: badge.others,
+          state: aggregate.label.toLowerCase(),
+        }),
+      ),
       text: `+${badge.others + 1}`,
     };
   }
@@ -257,7 +276,8 @@ export function ThreadPullRequestBadgeControl({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
+  const m = useMessages();
+  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status }, m);
   if (presentation === null) return null;
   return (
     <PullRequestBadge
@@ -530,12 +550,13 @@ export function resolveDisplayedThreadPrProvider(input: {
 
 export function terminalStatusFromRunningIds(
   runningTerminalIds: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
   }
   return {
-    label: "Terminal process running",
+    label: resolve(msg("Terminal process running")),
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
@@ -560,13 +581,14 @@ export function ThreadTerminalStatusButton({
   terminalIds: readonly string[];
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
 }) {
+  const gt = useGT();
   const terminalId = terminalIds[0];
   if (terminalId === undefined) return null;
   const status = terminalStatusFromRunningIds(terminalIds);
-  const label =
-    terminalIds.length === 1
-      ? "1 terminal process running. Open terminal"
-      : `${terminalIds.length} terminal processes running. Open terminal`;
+  const label = gt(
+    "{count, plural, one {{count} terminal process running. Open terminal} other {{count} terminal processes running. Open terminal}}",
+    { count: terminalIds.length },
+  );
   return (
     <Tooltip>
       <TooltipTrigger
@@ -605,6 +627,7 @@ export function ThreadWorktreeIndicator({
 }: {
   thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
 }) {
+  const gt = useGT();
   const worktreePath = thread.worktreePath?.trim();
   if (!worktreePath) {
     return null;
@@ -612,8 +635,8 @@ export function ThreadWorktreeIndicator({
 
   const displayPath = formatWorktreePathForDisplay(worktreePath);
   const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
+    ? gt("Worktree: {path} ({branch})", { path: displayPath, branch: thread.branch })
+    : gt("Worktree: {path}", { path: displayPath });
 
   return (
     <Tooltip>
@@ -641,6 +664,8 @@ function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const m = useMessages();
+  const label = m(status.label);
   if (compact) {
     return (
       <Tooltip>
@@ -648,7 +673,7 @@ function ThreadStatusLabel({
           render={
             <span
               role="img"
-              aria-label={status.label}
+              aria-label={label}
               className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
             />
           }
@@ -659,7 +684,7 @@ function ThreadStatusLabel({
             }`}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
+        <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -670,7 +695,7 @@ function ThreadStatusLabel({
         render={
           <span
             role="img"
-            aria-label={status.label}
+            aria-label={label}
             className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
           />
         }
@@ -680,14 +705,15 @@ function ThreadStatusLabel({
             status.pulse ? "motion-safe:animate-status-pulse" : ""
           }`}
         />
-        <span className="hidden md:inline">{status.label}</span>
+        <span className="hidden md:inline">{label}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
 
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const gt = useGT();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
   // A new ref callback would detach and reattach the row, and each reattach sets lease state.
   const statusRef = useStableCallback((node: HTMLSpanElement | null) =>
@@ -774,7 +800,10 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
+          aria-label={gt("{kind} #{number}, status pending", {
+            kind: changeRequestTerminologyForUrl(pendingLink.url).shortLabel,
+            number: pendingLink.number,
+          })}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
@@ -783,6 +812,8 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
 }
 
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const gt = useGT();
+  const m = useMessages();
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -791,9 +822,11 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  const threadEnvironmentLabel = isRemoteThread
+    ? (remoteEnvLabel ?? gt("Remote", { $context: "machine location" }))
+    : null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, m);
 
   if (!terminalStatus && !isRemoteThread) {
     return null;
@@ -825,7 +858,9 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           <TooltipTrigger
             render={
               <span
-                aria-label={threadEnvironmentLabel ?? "Remote"}
+                aria-label={
+                  threadEnvironmentLabel ?? gt("Remote", { $context: "machine location" })
+                }
                 className="inline-flex items-center justify-center"
               />
             }
@@ -876,6 +911,7 @@ export function ThreadSearchPullRequestNumber({
     thread.pullRequests,
     thread.branchPullRequest,
   );
+  const m = useMessages();
   if (!matched) return null;
   const badge = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -891,12 +927,15 @@ export function ThreadSearchPullRequestNumber({
       (reference) =>
         reference != null && pullRequestMatchesSearchQuery({ linkedPullRequest: reference }, query),
     );
-  const presentation = resolveThreadPullRequestBadgePresentation({
-    badge,
-    number: pr?.number ?? stored?.number,
-    url: pr?.url ?? stored?.url,
-    status: prStatusIndicator(pr, linked?.sourceControlProvider),
-  });
+  const presentation = resolveThreadPullRequestBadgePresentation(
+    {
+      badge,
+      number: pr?.number ?? stored?.number,
+      url: pr?.url ?? stored?.url,
+      status: prStatusIndicator(pr, linked?.sourceControlProvider),
+    },
+    m,
+  );
   if (presentation === null) return null;
   const aggregate = badge !== null && (badge.kind === "stack" || badge.others > 0);
   const state = aggregate

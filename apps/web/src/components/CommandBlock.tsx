@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -14,6 +15,7 @@ export function CommandBlock({
   readonly className?: string;
   readonly prominent?: boolean;
 }) {
+  const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
     target: "command",
@@ -33,7 +35,7 @@ export function CommandBlock({
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Copy command"
+        aria-label={gt("Copy command")}
         onClick={() => copyToClipboard(command, undefined)}
       >
         {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}

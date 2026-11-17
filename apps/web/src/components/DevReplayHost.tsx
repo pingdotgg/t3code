@@ -4,6 +4,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useState } from "react";
+import { T, useGT, Var } from "gt-react";
 
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useProjects, useThreadShell } from "../state/entities";
@@ -24,6 +25,7 @@ const DEV_REPLAY_INSTANCE_ID = ProviderInstanceId.make("devReplay");
  * opens a picker, and `window.t3dev.replay(scenario)` does the same from the console.
  */
 export function DevReplayHost() {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const environmentId = usePrimaryEnvironmentId();
@@ -45,10 +47,12 @@ export function DevReplayHost() {
   const replay = async (scenario?: string): Promise<ThreadId> => {
     const model = scenario ?? scenarios[0]?.slug;
     if (environmentId === null || project === undefined || model === undefined) {
-      throw new Error("Replay needs a dev server with a project and the Replay (dev) provider.");
+      throw new Error(
+        gt("Replay needs a dev server with a project and the Replay (dev) provider."),
+      );
     }
     if (!scenarios.some((candidate) => candidate.slug === model)) {
-      throw new Error(`Unknown replay scenario "${model}".`);
+      throw new Error(gt('Unknown replay scenario "{model}".', { model }));
     }
     const threadId = newThreadId();
     const modelSelection = { instanceId: DEV_REPLAY_INSTANCE_ID, model };
@@ -113,7 +117,7 @@ export function DevReplayHost() {
     replay(scenario).catch((error: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Replay failed",
+        title: gt("Replay failed"),
         description: error instanceof Error ? error.message : String(error),
       }),
     );
@@ -124,13 +128,19 @@ export function DevReplayHost() {
       <DialogPopup className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>
-            {project === undefined ? "Replay a recorded turn" : `Replay in ${project.title}`}
+            {project === undefined ? (
+              <T>Replay a recorded turn</T>
+            ) : (
+              <T>
+                Replay in <Var>{project.title}</Var>
+              </T>
+            )}
           </DialogTitle>
         </DialogHeader>
         <DialogPanel>
           {scenarios.length === 0 || project === undefined ? (
             <p className="text-sm text-muted-foreground">
-              Needs a project and the Replay (dev) provider, which dev servers start.
+              <T>Needs a project and the Replay (dev) provider, which dev servers start.</T>
             </p>
           ) : (
             <div className="flex flex-col items-start gap-1">

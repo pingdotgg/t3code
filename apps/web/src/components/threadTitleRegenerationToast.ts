@@ -4,7 +4,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 
+import { m } from "../i18n/messages";
 import { stackedThreadToast } from "./ui/toast";
 
 type TitleRegenerationResult = AtomCommandResult<ThreadTitleRegenerationOutcome | null, unknown>;
@@ -13,10 +15,10 @@ function failureMessage(result: TitleRegenerationResult): string | null {
   if (result._tag === "Failure") {
     if (isAtomCommandInterrupted(result)) return null;
     const error = squashAtomCommandFailure(result);
-    return error instanceof Error ? error.message : "An error occurred.";
+    return error instanceof Error ? error.message : m(msg("An error occurred."));
   }
   return result.value?.status === "failed"
-    ? (result.value.message ?? "Title generation failed.")
+    ? (result.value.message ?? m(msg("Title generation failed.")))
     : null;
 }
 
@@ -34,8 +36,13 @@ export function titleRegenerationToast(results: ReadonlyArray<TitleRegenerationR
       type: "error",
       title:
         results.length === 1
-          ? "Failed to regenerate thread title"
-          : `Failed to regenerate ${failures.length} of ${results.length} thread titles`,
+          ? m(msg("Failed to regenerate thread title"))
+          : m(
+              msg("Failed to regenerate {failed} of {total} thread titles", {
+                failed: failures.length,
+                total: results.length,
+              }),
+            ),
       description: failures[0],
     });
   }
@@ -44,16 +51,19 @@ export function titleRegenerationToast(results: ReadonlyArray<TitleRegenerationR
   if (results.length === 1) {
     return stackedThreadToast({
       type: "info",
-      title: "Title kept",
-      description: "The current title already fits this thread.",
+      title: m(msg("Title kept")),
+      description: m(msg("The current title already fits this thread.")),
     });
   }
   return stackedThreadToast({
     type: "info",
-    title: kept === results.length ? "Titles kept" : `Kept ${kept} of ${results.length} titles`,
+    title:
+      kept === results.length
+        ? m(msg("Titles kept"))
+        : m(msg("Kept {kept} of {total} titles", { kept, total: results.length })),
     description:
       kept === results.length
-        ? "The current titles already fit these threads."
-        : "Those titles already fit their threads.",
+        ? m(msg("The current titles already fit these threads."))
+        : m(msg("Those titles already fit their threads.")),
   });
 }
