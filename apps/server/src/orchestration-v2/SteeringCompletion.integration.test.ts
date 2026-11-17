@@ -2432,25 +2432,39 @@ it.effect("queues a restart sent into a provider turn that failed before its run
 );
 
 // regression: #22423 a steer accepted into a turn that then fails is left on the failed run
-it.effect("re-sends a steer whose provider turn fails before it is delivered", () =>
+it.effect.each([
+  { offered: false, title: "before it reaches the provider" },
+  { offered: true, title: "after the provider took it unread" },
+] as const)("re-sends a steer whose provider turn fails $title", ({ offered }) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const providerEvents: { queue?: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event> } = {};
       const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-        "steer-after-failed-unsettled",
+        `steer-after-failed-${offered ? "offered" : "unoffered"}`,
         false,
         true,
         Effect.void,
         true,
         undefined,
         (turn) =>
-          Effect.fail(
-            new ProviderAdapter.ProviderAdapterSteerRunError({
-              driver,
-              providerThreadId: turn.providerThread.id,
-              providerTurnId: turn.providerTurnId,
-            }),
-          ),
+          offered
+            ? Queue.offer(providerEvents.queue!, {
+                type: "steer.updated",
+                driver,
+                threadId: turn.threadId,
+                runId: turn.runId,
+                messageId: turn.message.messageId,
+                status: "pending",
+              }).pipe(Effect.asVoid)
+            : Effect.fail(
+                new ProviderAdapter.ProviderAdapterSteerRunError({
+                  driver,
+                  providerThreadId: turn.providerThread.id,
+                  providerTurnId: turn.providerTurnId,
+                }),
+              ),
       );
+      providerEvents.queue = events;
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -2458,6 +2472,18 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
         const first = started[0]!;
         const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
         const messageId = MessageId.make("message:steer-into-failed");
+        const steerPending = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === messageId &&
+              event.payload.status === "pending",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("steer-into-failed"),
@@ -2469,6 +2495,10 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
           createdBy: "user",
           creationSource: "web",
         });
+        if (offered) {
+          yield* worker.drain();
+          yield* Fiber.join(steerPending);
+        }
         const turnFailed = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>
@@ -2487,7 +2517,6 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
           providerTurn: { ...turn, status: "failed", completedAt: failedAt },
         });
         yield* Fiber.join(turnFailed);
-
         yield* worker.drain().pipe(Effect.ignore);
 
         const runEnded = yield* orchestrator.streamDomainEvents.pipe(
@@ -2501,6 +2530,32 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
           Stream.runDrain,
           Effect.forkScoped,
         );
+        // Queued behind the still-running turn, the steer is held with the queue the failure
+        // holds; once the run has failed and the thread is idle it starts as the next turn.
+        const resent = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              (event.type === "run.created" || event.type === "run.updated") &&
+              event.payload.userMessageId === messageId &&
+              event.payload.id !== first.runId &&
+              (offered
+                ? event.payload.status === "starting"
+                : event.payload.status === "queued" && event.payload.queueHeld === true),
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        if (offered) {
+          yield* Queue.offer(events, {
+            type: "steer.updated",
+            driver,
+            threadId,
+            runId: first.runId,
+            messageId,
+            status: "cancelled",
+          });
+        }
         yield* Queue.offer(events, {
           type: "turn.terminal",
           driver,
@@ -2518,11 +2573,13 @@ it.effect("re-sends a steer whose provider turn fails before it is delivered", (
           threadDisposition: "reusable",
         });
         yield* Fiber.join(runEnded);
+        yield* Fiber.join(resent);
         yield* worker.drain().pipe(Effect.ignore);
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.isDefined(
-          projection.runs.find((run) => run.userMessageId === messageId && run.id !== first.runId),
+        assert.deepEqual(
+          projection.runs.filter((run) => run.userMessageId === messageId).length,
+          1,
         );
       }).pipe(Effect.provide(layer));
     }),
