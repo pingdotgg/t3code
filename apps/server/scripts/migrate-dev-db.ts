@@ -1,10 +1,14 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - copyFile is the only FICLONE file copy on Linux.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,8 +20,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
+import * as CheckoutCloner from "../src/vcs/CheckoutCloner.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
-import { runMigrations } from "../src/persistence/Migrations.ts";
+import {
+  forkMigrationManifest,
+  hasPendingMigrations,
+  migrationManifest,
+  runMigrations,
+} from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -104,7 +114,7 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<Migrate
 export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhaseError>()(
   "MigrateDevDbPhaseError",
   {
-    phase: Schema.Literals(["snapshot", "prune", "compact", "migrate"]),
+    phase: Schema.Literals(["snapshot", "prune", "compact", "migrate", "clone"]),
     databasePath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -119,6 +129,8 @@ export interface RunMigrateDevDbInput {
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
+  /** Rebuild the cached seed even when a fresh one exists. */
+  readonly fresh?: boolean | undefined;
 }
 
 export interface RunMigrateDevDbOptions {
@@ -232,7 +244,10 @@ const COPY_CHUNK_ROWIDS = 1000;
  * threads with V2 rows, so the legacy guard refuses sources whose unimported V1 threads would
  * vanish (see LegacyV1ThreadImporter.pendingThreadCount).
  */
-const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
+const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (
+  sourcePath: string,
+  kept: Option.Option<KeptRows>,
+) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
   const schema = yield* sql<{ type: string; name: string; sql: string }>`
@@ -297,28 +312,44 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
     }>`SELECT name FROM pragma_table_list WHERE schema = 'src' AND wr = 1`).map((row) => row.name),
   );
 
-  // The snapshot is scratch: a crash mid-copy leaves a file that is deleted anyway.
-  yield* sql`PRAGMA main.synchronous = OFF`;
   for (const table of tables) yield* sql.unsafe(table.sql).unprepared;
   if (filtered) {
     yield* sql`CREATE TEMP TABLE copied_threads (thread_id TEXT PRIMARY KEY)`;
-    yield* sql`INSERT OR IGNORE INTO copied_threads
+    if (Option.isSome(kept)) {
+      for (const threadId of kept.value.threadIds) {
+        yield* sql`INSERT OR IGNORE INTO copied_threads VALUES (${threadId})`;
+      }
+    } else {
+      yield* sql`INSERT OR IGNORE INTO copied_threads
           SELECT family.thread_id FROM src.orchestration_v2_projection_threads family
           JOIN src.orchestration_v2_projection_threads root ON root.thread_id =
             COALESCE(json_extract(family.payload_json, '$.lineage.rootThreadId'), family.thread_id)
           WHERE ${rootIsVisible(sql)}`;
+    }
+  }
+  const keptProjects = filtered ? Option.map(kept, (rows) => rows.projectIds) : Option.none();
+  if (Option.isSome(keptProjects)) {
+    yield* sql`CREATE TEMP TABLE copied_projects (project_id TEXT PRIMARY KEY)`;
+    for (const projectId of keptProjects.value) {
+      yield* sql`INSERT OR IGNORE INTO copied_projects VALUES (${projectId})`;
+    }
   }
   for (const { name } of tables) {
     if (cleared.has(name) || virtualTables.includes(name)) continue;
     const nullable = threadIdNullable.get(name);
+    const projectEvents = Option.isSome(keptProjects)
+      ? `(aggregate_kind = 'project' AND stream_id IN (SELECT project_id FROM copied_projects))`
+      : `aggregate_kind = 'project'`;
     const filter = !filtered
       ? "1"
       : name === "orchestration_events"
         ? `(aggregate_kind = 'thread' AND stream_id IN (SELECT thread_id FROM copied_threads))
-                OR aggregate_kind < 'thread' OR aggregate_kind > 'thread'`
-        : nullable === undefined || name === PROVIDER_SESSIONS_TABLE
-          ? "1"
-          : `thread_id IN (SELECT thread_id FROM copied_threads)${nullable ? " OR thread_id IS NULL" : ""}`;
+                OR ${projectEvents} OR aggregate_kind NOT IN ('thread', 'project')`
+        : name === "projection_projects" && Option.isSome(keptProjects)
+          ? "project_id IN (SELECT project_id FROM copied_projects)"
+          : nullable === undefined || name === PROVIDER_SESSIONS_TABLE
+            ? "1"
+            : `thread_id IN (SELECT thread_id FROM copied_threads)${nullable ? " OR thread_id IS NULL" : ""}`;
     const copy = `INSERT INTO main."${name}" SELECT * FROM src."${name}" WHERE (${filter})`;
     // Without a rowid there is nothing to range over; these tables are small.
     if (withoutRowid.has(name)) {
@@ -338,11 +369,10 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
   for (const entry of schema) {
     if (entry.type !== "table") yield* sql.unsafe(entry.sql).unprepared;
   }
-  yield* rebuildMessageSearch(sql);
   yield* sql`DETACH DATABASE src`;
 });
 
-const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+const selectKeptRows = Effect.fn("selectDevDbKeptRows")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
 
   // Usage-limit recovery also depends on settings; exclude latest-run failures and recovery choices.
@@ -408,6 +438,43 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
       )
       WHERE recency_rank <= ${input.threadsPerProject}
     )`;
+});
+
+interface KeptRows {
+  readonly threadIds: ReadonlyArray<string>;
+  readonly projectIds: ReadonlyArray<string>;
+}
+
+/**
+ * Runs the prune's selection on a read-only connection to the source, so the copy writes only
+ * what the prune keeps. None when the source is behind this checkout's schema.
+ */
+const selectFromSource = Effect.fn("selectDevDbRowsFromSource")(
+  function* (_sourcePath: string, input: RunMigrateDevDbInput) {
+    const sql = yield* SqlClient.SqlClient;
+    if (yield* hasPendingMigrations()) return yield* Effect.fail("behind");
+    yield* selectKeptRows(input);
+    const threads = yield* sql<{ thread_id: string }>`SELECT thread_id FROM kept_threads`;
+    const projects = yield* sql<{ project_id: string }>`SELECT project_id FROM kept_projects`;
+    return {
+      threadIds: threads.map((row) => row.thread_id),
+      projectIds: projects.map((row) => row.project_id),
+    } satisfies KeptRows;
+  },
+  (effect, sourcePath) =>
+    effect.pipe(
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provideMerge(NodeSqliteClient.layer({ filename: sourcePath, readonly: true })),
+        ),
+      ),
+      Effect.option,
+    ),
+);
+
+const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* selectKeptRows(input);
 
   const threadTables = yield* sql<{ name: string }>`
     SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
@@ -467,6 +534,8 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     ORDER BY p.updated_at DESC`;
   const [events] = yield* sql<{ count: number }>`
     SELECT COUNT(*) AS count FROM orchestration_events`;
+  // Indexing after the prune writes only the kept messages into the index.
+  yield* rebuildMessageSearch(sql);
 
   return {
     projects: keptProjects as ReadonlyArray<KeptProject>,
@@ -501,6 +570,245 @@ const forgetPeerLinksPreviewHistory = Effect.fn("forgetPeerLinksPreviewHistory")
   );
 });
 
+const SEED_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+const SeedCacheMeta = Schema.fromJsonString(
+  Schema.Struct({
+    builtAt: Schema.Number,
+    migrations: Schema.Array(Schema.String),
+    projects: Schema.Array(Schema.Struct({ title: Schema.String, threads: Schema.Number })),
+    eventCount: Schema.Number,
+  }),
+);
+const decodeSeedCacheMeta = Schema.decodeEffect(SeedCacheMeta);
+const encodeSeedCacheMeta = Schema.encodeEffect(SeedCacheMeta);
+
+const checkoutMigrations: ReadonlyArray<string> = [
+  ...migrationManifest.map(([id, name]) => `${id}_${name}`),
+  ...forkMigrationManifest.map(([id, name]) => `fork:${id}_${name}`),
+];
+
+const shortHash = (text: string) =>
+  NodeCrypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+// This script's own text is in the key, so a changed prune never reuses a seed built by another.
+const seedCacheKey = Effect.fn("seedCacheKey")(function* (
+  sourcePath: string,
+  input: RunMigrateDevDbInput,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(sourcePath);
+  const script = yield* fs.readFileString(import.meta.filename);
+  return shortHash(
+    [
+      sourcePath,
+      info.dev,
+      Option.getOrUndefined(info.ino),
+      Option.getOrUndefined(info.birthtime)?.getTime(),
+      input.projects,
+      input.threadsPerProject,
+      shortHash(script),
+    ].join("\0"),
+  );
+});
+
+const isFresh = (builtAt: number, now: number) => now - builtAt < SEED_CACHE_MAX_AGE_MS;
+
+const readSeedCacheMeta = (file: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fs) => fs.readFileString(file)),
+    Effect.flatMap(decodeSeedCacheMeta),
+    Effect.option,
+  );
+
+/** A seed migrated by a newer checkout is skipped; one from an older checkout is migrated forward. */
+const findCachedSeed = Effect.fn("findCachedDevDbSeed")(function* (
+  cacheDir: string,
+  key: string,
+  now: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const names = yield* fs.readDirectory(cacheDir).pipe(Effect.orElseSucceed(() => []));
+  let best: { readonly seedPath: string; readonly meta: typeof SeedCacheMeta.Type } | undefined;
+  for (const name of names) {
+    if (!name.startsWith(`${key}-`) || !name.endsWith(".json")) continue;
+    const meta = yield* readSeedCacheMeta(path.join(cacheDir, name));
+    const seedPath = path.join(cacheDir, `${name.slice(0, -".json".length)}.sqlite`);
+    if (
+      Option.isNone(meta) ||
+      !isFresh(meta.value.builtAt, now) ||
+      !meta.value.migrations.every((migration) => checkoutMigrations.includes(migration)) ||
+      !(yield* fs.exists(seedPath))
+    ) {
+      continue;
+    }
+    if (best === undefined || meta.value.migrations.length > best.meta.migrations.length) {
+      best = { seedPath, meta: meta.value };
+    }
+  }
+  return best;
+});
+
+const SCRATCH_FILE = /\.(\d+)\.(?:snapshot|tmp)/;
+
+const pruneSeedCache = Effect.fn("pruneDevDbSeedCache")(function* (cacheDir: string, now: number) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const name of yield* fs.readDirectory(cacheDir).pipe(Effect.orElseSucceed(() => []))) {
+    const file = path.join(cacheDir, name);
+    const scratch = SCRATCH_FILE.exec(name);
+    if (scratch !== null) {
+      if (!isProcessAlive(Number(scratch[1]))) {
+        yield* fs.remove(file).pipe(Effect.orElseSucceed(() => undefined));
+      }
+      continue;
+    }
+    if (!name.endsWith(".json")) continue;
+    const meta = yield* readSeedCacheMeta(file);
+    if (Option.isSome(meta) && isFresh(meta.value.builtAt, now)) continue;
+    yield* removeDatabaseFiles(`${file.slice(0, -".json".length)}.sqlite`);
+    yield* fs.remove(file).pipe(Effect.orElseSucceed(() => undefined));
+  }
+});
+
+// The snapshot is scratch, deleted on any failure, so it needs neither a journal nor fsync.
+const scratchDatabase = (filename: string) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.unsafe("PRAGMA journal_mode = OFF").unprepared;
+      yield* sql.unsafe("PRAGMA synchronous = OFF").unprepared;
+    }),
+  ).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename })));
+
+const wrapPhase =
+  (phase: MigrateDevDbPhaseError["phase"], databasePath: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.mapError((cause) => new MigrateDevDbPhaseError({ phase, databasePath, cause })),
+    );
+
+const migrateDatabase = Effect.fn("migrateDevDb")(
+  function* (_databasePath: string, _layer: ReturnType<typeof NodeSqliteClient.layer>) {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
+    yield* forgetPeerLinksPreviewHistory();
+    return yield* runMigrations();
+  },
+  (effect, databasePath, layer) =>
+    effect.pipe(Effect.provide(layer), wrapPhase("migrate", databasePath)),
+);
+
+const buildSeed = Effect.fn("buildDevDbSeed")(function* (
+  sourcePath: string,
+  input: RunMigrateDevDbInput,
+  entryPath: string,
+  now: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const snapshotPath = `${entryPath}.${process.pid}.snapshot`;
+  const compactPath = `${entryPath}.${process.pid}.tmp`;
+  const seedPath = `${entryPath}.sqlite`;
+
+  return yield* Effect.gen(function* () {
+    yield* Console.log(`Selecting threads to keep from ${sourcePath} (read-only)...`);
+    const kept = yield* selectFromSource(sourcePath, input);
+    yield* Console.log(
+      Option.isSome(kept)
+        ? `Copying ${kept.value.threadIds.length} threads from ${sourcePath} (read-only)...`
+        : `Copying visible threads from ${sourcePath} (read-only)...`,
+    );
+    yield* copySourceSlice(sourcePath, kept).pipe(
+      Effect.provide(scratchDatabase(snapshotPath)),
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new MigrateDevDbPhaseError({ phase: "snapshot", databasePath: sourcePath, cause }),
+          ),
+      }),
+    );
+
+    // Migrate first so prune queries can use columns missing from older sources.
+    yield* Console.log("Running migrations on the snapshot...");
+    const executed = yield* migrateDatabase(snapshotPath, scratchDatabase(snapshotPath));
+
+    yield* Console.log(
+      `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
+    );
+    const pruned = yield* pruneSnapshot(input).pipe(
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(scratchDatabase(snapshotPath)))),
+      wrapPhase("prune", snapshotPath),
+    );
+
+    // A copy of only the kept rows is already compact; rewriting it would double the build's writes.
+    const sparse = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [pages] = yield* sql<{ free: number; total: number }>`
+        SELECT (SELECT freelist_count FROM pragma_freelist_count) AS free,
+          (SELECT page_count FROM pragma_page_count) AS total`;
+      return pages !== undefined && pages.free * 4 > pages.total;
+    }).pipe(Effect.provide(scratchDatabase(snapshotPath)), wrapPhase("compact", snapshotPath));
+    const builtPath = sparse ? compactPath : snapshotPath;
+    if (sparse) {
+      yield* Console.log(`Compacting into ${seedPath}...`);
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`VACUUM INTO ${compactPath}`;
+      }).pipe(Effect.provide(scratchDatabase(snapshotPath)), wrapPhase("compact", compactPath));
+    }
+    // The server boots in WAL mode; set it in the header that every clone copies.
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
+    }).pipe(
+      Effect.provide(NodeSqliteClient.layer({ filename: builtPath })),
+      wrapPhase("compact", builtPath),
+    );
+    // The scratch ran without fsync; flush it before it becomes a seed other worktrees trust.
+    yield* Effect.scoped(Effect.flatMap(fs.open(builtPath, { flag: "r+" }), (file) => file.sync));
+    yield* fs.chmod(builtPath, 0o600);
+    yield* fs.rename(builtPath, seedPath);
+
+    const meta = {
+      builtAt: now,
+      migrations: checkoutMigrations,
+      projects: pruned.projects,
+      eventCount: pruned.eventCount,
+    };
+    const metaPath = `${entryPath}.json`;
+    const metaScratch = `${entryPath}.${process.pid}.tmp.json`;
+    yield* fs.writeFileString(metaScratch, yield* encodeSeedCacheMeta(meta), { mode: 0o600 });
+    yield* fs.rename(metaScratch, metaPath);
+    return {
+      seedPath,
+      meta,
+      executedMigrations: executed.map(([id, name]) => `${id}_${name}`),
+    };
+  }).pipe(
+    Effect.ensuring(
+      Effect.all([removeDatabaseFiles(snapshotPath), removeDatabaseFiles(compactPath)]),
+    ),
+  );
+});
+
+// macOS clones through clonefile; Linux copyFile clones with FICLONE where the filesystem can.
+const cloneSeed = Effect.fn("cloneDevDbSeed")(function* (seedPath: string, databasePath: string) {
+  const clonefile = yield* CheckoutCloner.CheckoutCloner;
+  const cloned =
+    clonefile !== undefined &&
+    (yield* clonefile(seedPath, databasePath).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ));
+  if (cloned) return;
+  yield* removeDatabaseFiles(databasePath);
+  yield* Effect.tryPromise({
+    try: () => NodeFS.promises.copyFile(seedPath, databasePath, NodeFS.constants.COPYFILE_FICLONE),
+    catch: (cause) => new MigrateDevDbPhaseError({ phase: "clone", databasePath, cause }),
+  });
+}, Effect.provide(CheckoutCloner.layer));
+
 export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   input: RunMigrateDevDbInput,
   options: RunMigrateDevDbOptions = {},
@@ -516,6 +824,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const sourcePath = path.resolve(
     input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite"),
   );
+  const cacheDir = path.join(sharedHome, "dev", "seed-cache");
 
   const baseDir =
     input.baseDir !== undefined
@@ -526,7 +835,6 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   }
   const stateDir = path.join(baseDir, "userdata");
   const databasePath = path.join(stateDir, "statev2.sqlite");
-  const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
 
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new MigrateDevDbSourceMissingError({ sourcePath });
@@ -538,100 +846,59 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (canonicalBaseDir === canonicalSharedHome) {
     return yield* new MigrateDevDbSharedHomeError();
   }
-  // Both destination and snapshot are deleted below; reject sources resolving to either.
   const canonicalSourcePath = yield* fs
     .realPath(sourcePath)
     .pipe(Effect.orElseSucceed(() => sourcePath));
-  for (const destination of [databasePath, snapshotPath]) {
-    const canonicalDestination = yield* fs
-      .realPath(destination)
-      .pipe(Effect.orElseSucceed(() => destination));
-    if (canonicalSourcePath === canonicalDestination) {
-      return yield* new MigrateDevDbSourceIsDestinationError({ sourcePath });
-    }
+  const canonicalDestination = yield* fs
+    .realPath(databasePath)
+    .pipe(Effect.orElseSucceed(() => databasePath));
+  if (canonicalSourcePath === canonicalDestination) {
+    return yield* new MigrateDevDbSourceIsDestinationError({ sourcePath });
   }
 
   yield* fs.makeDirectory(stateDir, { recursive: true });
+  yield* fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 });
 
-  const wrapPhase =
-    (phase: MigrateDevDbPhaseError["phase"], phaseDatabasePath: string) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) => new MigrateDevDbPhaseError({ phase, databasePath: phaseDatabasePath, cause }),
-        ),
-      );
-
-  yield* removeDatabaseFiles(snapshotPath);
-  const { executedMigrations, pruned } = yield* Effect.gen(function* () {
-    yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
-    yield* copySourceSlice(sourcePath).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-      Effect.catchTags({
-        SqlError: (cause) =>
-          Effect.fail(
-            new MigrateDevDbPhaseError({ phase: "snapshot", databasePath: sourcePath, cause }),
-          ),
-      }),
-    );
-    // Checkpoints the destination, so it runs after the copy's legacy guard.
-    yield* ensureNotInUse(databasePath);
-
-    // Migrate first so prune queries can use columns missing from older sources.
-    yield* Console.log("Running migrations on the snapshot...");
-    const executed = yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
-      yield* forgetPeerLinksPreviewHistory();
-      return yield* runMigrations();
-    }).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-      wrapPhase("migrate", snapshotPath),
-    );
-
+  const now = yield* Clock.currentTimeMillis;
+  const key = yield* seedCacheKey(canonicalSourcePath, input);
+  const cached = input.fresh === true ? undefined : yield* findCachedSeed(cacheDir, key, now);
+  const seed =
+    cached !== undefined
+      ? { ...cached, executedMigrations: [] }
+      : yield* buildSeed(
+          sourcePath,
+          input,
+          path.join(cacheDir, `${key}-${shortHash(checkoutMigrations.join())}`),
+          now,
+        );
+  if (cached !== undefined) {
+    const hours = Math.floor((now - cached.meta.builtAt) / 3_600_000);
     yield* Console.log(
-      `Pruning to ${input.projects} projects, ${input.threadsPerProject} stopped threads each...`,
+      `Reusing the seed built ${hours}h ago in ${cacheDir}. --fresh rebuilds it from ${sourcePath}.`,
     );
-    const result = yield* pruneSnapshot(input).pipe(
-      Effect.provide(
-        ProjectionStore.layer.pipe(
-          Layer.provideMerge(NodeSqliteClient.layer({ filename: snapshotPath })),
-        ),
-      ),
-      wrapPhase("prune", snapshotPath),
-    );
+  } else {
+    yield* pruneSeedCache(cacheDir, now);
+  }
 
-    yield* Console.log(`Compacting into ${databasePath}...`);
-    // A server may have started during pruning; re-check before replacing its database.
-    yield* ensureNotInUse(databasePath);
-    yield* removeDatabaseFiles(databasePath);
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`VACUUM INTO ${databasePath}`;
-    }).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-      wrapPhase("compact", databasePath),
-    );
-    return { executedMigrations: executed, pruned: result };
-  }).pipe(Effect.ensuring(removeDatabaseFiles(snapshotPath)));
+  yield* ensureNotInUse(databasePath);
+  yield* removeDatabaseFiles(databasePath);
+  yield* cloneSeed(seed.seedPath, databasePath);
   yield* fs.chmod(databasePath, 0o600);
-
-  yield* Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    // VACUUM INTO loses WAL mode; restore the server boot setting.
-    yield* sql.unsafe("PRAGMA journal_mode = WAL").unprepared;
-  }).pipe(
-    Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
-    wrapPhase("compact", databasePath),
+  const executed = yield* migrateDatabase(
+    databasePath,
+    NodeSqliteClient.layer({ filename: databasePath }),
   );
 
   const size = (yield* fs.stat(databasePath)).size;
   return {
     databasePath,
     sizeBytes: Number(size),
-    projects: pruned.projects,
-    eventCount: pruned.eventCount,
-    executedMigrations: executedMigrations.map(([id, name]) => `${id}_${name}`),
+    projects: seed.meta.projects,
+    eventCount: seed.meta.eventCount,
+    executedMigrations: [
+      ...seed.executedMigrations,
+      ...executed.map(([id, name]) => `${id}_${name}`),
+    ],
   };
 });
 
@@ -661,14 +928,21 @@ export const migrateDevDbCommand = Command.make(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
     ),
+    fresh: Flag.Boolean("fresh").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription(
+        "Rebuild the shared seed from the source even if one built in the last day exists.",
+      ),
+    ),
   },
-  ({ projects, threadsPerProject, baseDir, source }) =>
+  ({ projects, threadsPerProject, baseDir, source, fresh }) =>
     Effect.gen(function* () {
       const result = yield* runMigrateDevDb({
         projects,
         threadsPerProject,
         baseDir: Option.getOrUndefined(baseDir),
         source: Option.getOrUndefined(source),
+        fresh,
       });
       yield* Console.log("");
       yield* Console.log(
@@ -686,7 +960,7 @@ export const migrateDevDbCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.t3 data, then run migrations.",
+    "Rebuild the worktree dev database as a clone of a pruned snapshot of the real ~/.t3 data, built at most daily and shared across worktrees, then run migrations.",
   ),
 );
 

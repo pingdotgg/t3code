@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -594,6 +595,52 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
+  it.effect("later worktrees clone the day's seed instead of copying the source again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-cache-" });
+      const source = yield* createFixtureSource(sourceDir);
+      const seed = Effect.fn(function* () {
+        const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-cache-dest-" });
+        const result = yield* runMigrateDevDb(
+          { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+          { sharedHome: sourceDir },
+        );
+        const threads = yield* withDatabase(
+          result.databasePath,
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            return yield* sql<{ thread_id: string }>`
+              SELECT thread_id FROM orchestration_v2_projection_threads
+              WHERE thread_id = 'later-thread'`;
+          }),
+        );
+        return threads.length > 0;
+      });
+
+      assert.equal(yield* seed(), false);
+      yield* withDatabase(
+        source,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO orchestration_v2_projection_threads
+            (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+            VALUES ('later-thread', 'project-kept', 'later-thread', 'codex', 'full-access', 'default', '2026-08-09', '2026-08-09', '{}')`;
+          yield* sql`INSERT INTO orchestration_v2_projection_runs
+            (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+            VALUES ('run-later-thread', 'later-thread', 1, 'codex', 'completed', '2026-08-09', '{}')`;
+        }),
+      );
+      assert.equal(yield* seed(), false, "the second seed reuses the first's snapshot");
+
+      yield* TestClock.adjust("25 hours");
+      assert.equal(yield* seed(), true, "a day later the seed is rebuilt from the source");
+      const cacheFiles = yield* fs.readDirectory(path.join(sourceDir, "dev", "seed-cache"));
+      assert.equal(cacheFiles.filter((name) => name.endsWith(".sqlite")).length, 1);
+    }),
+  );
+
   it.effect("refuses while a dev server holds the destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -625,16 +672,16 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const path = yield* Path.Path;
       const sharedDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-overlap-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-overlap-dest-" });
-      const leftoverSnapshot = path.join(destDir, "userdata", "statev2.sqlite.migrate-dev-db-tmp");
-      yield* fs.makeDirectory(path.dirname(leftoverSnapshot), { recursive: true });
-      yield* fs.writeFileString(leftoverSnapshot, "not a real db");
+      const destination = path.join(destDir, "userdata", "statev2.sqlite");
+      yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+      yield* fs.writeFileString(destination, "not a real db");
 
       const error = yield* runMigrateDevDb(
-        { baseDir: destDir, source: leftoverSnapshot, projects: 5, threadsPerProject: 10 },
+        { baseDir: destDir, source: destination, projects: 5, threadsPerProject: 10 },
         { sharedHome: sharedDir },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSourceIsDestinationError");
-      assert.equal(yield* fs.exists(leftoverSnapshot), true);
+      assert.equal(yield* fs.exists(destination), true);
     }),
   );
 
