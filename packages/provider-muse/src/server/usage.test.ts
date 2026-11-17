@@ -213,7 +213,7 @@ describe("Muse history discovery", () => {
             instanceId: ProviderInstanceId.make("muse-other"),
             configured: true,
             config: decodeSettings({ binaryPath: "~/bin/custom-muse" }),
-            environment: { XDG_DATA_HOME: xdg, MUSE_NO_AUTO_UPDATE: "0" },
+            environment: { XDG_DATA_HOME: xdg, MUSE_NO_AUTO_UPDATE: "0", MISE_OFFLINE: "0" },
           },
           AWAIT_REFRESH,
         );
@@ -226,6 +226,8 @@ describe("Muse history discovery", () => {
             PATH: "/host/bin",
             XDG_DATA_HOME: xdg ?? "/host/data",
             MUSE_NO_AUTO_UPDATE: "1",
+            // A lazy mise shim must not install Muse during background discovery.
+            MISE_OFFLINE: "1",
           },
           readOnly: true,
           startupTimeoutMs: 5_000,
