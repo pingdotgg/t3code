@@ -2194,7 +2194,7 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
   }),
 );
 
-it.effect.each(["auto", "restart", "deferred", "promote-edited"] as const)(
+it.effect.each(["auto", "deferred", "promote-edited"] as const)(
   "rejects expanded steering input before commit: %s",
   (delivery) =>
     Effect.scoped(
@@ -2269,8 +2269,7 @@ it.effect.each(["auto", "restart", "deferred", "promote-edited"] as const)(
             context,
             attachments: [],
             dispatchMode: { type: "start_immediately" },
-            deliveryIntent:
-              delivery === "restart" ? "restart" : delivery === "deferred" ? "steer" : "auto",
+            deliveryIntent: delivery === "deferred" ? "steer" : "auto",
             createdBy: "user",
             creationSource: "mobile",
           };

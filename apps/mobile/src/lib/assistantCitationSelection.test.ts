@@ -10,16 +10,14 @@ import { EnvironmentId, ThreadId, MessageId } from "@t3tools/contracts";
 it("offers distinct source choices within a block and maps recursive folds without merging occurrences", () => {
   const paragraph = `${"x".repeat(40)}**quote**${"x".repeat(40)}`;
   const markdown = `${paragraph}\n\n<details><summary>Outer</summary>\n\n<details><summary>Inner</summary>\n\n${paragraph}\n\n</details>\n\n</details>`;
-  const first = collectMobileAssistantTextSelectors(markdown, "0:0", "quote")[0];
-  const second = collectMobileAssistantTextSelectors(markdown, "1/1/0:0", "quote")[0];
-  expect(first?.occurrence).toEqual({ index: 0, count: 2 });
-  expect(second?.occurrence).toEqual({ index: 1, count: 2 });
+  const [first] = collectMobileAssistantTextSelectors(markdown, "0:0", "quote");
+  const [second] = collectMobileAssistantTextSelectors(markdown, "1/1/0:0", "quote");
+  expect([first?.index, first?.count, second?.index, second?.count]).toEqual([0, 2, 1, 2]);
   const rendered = `${"x".repeat(40)}quote${"x".repeat(40)} ${"x".repeat(40)}quote${"x".repeat(40)}`;
-  expect(findAssistantCitationText(rendered, second!)).toEqual({
-    start: rendered.lastIndexOf("quote"),
-    end: rendered.lastIndexOf("quote") + 5,
-  });
-  const markers = [first!, second!].map((selector) =>
+  expect(second?.selector.start).toBe(rendered.lastIndexOf("quote"));
+  // Identical context on both sides stays ambiguous rather than guessing.
+  expect(findAssistantCitationText(rendered, second!.selector)).toBeNull();
+  const markers = [first!, second!].map(({ selector }) =>
     serializeAssistantCitation({
       version: 1,
       environmentId: EnvironmentId.make("env"),
@@ -37,24 +35,24 @@ it("offers distinct source choices within a block and maps recursive folds witho
     "0:0",
     "quote",
   );
-  expect(sameBlock[1]?.start).toBe(17);
-  expect(sameBlock[1]?.prefix).toBe("first quote then ");
+  expect(sameBlock[1]?.selector.start).toBe(17);
+  expect(sameBlock[1]?.selector.prefix).toBe("first quote then ");
   const [leadingSpace] = collectMobileAssistantTextSelectors(
     "x\n\n<details><summary>More</summary>\n\n` quote`\n\n</details>",
     "1/0:0",
     "quote",
   );
-  expect(leadingSpace?.start).toBe(2);
-  expect(leadingSpace?.occurrence).toEqual({ index: 0, count: 1 });
+  expect(leadingSpace?.selector.start).toBe(2);
+  expect(leadingSpace?.count).toBe(1);
   const codeChoices = collectMobileAssistantTextSelectors(
     "quote\n\n```text\nquote\n```\n\nquote",
     "0:0",
     "quote",
   );
-  expect(codeChoices.map((choice) => choice.occurrence)).toEqual([
-    { index: 0, count: 3 },
-    { index: 1, count: 3 },
-    { index: 2, count: 3 },
+  expect(codeChoices.map((choice) => [choice.index, choice.count])).toEqual([
+    [0, 3],
+    [1, 3],
+    [2, 3],
   ]);
   for (const { source, path } of [
     { source: "![before](image.png)\n\nquote quote\n\n![after](image.png)", path: "0:0" },
@@ -70,7 +68,7 @@ it("offers distinct source choices within a block and maps recursive folds witho
   ]) {
     const selectors = collectMobileAssistantTextSelectors(source, path, "quote");
     expect(selectors).toHaveLength(2);
-    for (const [index, selector] of selectors.entries()) {
+    for (const [index, { selector }] of selectors.entries()) {
       expect(findAssistantCitationText("quote quote", selector)).toEqual({
         start: index * 6,
         end: index * 6 + 5,
@@ -88,13 +86,9 @@ it("rejects unmappable or blank selections instead of inventing a source", () =>
 
 it("uses the web math representation around a selected passage", () => {
   for (const formula of ["$x$", "\\(x\\)"]) {
-    const [selector] = collectMobileAssistantTextSelectors(
-      `Before ${formula} after`,
-      "0:0",
-      "after",
-    );
-    expect(selector?.prefix).toBe("Before \\(x\\) ");
-    expect(findAssistantCitationText("Before \\(x\\) after", selector!)).toEqual({
+    const [choice] = collectMobileAssistantTextSelectors(`Before ${formula} after`, "0:0", "after");
+    expect(choice?.selector.prefix).toBe("Before \\(x\\) ");
+    expect(findAssistantCitationText("Before \\(x\\) after", choice!.selector)).toEqual({
       start: 13,
       end: 18,
     });
@@ -104,5 +98,5 @@ it("uses the web math representation around a selected passage", () => {
     "0:0",
     "after",
   );
-  expect(display?.prefix).toBe("Before \\[ x \\] ");
+  expect(display?.selector.prefix).toBe("Before \\[ x \\] ");
 });

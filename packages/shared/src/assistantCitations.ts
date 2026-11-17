@@ -51,10 +51,6 @@ export function formatAssistantCitationHref(citation: AssistantCitation): string
     prefix: citation.prefix,
     suffix: citation.suffix,
   });
-  if (citation.occurrence !== undefined) {
-    query.set("occurrence", String(citation.occurrence.index));
-    query.set("occurrences", String(citation.occurrence.count));
-  }
   if (citation.comment !== undefined) query.set("comment", citation.comment);
   return `${CITATION_HREF_PREFIX}${path}?${query}`;
 }
@@ -79,14 +75,8 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
     }
     const requiredKeys = ["text", "start", "end", "prefix", "suffix"];
     const comment = url.searchParams.get("comment");
-    const occurrence = url.searchParams.get("occurrence");
-    const occurrences = url.searchParams.get("occurrences");
-    if ((occurrence === null) !== (occurrences === null)) return null;
-    if (occurrence !== null && (!/^\d{1,16}$/.test(occurrence) || !/^\d{1,16}$/.test(occurrences!)))
-      return null;
     if (
-      url.searchParams.size !==
-        requiredKeys.length + (comment === null ? 0 : 1) + (occurrence === null ? 0 : 2) ||
+      url.searchParams.size !== requiredKeys.length + (comment === null ? 0 : 1) ||
       requiredKeys.some((key) => url.searchParams.getAll(key).length !== 1)
     ) {
       return null;
@@ -106,9 +96,6 @@ export function parseAssistantCitationHref(href: string): AssistantCitation | nu
         prefix: url.searchParams.get("prefix"),
         suffix: url.searchParams.get("suffix"),
         ...(comment === null ? {} : { comment }),
-        ...(occurrence === null
-          ? {}
-          : { occurrence: { index: Number(occurrence), count: Number(occurrences) } }),
       }),
     );
   } catch {
@@ -218,7 +205,6 @@ export type AssistantTextSelector = {
   readonly end: number;
   readonly prefix: string;
   readonly suffix: string;
-  readonly occurrence?: AssistantCitation["occurrence"];
 };
 
 function normalizeWhitespace(text: string): string {
@@ -285,7 +271,6 @@ export function findAssistantCitationText(
       : null;
   let onlyQuote: { start: number; end: number } | null = null;
   let quoteCount = 0;
-  let occurrenceMatch: { start: number; end: number } | null = null;
 
   for (
     let start = normalized.indexOf(quote);
@@ -293,18 +278,12 @@ export function findAssistantCitationText(
     start = normalized.indexOf(quote, start + 1)
   ) {
     const end = start + quote.length;
-    if (selector.occurrence?.index === quoteCount) occurrenceMatch = { start, end };
     quoteCount += 1;
     onlyQuote = { start, end };
     if (!matchesContext(start, end)) continue;
-    if (match !== null && match.start !== start && selector.occurrence === undefined) return null;
+    if (match !== null && match.start !== start) return null;
     match = { start, end };
   }
 
-  if (selector.occurrence !== undefined) {
-    if (quoteCount !== selector.occurrence.count || occurrenceMatch === null) return null;
-    if (quoteCount === 1) return occurrenceMatch;
-    return matchesContext(occurrenceMatch.start, occurrenceMatch.end) ? occurrenceMatch : null;
-  }
   return match ?? (quoteCount === 1 ? onlyQuote : null);
 }

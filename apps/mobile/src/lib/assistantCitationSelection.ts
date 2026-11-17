@@ -101,6 +101,6 @@ export function collectMobileAssistantTextSelectors(markdown: string, path: stri
     const index = matches.indexOf(start);
     if (index === -1) return [];
     const selector = createAssistantTextSelector(fullText, start, start + quote.length);
-    return selector ? [{ ...selector, text, occurrence: { index, count: matches.length } }] : [];
+    return selector ? [{ selector: { ...selector, text }, index, count: matches.length }] : [];
   });
 }

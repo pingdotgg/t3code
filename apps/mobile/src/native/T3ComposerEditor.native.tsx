@@ -200,6 +200,7 @@ export function ComposerEditor({
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
         return {
+          // Android taps only known token types; a model chip opens like a skill chip.
           type:
             token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
           source: token.source,

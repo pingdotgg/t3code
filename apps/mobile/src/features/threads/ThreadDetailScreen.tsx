@@ -1374,13 +1374,7 @@ function ThreadDetailBody(
       voiceInputBlocksSubmission(voiceInputSession.controller.currentState)
     );
   const handleCiteAssistantText = (citation: AssistantCitation) => {
-    if (
-      !canCiteAssistantText ||
-      props.composerDraftKey === null ||
-      (voiceInputSession.ownerKey === props.composerDraftKey &&
-        voiceInputBlocksSubmission(voiceInputSession.controller.currentState))
-    )
-      return;
+    if (!canCiteAssistantText || props.composerDraftKey === null) return;
     const target = captureComposerDraftInsertion(props.composerDraftKey);
     const prefix = target.start > 0 && !/\s/.test(target.text[target.start - 1]!) ? " " : "";
     const value = `${prefix}${serializeAssistantCitation(citation)} `;
