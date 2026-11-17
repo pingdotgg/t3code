@@ -1,11 +1,13 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { memo } from "react";
 
 import { useTranslation } from "react-i18next";
 
 import { cn } from "~/lib/utils";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
@@ -43,7 +45,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
-  onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    group: SidebarProjectSnapshot,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const { t } = useTranslation("sidebar");
@@ -74,7 +80,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
-          props.onContextMenu(group, { x: event.clientX, y: event.clientY });
+          props.onContextMenu(
+            group,
+            { x: event.clientX, y: event.clientY },
+            contextMenuSourceOf(event),
+          );
         }}
         className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
@@ -88,7 +98,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           </span>
         ) : null}
         {collapsed && hiddenThreads.length > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible pointer-coarse:invisible">
+          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
             {hiddenThreads.length}
           </span>
         ) : null}
@@ -100,7 +110,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           )}
         />
       </button>
-      {/* Sits over the count, which hides on hover, and left of the chevron. */}
+      {/* Sits over the count, which hides on hover or focus, and left of the chevron. */}
       <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
         <Tooltip>
           <TooltipTrigger

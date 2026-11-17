@@ -120,6 +120,7 @@
     "startWithout": "Start without a project",
     "title": "What should we work on?"
   },
+  "notFoundInApp": "This link doesn't point to a page in {{app}}. Go home to choose a project or start a thread.",
   "notFoundInAppPrefix": "This link doesn't point to a page in",
   "notFoundInAppSuffix": ". Go home to choose a project or start a thread.",
   "onlyApprovedApps": "Only apps you approve can use it. You can turn it off in Settings.",

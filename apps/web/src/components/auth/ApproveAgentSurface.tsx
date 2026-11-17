@@ -15,6 +15,7 @@ import { isElectron } from "../../env";
 import { translateDynamic } from "../../i18nCore";
 import { runConnectMcpApproval } from "../../state/connectMcpApproval";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
+import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
@@ -89,6 +90,7 @@ export function ApproveAgentSurface() {
   );
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
+  const loadFailed = useClerkLoadFailed();
   const session = useAtomValue(managedRelaySessionAtom);
   const signInOpened = useRef(false);
 
@@ -110,6 +112,18 @@ export function ApproveAgentSurface() {
   if (framed) {
     return (
       <Message title={t("auth.ownWindowTitle")} description={t("auth.ownWindowDescription")} />
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Message title={t("auth.loadFailedTitle")} description={t("auth.loadFailedDescription")}>
+        <div className="mt-6">
+          <Button type="button" onClick={retryClerkLoad}>
+            {t("phone.retrySignIn")}
+          </Button>
+        </div>
+      </Message>
     );
   }
 

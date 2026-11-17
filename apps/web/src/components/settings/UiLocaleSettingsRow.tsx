@@ -17,7 +17,7 @@ export function UiLocaleSettingsRow() {
   const uiLocale = useUiLocale();
   return (
     <SettingsRow
-      {...searchableSetting("ui-locale")}
+      {...searchableSetting("language")}
       description={t("uiLocale.description")}
       control={
         <div className="w-full sm:w-40">

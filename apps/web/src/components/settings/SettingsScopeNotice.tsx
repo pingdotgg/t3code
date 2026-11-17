@@ -2,7 +2,6 @@ import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/cont
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 
 import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -16,6 +15,8 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import type { SettingsScopeSearch } from "./settingsScope";
 import {
+  projectScopeMenuGroups,
+  selectProjectAxis,
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
@@ -42,7 +43,6 @@ export function SettingsScopeNotice({
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
-  const { t } = useTranslation("settings");
   const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -59,6 +59,7 @@ export function SettingsScopeNotice({
     target === "checkout"
       ? groups.filter((group) => !search.project || group.projectKey === search.project)
       : [null];
+  const projectGroups = projectScopeMenuGroups(groups, search);
   const renderChoices = (group: SidebarProjectSnapshot | null) => {
     const choices: ScopeChoice[] = group
       ? group.memberProjects.map((member) => {
@@ -68,7 +69,7 @@ export function SettingsScopeNotice({
           const { primary, secondary } = environment
             ? settingsScopeEnvironmentLabels(environment, environments)
             : {
-                primary: member.environmentLabel ?? t("scope.environment"),
+                primary: member.environmentLabel ?? "Environment",
                 secondary: member.environmentId,
               };
           return {
@@ -83,11 +84,11 @@ export function SettingsScopeNotice({
           };
         })
       : target === "project"
-        ? groups.map((group) => ({
+        ? projectGroups.map((group) => ({
             label: group.displayName,
             secondary: [
-              ...(group.archived ? [t("scope.archived")] : []),
-              ...(groups.some(
+              ...(group.archived ? ["Archived"] : []),
+              ...(projectGroups.some(
                 (other) =>
                   other.projectKey !== group.projectKey && other.displayName === group.displayName,
               )
@@ -96,7 +97,7 @@ export function SettingsScopeNotice({
               group.workspaceRoot,
             ].join(" · "),
             icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
-            search: { project: group.projectKey },
+            search: selectProjectAxis(search, group.projectKey),
           }))
         : target === "environment"
           ? environments
@@ -116,7 +117,7 @@ export function SettingsScopeNotice({
               })
           : [
               {
-                label: t("scope.openAllEnvironments"),
+                label: "Open all environments",
                 icon: <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />,
                 search: {},
               },

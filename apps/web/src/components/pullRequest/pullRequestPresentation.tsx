@@ -16,37 +16,32 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
 import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
-import { i18n, translateDynamic } from "../../i18nCore";
 import { cn } from "~/lib/utils";
+import { i18n, translateDynamic } from "../../i18nCore";
 
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
+
+export function presentationLabel(label: string): string {
+  const key = label.startsWith("pullRequest:") ? label : `pullRequest:${label}`;
+  return i18n.exists(key) ? translateDynamic(key) : label;
+}
 import {
   PULL_REQUEST_STATE_PRESENTATION,
   PullRequestGlyph,
   type PullRequestStatePresentation,
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
-
-/**
- * Translates a presentation label stored as a `pullRequest` namespace key.
- * Callers also hand over already-resolved strings (interpolated values,
- * user-visible composites); those are not catalog keys and pass through.
- */
-export function presentationLabel(label: string): string {
-  // Callers hand over both bare catalog keys and already-namespaced ones; only prefix once.
-  const key = label.startsWith("pullRequest:") ? label : `pullRequest:${label}`;
-  return i18n.exists(key) ? translateDynamic(key) : label;
-}
 
 export function PullRequestLabelChip({
   label,
@@ -89,19 +84,19 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
     case "approved":
       return {
         Icon: UserCheckIcon,
-        label: "reviewDecision.approved",
+        label: "Approved",
         toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
       };
     case "changes-requested":
       return {
         Icon: UserRoundXIcon,
-        label: "reviewDecision.changesRequested",
+        label: "Changes requested",
         toneClassName: "text-amber-600/90 dark:text-amber-400/80",
       };
     case "review-required":
       return {
         Icon: UserRoundIcon,
-        label: "reviewDecision.reviewRequired",
+        label: "Awaiting review",
         toneClassName: "text-muted-foreground/60",
       };
   }
@@ -117,9 +112,9 @@ export function PullRequestReviewDecisionGlyph({
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
-        <span className="sr-only">{presentationLabel(presentation.label)}</span>
+        <span className="sr-only">{presentation.label}</span>
       </TooltipTrigger>
-      <TooltipPopup>{presentationLabel(presentation.label)}</TooltipPopup>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -148,9 +143,7 @@ function resolvePullRequestConflict(input: {
     return null;
   }
   return {
-    label: input.baseBranch
-      ? translateDynamic("pullRequest:conflict.withBranch", { branch: input.baseBranch })
-      : translateDynamic("pullRequest:conflict.hasConflicts"),
+    label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
     toneClassName: "text-destructive",
     Icon: PullRequestGlyph.conflicting,
   };
@@ -171,11 +164,11 @@ export function PullRequestStateGlyph({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentationLabel(presentation.label)}
+          aria-label={presentation.label}
           className={cn("size-4 shrink-0", presentation.toneClassName, className)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentationLabel(presentation.label)}</TooltipPopup>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -205,43 +198,35 @@ export function PullRequestConflictGlyph({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentationLabel(presentation.label)}
+          aria-label={presentation.label}
           className={cn("size-4 shrink-0", presentation.toneClassName, className)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentationLabel(presentation.label)}</TooltipPopup>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "checkStatus.pending", Icon: Spinner, toneClassName: "text-amber-500" },
+  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
   "action-required": {
-    label: "checkStatus.awaitingAction",
+    label: "Awaiting action",
     Icon: CircleDotIcon,
     toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
   success: {
-    label: "checkStatus.success",
+    label: "Passed",
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
-  failure: { label: "checkStatus.failure", Icon: CircleXIcon, toneClassName: "text-destructive" },
+  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
   cancelled: {
-    label: "checkStatus.cancelled",
-    Icon: CircleXIcon,
-    toneClassName: "text-destructive",
-  },
-  skipped: {
-    label: "checkStatus.skipped",
-    Icon: CircleSlashIcon,
+    label: "Cancelled",
+    Icon: OctagonXIcon,
     toneClassName: "text-muted-foreground/70",
   },
-  neutral: {
-    label: "checkStatus.neutral",
-    Icon: CircleDashedIcon,
-    toneClassName: "text-muted-foreground/70",
-  },
+  skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
+  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
 } as const satisfies Record<
   PullRequestCheckStatus,
   { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
@@ -259,8 +244,8 @@ export function pullRequestCheckStatusLabel(
   check: Pick<PullRequestCheck, "status" | "url">,
 ): string {
   return isWorkflowApprovalCheck(check)
-    ? presentationLabel("checkStatus.awaitingApproval")
-    : presentationLabel(CHECK_STATUS_PRESENTATION[check.status].label);
+    ? "Awaiting approval"
+    : CHECK_STATUS_PRESENTATION[check.status].label;
 }
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
@@ -275,17 +260,17 @@ export function PullRequestCheckStatusIcon({ status }: { status: PullRequestChec
 
 const CHECKS_STATE_PRESENTATION = {
   passing: {
-    label: "checksState.passing",
+    label: "All checks have passed",
     Icon: CircleCheckIcon,
     toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
   },
   failing: {
-    label: "checksState.failing",
+    label: "Some checks were not successful",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
   },
   pending: {
-    label: "checksState.pending",
+    label: "Some checks haven't completed yet",
     Icon: CircleDotIcon,
     toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
@@ -310,7 +295,7 @@ export function pullRequestChecksState(
 
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
-    label: "reviewOutcome.approved",
+    label: "Approved",
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
@@ -320,7 +305,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     badgeVariant: "success",
   },
   "changes-requested": {
-    label: "reviewOutcome.changesRequested",
+    label: "Changes requested",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
@@ -329,7 +314,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
     badgeVariant: "error",
   },
   dismissed: {
-    label: "reviewOutcome.dismissed",
+    label: "Review dismissed",
     Icon: CircleDashedIcon,
     toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",
@@ -365,9 +350,7 @@ export function pullRequestReviewOutcomeRingClassName(
 }
 
 export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
-  return translateDynamic("pullRequest:reviewOutcome.earlierChanges", {
-    outcome: presentationLabel(REVIEW_OUTCOME_PRESENTATION[outcome].label),
-  });
+  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
 }
 
 export function PullRequestReviewOutcomeIcon({
@@ -409,7 +392,7 @@ export function PullRequestReviewOutcomeAvatarBadge({
 }
 
 export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
-  return presentationLabel(REVIEW_OUTCOME_PRESENTATION[outcome].label);
+  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
 }
 
 export function PullRequestReviewOutcomeBadge({
@@ -424,7 +407,7 @@ export function PullRequestReviewOutcomeBadge({
     <Badge size="sm" variant={presentation.badgeVariant} className={className}>
       <span className="inline-flex items-baseline gap-1">
         <presentation.Icon aria-hidden className="size-3 self-center" />
-        <span>{presentationLabel(presentation.label)}</span>
+        <span>{presentation.label}</span>
       </span>
     </Badge>
   );

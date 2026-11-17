@@ -1,8 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-
-import { i18n } from "../../i18nCore";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import {
@@ -33,6 +31,12 @@ import { parseEasDeviceHostDraft } from "./easDeviceHostsSettings.logic";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 
 const FROM_THREAD_PROJECT = "thread-project";
+
+const CREDENTIAL_SOURCES: Record<DeviceEasAccount["credentialSource"], string> = {
+  settings: "the access token saved here",
+  env: "EXPO_TOKEN on the server",
+  "eas-login": "the server's eas login",
+};
 
 const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
@@ -95,10 +99,10 @@ export function EasDeviceHostEditor(props: {
   const problem = valid
     ? null
     : !tokenValid
-      ? t("easHost.invalidReference")
+      ? "Enter a valid secret reference."
       : draft.maxSessionMinutes > 0 && draft.idleMinutes >= draft.maxSessionMinutes
-        ? t("easHost.idleGtSession")
-        : t("easHost.genericProblem");
+        ? "Idle minutes must be smaller than session minutes."
+        : "Give the host a label and limits within the ranges shown.";
   const apps = account.status === "signed-in" ? account.account.apps : [];
 
   // A check answers for the credential it was asked about: a later check or a
@@ -172,10 +176,11 @@ export function EasDeviceHostEditor(props: {
           }}
         >
           <DialogHeader>
-            <DialogTitle>
-              {props.isNew ? t("easHost.addTitle") : t("easHost.editTitle")}
-            </DialogTitle>
-            <DialogDescription>{t("easHost.description")}</DialogDescription>
+            <DialogTitle>{props.isNew ? "Add Expo host" : "Edit Expo host"}</DialogTitle>
+            <DialogDescription>
+              The environment's server signs in to Expo and starts the sessions. Without a token
+              here it uses EXPO_TOKEN, then its eas login.
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <label className="block space-y-1.5 text-sm">
@@ -210,6 +215,7 @@ export function EasDeviceHostEditor(props: {
                         : ""
                   }
                   sources={secretSources}
+                  environmentId={props.environmentId}
                   onValidityChange={(valid) => {
                     setTokenValid(valid);
                     resetAccount();
@@ -219,7 +225,7 @@ export function EasDeviceHostEditor(props: {
                     resetAccount();
                   }}
                   disabled={props.busy}
-                  placeholder={t("easHost.optionalPlaceholder")}
+                  placeholder="Optional"
                   onChange={(event) => {
                     const value = event.target.value;
                     // Emptying the field is not clearing the saved token; the
@@ -255,17 +261,12 @@ export function EasDeviceHostEditor(props: {
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
               <p role="status" className="min-w-0 text-xs text-muted-foreground">
                 {account.status === "signed-in"
-                  ? t("easHost.signedInAs", {
-                      account: account.account.signedInAs,
-                      source: i18n.t(
-                        `easHost.credentialSource.${account.account.credentialSource}`,
-                      ),
-                    })
+                  ? `Signed in as ${account.account.signedInAs} with ${CREDENTIAL_SOURCES[account.account.credentialSource]}.`
                   : account.status === "failed"
                     ? account.error
                     : account.status === "checking"
-                      ? t("easHost.checkingAccount")
-                      : t("easHost.checkFirst")}
+                      ? "Checking the Expo account…"
+                      : "Check the Expo account before choosing a project."}
               </p>
               <Button
                 type="button"
@@ -322,8 +323,8 @@ export function EasDeviceHostEditor(props: {
               {limit("idleMinutes", t("easHost.idleMinutes"), 60)}
             </div>
             <p className="text-xs text-muted-foreground">
-              {t("easHost.limitsHint")}
-              {props.isNew ? null : t("easHost.limitsRestartHint")}
+              {t("easHost.simulatorLimits")}
+              {props.isNew ? null : t("easHost.simulatorRestartHint")}
             </p>
             {problem === null ? null : (
               <p className="text-xs text-destructive" role="alert">

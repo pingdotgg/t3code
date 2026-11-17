@@ -2,12 +2,13 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   MessageId,
+  OrchestrationV2ThreadProjection,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { useTranslation } from "react-i18next";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { Trans, useTranslation } from "react-i18next";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -25,6 +26,7 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
+import { findRevertCheckpoint } from "../../session-logic";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 
 /**
@@ -76,6 +78,7 @@ export function PullRequestThreadDialogHost(props: {
   readonly onPrepared: (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => Promise<void> | void;
 }) {
   const state = useThreadOverlay(pullRequestThreadDialogAtom, props.threadKey);
@@ -144,8 +147,8 @@ export function BranchRestoreConfirmHost(props: {
   readonly canWriteSourceControl: boolean;
   readonly onConfirm: () => void;
 }) {
-  const open = useThreadOverlay(branchRestoreConfirmAtom, props.threadKey) !== null;
   const { t } = useTranslation("chat");
+  const open = useThreadOverlay(branchRestoreConfirmAtom, props.threadKey) !== null;
   return (
     <AlertDialog
       open={open}
@@ -156,18 +159,15 @@ export function BranchRestoreConfirmHost(props: {
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            <Trans
-              i18nKey={"overlays.branchRestoreTitle" as never}
-              values={{ branch: props.threadBranch }}
-              components={{ code: <code className="font-medium" /> }}
-            />
+            Switch to <code className="font-medium">{props.threadBranch}</code>?
           </AlertDialogTitle>
-          <AlertDialogDescription>{t("overlays.branchRestoreDetail")}</AlertDialogDescription>
+          <AlertDialogDescription>
+            You have uncommitted changes. They'll carry over to the other branch, or block the
+            switch if they conflict.
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
-            {t("overlays.cancel")}
-          </AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
           <Button
             variant="default"
             disabled={!props.canWriteSourceControl}
@@ -197,15 +197,22 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
+  readonly checkpoints: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
+  readonly worktreePath: string | null;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
+  const { t } = useTranslation("chat");
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  // The server refuses file restore outside an isolated worktree.
+  const canRestoreFiles =
+    pending !== null &&
+    props.worktreePath !== null &&
+    findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
   const confirm = (restoreFiles: boolean) => {
-    if (pending === null) return;
+    if (pending === null || (restoreFiles && !canRestoreFiles)) return;
     closeThreadOverlay(revertConfirmAtom);
     props.onConfirm(pending.turnCount, pending.messageId, restoreFiles);
   };
-  const { t } = useTranslation("chat");
   return (
     <AlertDialog
       open={pending !== null}
@@ -215,14 +222,19 @@ export function RevertConfirmHost(props: {
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("overlays.revertTitle")}</AlertDialogTitle>
-          <AlertDialogDescription>{t("overlays.revertDetail")}</AlertDialogDescription>
+          <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Rewind chat to before this message. Your prompt and attachments return to the composer.
+            “Revert files too” also undoes your own edits.
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
-            {t("overlays.cancel")}
-          </AlertDialogClose>
-          <Button variant="destructive-outline" onClick={() => confirm(true)}>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <Button
+            variant="destructive-outline"
+            disabled={!canRestoreFiles}
+            onClick={() => confirm(true)}
+          >
             {t("overlays.revertFilesToo")}
           </Button>
           <Button onClick={() => confirm(false)}>{t("overlays.revertKeepChanges")}</Button>

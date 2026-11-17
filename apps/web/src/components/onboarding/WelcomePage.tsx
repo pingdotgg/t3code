@@ -28,7 +28,6 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { Link, useBlocker } from "@tanstack/react-router";
-import { Trans, useTranslation } from "react-i18next";
 import * as Schema from "effect/Schema";
 import {
   CheckIcon,
@@ -39,17 +38,18 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
-import { i18n } from "../../i18nCore";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
 import { useCloudLinkState } from "../../cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
@@ -95,6 +95,7 @@ import {
   useEnvironmentsWithScope,
 } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
+import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
 import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog";
@@ -117,6 +118,7 @@ import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
+const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 /**
  * First-run page for one computer: its agents, the projects found in agent history, and the
@@ -133,7 +135,7 @@ export function WelcomePage({
   const { environments } = useEnvironments();
   const label =
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
-    t("welcome.thisComputer");
+    "this computer";
   const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
   // The phone and `t3` on PATH belong to the primary computer, so only it offers them.
   const isPrimary = usePrimaryEnvironmentId() === environmentId;
@@ -167,8 +169,8 @@ export function WelcomePage({
       toastManager.add({
         id: "welcome-finishing",
         type: "info",
-        title: t("toasts.finishingSetup"),
-        description: t("toasts.oneMoment"),
+        title: "Finishing setup",
+        description: "One moment.",
       });
       return true;
     },
@@ -204,14 +206,14 @@ export function WelcomePage({
         if (importWarning) {
           toastManager.add({
             type: "warning",
-            title: t("toasts.someHistoryNotImported"),
+            title: "Some history was not imported",
             description: importWarning,
             timeout: 0,
           });
         } else if (importedThreadCount > 0) {
           toastManager.add({
             type: "success",
-            title: t("toasts.importedThreads", { count: importedThreadCount }),
+            title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
           });
         }
         return true;
@@ -220,8 +222,8 @@ export function WelcomePage({
         holdPageRef.current = false;
         const errorToast = {
           type: "error",
-          title: t("toasts.couldNotFinishSetup"),
-          description: t("toasts.couldNotFinishSetupDescription"),
+          title: "Could not finish setup",
+          description: "Your settings could not be saved. Try again.",
         } as const;
         if (completionErrorToastIdRef.current === null) {
           completionErrorToastIdRef.current = toastManager.add(errorToast);
@@ -277,9 +279,10 @@ export function WelcomePage({
             </h1>
             <p className="mt-1.5 text-sm text-muted-foreground">
               <Trans
-                i18nKey={"welcome.settingUp" as never}
+                ns="onboarding"
+                i18nKey="welcome.settingUp"
                 values={{ label }}
-                components={[<span className="text-foreground" key="0" />]}
+                components={{ 0: <span className="text-foreground" />, 1: <></> }}
               />
             </p>
             <div className="mt-10 border-t border-border/60">
@@ -338,16 +341,19 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
     <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
       {telemetryOff ?? t("telemetry.notice")}{" "}
       <Trans
-        i18nKey={(telemetryOff === undefined ? "telemetry.optOut" : "telemetry.see") as never}
-        components={[
-          <a
-            className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            key="0"
-          />,
-        ]}
+        ns="onboarding"
+        i18nKey={telemetryOff === undefined ? "telemetry.optOut" : "telemetry.see"}
+        components={{
+          0: (
+            <a
+              className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
+              href={PRIVACY_POLICY_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+            />
+          ),
+          1: <></>,
+        }}
       />
     </p>
   );
@@ -529,7 +535,7 @@ function AgentsSection({
         const cause = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: t("toasts.couldNotTurnOn", { name: agentName(provider) }),
+          title: `Could not turn on ${agentName(provider)}`,
           ...(cause instanceof Error ? { description: cause.message } : {}),
         });
       }
@@ -547,7 +553,7 @@ function AgentsSection({
       <Button
         size="xs"
         variant="outline"
-        aria-label={t("action.genericAria", { action: actionLabel, name })}
+        aria-label={`${actionLabel}: ${name}`}
         render={
           <Link
             to="/settings/providers"
@@ -572,7 +578,7 @@ function AgentsSection({
       );
     }
     // Settings updates a broken CLI the way it was installed, including a custom binary path.
-    if (isBrokenVersion(provider)) return settingsAction(t("action.update"));
+    if (isBrokenVersion(provider)) return settingsAction("Update");
     if (serverConfig !== null && codexNeedsSetup(provider, serverConfig.settings)) {
       const open = codexSetupId === provider.instanceId;
       return (
@@ -602,11 +608,7 @@ function AgentsSection({
       );
     }
     return settingsAction(
-      state === "signIn"
-        ? t("action.signIn")
-        : state === "attention"
-          ? t("action.details")
-          : t("action.setUp"),
+      state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up",
     );
   };
 
@@ -616,7 +618,7 @@ function AgentsSection({
       (provider) =>
         needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
     )
-      ? t("agents.cannotControlTerminals")
+      ? "This connection cannot control terminals."
       : null,
     !canManageProviders &&
     (acpAllowed ||
@@ -624,7 +626,7 @@ function AgentsSection({
         (provider) =>
           stateOf(provider) === "disabled" || codexNeedsSetup(provider, serverConfig?.settings),
       ))
-      ? t("agents.cannotManageAgents")
+      ? "This connection cannot manage agents."
       : null,
   ].filter((note) => note !== null);
 
@@ -713,6 +715,12 @@ function AgentsSection({
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
           session={terminalSession}
+          onCommandFinished={() =>
+            void refreshProviders({
+              environmentId,
+              input: { instanceId: terminalSession.providerInstanceId },
+            })
+          }
           onClose={() => {
             setTerminalSession(null);
             void refreshProviders({ environmentId, input: {} });
@@ -787,7 +795,7 @@ function ProjectsSection({
     return (
       <WelcomeSection title={t("projects.title")}>
         <p className="text-sm leading-10 text-muted-foreground">
-          {t("projects.looking", { sources: importSourcesLabel() })}
+          {t("projects.looking", { sources: IMPORT_SOURCES_LABEL })}
         </p>
       </WelcomeSection>
     );
@@ -814,7 +822,7 @@ function ProjectsSection({
     return scan.data?.truncated ? (
       <WelcomeSection title={t("projects.title")}>
         <p className="text-xs leading-10 text-muted-foreground" role="status">
-          {t("projects.scanLimit")}
+          {SCAN_LIMIT_MESSAGE}
         </p>
       </WelcomeSection>
     ) : null;
@@ -847,11 +855,11 @@ function ProjectsSection({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium text-foreground">
               {canWrite && selected.length > 0
-                ? t("projects.importSelected", { count: selected.length })
-                : t("projects.importDefault")}
+                ? `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
+                : "Import projects and their threads"}
             </span>
             <span className="block text-xs text-muted-foreground">
-              {t("projects.fromHistory", { sources: importSourcesLabel() })}
+              {t("projects.fromHistory", { sources: IMPORT_SOURCES_LABEL })}
             </span>
           </span>
         </label>
@@ -862,7 +870,7 @@ function ProjectsSection({
             aria-expanded={reviewing}
             onClick={() => setReviewing((open) => !open)}
           >
-            {reviewing ? t("projects.hide") : t("projects.reviewAll", { count: candidates.length })}
+            {reviewing ? "Hide" : `Review all ${candidates.length}`}
             <ChevronDownIcon className={cn("size-3.5", reviewing && "rotate-180")} />
           </Button>
         ) : null}
@@ -906,7 +914,7 @@ function ProjectsSection({
       ) : null}
       {scan.data?.truncated ? (
         <p className="pl-8 text-xs text-muted-foreground" role="status">
-          {t("projects.scanLimit")}
+          {SCAN_LIMIT_MESSAGE}
         </p>
       ) : null}
       {scan.error !== null ? (
@@ -982,6 +990,7 @@ function PhoneStep({ step, children }: { readonly step: number; readonly childre
 function PhoneConnectLink({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { t } = useTranslation("onboarding");
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const loadFailed = useClerkLoadFailed();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const linkState = useCloudLinkState(environmentId);
   const refreshLinkState = useEffectEvent(linkState.refresh);
@@ -1042,9 +1051,15 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   return (
     <>
       <p className="text-sm text-foreground">{t("phone.signInHere")}</p>
-      <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
-        {t("phone.signInButton")}
-      </Button>
+      {loadFailed ? (
+        <Button variant="outline" size="xs" onClick={retryClerkLoad}>
+          {t("phone.retrySignIn")}
+        </Button>
+      ) : (
+        <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
+          {t("phone.signInButton")}
+        </Button>
+      )}
     </>
   );
 }
@@ -1065,7 +1080,6 @@ function OnboardingCodexSetup({
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
-  const { t } = useTranslation("onboarding");
   const instanceId = provider.instanceId;
   const instance = serverConfig.settings.providerInstances[instanceId] ?? {
     driver: provider.driver,
@@ -1091,7 +1105,7 @@ function OnboardingCodexSetup({
           const cause = squashAtomCommandFailure(result);
           toastManager.add({
             type: "error",
-            title: t("toasts.couldNotSaveCodexSetup"),
+            title: "Could not save Codex setup",
             ...(cause instanceof Error ? { description: cause.message } : {}),
           });
         }
@@ -1131,7 +1145,7 @@ function TerminalAction({
     <Button
       size="xs"
       variant="outline"
-      aria-label={t("action.genericAria", { action: label, name })}
+      aria-label={`${label}: ${name}`}
       disabled={disabled}
       onClick={onClick}
     >
@@ -1163,7 +1177,7 @@ function AgentRow({
     state === "install"
       ? isInstallableDriver(provider.driver)
         ? null
-        : t("agents.notInstalled")
+        : "Not installed"
       : compact || state === "ready" || state === "checking"
         ? null
         : state === "attention"
@@ -1209,13 +1223,15 @@ function AgentRow({
 
 function AgentInstallTerminal({
   session,
+  onCommandFinished,
   onClose,
 }: {
   readonly session: AgentTerminalSession;
+  readonly onCommandFinished: () => void;
   readonly onClose: () => void;
 }) {
-  const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   const { t } = useTranslation("onboarding");
+  const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1235,6 +1251,22 @@ function AgentInstallTerminal({
     "preparing" | "ready" | "openFailed" | "writeFailed"
   >("preparing");
   const terminalReady = setupState === "ready" || setupState === "writeFailed";
+  const commandRunning = useThreadRunningTerminalIds({
+    environmentId,
+    threadId: AGENT_ONBOARDING_THREAD_ID,
+  }).includes(terminalId);
+  const commandStartedRef = useRef(false);
+  const handleCommandFinished = useEffectEvent(onCommandFinished);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the shell stays open after an install or sign-in, so its command exiting is the only signal to check the agent again
+  useEffect(() => {
+    if (commandRunning) {
+      commandStartedRef.current = true;
+    } else if (commandStartedRef.current) {
+      commandStartedRef.current = false;
+      handleCommandFinished();
+    }
+  }, [commandRunning]);
 
   // StrictMode can finish a cancelled open after replacement setup; it must not close or pre-type into that
   // session.
@@ -1317,9 +1349,13 @@ function AgentInstallTerminal({
             t("agents.cannotControlTerminals")
           ) : setupState === "writeFailed" ? (
             <Trans
-              i18nKey={"terminal.run" as never}
+              ns="onboarding"
+              i18nKey="terminal.run"
               values={{ command }}
-              components={[<code className="rounded bg-muted px-1 font-mono" key="0" />]}
+              components={{
+                0: <code className="rounded bg-muted px-1 font-mono" />,
+                1: <></>,
+              }}
             />
           ) : setupState === "ready" ? (
             t("terminal.review")
@@ -1370,6 +1406,8 @@ function AgentInstallTerminal({
   );
 }
 
+const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
+
 // Creates the selected projects, then imports each one's agent history. Owns retry state so a
 // second Start resumes instead of recreating projects.
 function useProjectImport({
@@ -1394,7 +1432,6 @@ function useProjectImport({
     importedThreadCount?: number,
   ) => Promise<boolean>;
 }) {
-  const { t } = useTranslation("onboarding");
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
@@ -1454,7 +1491,7 @@ function useProjectImport({
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
   );
-  const visibleImportError = canWrite && canImport ? "" : t("projects.cannotImport");
+  const visibleImportError = canWrite && canImport ? "" : IMPORT_PERMISSION_MESSAGE;
 
   const importedThreadTotal = () =>
     lastImportSelectionRef.current.reduce(
@@ -1607,15 +1644,13 @@ function useProjectImport({
     const importedThreadCount = importedThreadTotal();
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = `${t("toasts.importedThreads", { count: importedThreadCount })}. ${t("importWarning.notImportedThreads", { count: skippedThreadCount })}`;
+        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;
       } else if (skippedThreadCount > 0) {
-        importWarningRef.current = t("importWarning.notImportedThreads", {
-          count: skippedThreadCount,
-        });
+        importWarningRef.current = `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`;
       } else if (importedThreadCount > 0) {
-        importWarningRef.current = `${t("toasts.importedThreads", { count: importedThreadCount })}. ${t("importWarning.someNotImported")}`;
+        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`;
       } else {
-        importWarningRef.current = t("importWarning.couldNotImport");
+        importWarningRef.current = "Could not import thread history.";
       }
     }
     finishAfterImport();
@@ -1839,11 +1874,9 @@ const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
   codex: "Codex",
   pi: "Pi",
 };
-// The brand names are data; only the list's "and" follows the UI language.
-const importSourcesLabel = () =>
-  new Intl.ListFormat(i18n.language, { type: "conjunction" }).format(
-    AgentSessionSource.literals.map((source) => IMPORT_SOURCE_NAMES[source]),
-  );
+const IMPORT_SOURCES_LABEL = new Intl.ListFormat("en", { type: "conjunction" }).format(
+  AgentSessionSource.literals.map((source) => IMPORT_SOURCE_NAMES[source]),
+);
 
 function ImportRowMeta({
   sources,
@@ -1854,10 +1887,8 @@ function ImportRowMeta({
   readonly threadCount: number;
   readonly lastActiveAt: string | null;
 }) {
-  const { t } = useTranslation("onboarding");
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
-  const age =
-    relative === null ? "" : relative.suffix === null ? t("projects.now") : relative.value;
+  const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
     <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
       {AgentSessionSource.literals.map((source) => (
@@ -1893,15 +1924,17 @@ function CliPathSetup() {
       <p className="min-w-0 flex-1 text-sm text-muted-foreground">
         {setup.added ? (
           <Trans
-            i18nKey={"cli.added" as never}
+            ns="onboarding"
+            i18nKey="cli.added"
             values={{ file: setup.file }}
-            components={[<code className="font-mono" key="0" />]}
+            components={{ 0: <code className="font-mono" />, 1: <></> }}
           />
         ) : (
           <Trans
-            i18nKey={"cli.use" as never}
+            ns="onboarding"
+            i18nKey="cli.use"
             values={{ file: setup.file }}
-            components={[<code className="font-mono" key="0" />]}
+            components={{ 0: <code className="font-mono" />, 1: <></> }}
           />
         )}
       </p>

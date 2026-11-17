@@ -1,5 +1,5 @@
 import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -32,8 +32,9 @@ export function AddUsageLimitSourceDialog({
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
-  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const { t } = useTranslation("settings");
+  const formId = useId();
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const secretSources = useSecretSources(environmentId);
@@ -78,13 +79,15 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("addUsageLimitSource.title")}</DialogTitle>
+          <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
           <DialogDescription>
-            {t("addUsageLimitSource.description", { environment: environmentLabel })}
+            Show the quota of every account the hub pools, next to the providers on{" "}
+            {environmentLabel}. The key stays on that server.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form
+            id={formId}
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -108,6 +111,7 @@ export function AddUsageLimitSourceDialog({
                 aria-label={t("addUsageLimitSource.managementKey")}
                 value={keyDraft}
                 sources={secretSources}
+                environmentId={environmentId}
                 onChange={(event) => setKeyDraft(event.target.value)}
                 onSecretChange={(secret) => setKeyDraft(secret ?? "")}
                 onValidityChange={setKeyValid}
@@ -117,7 +121,7 @@ export function AddUsageLimitSourceDialog({
               <Label htmlFor="usage-source-label">{t("addUsageLimitSource.labelOptional")}</Label>
               <Input
                 id="usage-source-label"
-                placeholder={t("addUsageLimitSource.labelPlaceholder")}
+                placeholder="Defaults to the hub's host name"
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -132,9 +136,9 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            {t("common.cancel")}
+            {t("addUsageLimitSource.cancel")}
           </Button>
-          <Button onClick={save} disabled={!canSave}>
+          <Button type="submit" form={formId} disabled={!canSave}>
             {t("addUsageLimitSource.addHub")}
           </Button>
         </DialogFooter>

@@ -1,10 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`chat:${key}`, options);
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { SectionHeaderStatus } from "../ui/collapsible-section-header";
@@ -47,7 +43,7 @@ import {
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
@@ -67,8 +63,8 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
+  useQuietThreadProjection,
   useQuietThreadShell,
-  useThreadProjection,
   useThreadRelationshipShells,
   useHiddenThreadKeys,
   useAnyEnvironmentHiding,
@@ -78,15 +74,16 @@ import { serverEnvironment } from "../../state/server";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  hasInstanceBadge,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
-import { orchestrationEnvironment } from "../../state/orchestration";
+import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
-import { openSideChatTab } from "../../lib/sideChatPane";
+import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -123,8 +120,8 @@ function ThreadLineageRowList(props: {
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
-        aria-label={td("relations.relatedThreads")}
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        aria-label="Related threads"
+        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -208,15 +205,11 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
 }
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
-  if (edge.kind === "transfer") return td("relations.contextTransfer");
+  if (edge.kind === "transfer") return "Context transfer";
   if (edge.kind === "subagent") {
-    return edge.sourceThreadId === currentThreadId
-      ? td("relations.subagent")
-      : td("relations.parentAgent");
+    return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
   }
-  return edge.sourceThreadId === currentThreadId
-    ? td("relations.fork")
-    : td("relations.parentThread");
+  return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
 }
 
 function relationshipThreadTitle(input: {
@@ -275,15 +268,16 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
-  const navigate = useNavigate();
   const { t } = useTranslation("chat");
+  const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
   const status = props.agent.status;
   const failed = status === "failed";
   const title = relationshipThreadTitle({
-    title: props.agent.title ?? td("relations.subagent"),
+    title: props.agent.title ?? "Subagent",
     isSubagent: true,
   });
   return (
@@ -313,6 +307,7 @@ function RemoteSubagentRow(props: {
             // The task's own driver here is only a "remote" label.
             driver={props.provider?.driver}
             provider={props.provider}
+            anyInstanceBadge={props.anyInstanceBadge}
             fallbackIcon={BotIcon}
             status={status}
           />
@@ -324,7 +319,7 @@ function RemoteSubagentRow(props: {
           <span
             className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
-            <span className="truncate">{t("relations.runsOn", { label: remoteChild.label })}</span>
+            <span className="truncate">{t("relations.on", { label: remoteChild.label })}</span>
             <span className="shrink-0">· {threadRelationshipStatusLabel(status)}</span>
           </span>
         </TooltipTrigger>
@@ -350,16 +345,47 @@ function RemoteSubagentRow(props: {
 function DelegatedFromRow(props: {
   readonly delegatedFrom: OrchestrationV2DelegatedFrom;
   readonly fallbackLabel: string | undefined;
+  readonly anyInstanceBadge: boolean;
 }) {
-  const navigate = useNavigate();
   const { t } = useTranslation("chat");
+  const navigate = useNavigate();
+  const router = useRouter();
   const { delegatedFrom } = props;
   const environment = useEnvironment(delegatedFrom.environmentId);
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
+  const readParent = useAtomCommand(threadTitlesRead);
+  const [opening, setOpening] = useState(false);
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
+  // The parent may have been deleted there since delegation, and the shell can't
+  // tell a deleted parent from one this client never loaded, so ask its environment.
+  const openParent = async () => {
+    if (opening) return;
+    setOpening(true);
+    const location = router.latestLocation;
+    const result = await readParent({
+      environmentId: delegatedFrom.environmentId,
+      input: { threadIds: [delegatedFrom.threadId] },
+    });
+    setOpening(false);
+    // The read can outlast the user's stay on this thread; a late answer must not pull them back.
+    if (router.latestLocation !== location) return;
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not open the parent thread" });
+      return;
+    }
+    // Deleted and unknown threads are absent from the titles.
+    if (result.value[delegatedFrom.threadId] === undefined) {
+      toastManager.add({ type: "info", title: "The parent thread was deleted" });
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(parentRef),
+    });
+  };
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
@@ -373,15 +399,16 @@ function DelegatedFromRow(props: {
               aria-disabled={environment === null || undefined}
               onClick={() => {
                 if (environment === null) return;
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(parentRef),
-                });
+                void openParent();
               }}
             />
           }
         >
-          <ThreadRelationshipIcon fallbackIcon={CornerLeftUpIcon} status={null} />
+          <ThreadRelationshipIcon
+            anyInstanceBadge={props.anyInstanceBadge}
+            fallbackIcon={CornerLeftUpIcon}
+            status={null}
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
               {title}
@@ -389,7 +416,7 @@ function DelegatedFromRow(props: {
           </span>
           {label ? (
             <span className="max-w-1/2 shrink-0 truncate text-2xs text-muted-foreground">
-              {t("relations.runsOn", { label })}
+              {t("relations.on", { label })}
             </span>
           ) : null}
         </TooltipTrigger>
@@ -414,9 +441,8 @@ export function ThreadRelationshipsPanel(props: {
   readonly showLineage: boolean;
   readonly showSideChats: boolean;
 }) {
-  const { t } = useTranslation("chat");
   const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useThreadProjection(ref)?.projection ?? null;
+  const projection = useQuietThreadProjection(ref)?.projection ?? null;
   const providersByEnvironment = useEnvironmentProviders();
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const relationshipShells = useThreadRelationshipShells(ref);
@@ -443,7 +469,7 @@ export function ThreadRelationshipsPanel(props: {
     parentShell && isProviderNativeSubagentThread(parentShell)
       ? scopeThreadRef(props.environmentId, parentShell.id)
       : null;
-  const parentProjection = useThreadProjection(parentRef)?.projection;
+  const parentProjection = useQuietThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
@@ -585,7 +611,7 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
     {
       id: "previous",
-      label: td("relations.previousAgents"),
+      label: "Previous agents",
       rows: [...previous, ...remotePrevious],
       expanded: false,
     },
@@ -618,10 +644,14 @@ export function ThreadRelationshipsPanel(props: {
 
   // Idle children can be omitted from the shell; opening one loads its own detail.
   const openThread = (threadId: ThreadId) => {
-    if (openSideChatTab(ref, graph.nodes.get(threadId)?.thread ?? null)) return;
+    const routeRef = resolveThreadOpenRoute(
+      scopeThreadRef(props.environmentId, threadId),
+      graph.nodes.get(threadId)?.thread ?? null,
+    );
+    if (routeRef.threadId === ref.threadId) return;
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(props.environmentId, threadId)),
+      params: buildThreadRouteParams(routeRef),
     });
   };
 
@@ -644,7 +674,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       mergeErrorToastId.current = toastManager.add({
         type: "error",
-        title: td("relations.mergeBackFailed"),
+        title: "Could not merge back",
       });
       return;
     }
@@ -666,7 +696,7 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       detachErrorToastId.current = toastManager.add({
         type: "error",
-        title: td("relations.disconnectFailed"),
+        title: "Could not disconnect agent session",
       });
     }
   };
@@ -683,7 +713,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: td("relations.stopSubagentFailed") });
+      toastManager.add({ type: "error", title: "Could not stop subagent" });
     }
   };
 
@@ -696,7 +726,7 @@ export function ThreadRelationshipsPanel(props: {
     });
     setStoppingId(null);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: td("relations.stopWorkflowFailed") });
+      toastManager.add({ type: "error", title: "Could not stop workflow" });
     }
   };
 
@@ -725,7 +755,7 @@ export function ThreadRelationshipsPanel(props: {
           : GitForkIcon;
     const relationship =
       node?.thread?.lineage.sideChat === true && !isParent
-        ? td("relations.sideChat")
+        ? "Side chat"
         : relationshipLabel(edge, props.threadId);
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
@@ -896,10 +926,10 @@ export function ThreadRelationshipsPanel(props: {
                     part="secondary"
                     aria-label={
                       parentTitle
-                        ? td("relations.mergeBackTo", { title: parentTitle })
-                        : td("relations.mergeBackToSource")
+                        ? `Merge back to ${parentTitle}`
+                        : "Merge back to source conversation"
                     }
-                    disabled={!canMerge || busyAction !== null}
+                    aria-disabled={!canMerge || busyAction !== null || undefined}
                     onClick={() => void merge()}
                   >
                     {busyAction === "merge" ? (
@@ -912,10 +942,10 @@ export function ThreadRelationshipsPanel(props: {
               />
               <TooltipPopup side="left">
                 {latestMergeBackRun === null
-                  ? td("relations.mergeNeedsRun")
+                  ? "Complete a run in this fork before merging it back"
                   : parentTitle
-                    ? td("relations.mergeInto", { title: parentTitle })
-                    : td("relations.mergeIntoSource")}
+                    ? `Merge this conversation back into ${parentTitle}`
+                    : "Merge this conversation back into its source"}
               </TooltipPopup>
             </Tooltip>
             <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
@@ -935,7 +965,7 @@ export function ThreadRelationshipsPanel(props: {
                     variant="ghost"
                     part="icon"
                     tone="destructive"
-                    aria-label={t("relations.stopSubagentAria", { title: threadTitle })}
+                    aria-label={`Stop subagent ${threadTitle}`}
                     disabled={stoppingId !== null}
                     onClick={() => void stopSubagent(threadId, agent)}
                   />
@@ -960,11 +990,7 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
-          title={
-            runningCount > 0
-              ? td("relations.lineageRunning", { count: runningCount })
-              : td("relations.lineage")
-          }
+          title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
           // A lone "Previous agents" row names itself; the heading returns for status or actions.
           showHeading={
             runningCount > 0 ||
@@ -984,7 +1010,7 @@ export function ThreadRelationshipsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label={td("relations.moreThreadActions")}
+                      aria-label="More thread actions"
                       disabled={busyAction !== null}
                     />
                   }
@@ -1006,6 +1032,7 @@ export function ThreadRelationshipsPanel(props: {
               <DelegatedFromRow
                 delegatedFrom={delegatedFrom}
                 fallbackLabel={currentThread?.linkOrigin?.label}
+                anyInstanceBadge={hasInstanceBadge(providerEntries)}
               />
             </ThreadLineageRowList>
           )}
@@ -1021,6 +1048,7 @@ export function ThreadRelationshipsPanel(props: {
                       provider={providersByEnvironment
                         .get(row.remote.remoteChild.environmentId)
                         ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
+                      anyInstanceBadge={hasInstanceBadge(providerEntries)}
                     />
                   ) : (
                     renderRelationshipRow(row)
@@ -1034,11 +1062,7 @@ export function ThreadRelationshipsPanel(props: {
       {sideChatsVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-side-chats-heading"
-          title={
-            runningSideChats > 0
-              ? td("relations.sideChatsRunning", { count: runningSideChats })
-              : td("relations.sideChats")
-          }
+          title={runningSideChats > 0 ? `Side chats · ${runningSideChats} running` : "Side chats"}
           data-thread-side-chats-panel
         >
           <ThreadLineageGroup

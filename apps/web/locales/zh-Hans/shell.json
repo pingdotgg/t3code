@@ -14,7 +14,6 @@
     "cloneToFallback": "克隆到机器",
     "copyIgnoredFiles": "复制被忽略的文件",
     "copyNote": "文件会在克隆完成后复制。git 整体忽略的文件夹（如 node_modules）不会包含。",
-    "fileCount": "+ {{count}} 个文件",
     "fileCount_other": "+ {{count}} 个文件",
     "findingIgnoredFiles": "正在查找被忽略的文件…",
     "folderOn": "{{target}} 上的文件夹",
@@ -33,7 +32,6 @@
     "thisMachine": "此机器",
     "title": "添加到其他机器"
   },
-  "agentSignIn": "代理登录",
   "appHelp": "{{app}} 帮助",
   "approveScope": "批准{{scope}}",
   "approving": "批准中…",
@@ -120,6 +118,7 @@
     "startWithout": "不开项目直接开始",
     "title": "接下来做什么？"
   },
+  "notFoundInApp": "此链接指向的页面不在 {{app}} 中。请回到主页选择项目或开始新线程。",
   "notFoundInAppPrefix": "此链接指向的页面不在",
   "notFoundInAppSuffix": "中。请回到主页选择项目或开始新线程。",
   "onlyApprovedApps": "只有你批准的应用才能使用。可在设置中关闭。",

@@ -4,7 +4,7 @@ import {
   type WorktreeSubmodules,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -192,7 +192,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   });
               }}
               onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
+                setModel(pickModelSelection(mixedModel ? null : selection, instanceId, model))
               }
             />
             {!mixedModel && !presentation.providerNote && !effortDisabledReason && activeEntry ? (
@@ -308,7 +308,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   });
                   return;
                 }
-                updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
+                updateSettings({
+                  fallbackModelSelection: pickModelSelection(
+                    mixedFallback ? null : settings.fallbackModelSelection,
+                    instanceId,
+                    model,
+                  ),
+                });
               }}
             />
             {settings.fallbackModelSelection !== null && fallbackEntry && !mixedFallback ? (

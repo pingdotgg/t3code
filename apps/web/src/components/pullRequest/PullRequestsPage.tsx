@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
@@ -86,7 +89,7 @@ import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
-import { SidebarInset } from "../ui/sidebar";
+import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
@@ -104,7 +107,7 @@ import {
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
 import {
   pullRequestEnvironment,
-  usePullRequestList,
+  usePullRequestHostList,
   usePullRequestListStats,
   restoredPullRequestList,
   usePullRequestTurnRefreshes,
@@ -120,11 +123,6 @@ import {
   resetPullRequestHosts,
   type PullRequestHostRead,
 } from "./pullRequestProjectAssignment.logic";
-
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`pullRequest:${key}`, options);
 
 function getShortcutContext() {
   return {
@@ -152,7 +150,37 @@ const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
+const heldRowReaders = new WeakMap<
+  EnvironmentPullRequestEntry,
+  Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
+>();
+
+function usePendingListEntries(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
+) {
+  const key = JSON.stringify(input);
+  return useAtomValue(
+    Atom.make((get) =>
+      (entries ?? []).flatMap((entry) => {
+        let readers = heldRowReaders.get(entry);
+        if (readers === undefined) {
+          readers = new Map();
+          heldRowReaders.set(entry, readers);
+        }
+        let reader = readers.get(key);
+        if (reader === undefined) {
+          reader = heldPullRequestListEntriesAtom(entry.environmentId, input, [entry]);
+          readers.set(key, reader);
+        }
+        return AsyncResult.getOrElse(get(reader), () => []);
+      }),
+    ),
+  );
+}
+
 export function PullRequestsPage() {
+  const { t } = useTranslation("pullRequest");
   const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -346,7 +374,7 @@ export function PullRequestsPage() {
       ];
     });
   const listTargets = listTargetsFor(environmentQueries);
-  const listQuery = usePullRequestList(listTargets);
+  const listQuery = usePullRequestHostList(listTargets);
 
   /**
    * Kept as its own read rather than remembered from an earlier answer because an answer cannot
@@ -367,7 +395,7 @@ export function PullRequestsPage() {
       } satisfies PullRequestListInput,
     }));
   const baselineTargets = baselineTargetsFor(environmentQueries);
-  const baselineQuery = usePullRequestList(baselineTargets);
+  const baselineQuery = usePullRequestHostList(baselineTargets);
   const observedHosts = rememberPullRequestHosts(
     rememberPullRequestHosts(hostReads, baselineQuery.observations),
     listQuery.observations,
@@ -392,7 +420,7 @@ export function PullRequestsPage() {
       } satisfies PullRequestListInput,
     }));
   })();
-  const facetQuery = usePullRequestList(facetTargets);
+  const facetQuery = usePullRequestHostList(facetTargets);
   const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
     environmentId,
     input: {
@@ -428,8 +456,8 @@ export function PullRequestsPage() {
       }));
     return { authored: targetsFor("authored"), reviewing: targetsFor("reviewing") };
   })();
-  const authoredQuery = usePullRequestList(partitionTargets.authored);
-  const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
+  const authoredQuery = usePullRequestHostList(partitionTargets.authored);
+  const reviewingQuery = usePullRequestHostList(partitionTargets.reviewing);
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const [invalidating, setInvalidating] = useState(false);
@@ -708,6 +736,23 @@ export function PullRequestsPage() {
     search.state,
   );
 
+  const heldEntries = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+  const overlayInput = { state: search.state, filters };
+  const shownEntries = usePendingListEntries(overlayInput, heldEntries);
+  const shownBaseline = usePendingListEntries(
+    overlayInput,
+    typedParsed.filters.checks === undefined ? baselineQuery.data?.entries : undefined,
+  );
+  const shownAuthored = usePendingListEntries(
+    overlayInput,
+    partitionsWanted ? authoredQuery.data?.entries : undefined,
+  );
+  const shownReviewing = usePendingListEntries(
+    overlayInput,
+    partitionsWanted ? reviewingQuery.data?.entries : undefined,
+  );
+  const shownHeldAuthored = usePendingListEntries(overlayInput, heldPartitions?.authored);
+  const shownHeldReviewing = usePendingListEntries(overlayInput, heldPartitions?.reviewing);
   const scrollRef = useRef<HTMLDivElement>(null);
   const {
     entries,
@@ -716,9 +761,12 @@ export function PullRequestsPage() {
     entriesByStatsKey,
     heldPullRequestsBySurface,
   } = pullRequestGroups({
-    known: ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []),
+    known: shownEntries,
     // The baseline was read without typed qualifiers, and rows cannot be checked for `checks:`.
-    baseline: typedParsed.filters.checks === undefined ? baselineQuery.data?.entries : undefined,
+    baseline:
+      typedParsed.filters.checks === undefined && baselineQuery.data !== null
+        ? shownBaseline
+        : undefined,
     providers: baselineQuery.data?.providers ?? listData?.providers ?? [],
     viewers,
     involvement: search.involvement,
@@ -728,11 +776,14 @@ export function PullRequestsPage() {
     answeredLocally: querySettled && !showingCarried,
     baselineEmpty,
     held:
-      loaded !== null && loaded.environmentKey === environmentKey && loaded.scope === scopeKey
-        ? loaded.partitions
-        : undefined,
-    authored: partitionsWanted ? authoredQuery.data?.entries : undefined,
-    reviewing: partitionsWanted ? reviewingQuery.data?.entries : undefined,
+      heldPartitions === undefined
+        ? undefined
+        : {
+            authored: shownHeldAuthored,
+            reviewing: shownHeldReviewing,
+          },
+    authored: partitionsWanted && authoredQuery.data !== null ? shownAuthored : undefined,
+    reviewing: partitionsWanted && reviewingQuery.data !== null ? shownReviewing : undefined,
     partitionsWanted,
   });
 
@@ -1050,6 +1101,7 @@ export function PullRequestsPage() {
     },
   );
   const rightPanelAvailable = selectedPullRequestSurface !== null;
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const [maximized, setMaximized] = useState(false);
   const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
@@ -1158,14 +1210,17 @@ export function PullRequestsPage() {
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      rightPanelUnavailableLabel={td("page.selectFirst")}
+      rightPanelUnavailableLabel="Select a pull request first"
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
   );
   const openPanelControls = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className={cn(
+        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        mobileSidebarSheetMounted && "hidden",
+      )}
       data-workspace-titlebar-controls
     >
       {rightPanelState.isOpen ? (
@@ -1177,6 +1232,9 @@ export function PullRequestsPage() {
       {panelToggleControls}
     </div>
   );
+  const listError = listQuery.error
+    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
+    : null;
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
@@ -1184,17 +1242,17 @@ export function PullRequestsPage() {
   const listBody = (
     <>
       {!capabilityKnown ? (
-        <PullRequestListGhost rows={7} caption={td("ghosts.loadingPullRequestsEllipsis")} />
+        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
-          title={td("page.unavailable")}
-          error={td("page.updateServers")}
+          title="Pull requests unavailable"
+          error="Update your T3 Code servers to browse pull requests."
         />
       ) : firstLoad ? (
-        <PullRequestListGhost rows={7} caption={td("ghosts.loadingPullRequestsEllipsis")} />
-      ) : listQuery.error && shownCount === 0 ? (
+        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
+      ) : listError && shownCount === 0 ? (
         <PullRequestsUnavailableState
-          error={listQuery.error}
+          error={listError}
           refreshing={listQuery.isPending}
           onRetry={() => listQuery.refresh()}
         />
@@ -1237,13 +1295,13 @@ export function PullRequestsPage() {
         />
       )}
 
-      {listQuery.error && shownCount > 0 ? (
+      {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>
-            {listQuery.error} {td("page.showingLoaded")}
+            {listError} {t("list.truncatedNotice")}
           </span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
-            {td("common.retry")}
+            {t("list.retry")}
           </Button>
         </div>
       ) : null}
@@ -1252,7 +1310,7 @@ export function PullRequestsPage() {
           {loadingMore ? (
             <span className="flex items-center gap-2">
               <Spinner aria-hidden size="sm" />
-              {sentCursors === null ? td("page.updating") : td("page.loadingMore")}
+              {sentCursors === null ? t("list.updating") : t("list.loadingMore")}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
@@ -1261,10 +1319,10 @@ export function PullRequestsPage() {
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
-              {td("emptyState.loadMore")}
+              {t("list.loadMore")}
             </Button>
           ) : (
-            <span>{td("page.narrowSearch")}</span>
+            <span>{t("list.narrowSearch")}</span>
           )}
         </div>
       ) : null}
@@ -1272,7 +1330,7 @@ export function PullRequestsPage() {
   );
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "list.allHosts", Icon: Plug2Icon },
+    { value: "", label: "list.all", Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       const summary = hosts.find((host) => host.host === entry.host);
       return {
@@ -1281,7 +1339,7 @@ export function PullRequestsPage() {
         Icon: getSourceControlPresentationForKind(entry.kind).Icon,
         ...(summary === undefined || summary.configured
           ? {}
-          : { unavailable: summary.detail ?? td("page.hostUnreadable") }),
+          : { unavailable: summary.detail ?? "list.hostUnavailable" }),
       };
     }),
   ];
@@ -1295,9 +1353,9 @@ export function PullRequestsPage() {
   ];
   const sortMenu = (
     <PullRequestCompactFilterMenu
-      label={td("page.sortPullRequests")}
+      label="list.sortMenu"
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
-      triggerLabel={td("page.sort")}
+      triggerLabel="list.sortTrigger"
       outlined
       value={sort}
       options={SORT_OPTIONS}
@@ -1443,26 +1501,13 @@ export function PullRequestsPage() {
     const { shortLabel, singular } = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void writeTextToClipboard(
-      url,
-      translateDynamic("pullRequest:page.termLink", { term: singular }),
-    ).then(
-      (didCopy) => {
-        if (didCopy)
-          toastManager.add({
-            type: "success",
-            title: td("page.linkCopied", { label: shortLabel }),
-            description: url,
-          });
-      },
-      (error) => {
-        toastManager.add({
-          type: "error",
-          title: td("page.failedToCopyLink", { label: shortLabel }),
-          description: error instanceof Error ? error.message : td("errors.generic"),
-        });
-      },
-    );
+    void writeTextToClipboard(url, `${singular} link`).then(undefined, (error) => {
+      toastManager.add({
+        type: "error",
+        title: `Failed to copy ${shortLabel} link`,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
   });
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activePullRequestSurface === null) return;

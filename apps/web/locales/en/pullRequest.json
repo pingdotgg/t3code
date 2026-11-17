@@ -89,10 +89,14 @@
   },
   "checks": {
     "counter": "{{done}}/{{total}} checks",
+    "counterSuffix": "checks",
     "details": "Details",
     "failedCount": "{{count}} failed",
+    "failedCount_one": "{{count}} failed",
+    "failedCount_other": "{{count}} failed",
     "loading": "Loading checks…",
     "noChecksReported": "No checks reported",
+    "openDetailsFailed": "Unable to open check details",
     "openWithSummary": "Open checks: {{summary}}",
     "outOfDate": "Check details are out of date.",
     "outOfDateDetail": "Check details are out of date. Refresh the pull request to update them.",
@@ -433,16 +437,26 @@
       "server": "Server",
       "state": "State"
     },
+    "hostUnavailable": "This host could not be read.",
     "involvement": {
       "all": "All",
       "authored": "Authored",
       "reviewing": "Reviewing"
     },
+    "labels": "Labels",
+    "loadingMore": "Loading more",
+    "loadMore": "Load more pull requests",
     "mergesLoaded": "{{count}} merges loaded",
+    "mergesLoaded_one": "{{count}} merges loaded",
+    "mergesLoaded_other": "{{count}} merges loaded",
+    "narrowSearch": "Narrow your search to find more pull requests.",
     "noAuthors": "No authors found",
     "noLabels": "No labels found",
     "refresh": "Refresh pull requests",
+    "retry": "Retry",
     "review": {
+      "approved": "Approved",
+      "changesRequested": "Changes requested",
       "none": "No reviews",
       "reviewRequired": "Review required"
     },
@@ -454,6 +468,8 @@
     "searchLabelsFailed": "Couldn't search labels on the host",
     "searchPlaceholder": "Search pull requests, or label:bug",
     "selectedCount": "{{count}} selected",
+    "selectedCount_one": "{{count}} selected",
+    "selectedCount_other": "{{count}} selected",
     "sort": {
       "blocked": "Blocked on me",
       "largest": "Largest shown",
@@ -463,6 +479,8 @@
       "smallest": "Smallest shown",
       "updated": "Recently updated"
     },
+    "sortMenu": "Sort pull requests",
+    "sortTrigger": "Sort",
     "state": {
       "all": "All",
       "closed": "Closed",
@@ -470,7 +488,9 @@
       "open": "Open"
     },
     "title": "Pull requests",
-    "unavailableDot": "· Unavailable"
+    "truncatedNotice": "Showing the last pull requests loaded.",
+    "unavailableDot": "· Unavailable",
+    "updating": "Updating pull requests"
   },
   "loading": {
     "termDiff": "Loading {{term}} diff..."
@@ -522,7 +542,8 @@
     "prTabs": "Pull request tabs",
     "receivesChangesFrom": "receives changes from",
     "reviewers": "Reviewers",
-    "termReference": "{{term}} reference"
+    "termReference": "{{term}} reference",
+    "termUpdated": "updated"
   },
   "page": {
     "failedToCopyLink": "Failed to copy {{label}} link",
@@ -559,11 +580,13 @@
     "watch": "Watch for changes"
   },
   "picker": {
+    "alreadyAsked": "Already asked",
     "couldNotAsk": "Could not ask {{login}} for a review",
     "couldNotTakeBack": "Could not take back the review request to {{login}}",
     "needsWriteAccess": "Asking someone to review needs write access on this repository",
     "nobodyElse": "Nobody else has access to this repository.",
     "noMatch": "Nobody with access matches that.",
+    "overflowAsk": "This repository has more people with access than are listed here. Ask for the rest on the host.",
     "overflowHint": "This repository has more people with access than are listed here. Search to find them.",
     "readFailed": "The people with access could not be read.",
     "requestReview": "Request a review",

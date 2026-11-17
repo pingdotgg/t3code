@@ -88,10 +88,12 @@
   },
   "checks": {
     "counter": "{{done}}/{{total}} 项检查",
+    "counterSuffix": "项检查",
     "details": "详情",
     "failedCount": "{{count}} 项失败",
     "loading": "正在加载检查…",
     "noChecksReported": "未报告任何检查",
+    "openDetailsFailed": "无法打开检查详情",
     "openWithSummary": "打开检查：{{summary}}",
     "outOfDate": "检查信息已过期。",
     "outOfDateDetail": "检查信息已过期。刷新此拉取请求以更新。",
@@ -216,10 +218,8 @@
     "termBranch": "复制{{term}}分支"
   },
   "counts": {
-    "comments": "{{formatted}} 条评论",
     "comments_other": "{{formatted}} 条评论",
     "commentsUnavailable": "评论不可用",
-    "commits": "{{formatted}} 个提交",
     "commits_other": "{{formatted}} 个提交",
     "commitsUnavailable": "提交不可用",
     "conversation_other": "{{formatted}} 个会话",
@@ -293,7 +293,6 @@
     "updateBranchRebaseHint": "托管平台拒绝了该操作。变基会在第一个无法干净应用的提交处停下；改用合并提交更新可能仍然可行。"
   },
   "files": {
-    "count": "{{formatted}} 个文件",
     "count_other": "{{formatted}} 个文件"
   },
   "ghosts": {
@@ -428,16 +427,24 @@
       "server": "服务器",
       "state": "状态"
     },
+    "hostUnavailable": "无法读取此主机。",
     "involvement": {
       "all": "全部",
       "authored": "我发起的",
       "reviewing": "审查中"
     },
+    "labels": "标签",
+    "loadingMore": "正在加载更多",
+    "loadMore": "加载更多变更请求",
     "mergesLoaded": "已加载 {{count}} 次合并",
+    "narrowSearch": "缩小搜索范围以找到更多变更请求。",
     "noAuthors": "未找到作者",
     "noLabels": "未找到标签",
     "refresh": "刷新变更请求",
+    "retry": "重试",
     "review": {
+      "approved": "已批准",
+      "changesRequested": "请求修改",
       "none": "没有审查",
       "reviewRequired": "需要审查"
     },
@@ -458,6 +465,8 @@
       "smallest": "最小的在前",
       "updated": "最近更新"
     },
+    "sortMenu": "排序变更请求",
+    "sortTrigger": "排序",
     "state": {
       "all": "全部",
       "closed": "已关闭",
@@ -465,7 +474,9 @@
       "open": "打开"
     },
     "title": "变更请求",
-    "unavailableDot": "· 不可用"
+    "truncatedNotice": "仅显示已加载的变更请求。",
+    "unavailableDot": "· 不可用",
+    "updating": "正在更新变更请求"
   },
   "loading": {
     "termDiff": "正在加载{{term}}的差异…"
@@ -517,7 +528,8 @@
     "prTabs": "变更请求标签页",
     "receivesChangesFrom": "接受来自以下分支的更改",
     "reviewers": "审查者",
-    "termReference": "{{term}}引用"
+    "termReference": "{{term}}引用",
+    "termUpdated": "更新于"
   },
   "page": {
     "failedToCopyLink": "复制 {{label}} 链接失败",
@@ -554,11 +566,13 @@
     "watch": "关注更改"
   },
   "picker": {
+    "alreadyAsked": "已请求过",
     "couldNotAsk": "无法请 {{login}} 审查",
     "couldNotTakeBack": "无法撤回对 {{login}} 的审查请求",
     "needsWriteAccess": "请人审查需要此仓库的写权限",
     "nobodyElse": "没有其他人有此仓库的访问权限。",
     "noMatch": "没有匹配的有权限者。",
+    "overflowAsk": "此仓库有权限的人多于列表所示。请到托管平台上请求其余的人。",
     "overflowHint": "此仓库有权限的人多于列表所示。搜索即可找到他们。",
     "readFailed": "无法读取有权限的人员。",
     "requestReview": "请求审查",

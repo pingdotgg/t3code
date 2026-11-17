@@ -9,8 +9,17 @@ import {
   reviewerCandidateView,
   type ReviewerTruncation,
 } from "@t3tools/client-runtime/pull-request-reviewers";
+import {
+  emptySelection,
+  isSelected,
+  changeBatches,
+  selectionChanges,
+  toggleSelection,
+} from "@t3tools/client-runtime/pull-request-selection";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -22,18 +31,15 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
-import { translateDynamic } from "../../i18nCore";
+const TRUNCATED_LABELS: Record<ReviewerTruncation, (t: Translate, error: string | null) => string> =
+  {
+    unsearchable: (t) => t("pullRequest:picker.overflowAsk"),
+    searchable: (t) => t("pullRequest:picker.overflowHint"),
+    "search-failed": (t, error) => t("pullRequest:picker.searchFailed", { error: error ?? "" }),
+    "search-truncated": (t) => t("pullRequest:picker.tooManyMatches"),
+  };
 
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`pullRequest:${key}`, options);
-
-const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
-  unsearchable: () =>
-    "This repository has more people with access than are listed here. Ask for the rest on the host.",
-  searchable: () => td("picker.overflowHint"),
-  "search-failed": (error) => td("picker.searchFailed", { error: error ?? "" }),
-  "search-truncated": () => td("picker.tooManyMatches"),
-};
+type Translate = TFunction<["pullRequest", "pullRequest"]>;
 
 export function PullRequestReviewerPicker({
   environmentId,
@@ -48,7 +54,8 @@ export function PullRequestReviewerPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [draft, setDraft] = useState(emptySelection<PullRequestReviewerCandidate>);
+  const { t } = useTranslation("pullRequest");
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
@@ -74,53 +81,70 @@ export function PullRequestReviewerPicker({
     search: searchResult,
   });
 
-  const toggle = async (candidate: PullRequestReviewerCandidate) => {
-    if (pending !== null) return;
-    setPending(candidate.id);
+  const send = async (people: ReadonlyArray<PullRequestReviewerCandidate>, requested: boolean) => {
+    for (const batch of changeBatches(people)) await sendBatch(batch, requested);
+  };
+  const sendBatch = async (
+    people: ReadonlyArray<PullRequestReviewerCandidate>,
+    requested: boolean,
+  ) => {
     const result = await requestReviewers({
       environmentId,
       input: {
         ...reference,
-        reviewers: [{ id: candidate.id, kind: candidate.kind }],
-        requested: !candidate.isRequested,
+        reviewers: people.map(({ id, kind }) => ({ id, kind })),
+        requested,
       },
     });
-    setPending(null);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: candidate.isRequested
-          ? td("picker.couldNotTakeBack", { login: candidate.login })
-          : td("picker.couldNotAsk", { login: candidate.login }),
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
-        ),
-      });
-      return;
-    }
-    // The command reads the loaded list again only for somebody it lacked, and a search result
-    // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
-    if (hostQuery !== null) searchResult.refresh();
+    if (result._tag === "Success") return;
+    const logins = people.map((person) => person.login).join(", ");
     toastManager.add({
-      type: "success",
-      title: candidate.isRequested
-        ? td("picker.requestTakenBack", { login: candidate.login })
-        : `Review requested from ${candidate.login}`,
+      type: "error",
+      title: requested
+        ? `Could not ask ${logins} for a review`
+        : `Could not take back the review request to ${logins}`,
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+      ),
     });
+  };
+
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    // Loaded rows first: they carry the request state mutations update.
+    const latest = [
+      ...(candidatesQuery.data?.candidates ?? []),
+      ...(searchResult.data?.candidates ?? []),
+    ];
+    const { add, remove } = selectionChanges(
+      draft,
+      (key, person) =>
+        latest.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
+        person.isRequested,
+    );
+    setDraft(emptySelection());
+    // A search result is keyed by what was typed, so the writes do not reach it on their own.
+    const refreshSearch =
+      hostQuery !== null && add.length + remove.length > 0 ? searchResult.refresh : null;
+    // Removing first lets a host that keeps one reviewer take the new one.
+    void send(remove, false)
+      .then(() => send(add, true))
+      .then(() => refreshSearch?.());
   };
 
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label={td("picker.requestReview")}
+      label={t("picker.requestReview")}
       allowed={allowed}
-      disabledReason={td("picker.needsWriteAccess")}
+      disabledReason={t("picker.needsWriteAccess")}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel={td("picker.searchPeople")}
+      searchLabel={t("picker.searchPeople")}
       isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
       error={
         candidatesQuery.data === null
@@ -130,23 +154,31 @@ export function PullRequestReviewerPicker({
             : null
       }
       candidates={candidates}
-      emptyLabel={td("picker.nobodyElse")}
-      noMatchLabel={td("picker.noMatch")}
-      errorLabel={td("picker.readFailed")}
+      emptyLabel={t("picker.nobodyElse")}
+      noMatchLabel={t("picker.noMatch")}
+      errorLabel={t("picker.readFailed")}
       truncated={truncation !== null}
-      truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
+      truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](t, searchError)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
-      disabled={pending !== null}
-      onSelect={(candidate) => void toggle(candidate)}
+      onSelect={(candidate) =>
+        setDraft((current) =>
+          toggleSelection(
+            current,
+            `${candidate.kind}:${candidate.id}`,
+            candidate,
+            candidate.isRequested,
+          ),
+        )
+      }
     >
       {(candidate) => (
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
-            <span className="shrink-0 text-muted-foreground">{td("picker.team")}</span>
+            <span className="shrink-0 text-muted-foreground">{t("picker.team")}</span>
           ) : null}
-          {candidate.isRequested ? (
-            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
+          {isSelected(draft, `${candidate.kind}:${candidate.id}`, candidate.isRequested) ? (
+            <CheckIcon aria-label={t("picker.alreadyAsked")} className="size-3.5 shrink-0" />
           ) : null}
         </>
       )}

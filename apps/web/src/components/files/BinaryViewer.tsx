@@ -7,6 +7,7 @@ import {
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Select,
@@ -30,15 +31,13 @@ import {
 import { PreviewImage } from "./PreviewImage";
 import { readBinaryPreview } from "./readBinaryPreview";
 
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`files:${key}`, options);
-
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 type Archive = Extract<BinaryWorkerResult, { type: "archive" }>;
 type Database = Extract<BinaryWorkerResult, { type: "sqlite" }>;
 type Rows = Extract<BinaryWorkerResult, { type: "rows" }>;
+
+const countLabel = (count: number, one: string, many: string) =>
+  `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
 function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<ArrayBuffer> }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -88,6 +87,7 @@ export default function BinaryViewer(props: {
   readonly kind: "archive" | "sqlite";
   readonly onRetry?: () => void;
 }) {
+  const { t } = useTranslation("files");
   const [sizeBytes, setSizeBytes] = useState<number | null>(null);
   const [archive, setArchive] = useState<Archive | null>(null);
   const [database, setDatabase] = useState<Database | null>(null);
@@ -215,7 +215,7 @@ export default function BinaryViewer(props: {
             {selectedPath ?? (folder || "Archive contents")}
           </span>
           <span className="shrink-0 text-muted-foreground">
-            {td("entriesCount", { count: archive.entries.length.toLocaleString() })}
+            {countLabel(archive.entries.length, "entry", "entries")}
             {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
           </span>
         </div>
@@ -232,13 +232,13 @@ export default function BinaryViewer(props: {
               >
                 <SelectTrigger aria-label="Table" aria-disabled={busy} aria-busy={busy} size="xs">
                   <SelectValue>
-                    {table.name} ({table.count.toLocaleString()} rows)
+                    {table.name} ({countLabel(table.count, "row", "rows")})
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {database.tables.map((item) => (
                     <SelectItem key={item.name} value={item.name}>
-                      {item.name} ({item.count.toLocaleString()} rows)
+                      {item.name} ({countLabel(item.count, "row", "rows")})
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -268,10 +268,8 @@ export default function BinaryViewer(props: {
             className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
             role="status"
           >
-            {td("rowsColumns", {
-              rows: table.count.toLocaleString(),
-              columns: rows?.columns.length ?? "…",
-            })}
+            {countLabel(table.count, "row", "rows")} ·{" "}
+            {rows ? countLabel(rows.columns.length, "column", "columns") : "… columns"}
             {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
           </div>
           <FileSurfaceNotice>
@@ -299,13 +297,13 @@ export default function BinaryViewer(props: {
             <thead className="sticky top-0 bg-background text-muted-foreground">
               <tr>
                 <th scope="col" className="px-3 py-2 text-left font-normal">
-                  {td("columnName")}
+                  {t("columnName")}
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-normal">
-                  {td("columnSize")}
+                  {t("columnSize")}
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-normal">
-                  {td("columnModified")}
+                  {t("columnModified")}
                 </th>
               </tr>
             </thead>
@@ -352,7 +350,7 @@ export default function BinaryViewer(props: {
             </tbody>
           </table>
           {children.size === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">{td("emptyFolder")}</p>
+            <p className="p-6 text-xs text-muted-foreground">{t("emptyFolder")}</p>
           ) : null}
         </div>
       ) : rows ? (
@@ -390,11 +388,11 @@ export default function BinaryViewer(props: {
             </tbody>
           </table>
           {rows.rows.length === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">{td("emptyTable")}</p>
+            <p className="p-6 text-xs text-muted-foreground">{t("emptyTable")}</p>
           ) : null}
         </div>
       ) : (
-        <p className="p-6 text-xs text-muted-foreground">{td("noReadableTables")}</p>
+        <p className="p-6 text-xs text-muted-foreground">{t("noReadableTables")}</p>
       )}
     </div>
   );

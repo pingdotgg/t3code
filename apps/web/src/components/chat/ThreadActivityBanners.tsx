@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { translateDynamic } from "../../i18nCore";
 import {
   presentPendingBackgroundWork,
   presentProviderGoal,
@@ -26,11 +27,11 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { Fragment } from "react";
-import { translateDynamic } from "../../i18n";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { BackgroundWorkDetails } from "./BackgroundWorkDetails";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import type { ThreadNowItem } from "./ThreadNow";
 
@@ -66,8 +67,8 @@ export function childInputNowItem(input: {
     ),
     title: childThreadInputsTitle(childThreadInputs),
     waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
-      ? translateDynamic("chat:banners.sideChatWaiting")
-      : translateDynamic("chat:banners.subagentWaiting"),
+      ? "Side chat waiting"
+      : "Subagent waiting",
     description: childThreadInputs.map((child, index) => (
       <Fragment key={child.id}>
         {index > 0 ? " " : null}
@@ -81,9 +82,7 @@ export function childInputNowItem(input: {
     )),
     actions: (
       <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
-        {first.hasPendingApprovals
-          ? translateDynamic("chat:banners.openApproval")
-          : translateDynamic("chat:banners.openQuestion")}
+        {first.hasPendingApprovals ? "Open approval" : "Open question"}
       </InlineButton>
     ),
   };
@@ -101,10 +100,17 @@ export function goalNowItem(input: {
   return {
     id: `goal:${input.threadId}`,
     icon: <TargetIcon />,
-    title:
-      presentation.usage === null
-        ? presentation.title
-        : `${presentation.title} · ${presentation.usage}`,
+    title: (
+      <Popover>
+        <PopoverTrigger openOnHover render={<InlineButton />}>
+          {presentation.title}
+          {presentation.usage === null ? null : ` · ${presentation.usage}`}
+        </PopoverTrigger>
+        <PopoverPopup side="top" width="md" padding="compact" aria-label="Goal objective">
+          <p className="whitespace-pre-wrap wrap-anywhere text-sm">{presentation.objective}</p>
+        </PopoverPopup>
+      </Popover>
+    ),
     description: presentation.objective,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
@@ -112,25 +118,18 @@ export function goalNowItem(input: {
         {presentation.canResume && !isWorking ? (
           <>
             <InlineButton
-              onClick={() =>
-                void onSendCommand(
-                  "/goal resume",
-                  translateDynamic("chat:banners.failedToResumeGoal"),
-                )
-              }
+              onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
             >
-              {translateDynamic("chat:banners.resume")}
+              Resume
             </InlineButton>
             <span aria-hidden>·</span>
           </>
         ) : null}
         <InlineButton
           tone="muted"
-          onClick={() =>
-            void onSendCommand("/goal clear", translateDynamic("chat:banners.failedToClearGoal"))
-          }
+          onClick={() => void onSendCommand("/goal clear", "Failed to clear goal.")}
         >
-          {translateDynamic("chat:banners.clear")}
+          Clear
         </InlineButton>
       </>
     ),
@@ -154,10 +153,10 @@ export function runStopNowItem(input: {
     ) : (
       <CircleStopIcon />
     ),
-    title: unresponsive
-      ? translateDynamic("chat:banners.agentNotRespondingToStop")
-      : translateDynamic("chat:banners.stopping"),
-    description: unresponsive ? translateDynamic("chat:banners.forceStopDetail") : undefined,
+    title: unresponsive ? "Agent not responding to Stop" : "Stopping",
+    description: unresponsive
+      ? "It may be short on memory. Force stop kills its processes."
+      : undefined,
     actions: (
       <>
         <span
@@ -169,9 +168,7 @@ export function runStopNowItem(input: {
         />
         {unresponsive && input.canForceStop ? (
           <InlineButton disabled={input.forceStopping} onClick={input.onForceStop}>
-            {input.forceStopping
-              ? translateDynamic("chat:banners.forceStopping")
-              : translateDynamic("chat:banners.forceStop")}
+            {input.forceStopping ? "Force stopping..." : "Force stop"}
           </InlineButton>
         ) : null}
       </>
@@ -194,9 +191,11 @@ export function backgroundWorkNowItem(input: {
   const presentation = presentPendingBackgroundWork(input.tasks);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
+    const itemKey =
+      input.tasks.find((pending) => pending.taskId === task.taskId)?.nativeItemId ?? task.taskId;
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
     const item = input.turnItems.findLast(
-      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId,
+      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
     return {
@@ -214,7 +213,6 @@ export function backgroundWorkNowItem(input: {
       activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
       startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
       updatedAtMs: subagent ? DateTime.toEpochMillis(subagent.updatedAt) : 0,
-      childThreadId: task.childThreadId ?? subagent?.childThreadId ?? undefined,
     };
   });
   const [only] = rows.length === 1 ? rows : [];
@@ -222,7 +220,6 @@ export function backgroundWorkNowItem(input: {
     .filter((row) => row.activity)
     .toSorted((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
   const isCommand = (row: (typeof rows)[number]) => row.task.kind !== "subagent";
-  const onlyThreadId = only?.childThreadId;
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
@@ -230,12 +227,7 @@ export function backgroundWorkNowItem(input: {
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {translateDynamic(
-            presentation.waiting
-              ? "chat:lifecycle.status.waiting"
-              : "chat:lifecycle.status.running",
-          )}{" "}
-          · {only.label}
+          {presentation.waiting ? "Waiting" : "Running"} · {only.label}
         </>
       ) : (
         presentation.title
@@ -272,15 +264,8 @@ export function backgroundWorkNowItem(input: {
           turnItems={input.turnItems}
           onOpenThread={onOpenThread}
         />
-        {onlyThreadId === undefined ? null : (
-          <InlineButton tone="muted" onClick={() => onOpenThread(onlyThreadId)}>
-            {translateDynamic("chat:banners.open")}
-          </InlineButton>
-        )}
         <InlineButton disabled={input.stopDisabled} onClick={() => void input.onStop()}>
-          {input.stopping
-            ? translateDynamic("chat:banners.stopping")
-            : translateDynamic("chat:banners.stop")}
+          {input.stopping ? "Stopping..." : "Stop"}
         </InlineButton>
       </>
     ),
@@ -315,22 +300,18 @@ export function branchMismatchBannerItem(input: {
             }
           />
           <TooltipPopup side="top">
-            {translateDynamic("chat:banners.branchMismatchDetail", {
-              threadBranch: mismatch.threadBranch,
-              currentBranch: mismatch.currentBranch,
-            })}
+            This thread last ran on {mismatch.threadBranch}. Sending will continue on{" "}
+            {mismatch.currentBranch}.
           </TooltipPopup>
         </Tooltip>
       </span>
     ),
     actions: (
       <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
-        {input.restoring
-          ? translateDynamic("chat:banners.restoring")
-          : translateDynamic("chat:banners.restoreBranch")}
+        {input.restoring ? "Restoring..." : "Restore branch"}
       </Button>
     ),
-    dismissLabel: translateDynamic("chat:banners.dismissBranchNotice"),
+    dismissLabel: "Dismiss branch change notice",
     onDismiss: input.onDismiss,
   };
 }

@@ -3,6 +3,7 @@ import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
@@ -34,15 +35,13 @@ const MAX_THEME_FILE_BYTES = 256 * 1024;
 /** Highlighting rebuilds markup per keystroke; fall back to plain text for oversized pastes. */
 const MAX_HIGHLIGHTED_JSON_LENGTH = 20_000;
 
-function formatByteSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} bytes`;
-}
-
 function describeOversizedThemeFile(bytes: number): string | null {
   if (bytes <= MAX_THEME_FILE_BYTES) return null;
-  return `That file is ${formatByteSize(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatByteSize(MAX_THEME_FILE_BYTES)}).`;
+  return `That file is ${formatBytes(bytes)}. Theme files are only a few KB, so this one was not read (limit ${formatBytes(MAX_THEME_FILE_BYTES)}).`;
+}
+
+function isThemeIdTaken(themeId: string): boolean {
+  return getCustomThemes().some((existing) => existing.id === themeId);
 }
 
 function escapeJsonHtml(value: string): string {
@@ -200,8 +199,8 @@ function ThemeImportBody({
   session: AbortController;
   onClose: () => void;
 }) {
-  const { t } = useTranslation("settings");
   const { signal } = session;
+  const { t } = useTranslation("settings");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [json, setJson] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -270,7 +269,7 @@ function ThemeImportBody({
     const installed: ThemeDefinition[] = [];
     const conflicting: ThemeDefinition[] = [];
     for (const theme of pairVsCodeThemes(resolveThemeLabelCollisions(parsed))) {
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
+      if (isThemeIdTaken(theme.id)) {
         conflicting.push(theme);
         continue;
       }
@@ -331,28 +330,24 @@ function ThemeImportBody({
     theme: ThemeDefinition,
     preferredName?: string | null,
   ): ThemeDefinition => {
-    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = parseThemeFile({
+    // The collection stays behind: updating a collection replaces every theme in it.
+    const copyNamed = (name: string) =>
+      parseThemeFile({
         version: THEME_FILE_VERSION,
-        name: preferredName.slice(0, 48),
+        name,
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
         ...(theme.managed ? { managed: true } : {}),
+        ...(theme.css ? { css: theme.css } : {}),
       });
-      if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
+    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
+      const candidate = copyNamed(preferredName.slice(0, 48));
+      if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
-      if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;
-      return candidate;
+      const candidate = copyNamed(`${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`);
+      if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     throw new Error(`Too many copies of "${theme.label}".`);
   };
@@ -397,7 +392,7 @@ function ThemeImportBody({
     }
     try {
       const theme = parseThemeImport(json);
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
+      if (isThemeIdTaken(theme.id)) {
         setError(null);
         setConflicts([theme]);
         return;
@@ -460,10 +455,10 @@ function ThemeImportBody({
             type="file"
           />
         );
-        const chooseButton = (label = "Choose files") => (
+        const chooseButton = (label = t("themeImport.chooseFiles")) => (
           <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
             <DownloadIcon />
-            {isReading ? "Reading…" : label}
+            {isReading ? t("themeImport.reading") : label}
           </Button>
         );
         const editorSection = () => (
@@ -514,7 +509,7 @@ function ThemeImportBody({
               <div className="min-w-0">
                 <p className="text-sm font-medium">{t("themeImport.fileLabel")}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {fileName ?? "Drop T3 Code or VS Code .json files"}
+                  {fileName ?? t("themeImport.dropHint")}
                 </p>
               </div>
               {chooseButton()}

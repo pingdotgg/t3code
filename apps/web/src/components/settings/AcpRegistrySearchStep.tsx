@@ -1,5 +1,9 @@
 import { pipe } from "effect/Function";
-import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
+  AuthProvidersManageScope,
+} from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -13,13 +17,12 @@ import type {
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, SearchIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { translateDynamic } from "../../i18nCore";
-import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -33,7 +36,7 @@ import { providerClients } from "./providerDriverMeta";
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
     ? error.message
-    : translateDynamic("acp.prepareFailed");
+    : "The ACP could not be prepared.";
 }
 
 const ACP_REGISTRY_SEARCH_DEBOUNCE_MS = 300;
@@ -92,7 +95,11 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
     prepareError,
     type: (text: string) => {
       setPrepareError(null);
-      setInput({ text, submitted: submittedQuery, typedAt: Date.now() });
+      setInput({
+        text: text.slice(0, ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH),
+        submitted: submittedQuery,
+        typedAt: Date.now(),
+      });
     },
     submit: () => {
       const trimmed = input.text.trim();
@@ -107,7 +114,10 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
       if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
       setPrepareError(null);
       setPreparingId(agent.id);
-      const result = await prepareAgent({ environmentId, input: { agentId: agent.id } });
+      const result = await prepareAgent({
+        environmentId,
+        input: { agentId: agent.id },
+      });
       setPreparingId(null);
       if (result._tag === "Success") {
         onPrepared(applyAcpRegistryPrepareResult(agent, result.value));
@@ -139,8 +149,8 @@ export function AcpRegistrySearchStep({
   onManualConfiguration,
   onLocalConfiguration,
 }: AcpRegistrySearchStepProps) {
-  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const { t } = useTranslation("settings");
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const { query, search, preparingId, prepareError } = registry;
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -170,10 +180,11 @@ export function AcpRegistrySearchStep({
             <SearchIcon />
           </InputGroupAddon>
           <InputGroupInput
-            aria-label={t("acp.searchRegistry")}
+            aria-label="Search ACP Registry"
+            maxLength={ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH}
             disabled={preparingId !== null}
             onChange={(event) => registry.type(event.currentTarget.value)}
-            placeholder={t("acp.searchPlaceholder")}
+            placeholder="Search agents…"
             size="sm"
             type="search"
             value={query}
@@ -203,11 +214,11 @@ export function AcpRegistrySearchStep({
 
       <div className="sr-only" role="status">
         {isInitialSearch
-          ? t("acp.searching")
+          ? "Searching the ACP Registry."
           : isRefreshing
-            ? t("acp.refreshing")
+            ? "Refreshing ACP Registry results."
             : results
-              ? t("acp.resultsFound", { count: resultCount })
+              ? `${resultCount} compatible ${resultCount === 1 ? "agent" : "agents"} found.`
               : ""}
       </div>
 
@@ -263,8 +274,7 @@ function AcpRegistryAgentRow({
   readonly isPreparing: boolean;
   readonly onAdd: (agent: AcpRegistrySearchAgent) => void;
 }) {
-  const { t } = useTranslation("settings");
-  const progressLabel = agent.distribution === "binary" ? t("acp.downloading") : t("acp.preparing");
+  const progressLabel = agent.distribution === "binary" ? "Downloading" : "Preparing";
   const aboutUrl = agent.website || agent.repository;
   return (
     <article className="min-w-0 py-2.5">
@@ -294,31 +304,24 @@ function AcpRegistryAgentRow({
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    aria-label={t("acp.aboutAgent", { name: agent.name })}
+                    aria-label={`About ${agent.name}`}
                     render={<a href={aboutUrl} target="_blank" rel="noreferrer" />}
                   >
                     <ExternalLinkIcon />
                   </Button>
                 }
               />
-              <TooltipPopup>{t("acp.aboutAgent", { name: agent.name })}</TooltipPopup>
+              <TooltipPopup>About {agent.name}</TooltipPopup>
             </Tooltip>
           ) : null}
           <Button
-            aria-label={t("acp.addAgentAria", {
-              action: alreadyAdded
-                ? t("acp.alreadyAdded")
-                : isPreparing
-                  ? progressLabel
-                  : t("acp.add"),
-              name: agent.name,
-            })}
+            aria-label={`${alreadyAdded ? "Already added" : isPreparing ? progressLabel : "Add"} ${agent.name}`}
             disabled={!canAdd || alreadyAdded}
             onClick={() => onAdd(agent)}
             size="xs"
             variant={isPreparing ? "secondary" : "outline"}
           >
-            {alreadyAdded ? t("acp.added") : isPreparing ? progressLabel : t("acp.add")}
+            {alreadyAdded ? "Added" : isPreparing ? progressLabel : "Add"}
           </Button>
         </div>
       </div>

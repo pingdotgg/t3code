@@ -35,7 +35,7 @@ import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 export function ProjectActionsSettings() {
-  const { t } = useTranslation();
+  const { t } = useTranslation("settings");
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -104,19 +104,19 @@ export function ProjectActionsSettings() {
       setRequest({
         scriptId: null,
         initial: payload,
-        error: error instanceof Error ? error.message : t("projectActions.importFailed"),
+        error: error instanceof Error ? error.message : "Failed to import action.",
       });
     }
   };
 
   return (
-    <SettingsSection id="project-actions" title={t("projectActions.title")}>
+    <SettingsSection id="project-actions" title="Actions">
       <SettingsRow
         serverScoped
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
-        title={t("projectActions.title")}
-        description={t("projectActions.description")}
+        title="Actions"
+        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
@@ -133,7 +133,7 @@ export function ProjectActionsSettings() {
                     />
                   }
                 >
-                  {t("projectActions.importScripts")}
+                  Import scripts
                   <ChevronDownIcon className="size-3.5" />
                 </MenuTrigger>
                 <MenuPopup align="end">
@@ -165,7 +165,12 @@ export function ProjectActionsSettings() {
               size="xs"
               variant="outline"
               disabled={saving || !canWriteSettings || targets.length === 0}
-              onClick={() => setRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })}
+              onClick={() =>
+                setRequest({
+                  scriptId: null,
+                  initial: EMPTY_PROJECT_SCRIPT_INPUT,
+                })
+              }
             >
               <PlusIcon className="size-3.5" />
               {t("projectActions.addAction")}
@@ -175,8 +180,8 @@ export function ProjectActionsSettings() {
       />
       {mixed ? (
         <SettingsRow
-          title={t("projectActions.mixedTitle")}
-          description={t("projectActions.mixedDescription")}
+          title="Different actions across checkouts"
+          description="Narrow the selection above to one checkout to edit its list. Adding an action here adds it to every selected checkout."
         />
       ) : (
         <ProjectActionsList
@@ -188,8 +193,8 @@ export function ProjectActionsSettings() {
       )}
       {t3File.status === "invalid" ? (
         <SettingsRow
-          title={t("projectActions.invalidTitle")}
-          description={t("projectActions.invalidDescription")}
+          title="t3.json is invalid"
+          description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
           className="text-warning"
         />
       ) : null}

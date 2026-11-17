@@ -11,7 +11,7 @@ import {
   PullRequestListFilters,
   PullRequestListState,
   type ProviderInstanceId,
-  type PullRequestMergeMethod,
+  PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
@@ -79,7 +79,14 @@ const WorkspaceSelections = Schema.Struct({
 });
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
+const PullRequestActivityVisibility = Schema.Struct({
+  bots: Schema.Boolean,
+  resolved: Schema.Boolean,
+});
+export type PullRequestActivityVisibility = typeof PullRequestActivityVisibility.Type;
+
 const isThreadListFilters = Schema.is(ThreadListFilters);
+const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const ThreadProject = Schema.Struct({
@@ -92,6 +99,8 @@ export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   readonly pullRequestHideTestFiles?: boolean;
+  /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
+  readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
@@ -113,6 +122,8 @@ export interface Preferences {
   /** Hardware-keyboard Return behavior in the composer. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
+  /** The client `language` setting: a locale code or "system". Unset means English. */
+  readonly language?: string;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -172,12 +183,14 @@ export class MobilePreferencesStore extends Context.Service<
 >()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
+const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     pullRequestHideTestFiles?: boolean;
+    pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
@@ -197,6 +210,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    language?: string;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -229,11 +243,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
   }
 
-  if (
-    parsed.pullRequestMergeMethod === "squash" ||
-    parsed.pullRequestMergeMethod === "merge" ||
-    parsed.pullRequestMergeMethod === "rebase"
-  ) {
+  if (isPullRequestActivityVisibility(parsed.pullRequestActivityVisibility)) {
+    preferences.pullRequestActivityVisibility = parsed.pullRequestActivityVisibility;
+  }
+
+  if (isPullRequestMergeMethod(parsed.pullRequestMergeMethod)) {
     preferences.pullRequestMergeMethod = parsed.pullRequestMergeMethod;
   }
 
@@ -305,6 +319,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
+  if (typeof parsed.language === "string") preferences.language = parsed.language;
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {
       if (typeof entry !== "object" || entry === null || !isMicrophoneKind(entry.kind)) return [];

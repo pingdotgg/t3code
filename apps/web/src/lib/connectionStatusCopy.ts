@@ -6,7 +6,7 @@ import { translateDynamic } from "../i18nCore";
  * Web-side rendering of the shared connection phase data. The shared
  * `connectionStatusText` helper in client-runtime stays untranslated data.
  */
-export function connectionStatusCopy(connection: EnvironmentConnectionPresentation): string {
+function connectionStatusCopy(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":
       return translateDynamic("connStatus.available");

@@ -1,15 +1,19 @@
 import type { GitStatusEntry } from "@pierre/trees";
-import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
+import { FileTree, useFileTree } from "@pierre/trees/react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { translateDynamic } from "../../i18nCore";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  setAllDirectoriesExpanded,
+  subscribeOncePerTask,
+} from "../files/fileTreeExpansion";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -44,7 +48,6 @@ export function DiffFileTree({
   footer,
   className,
 }: DiffFileTreeProps) {
-  const { t } = useTranslation("diffs");
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
   const presented = diffFileTreeModel(paths);
@@ -92,8 +95,9 @@ export function DiffFileTree({
     sort: ordering.sort,
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
-  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
-    areAllDirectoriesExpanded(currentModel, directoryPaths),
+  const allDirectoriesExpanded = useSyncExternalStore(
+    (listener) => subscribeOncePerTask(model, listener),
+    () => areAllDirectoriesExpanded(model, directoryPaths),
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the icon set into the imperative Pierre file tree model
@@ -187,7 +191,9 @@ export function DiffFileTree({
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <span className="px-1 font-medium text-foreground">{t("fileTree.files")}</span>
+        <span className="px-1 font-medium text-foreground">
+          {translateDynamic("diffs:fileTree.files")}
+        </span>
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
         {directoryPaths.length > 0 ? (
@@ -199,7 +205,7 @@ export function DiffFileTree({
                   size="icon-xs"
                   variant="ghost"
                   aria-label={
-                    allDirectoriesExpanded ? t("fileTree.collapseAll") : t("fileTree.expandAll")
+                    allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                   }
                   onClick={() =>
                     setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
@@ -214,7 +220,7 @@ export function DiffFileTree({
               )}
             </TooltipTrigger>
             <TooltipPopup>
-              {allDirectoriesExpanded ? t("fileTree.collapseAll") : t("fileTree.expandAll")}
+              {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

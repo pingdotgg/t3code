@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -32,6 +33,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ConnectDeviceApprovalCoordinator } from "../components/ConnectDeviceApprovalCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -57,12 +59,8 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/serv
 import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
+import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
-
-import { translateDynamic } from "../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`shell:${key}`, options);
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -118,15 +116,15 @@ export const Route = createRootRoute({
 });
 
 function RootRouteNotFoundView() {
+  const { t } = useTranslation("shell");
   return (
     <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-        <h1 className="text-lg font-medium text-foreground">{td("pageNotFound")}</h1>
+        <h1 className="text-lg font-medium text-foreground">{t("pageNotFound")}</h1>
         <p className="text-sm text-muted-foreground">
-          {td("notFoundInAppPrefix")} {APP_DISPLAY_NAME}
-          {td("notFoundInAppSuffix")}
+          {t("notFoundInApp", { app: APP_DISPLAY_NAME })}
         </p>
-        <Button render={<Link to="/" replace />}>{td("goHome")}</Button>
+        <Button render={<Link to="/" replace />}>{t("goHome")}</Button>
       </div>
     </main>
   );
@@ -196,6 +194,7 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <ProjectCloneToastCoordinator />
+      <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
@@ -237,6 +236,7 @@ function RootRouteBranch() {
 }
 
 function RootRouteErrorView({ error }: ErrorComponentProps) {
+  const { t } = useTranslation("shell");
   const router = useRouter();
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
@@ -245,20 +245,25 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 
   return (
     <StandalonePage>
-      <StandalonePageHeader title={td("somethingWentWrong")} description={message} />
+      <StandalonePageHeader title={t("somethingWentWrong")} description={message} />
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
-          {td("tryAgain")}
+        <Button
+          size="sm"
+          onClick={() =>
+            isChunkLoadError(error) ? window.location.reload() : void router.invalidate()
+          }
+        >
+          {t("tryAgain")}
         </Button>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-          {td("reloadApp")}
+          {t("reloadApp")}
         </Button>
         <CopyErrorButton report={report} />
       </div>
 
       <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
-        <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">{td("errorReport")}</p>
+        <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">{t("errorReport")}</p>
         <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
           {report}
         </pre>
@@ -273,7 +278,7 @@ function CopyErrorButton({ report }: { report: string }) {
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
       {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
-      {isCopied ? td("copied") : td("copyError")}
+      {isCopied ? "Copied" : "Copy error"}
     </Button>
   );
 }
@@ -287,7 +292,7 @@ function errorMessage(error: unknown): string {
     return error;
   }
 
-  return td("unexpectedRouterError");
+  return "An unexpected router error occurred.";
 }
 
 function errorDetails(error: unknown): string {
@@ -302,7 +307,7 @@ function errorDetails(error: unknown): string {
   try {
     return JSON.stringify(error, null, 2);
   } catch {
-    return td("noErrorDetails");
+    return "No additional error details are available.";
   }
 }
 
@@ -319,7 +324,7 @@ function errorReport(error: unknown, pathname: string): string {
   ];
   let cause = error instanceof Error ? error.cause : undefined;
   for (let depth = 0; cause !== undefined && depth < MAX_ERROR_CAUSE_DEPTH; depth += 1) {
-    lines.push("", td("causedBy"), errorDetails(cause));
+    lines.push("", "Caused by:", errorDetails(cause));
     cause = cause instanceof Error ? cause.cause : undefined;
   }
   return lines.join("\n");

@@ -1,24 +1,19 @@
-import { useRef } from "react";
-import { useTranslation } from "react-i18next";
-
 import { APP_VERSION } from "../../branding";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { showAnchoredCopySuccessToast } from "../ui/anchoredCopyToast";
+import { useTranslation } from "react-i18next";
 import { InlineButton } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function AboutVersionTitle() {
   const { t } = useTranslation("settings");
-  const copyButtonRef = useRef<HTMLButtonElement>(null);
   const { copyToClipboard } = useCopyToClipboard<void>({
     target: "version",
-    onCopy: () => showAnchoredCopySuccessToast(copyButtonRef),
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: t("about.copyError"),
+          title: "Could not copy version",
           description: error.message,
         }),
       );
@@ -33,16 +28,15 @@ export function AboutVersionTitle() {
           <TooltipTrigger
             render={
               <InlineButton
-                ref={copyButtonRef}
                 tone="muted"
-                aria-label={t("about.copyVersionAria", { version: APP_VERSION })}
+                aria-label={`Copy version ${APP_VERSION}`}
                 onClick={() => copyToClipboard(APP_VERSION, undefined)}
               >
                 {APP_VERSION}
               </InlineButton>
             }
           />
-          <TooltipPopup>{t("about.copyVersion")}</TooltipPopup>
+          <TooltipPopup>Copy version</TooltipPopup>
         </Tooltip>
       </code>
     </span>

@@ -30,13 +30,13 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
-import { translateDynamic } from "../i18n";
 
 export const RECENT_THREAD_LIMIT = 12;
+const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -51,11 +51,8 @@ export function buildLinkedThreadActionItems(
     kind: "action",
     value: `thread:${input.environmentId}:${thread.id}`,
     threadRef: { environmentId: input.environmentId, threadId: thread.id },
-    title: thread.title || translateDynamic("palette:labels.untitledThread"),
-    description:
-      thread.archivedAt === null
-        ? translateDynamic("palette:labels.linkedThread")
-        : translateDynamic("palette:labels.archivedThread"),
+    title: thread.title || "Untitled thread",
+    description: thread.archivedAt === null ? "Linked thread" : "Archived thread",
     searchTerms: [input.query, thread.title],
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
@@ -217,6 +214,8 @@ export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly run: () => Promise<void>;
   /** A pin toggle on the row, also reached with the pin shortcut while the row is highlighted. */
   readonly pin?: CommandPaletteItemPin;
+  /** Set on toggle rows; exposed to assistive technology as `aria-checked`. */
+  readonly checked?: boolean;
 }
 
 export interface CommandPaletteItemPin {
@@ -363,9 +362,7 @@ export function buildCommandPaletteProjectMetadata(input: {
   const environmentLabels = new Set<string>();
 
   for (const project of input.projects) {
-    const label =
-      input.locationByEnvironmentId.get(project.environmentId)?.label ??
-      translateDynamic("palette:labels.remote");
+    const label = input.locationByEnvironmentId.get(project.environmentId)?.label ?? "Remote";
     searchTerms.push(project.title, project.workspaceRoot, label);
     environmentLabels.add(label);
   }
@@ -440,10 +437,19 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   runThread: (thread: TThread) => Promise<void>;
   /** Makes the environment searchable; pass it only with two or more environments. */
   environmentLabelOf?: (thread: TThread) => string | null;
+  /** Tasks linked environments run for a listed thread; they open from under that thread. */
+  delegatedUnderParent?: ReadonlySet<string>;
 }): CommandPaletteActionItem[] {
+  const delegatedUnderParent = input.delegatedUnderParent ?? NO_THREAD_KEYS;
   // Callers order these: recents by last use, search results by rank.
   const visibleThreads = input.threads.filter(
-    (thread) => thread.archivedAt === null && !isSidebarHiddenThread(thread),
+    (thread) =>
+      thread.archivedAt === null &&
+      !isShownUnderParent(
+        { environmentId: thread.environmentId, threadId: thread.id },
+        thread.lineage,
+        delegatedUnderParent,
+      ),
   );
 
   return visibleThreads.map((thread) => {
@@ -462,7 +468,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       thread.id === input.activeThread?.id &&
       thread.environmentId === input.activeThread.environmentId;
     if (isCurrent) {
-      descriptionParts.push(translateDynamic("palette:labels.currentThread"));
+      descriptionParts.push("Current thread");
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);
@@ -604,28 +610,28 @@ export function filterCommandPaletteGroups(input: {
     if (input.allOptions && input.allOptions.nestedItems.length > 0) {
       searchableGroups.push({
         value: "nested-search",
-        label: translateDynamic("palette:groups.suggestions"),
+        label: "Suggestions",
         items: input.allOptions.nestedItems,
       });
     }
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
-        label: translateDynamic("palette:groups.threads"),
+        label: "Threads",
         items: input.threadSearchItems,
       });
     }
     if (input.projectSearchItems.length > 0) {
       searchableGroups.push({
         value: "projects-search",
-        label: translateDynamic("palette:groups.projects"),
+        label: "Projects",
         items: input.projectSearchItems,
       });
     }
     if (input.settingsSearchItems && input.settingsSearchItems.length > 0) {
       searchableGroups.push({
         value: "settings-search",
-        label: translateDynamic("palette:groups.settings"),
+        label: "Settings",
         items: input.settingsSearchItems,
       });
     }
@@ -667,14 +673,7 @@ export function filterCommandPaletteGroups(input: {
   const messageItems = (input.threadMessageItems ?? []).filter((item) => !listed.has(item.value));
   return messageItems.length === 0
     ? groups
-    : [
-        ...groups,
-        {
-          value: "threads-messages",
-          label: translateDynamic("palette:groups.inMessages"),
-          items: messageItems,
-        },
-      ];
+    : [...groups, { value: "threads-messages", label: "In messages", items: messageItems }];
 }
 
 /** Every option inside a submenu as one row, e.g. "New thread in t3code" or "Change theme: Dracula". */
@@ -760,9 +759,14 @@ export function filterPinnedBrowseEntries(input: {
     ? ""
     : input.filterQuery;
   const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const normalizedFilterQuery = input.filterQuery.normalize("NFC");
+  const normalizedMatches = input.browseEntries.filter((entry) =>
+    namesMatch(entry.name.normalize("NFC"), normalizedFilterQuery),
+  );
   const exactEntry =
     input.filterQuery.length > 0
-      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ??
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
       : null;
   return { visibleEntries, exactEntry };
 }
@@ -783,16 +787,12 @@ export function buildRootGroups(input: {
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
   if (input.actionItems.length > 0) {
-    groups.push({
-      value: "actions",
-      label: translateDynamic("palette:groups.actions"),
-      items: input.actionItems,
-    });
+    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
-      label: translateDynamic("palette:groups.recentThreads"),
+      label: "Recent Threads",
       items: input.recentThreadItems,
     });
   }
@@ -802,13 +802,13 @@ export function buildRootGroups(input: {
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {
   switch (mode) {
     case "root":
-      return translateDynamic("palette:placeholders.root");
+      return "Search commands, projects, and threads...";
     case "root-browse":
-      return translateDynamic("palette:placeholders.rootBrowse");
+      return "Enter project path (e.g. ~/projects/my-app)";
     case "submenu":
-      return translateDynamic("palette:placeholders.submenu");
+      return "Search...";
     case "submenu-browse":
-      return translateDynamic("palette:placeholders.submenuBrowse");
+      return "Enter path (e.g. ~/projects/my-app)";
   }
 }
 
@@ -853,12 +853,9 @@ export function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null):
   if (!flow) return null;
   if (flow.step === "confirm") return null;
   if (flow.source === "url") {
-    return translateDynamic("palette:placeholders.remoteUrl");
+    return "Enter Git clone URL";
   }
-  return translateDynamic("palette:placeholders.remoteRepository", {
-    label: addProjectRemoteSourceLabel(flow.source),
-    hint: addProjectRemoteSourcePathHint(flow.source),
-  });
+  return `Enter ${addProjectRemoteSourceLabel(flow.source)} repository (${addProjectRemoteSourcePathHint(flow.source)})`;
 }
 
 export function buildPaletteRemoteSourceReadiness(
@@ -883,7 +880,7 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return translateDynamic("palette:labels.errorFallback");
+  return "An error occurred.";
 }
 
 const OVERLAY_MODE_BY_COMMAND = {

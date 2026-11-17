@@ -1,0 +1,159 @@
+diff --git a/dist/editor/editor.js b/dist/editor/editor.js
+index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd446347746 100644
+--- a/dist/editor/editor.js
++++ b/dist/editor/editor.js
+@@ -95,6 +95,7 @@ var Editor = class {
+ 	#deletionsColumn;
+ 	#overlayElement;
+ 	#overlayElements;
++	#fontProbeElement;
+ 	#caretElements;
+ 	#caretHighlightElements;
+ 	#primaryCaretElement;
+@@ -584,6 +585,7 @@ var Editor = class {
+ 		this.#contentHasFocus = false;
+ 		this.#overlayElement?.remove();
+ 		this.#overlayElement = void 0;
++		this.#fontProbeElement = void 0;
+ 		this.#resizeObserver?.disconnect();
+ 		this.#resizeObserver = void 0;
+ 		this.#fontRemeasureScheduled = false;
+@@ -1022,6 +1024,19 @@ var Editor = class {
+ 		this.#tokenizer?.applyStyle();
+ 		this.#spriteElement = createSpriteElement();
+ 		this.#overlayElement = h("div", { dataset: "editorOverlay" });
++		// Resizes when the inherited code font changes, so the observer can re-measure.
++		this.#fontProbeElement = h("span", {
++			ariaHidden: "true",
++			style: {
++				position: "absolute",
++				top: "0",
++				left: "0",
++				visibility: "hidden",
++				pointerEvents: "none",
++				whiteSpace: "pre"
++			},
++			textContent: "0"
++		}, this.#overlayElement);
+ 		const replacementFocusTargetIsContent = (event) => {
+ 			const target = event.composedPath()[0];
+ 			return target instanceof Node && this.#contentElement?.contains(target) === true;
+@@ -1130,6 +1145,7 @@ var Editor = class {
+ 		this.#editorEventDisposes = [
+ 			addEventListener(contentEl, "focus", () => {
+ 				this.#contentHasFocus = true;
++				this.#retainSearchPanelFocus = false;
+ 				onFocus?.();
+ 				if (!this.#isContentMouseDown && !this.#isComposing && this.#focusRequest == null && this.#selections !== void 0 && this.#selections.length > 0) this.#setWindowSelection(this.#selections.at(-1));
+ 			}, { passive: true }),
+@@ -1397,6 +1413,7 @@ var Editor = class {
+ 		this.#resizeObserver = new ResizeObserver(this.#handleLayoutResize);
+ 		this.#resizeObserver.observe(contentEl);
+ 		this.#resizeObserver.observe(contentEl.parentElement);
++		if (this.#fontProbeElement !== void 0) this.#resizeObserver.observe(this.#fontProbeElement);
+ 		this.#computeContentOffset(contentEl);
+ 	}
+ 	#handleCustomPasteEvent = async () => {
+@@ -1852,7 +1869,9 @@ var Editor = class {
+ 		const change = textDocument.applyEdits(edits, true, selections, nextSelections, true);
+ 		if (change !== void 0) this.#applyChange(change, nextSelections);
+ 	}
+-	#handleLayoutResize = () => {
++	#handleLayoutResize = (entries) => {
++		const contentElement = this.#contentElement;
++		const metricsChanged = contentElement !== void 0 && entries.some((entry) => entry.target === this.#fontProbeElement) && this.#metrics.init(contentElement);
+ 		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
+ 		const prevGutterWidth = this.#gutterWidthCache;
+ 		const prevContentWidth = this.#contentWidthCache;
+@@ -1860,12 +1879,12 @@ var Editor = class {
+ 		this.#contentWidthCache = void 0;
+ 		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
+ 		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
+-		if (!gutterWidthChanged && !contentWidthChanged) return;
++		if (!gutterWidthChanged && !contentWidthChanged && !metricsChanged) return;
+ 		this.#lastAccessedCharX = void 0;
+ 		this.#metrics.clearTextWidthCache();
+-		if (contentWidthChanged) {
++		if (contentWidthChanged || metricsChanged) {
+ 			this.#wrapLineOffsetsCache.clear();
+-			if (this.#isWrap || lineAnnotations > 0) this.#lineYCache.clear();
++			if (metricsChanged || this.#isWrap || lineAnnotations > 0) this.#lineYCache.clear();
+ 		}
+ 		if (this.#selections !== void 0 || this.#matches !== void 0 || this.#markerRenderer !== void 0) {
+ 			this.#updateSelections(this.#selections ?? []);
+@@ -3369,7 +3388,8 @@ var Editor = class {
+ 		});
+ 		this.#searchPanel = searchPanel;
+ 		this.#retainSearchPanelFocus = false;
+ 		searchPanel.mount();
++		searchPanel.getHostElement().dataset.searchPanelOverlay = "";
+ 	}
+ 	#searchWithNavigationTarget(textDocument, searchParams) {
+ 		const viewport = this.#getSearchViewportBounds();
+diff --git a/dist/editor/textMeasure.d.ts b/dist/editor/textMeasure.d.ts
+index 89e938d89eca77d351aeed65f3c5495383effd97..cde1d6ba89a97bbb1614754a48f8994388c186bd 100644
+--- a/dist/editor/textMeasure.d.ts
++++ b/dist/editor/textMeasure.d.ts
+@@ -9,8 +9,8 @@ declare class Metrics {
+   lineHeight: number;
+   /** Padding top of the root element. */
+   paddingTop: number;
+-  /** initialize the metrics */
+-  init(root: HTMLElement): void;
++  /** (re)read the metrics from root, returning true when they changed */
++  init(root: HTMLElement): boolean;
+   /**
+    * Re-measure the '0' character width against the font that is loaded right
+    * now, returning true when measurement-dependent UI should refresh.
+diff --git a/dist/editor/textMeasure.js b/dist/editor/textMeasure.js
+index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea875c73a5 100644
+--- a/dist/editor/textMeasure.js
++++ b/dist/editor/textMeasure.js
+@@ -16,9 +16,10 @@ var Metrics = class {
+ 	lineHeight = 20;
+ 	/** Padding top of the root element. */
+ 	paddingTop = 0;
+-	/** initialize the metrics */
++	/** (re)read the metrics from root, returning true when they changed */
+ 	init(root) {
+-		if (this.#root === root && this.#canvasCtx !== void 0 && this.ch !== -1) return;
++		const previousLineHeight = this.lineHeight;
++		let fontChanged = false;
+ 		this.#root = root;
+ 		this.#canvas ??= h("canvas", { style: { display: "none" } });
+ 		this.#canvasCtx ??= this.#canvas.getContext("2d") ?? void 0;
+@@ -37,9 +38,11 @@ var Metrics = class {
+ 			this.#setCanvasFont(font);
+ 			this.ch = this.canvasMeasureTextWidth("0");
+ 			this.clearTextWidthCache();
++			fontChanged = true;
+ 		}
+ 		const nextTabSize = parseInt(tabSize, 10);
+ 		if (!Number.isNaN(nextTabSize)) this.tabSize = nextTabSize;
++		return fontChanged || this.lineHeight !== previousLineHeight;
+ 	}
+ 	/**
+ 	* Re-measure the '0' character width against the font that is loaded right
+diff --git a/package.json b/package.json
+index d1fa4d5d79ba70b6cd990b0ac9df5206fe55b58d..8762624a075174f5d9f35224cf091596d951a1a7 100644
+--- a/package.json
++++ b/package.json
+@@ -60,6 +60,18 @@
+     "./worker/worker-portable.js": {
+       "types": "./dist/worker/worker-portable.d.ts",
+       "import": "./dist/worker/worker-portable.js"
++    },
++    "./types": {
++      "types": "./dist/types.d.ts",
++      "import": "./dist/types.js"
++    },
++    "./utils/getFiletypeFromFileName": {
++      "types": "./dist/utils/getFiletypeFromFileName.d.ts",
++      "import": "./dist/utils/getFiletypeFromFileName.js"
++    },
++    "./utils/parsePatchFiles": {
++      "types": "./dist/utils/parsePatchFiles.d.ts",
++      "import": "./dist/utils/parsePatchFiles.js"
+     }
+   },
+   "publishConfig": {

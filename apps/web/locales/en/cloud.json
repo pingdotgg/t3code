@@ -8,6 +8,7 @@
   "manageTunnels": "Manage tunnels",
   "noPublishedEnvironments": "No other environments are published to your account yet. Publish one from another device and it will show up here.",
   "notNow": "Not now",
+  "retrySignIn": "Retry sign-in",
   "signIn": "Sign in",
   "tryAgain": "Try again",
   "tunnelsInUse": "{{used}} of {{limit}} tunnels in use",

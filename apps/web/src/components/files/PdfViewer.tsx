@@ -29,11 +29,6 @@ import {
 } from "./pdfLayout";
 import "./pdfViewer.css";
 
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`files:${key}`, options);
-
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
 
@@ -98,7 +93,8 @@ function PdfPage(props: {
       });
       await Promise.all([paint.promise, layer.render()]);
     })().catch((cause: unknown) => {
-      if (!cancelled) onError(cause instanceof Error ? cause.message : td("pageRenderFailed"));
+      if (!cancelled)
+        onError(cause instanceof Error ? cause.message : "This PDF page could not render.");
     });
     return () => {
       cancelled = true;
@@ -169,7 +165,7 @@ export default function PdfViewer(props: {
     let disposed = false;
     let task: ReturnType<typeof openPdf> | undefined;
     const timeout = setTimeout(() => {
-      setError(td("loadTimeout"));
+      setError("This PDF took too long to load. Try again.");
       controller.abort();
       void task?.destroy();
     }, 30_000);
@@ -183,7 +179,8 @@ export default function PdfViewer(props: {
         controller.signal.throwIfAborted();
         task = openPdf(bytes);
         const document = await task.promise;
-        if (document.numPages > MAX_PAGES) throw new Error(td("pageLimit"));
+        if (document.numPages > MAX_PAGES)
+          throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
         const sizes = await Promise.all(
           Array.from({ length: Math.min(initialPage + 1, document.numPages) }, async (_, index) => {
@@ -205,7 +202,7 @@ export default function PdfViewer(props: {
       })
       .catch((cause: unknown) => {
         if (!disposed && !controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : td("openFailed"));
+          setError(cause instanceof Error ? cause.message : "Unable to open PDF.");
       })
       .finally(() => clearTimeout(timeout));
     return () => {
@@ -292,10 +289,11 @@ export default function PdfViewer(props: {
     }
     saveView(node, anchor !== null);
   });
+  const firstMatch = matches[0];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
-    if (matches.length) jumpToPage(matches[0]!);
-  }, [matches]);
+    if (firstMatch !== undefined) jumpToPage(firstMatch);
+  }, [firstMatch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
   useEffect(() => {
     if (!pdf || !query.trim()) {
@@ -314,22 +312,31 @@ export default function PdfViewer(props: {
         const sizes: number[] = [];
         let size = 0;
         for (let index = 0; index < pdf.numPages; index++) {
-          if (cancelled) return;
           const page = await pdf.getPage(index + 1);
           const pageSize = page.getViewport({ scale: 1 });
           sizes.push(pageSize.height / pageSize.width);
           const content = await page.getTextContent();
+          if (cancelled) return;
           const text = pdfPageText(content.items);
           size += text.length;
-          if (size > MAX_FIND_TEXT) throw new Error(td("searchTooMuchText"));
-          if (pdfFindIncludes(text, query)) found.push(index);
+          if (size > MAX_FIND_TEXT)
+            throw new Error(
+              "This PDF has too much text to search. Save it to search in another app.",
+            );
+          if (!pdfFindIncludes(text, query)) continue;
+          found.push(index);
+          if (found.length > 1) continue;
+          // Pages up to the first hit are measured, so its jump lands before the scan finishes.
+          setRatios((old) => [...sizes, ...old.slice(sizes.length)]);
+          setMatches([index]);
         }
         if (cancelled) return;
         setRatios(sizes);
         setMatches(found);
       })()
         .catch((cause: unknown) => {
-          if (!cancelled) setFindError(cause instanceof Error ? cause.message : td("searchFailed"));
+          if (!cancelled)
+            setFindError(cause instanceof Error ? cause.message : "Could not search this PDF.");
         })
         .finally(() => {
           if (!cancelled) setFinding(false);
@@ -344,41 +351,41 @@ export default function PdfViewer(props: {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
-          {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
+          {pdf ? `${current + 1} / ${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}` : "PDF"}
         </span>
         <FileSurfaceAction
-          label={td("prevPage")}
+          label="Previous page"
           disabled={!pdf || current === 0}
           onPress={() => showPage(current - 1)}
         >
           <ChevronUpIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label={td("nextPage")}
+          label="Next page"
           disabled={!pdf || current + 1 >= pdf.numPages}
           onPress={() => showPage(current + 1)}
         >
           <ChevronDownIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label={td("zoomOut")}
+          label="Zoom out"
           disabled={scale <= PDF_MIN_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, -1))}
         >
           <MinusIcon className="size-3.5" />
         </FileSurfaceAction>
         <span className="min-w-14 text-center tabular-nums">
-          {zoom === null ? td("fitWidth") : `${Math.round(scale * 100)}%`}
+          {zoom === null ? "Fit width" : `${Math.round(scale * 100)}%`}
         </span>
         <FileSurfaceAction
-          label={td("zoomIn")}
+          label="Zoom in"
           disabled={scale >= PDF_MAX_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, 1))}
         >
           <PlusIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label={td("fitWidth")}
+          label="Fit width"
           onPress={() => {
             changeZoom(null);
             scroll.current?.scrollTo({ left: 0 });
@@ -391,8 +398,8 @@ export default function PdfViewer(props: {
             ref={find}
             size="compact"
             type="search"
-            aria-label={td("find")}
-            placeholder={td("find")}
+            aria-label="Find in PDF"
+            placeholder="Find in PDF"
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -405,11 +412,11 @@ export default function PdfViewer(props: {
           <>
             <span role="status">
               {finding
-                ? td("searching")
+                ? "Searching…"
                 : (findError ?? `${matches.length ? match + 1 : 0}/${matches.length}`)}
             </span>
             <FileSurfaceAction
-              label={td("nextMatch")}
+              label="Next matching page"
               disabled={!matches.length}
               onPress={() => {
                 const next = (match + 1) % matches.length;

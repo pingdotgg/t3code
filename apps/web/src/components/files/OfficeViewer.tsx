@@ -3,6 +3,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import VirtualTablePreview from "./VirtualTablePreview";
 
@@ -16,11 +17,6 @@ import {
 
 import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
-
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`files:${key}`, options);
 
 const DocumentPages = lazy(() => import("./DocumentPages"));
 const NotebookPreview = lazy(() => import("./NotebookPreview"));
@@ -73,6 +69,7 @@ function ExtendedOfficeViewer(props: {
   readonly kind: OfficePreviewKind;
   readonly sizeBytes?: number;
 }) {
+  const { t } = useTranslation("files");
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -165,9 +162,9 @@ function ExtendedOfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">{td("noPreview")}</p>
+        <p className="text-sm font-medium">{t("noPreview")}</p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          {error} {td("saveOrOpenElsewhere")}
+          {error} {t("saveOrOpenElsewhere")}
         </p>
       </div>
     );
@@ -224,7 +221,7 @@ function ExtendedOfficeViewer(props: {
                   if (value !== null) selectPage(value);
                 }}
               >
-                <SelectTrigger aria-label="Chapter" size="xs">
+                <SelectTrigger aria-label={t("chapter")} size="xs">
                   <SelectValue>{documentPage?.title}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -239,8 +236,8 @@ function ExtendedOfficeViewer(props: {
           ) : (
             <span className="flex-1 text-center tabular-nums" aria-live="polite">
               {navigation === "slide"
-                ? td("slideOf", { page: page + 1, count })
-                : td("pageOf", { page: page + 1, count })}
+                ? t("slideOf", { page: page + 1, count })
+                : t("pageOf", { page: page + 1, count })}
             </span>
           )}
           <FileSurfaceAction
@@ -257,7 +254,7 @@ function ExtendedOfficeViewer(props: {
           className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
           role="status"
         >
-          {td("sheetStatus", {
+          {t("sheetStatus", {
             page: page + 1,
             count,
             rows: sheet.rowCount.toLocaleString(),
@@ -294,7 +291,7 @@ function ExtendedOfficeViewer(props: {
               : ""}
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">{td("emptySheet")}</p>
+            <p className="p-6 text-xs text-muted-foreground">{t("emptySheet")}</p>
           ) : (
             <VirtualTablePreview
               key={page}

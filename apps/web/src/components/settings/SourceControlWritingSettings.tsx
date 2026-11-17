@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   type ProviderInstanceId,
   type ServerSettings,
@@ -7,7 +8,7 @@ import {
   textGeneratorForSelection,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import {
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
@@ -23,7 +24,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useTextGenerationTargets } from "../../textGenerators";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -44,22 +45,24 @@ import {
 } from "./settingsLayout";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { searchableSetting } from "./settingsSearch";
-import { useTranslation } from "react-i18next";
 
-const MODE_OPTIONS = {
-  repo_conventions: {
-    label: "scWriting.repoConventionsLabel",
-    description: "scWriting.repoConventionsDescription",
-  },
-  conventional_commits: {
-    label: "scWriting.conventionalCommitsLabel",
-    description: "scWriting.conventionalCommitsDescription",
-  },
-  custom: {
-    label: "scWriting.customLabel",
-    description: "scWriting.customDescription",
-  },
-} as const;
+const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
+  {
+    repo_conventions: {
+      label: "Repository conventions",
+      description:
+        "Commit messages and pull request titles and descriptions match each project's history.",
+    },
+    conventional_commits: {
+      label: "Conventional Commits",
+      description: "Conventional Commit prefixes, with short pull request titles and descriptions.",
+    },
+    custom: {
+      label: "Custom instructions",
+      description:
+        "Your instructions shape commit messages and pull request titles and descriptions.",
+    },
+  };
 
 export function SourceControlWritingSettingsSection() {
   const { t } = useTranslation("settings");
@@ -150,13 +153,13 @@ export function SourceControlWritingSettingsSection() {
     (entry) =>
       entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
-  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+  const modelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
-  const writerModelDisabledReason = useScopedModelDisabledReason(settings, writerEntries);
+  const writerModelDisabledReason = useScopedModelDisabledReason(settings, writerEntries, true);
   const writerInstanceEntry = writerEntries.find(
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
@@ -178,7 +181,7 @@ export function SourceControlWritingSettingsSection() {
     },
     projectAgentProviders,
   );
-  const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const reviewGuideModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     projectAgentProviders,
     reviewGuideSelection.instanceId,
@@ -193,17 +196,17 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection id="source-control-text-generation" title={t("scWriting.sectionTitle")}>
+    <SettingsSection id="source-control-text-generation" title="Commits & pull requests">
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
         mixed={writingStyleMixed}
         {...searchableSetting("source-control-writing-style")}
-        description={t(MODE_OPTIONS[style.mode].description)}
+        description={MODE_OPTIONS[style.mode].description}
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label={t("scWriting.resetWritingStyle")}
+              label="commit and pull request writing"
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -231,18 +234,18 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label={t("scWriting.writingAria")}
+              aria-label="Commit and pull request writing"
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
-                  value === null ? t("storage.mixed") : t(MODE_OPTIONS[value].label)
+                  value === null ? "Mixed" : MODE_OPTIONS[value].label
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
                 <SelectItem key={mode} hideIndicator value={mode}>
-                  {t(MODE_OPTIONS[mode].label)}
+                  {MODE_OPTIONS[mode].label}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -316,13 +319,13 @@ export function SourceControlWritingSettingsSection() {
         settingKeys={["reviewGuidesEnabled"]}
         mixed={mixedReviewGuidesEnabled}
         {...searchableSetting("review-guides")}
-        description={t("scWriting.reviewGuidesDescription")}
+        description="Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review."
         control={
           <Switch
             mixed={mixedReviewGuidesEnabled}
             checked={mixedReviewGuidesEnabled ? false : settings.reviewGuidesEnabled}
             onCheckedChange={(checked) => updateSettings({ reviewGuidesEnabled: Boolean(checked) })}
-            aria-label={t("scWriting.reviewGuidesAria")}
+            aria-label="Review guides"
           />
         }
       />
@@ -333,7 +336,7 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideModelSelection"]}
             {...searchableSetting("review-guide-model")}
-            description={t("scWriting.reviewGuideModelDescription")}
+            description="Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator."
             control={
               !hasServerTargets ? (
                 <span className="text-sm text-muted-foreground">
@@ -350,21 +353,25 @@ export function SourceControlWritingSettingsSection() {
                       instanceEntries={instanceEntries}
                       modelOptionsByInstance={reviewGuideModelOptionsByInstance}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      triggerAriaLabel={t("scWriting.reviewGuideModel")}
-                      {...(mixedReviewGuideModel ? { triggerLabel: t("storage.mixed") } : {})}
+                      triggerAriaLabel="Review guide model"
+                      {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
                       getModelDisabledReason={writerModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
                         const reason = writerModelDisabledReason(instanceId, model);
                         if (reason) {
                           toastManager.add({
                             type: "error",
-                            title: t("scWriting.reviewGuideModelNotSaved"),
+                            title: "Review guide model not saved",
                             description: reason,
                           });
                           return;
                         }
                         updateSettings({
-                          reviewGuideModelSelection: createModelSelection(instanceId, model),
+                          reviewGuideModelSelection: pickModelSelection(
+                            mixedReviewGuideModel ? null : reviewGuideSelection,
+                            instanceId,
+                            model,
+                          ),
                         });
                       }}
                     />
@@ -408,7 +415,7 @@ export function SourceControlWritingSettingsSection() {
                       if (reason) {
                         toastManager.add({
                           type: "error",
-                          title: t("scWriting.reviewGuideModelNotSaved"),
+                          title: "Review guide model not saved",
                           description: reason,
                         });
                         return;
@@ -421,7 +428,7 @@ export function SourceControlWritingSettingsSection() {
                         ),
                       });
                     }}
-                    aria-label={t("scWriting.useSeparateReviewGuideModel")}
+                    aria-label="Use a separate review guide model"
                   />
                 </div>
               )
@@ -432,11 +439,11 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideInstructions"]}
             {...searchableSetting("review-guide-instructions")}
-            description={t("scWriting.reviewGuideInstructionsDescription")}
+            description="Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same."
             resetAction={
               mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
                 <SettingResetButton
-                  label={t("scWriting.resetReviewGuideInstructions")}
+                  label="review guide instructions"
                   onClick={() => updateSettings({ reviewGuideInstructions: "" })}
                 />
               ) : null
@@ -453,8 +460,8 @@ export function SourceControlWritingSettingsSection() {
                 defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
                 placeholder={
                   mixedReviewGuideInstructions
-                    ? t("scWriting.instructionsMixedPlaceholder")
-                    : t("scWriting.instructionsPlaceholder")
+                    ? "Mixed. Enter instructions to apply to all selected targets."
+                    : "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences."
                 }
                 onBlur={(event) => {
                   const value = event.target.value.trim();
@@ -481,12 +488,12 @@ export function SourceControlWritingSettingsSection() {
           settingKeys={["sourceControlWritingStyle"]}
           mixed={templatesMixed}
           {...searchableSetting("follow-change-request-templates")}
-          description={t("scWriting.templatesDescription")}
+          description="Use the repository's pull request template when it has one."
           resetAction={
             templatesMixed ||
             style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
               <SettingResetButton
-                label={t("scWriting.resetTemplates")}
+                label="pull request templates"
                 onClick={() =>
                   updateSettings({
                     sourceControlWritingStyle: {
@@ -508,7 +515,7 @@ export function SourceControlWritingSettingsSection() {
                   },
                 })
               }
-              aria-label={t("scWriting.followTemplatesAria")}
+              aria-label="Follow pull request templates"
             />
           }
         />
@@ -517,7 +524,7 @@ export function SourceControlWritingSettingsSection() {
           serverScoped
           settingKeys={["sourceControlWriterModelSelection"]}
           {...searchableSetting("source-control-writer-model")}
-          description={t("scWriting.writerModelDescription")}
+          description="Model for commit messages, pull request text, and branch or bookmark names. When disabled, use the text generation model configured for this environment."
           control={
             !hasServerTargets ? (
               <span className="text-sm text-muted-foreground">
@@ -539,8 +546,8 @@ export function SourceControlWritingSettingsSection() {
                     instanceEntries={writerEntries}
                     modelOptionsByInstance={modelOptionsByInstance}
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    triggerAriaLabel={t("scWriting.writerModel")}
-                    {...(mixedWriterModel ? { triggerLabel: t("storage.mixed") } : {})}
+                    triggerAriaLabel="Source control writer model"
+                    {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
                     {...(environmentId
                       ? {
                           onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
@@ -557,13 +564,17 @@ export function SourceControlWritingSettingsSection() {
                       if (reason) {
                         toastManager.add({
                           type: "error",
-                          title: t("scWriting.writerModelNotSaved"),
+                          title: "Source control writer model not saved",
                           description: reason,
                         });
                         return;
                       }
                       updateSettings({
-                        sourceControlWriterModelSelection: createModelSelection(instanceId, model),
+                        sourceControlWriterModelSelection: pickModelSelection(
+                          mixedWriterModel ? null : activeSelection,
+                          instanceId,
+                          model,
+                        ),
                       });
                     }}
                   />
@@ -594,7 +605,21 @@ export function SourceControlWritingSettingsSection() {
                 <Switch
                   checked={usesDedicatedModel}
                   disabled={!usesDedicatedModel && !canEnableDedicatedModel}
-                  onCheckedChange={(checked) =>
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      const reason = writerModelDisabledReason(
+                        defaultModelSelection.instanceId,
+                        defaultModelSelection.model,
+                      );
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Writer model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                    }
                     updateSettings({
                       sourceControlWriterModelSelection: checked
                         ? createModelSelection(
@@ -603,9 +628,9 @@ export function SourceControlWritingSettingsSection() {
                             defaultModelSelection.options,
                           )
                         : null,
-                    })
-                  }
-                  aria-label={t("scWriting.useSeparateWriterModel")}
+                    });
+                  }}
+                  aria-label="Use a separate source control writer model"
                 />
               </div>
             )

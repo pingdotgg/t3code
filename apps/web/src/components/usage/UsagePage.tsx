@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -107,11 +108,6 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`usage:${key}`, options);
-
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
@@ -180,6 +176,7 @@ function UsageModelDialogHost({
 }
 
 export function UsagePage() {
+  const { t } = useTranslation("usage");
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
@@ -363,9 +360,9 @@ export function UsagePage() {
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
-      <WorkspaceBreadcrumb ariaLabel={td("breadcrumb")} className="min-w-0">
+      <WorkspaceBreadcrumb ariaLabel={t("breadcrumb")} className="min-w-0">
         <WorkspaceBreadcrumbItem>
-          <h1>{td("title")}</h1>
+          <h1>{t("title")}</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
         <WorkspaceBreadcrumbItem className="min-w-10 shrink">
@@ -400,7 +397,7 @@ export function UsagePage() {
             tabs so dropping it never moves them. */}
         {showingLimits ? null : (
           <ToggleGroup
-            aria-label={td("period")}
+            aria-label={t("period")}
             variant="segmented"
             value={[String(windowDays)]}
             onValueChange={(next) => {
@@ -416,7 +413,7 @@ export function UsagePage() {
           </ToggleGroup>
         )}
         <ToggleGroup
-          aria-label={td("metric")}
+          aria-label={t("metric")}
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
@@ -432,7 +429,7 @@ export function UsagePage() {
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? td("refreshLimits") : td("refreshUsage")}
+          aria-label={showingLimits ? t("refreshLimits") : t("refreshUsage")}
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -445,7 +442,7 @@ export function UsagePage() {
         {showingLimits ? null : (
           <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
             <SelectTrigger
-              aria-label={td("period")}
+              aria-label={t("period")}
               size="compact"
               variant="ghost"
               className="w-auto min-w-0"
@@ -474,7 +471,7 @@ export function UsagePage() {
           }}
         >
           <SelectTrigger
-            aria-label={td("metric")}
+            aria-label={t("metric")}
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
@@ -493,7 +490,7 @@ export function UsagePage() {
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? td("refreshLimits") : td("refreshUsage")}
+          aria-label={showingLimits ? t("refreshLimits") : t("refreshUsage")}
           aria-busy={isRefreshing}
           disabled={isRefreshing || (!showingLimits && !canReadDiagnostics)}
           size="icon-sm"
@@ -506,7 +503,7 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label={td("title")}>
+    <AppRouteModal label={t("title")}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
@@ -518,8 +515,12 @@ export function UsagePage() {
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
-                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
-                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
+                  ? showingLimits
+                    ? t("connectToSeeLimits")
+                    : t("connectToSeeUsage")
+                  : showingLimits
+                    ? t("selectToSeeLimits")
+                    : t("selectToSeeUsage")}
               </p>
             ) : showingLimits ? (
               <UsageLimitsSection
@@ -614,6 +615,7 @@ function UsageOverview({
   readonly showChatGptSharing: boolean;
   readonly onSelectModel: (key: string) => void;
 }) {
+  const { t } = useTranslation("usage");
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
@@ -663,42 +665,46 @@ function UsageOverview({
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <span
+            <p
               className={cn(
                 "text-4xl font-semibold text-foreground tabular-nums",
                 figureClass(loadingPartial),
               )}
             >
               {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
-            </span>
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            </p>
+            <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
-                  {td("sessionsCount", { count: formatCount(merged.sessions) })}
+                  {t("sessionsCount", {
+                    count: merged.sessions,
+                    formattedCount: formatCount(merged.sessions),
+                  })}
                 </span>
-                {metric === "cost" && " · API estimate"}
+                {metric === "cost" && ` · ${t("apiEstimate")}`}
               </span>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
                 <Popover>
                   <PopoverTrigger
                     openOnHover
                     render={<InlineButton tone="muted" />}
-                    aria-label={td("unpricedDetails")}
+                    aria-label={t("unpricedDetails")}
                   >
                     <InfoIcon className="size-3" aria-hidden />
                   </PopoverTrigger>
                   <PopoverPopup side="top" tooltipStyle>
-                    API estimate excludes {formatPercent(merged.costQuality.unpricedShare)} unpriced
-                    records.
+                    {t("apiEstimateExcludes", {
+                      formattedPercent: formatPercent(merged.costQuality.unpricedShare),
+                    })}
                   </PopoverPopup>
                 </Popover>
               )}
-            </span>
+            </p>
           </div>
 
           {showChatGptSharing ? (
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>{td("chatgptSharedUsage")}</span>
+              <span>{t("chatgptSharedUsage")}</span>
               <ChatGptUsageButton size="xs" />
             </div>
           ) : null}
@@ -707,15 +713,16 @@ function UsageOverview({
             const totals = merged.providers.find((entry) => entry.provider === provider);
             const share = metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
             const providerSessions = totals?.sessions ?? 0;
-            const sessionLabel = `${formatCount(providerSessions)} ${
-              providerSessions === 1 ? "session" : "sessions"
-            }`;
+            const sessionLabel = t("sessionsCount", {
+              count: providerSessions,
+              formattedCount: formatCount(providerSessions),
+            });
             const providerLoading = loadingProviders.has(provider);
             const awaitingData = providerLoading && !providersWithData.has(provider);
             return (
               <div key={provider} className="flex flex-col gap-1">
-                <div className="flex items-baseline justify-between gap-4">
-                  <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                <dl className="flex items-baseline justify-between gap-4">
+                  <dt className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                     <span
                       aria-hidden
                       className="size-2 shrink-0 rounded-full"
@@ -736,8 +743,8 @@ function UsageOverview({
                         {sessionLabel}
                       </span>
                     </span>
-                  </span>
-                  <span
+                  </dt>
+                  <dd
                     className={cn(
                       "shrink-0 text-sm font-medium text-foreground tabular-nums",
                       figureClass(providerLoading),
@@ -748,9 +755,9 @@ function UsageOverview({
                       : metric === "cost"
                         ? formatUsd(totals?.costUsd ?? 0)
                         : formatTokens(totals?.totalTokens ?? 0)}
-                  </span>
-                </div>
-                <span
+                  </dd>
+                </dl>
+                <p
                   className={cn(
                     "text-xs text-muted-foreground",
                     figureClass(providerLoading),
@@ -758,9 +765,15 @@ function UsageOverview({
                   )}
                 >
                   {metric === "cost"
-                    ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
-                </span>
+                    ? t("ofCost", {
+                        formattedPercent: formatPercent(share),
+                        formattedTokens: formatTokens(totals?.totalTokens ?? 0),
+                      })
+                    : t("ofTokens", {
+                        formattedPercent: formatPercent(share),
+                        formattedUsd: formatUsd(totals?.costUsd ?? 0),
+                      })}
+                </p>
               </div>
             );
           })}
@@ -768,8 +781,10 @@ function UsageOverview({
 
         <div className="flex min-w-0 flex-col gap-3">
           <h2 className="text-sm font-medium text-foreground">
-            {shownHourly ? td("hourly") : td("daily")}{" "}
-            {metric === "tokens" ? td("processedTokens") : td("cost")}
+            {t("chartHeading", {
+              period: shownHourly ? t("hourly") : t("daily"),
+              metric: metric === "tokens" ? t("processedTokens") : t("cost"),
+            })}
           </h2>
           <UsageProviderChart
             providers={activeProviders}
@@ -788,34 +803,34 @@ function UsageOverview({
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">{td("totals")}</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+        <h2 className="text-sm font-medium text-foreground">{t("totals")}</h2>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
           <Metric
             loading={loadingPartial}
-            label={td("processedTokens")}
+            label={t("processedTokensLabel")}
             value={formatTokens(merged.totalTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label={td("cachedInput")}
+            label={t("cachedInput")}
             value={formatTokens(merged.cachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label={td("uncachedInput")}
+            label={t("uncachedInput")}
             value={formatTokens(merged.uncachedInputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label={td("output")}
+            label={t("output")}
             value={formatTokens(merged.outputTokens)}
           />
           <Metric
             loading={loadingPartial}
-            label={td("cacheSavings")}
+            label={t("cacheSavings")}
             value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           />
-        </div>
+        </dl>
       </section>
 
       {merged.totalTokens > 0 ? (
@@ -824,20 +839,20 @@ function UsageOverview({
         >
           {metric === "tokens" ? (
             <UsageShareBar
-              label={td("tokensByType")}
+              label={t("tokensByType")}
               segments={tokenTypeSegments(merged)}
               format={formatTokens}
             />
           ) : (
             <>
               <UsageShareBar
-                label={td("costByType")}
+                label={t("costByType")}
                 segments={costTypeSegments(merged.categoryCost)}
                 format={formatUsd}
               />
               {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label={td("costBySpeed")}
+                  label={t("costBySpeed")}
                   segments={speedCostSegments(merged.speedCost)}
                   format={formatUsd}
                   aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
@@ -850,9 +865,9 @@ function UsageOverview({
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">{td("breakdown")}</h2>
+          <h2 className="text-sm font-medium text-foreground">{t("breakdown")}</h2>
           <ToggleGroup
-            aria-label={td("breakdown")}
+            aria-label={t("breakdown")}
             variant="segmented"
             value={[breakdown]}
             onValueChange={(next) => {
@@ -862,8 +877,8 @@ function UsageOverview({
           >
             {(
               [
-                { value: "model", label: td("model") },
-                { value: "time", label: shownHourly ? td("hour") : td("day") },
+                { value: "model", label: t("model") },
+                { value: "time", label: shownHourly ? t("hour") : t("day") },
               ] as const
             ).map((option) => (
               <Toggle key={option.value} value={option.value}>
@@ -878,17 +893,17 @@ function UsageOverview({
             <thead>
               <tr className="border-b border-border text-right text-xs text-muted-foreground">
                 <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
-                <th className="w-full py-2 text-left font-normal">{td("model")}</th>
-                <th className="py-2 pl-6 font-normal">{td("cost")}</th>
-                <th className="hidden py-2 pl-6 font-normal sm:table-cell">{td("share")}</th>
-                <th className="py-2 pr-2 pl-6 font-normal">{td("tokens")}</th>
+                <th className="w-full py-2 text-left font-normal">{t("model")}</th>
+                <th className="py-2 pl-6 font-normal">{t("cost")}</th>
+                <th className="hidden py-2 pl-6 font-normal sm:table-cell">{t("share")}</th>
+                <th className="py-2 pr-2 pl-6 font-normal">{t("tokens")}</th>
               </tr>
             </thead>
             <tbody>
               {breakdownModels.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                    {td("noActivity")}
+                    {t("noActivity")}
                   </td>
                 </tr>
               ) : (
@@ -930,7 +945,7 @@ function UsageOverview({
                       </td>
                       <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
                         {isModelCostUnknown(model) ? (
-                          <span className="text-muted-foreground">{td("unpriced")}</span>
+                          <span className="text-muted-foreground">{t("unpriced")}</span>
                         ) : (
                           formatUsd(model.costUsd)
                         )}
@@ -951,7 +966,7 @@ function UsageOverview({
           <div
             className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             role="region"
-            aria-label={td("breakdownByTime")}
+            aria-label={t("breakdownByTime")}
             tabIndex={0}
           >
             <table className="w-full text-sm whitespace-nowrap">
@@ -960,14 +975,14 @@ function UsageOverview({
               </colgroup>
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-2 pl-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
+                  <th className="py-2 pl-2 font-normal">{shownHourly ? t("hour") : t("day")}</th>
                   {activeProviders.map((provider) => (
                     <th key={provider} className="py-2 pl-4 text-right font-normal">
                       {PROVIDER_PRESENTATION[provider].label}
                     </th>
                   ))}
-                  <th className="py-2 pl-4 text-right font-normal">{td("total")}</th>
-                  <th className="py-2 pr-2 pl-4 text-right font-normal">{td("tokens")}</th>
+                  <th className="py-2 pl-4 text-right font-normal">{t("total")}</th>
+                  <th className="py-2 pr-2 pl-4 text-right font-normal">{t("tokens")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -977,7 +992,7 @@ function UsageOverview({
                       colSpan={activeProviders.length + 3}
                       className="py-6 text-center text-muted-foreground"
                     >
-                      {td("noActivity")}
+                      {t("noActivity")}
                     </td>
                   </tr>
                 ) : (
@@ -1062,12 +1077,12 @@ function Metric({
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd
         className={cn("text-base font-medium text-foreground tabular-nums", figureClass(loading))}
       >
         {value}
-      </span>
+      </dd>
     </div>
   );
 }
@@ -1081,6 +1096,7 @@ function UsageCoverageNotice({
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
 }) {
+  const { t } = useTranslation("usage");
   const failed = environments.filter((environment) => environment.error !== null);
   const mismatchByEnvironment = new Map(
     contractMismatches.map((mismatch) => [mismatch.environmentId, mismatch]),
@@ -1106,7 +1122,7 @@ function UsageCoverageNotice({
         </span>
       ))}
       {duplicateSources.length > 0 ? (
-        <span>{td("duplicateTranscriptDirs", { list: duplicateSources.join(", ") })}</span>
+        <span>{t("duplicateTranscriptDirs", { list: duplicateSources.join(", ") })}</span>
       ) : null}
     </div>
   );
@@ -1135,12 +1151,13 @@ function UsageEnvironmentFilter({
   readonly contractMismatches: MergedUsage["contractMismatches"];
   readonly onOpenModelPrices: () => void;
 }) {
+  const { t } = useTranslation("usage");
   const allSelected = selectedEnvironmentIds === null;
   const label = allSelected
-    ? td("allEnvironments")
+    ? t("allEnvironments")
     : selectedEnvironments.length === 1
       ? selectedEnvironments[0]!.label
-      : `${selectedEnvironments.length} environments`;
+      : t("environmentsCount", { count: selectedEnvironments.length });
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null) ||
     contractMismatches.length > 0;
@@ -1153,7 +1170,7 @@ function UsageEnvironmentFilter({
           {showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
-              aria-label={td("someUnavailable")}
+              aria-label={t("someUnavailable")}
             />
           ) : (
             <ChevronDownIcon
@@ -1169,7 +1186,7 @@ function UsageEnvironmentFilter({
           closeOnClick={false}
           onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
         >
-          All environments
+          {t("allEnvironments")}
         </MenuCheckboxItem>
         <MenuSeparator />
         {environments.map((environment) => {
@@ -1179,22 +1196,22 @@ function UsageEnvironmentFilter({
           const progress = usageEnvironmentProgress(environment, refreshing);
           const status =
             environment.error !== null
-              ? td("unavailable")
+              ? t("unavailable")
               : environment.summary !== null &&
                   !isCompatibleUsageContractVersion(
                     environment.summary.contractVersion,
                     USAGE_CONTRACT_VERSION,
                   )
-                ? td("updateRequired")
+                ? t("updateRequired")
                 : !environment.isConnected
-                  ? td("connecting")
+                  ? t("connecting")
                   : progress.phase === "loading"
-                    ? td("scanning")
+                    ? t("scanning")
                     : progress.phase === "stale"
-                      ? td("refreshing")
+                      ? t("refreshing")
                       : progress.phase === "partway"
                         ? updatingProvidersLabel(progress.providers, providerLabel)
-                        : td("ready");
+                        : t("ready");
           return (
             <MenuCheckboxItem
               key={environment.environmentId}
@@ -1224,10 +1241,10 @@ function UsageEnvironmentFilter({
           );
         })}
         {environments.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">{td("noEnvironments")}</p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">{t("noEnvironments")}</p>
         ) : null}
         {showUsageStatus && isPartial ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">{td("totalsPartialScanning")}</p>
+          <p className="px-2 py-2 text-xs text-muted-foreground">{t("totalsPartialScanning")}</p>
         ) : null}
         {showUsageStatus ? (
           <UsageCoverageNotice
@@ -1239,7 +1256,7 @@ function UsageEnvironmentFilter({
         <MenuSeparator />
         <MenuItem onClick={onOpenModelPrices}>
           <SlidersHorizontalIcon aria-hidden />
-          Model prices
+          {t("modelPrices")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -1253,15 +1270,16 @@ function UsageProviderFilter({
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly onChange: (hiddenProviders: readonly UsageProviderKind[]) => void;
 }) {
+  const { t } = useTranslation("usage");
   const visible = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider));
   const label =
     visible.length === PROVIDER_ORDER.length
-      ? td("allProviders")
+      ? t("allProviders")
       : visible.length === 0
-        ? td("noProviders")
+        ? t("noProviders")
         : visible.length === 1
           ? PROVIDER_PRESENTATION[visible[0]!].label
-          : `${visible.length} providers`;
+          : t("providersCount", { count: visible.length });
 
   return (
     <Menu>
@@ -1278,7 +1296,7 @@ function UsageProviderFilter({
           closeOnClick={false}
           onCheckedChange={(checked) => onChange(checked ? [] : PROVIDER_ORDER)}
         >
-          All providers
+          {t("allProviders")}
         </MenuCheckboxItem>
         <MenuSeparator />
         {PROVIDER_ORDER.map((provider) => (
@@ -1306,6 +1324,7 @@ function UsageProviderFilter({
 }
 
 function UsageSkeleton() {
+  const { t } = useTranslation("usage");
   return (
     <>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
@@ -1339,14 +1358,14 @@ function UsageSkeleton() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">{td("totals")}</h2>
+        <h2 className="text-sm font-medium text-foreground">{t("totals")}</h2>
         <MetricSkeletons
           labels={[
-            td("processedTokens"),
-            td("cachedInput"),
-            td("uncachedInput"),
-            td("output"),
-            td("cacheSavings"),
+            t("processedTokensLabel"),
+            t("cachedInput"),
+            t("uncachedInput"),
+            t("output"),
+            t("cacheSavings"),
           ]}
         />
       </section>
@@ -1361,7 +1380,7 @@ function UsageSkeleton() {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">{td("breakdown")}</h2>
+          <h2 className="text-sm font-medium text-foreground">{t("breakdown")}</h2>
           <Skeleton shape="card" className="h-7 w-28" />
         </div>
         <Skeleton className="h-44" />

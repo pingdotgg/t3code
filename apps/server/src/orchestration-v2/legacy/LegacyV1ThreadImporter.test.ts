@@ -155,12 +155,16 @@ it.effect(
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       yield* seedPendingTranscripts;
-      yield* sql`
-        UPDATE projection_thread_messages SET created_at = '0000-not-a-date'
-        WHERE message_id = 'thread:first:old'
-      `;
 
-      yield* importer.importPendingTranscripts;
+      yield* importer.importPendingTranscripts.pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          const [query, params] = statement.compile();
+          return query.includes("FROM projection_thread_messages") &&
+            params.includes("thread:first")
+            ? Effect.die("transcript read failed")
+            : Effect.succeed(statement);
+        }),
+      );
 
       const later = yield* projections.getThreadProjection(ThreadId.make("thread:later"));
       assert.deepStrictEqual(
@@ -215,6 +219,53 @@ it.effect("propagates interruption from transcript reads and retry-marker writes
         WHERE transcript_imported_at IS NOT NULL OR last_error IS NOT NULL
       `,
       [],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// regression: #30813 a malformed V1 timestamp stopped the server from starting
+it.effect("imports legacy rows with malformed timestamps and keeps the archive marker", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const malformed = "2026-07-13T14:13:00.3NZ";
+    yield* sql`
+      INSERT INTO projection_projects (
+        project_id, title, workspace_root, scripts_json, created_at, updated_at
+      ) VALUES (
+        'project:malformed', 'Legacy project', '/tmp/legacy-malformed', '[]',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      )
+    `;
+    yield* sql`
+      INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json, runtime_mode,
+        interaction_mode, created_at, updated_at, archived_at
+      ) VALUES (
+        'thread:malformed', 'project:malformed', 'Legacy thread',
+        '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+        '2026-07-13T14:00:00.000Z', ${malformed}, ${malformed}
+      )
+    `;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      ) VALUES (
+        'message:malformed', 'thread:malformed', 'user', 'Question', 0,
+        ${malformed}, '2026-07-13T14:13:00.000Z'
+      )
+    `;
+
+    assert.deepStrictEqual(yield* importer.reconcileShells, {
+      importedThreadCount: 1,
+      importedMessageCount: 1,
+    });
+    const projection = yield* projections.getThreadProjection(ThreadId.make("thread:malformed"));
+    assert.isNotNull(projection.thread.archivedAt);
+    assert.deepStrictEqual(
+      projection.messages.map((message) => message.text),
+      ["Question"],
     );
   }).pipe(Effect.provide(layerTest)),
 );

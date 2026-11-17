@@ -41,6 +41,7 @@ import {
   openQuestionAttachmentDraft,
 } from "../../questionAttachments";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 
 import { translateDynamic } from "../../i18nCore";
 
@@ -178,6 +179,7 @@ export async function deliverSnapShot(
     throw new Error(td("captureTooLarge"));
   }
   const file = compressed.file;
+  await readComposerImageBytes(file);
   const source = resizeSnapShotSource(capture.source, compressed.imageSize);
   const dataUrl = compressed.recompressed ? await readFileAsDataUrl(file) : capture.dataUrl;
   const target = resolveTarget();

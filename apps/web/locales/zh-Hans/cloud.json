@@ -8,6 +8,7 @@
   "manageTunnels": "管理隧道",
   "noPublishedEnvironments": "你的账户还没有发布其他环境。在另一台设备上发布一个，它就会出现在这里。",
   "notNow": "暂不",
+  "retrySignIn": "重试登录",
   "signIn": "登录",
   "tryAgain": "重试",
   "tunnelsInUse": "已使用 {{limit}} 条隧道中的 {{used}} 条",

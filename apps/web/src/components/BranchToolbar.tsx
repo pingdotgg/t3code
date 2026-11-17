@@ -18,11 +18,6 @@ import {
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 
-import { translateDynamic } from "../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`git:${key}`, options);
-
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
@@ -115,7 +110,7 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
   event.preventDefault();
   event.stopPropagation();
   void api.contextMenu
-    .show([{ id: "copy-path", label: td("branch.copyPath"), icon: "copy" }], {
+    .show([{ id: "copy-path", label: "Copy full path", icon: "copy" }], {
       x: event.clientX,
       y: event.clientY,
     })
@@ -123,21 +118,13 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
       if (action !== "copy-path") return;
       const clipboardPath = formatFilePathForClipboard(workspacePath);
       void writeTextToClipboard(clipboardPath, "workspace path").then(
-        (didCopy) => {
-          if (didCopy) {
-            toastManager.add({
-              type: "success",
-              title: td("toast.pathCopied"),
-              description: clipboardPath,
-            });
-          }
-        },
+        undefined,
         (error: unknown) => {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: td("toast.copyPathFailed"),
-              description: error instanceof Error ? error.message : td("toast.errorGeneric"),
+              title: "Failed to copy path",
+              description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
         },
@@ -190,7 +177,7 @@ const RunContextSelector = memo(function RunContextSelector({
   addTargets,
   onAddToMachine,
 }: RunContextSelectorProps) {
-  const { t } = useTranslation("git");
+  const { t } = useTranslation("shell");
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
@@ -226,7 +213,7 @@ const RunContextSelector = memo(function RunContextSelector({
       <TooltipPopup>
         {isPanel
           ? forceNewWorktree
-            ? t("branch.ownWorktreeTooltip")
+            ? "Each model starts in its own worktree."
             : (workspacePath ?? workspaceLabel)
           : workspaceLabel}
       </TooltipPopup>
@@ -250,9 +237,7 @@ const RunContextSelector = memo(function RunContextSelector({
           />
         )}
       </TooltipTrigger>
-      <TooltipPopup>
-        {autoEnvironmentLabel ?? activeEnvironment?.label ?? t("branch.runOn")}
-      </TooltipPopup>
+      <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
     </Tooltip>
   );
   const icon = showEnvironmentIndicator ? environmentIcon : workspaceIcon;
@@ -261,9 +246,7 @@ const RunContextSelector = memo(function RunContextSelector({
       {icon}
       <ComposerContextLabel displayMode={displayMode}>
         {autoEnvironmentLabel ??
-          (showEnvironmentIndicator
-            ? (activeEnvironment?.label ?? t("branch.runOn"))
-            : workspaceLabel)}
+          (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
       </ComposerContextLabel>
       {/* Trailing in the panel, so every row label starts on the same edge. */}
       {isPanel && showEnvironmentIndicator ? workspaceIcon : null}
@@ -281,11 +264,7 @@ const RunContextSelector = memo(function RunContextSelector({
         onContextMenu={handleContextMenu}
         aria-label={
           isPanel
-            ? t("branch.runContext", {
-                labels: [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel]
-                  .filter(Boolean)
-                  .join(", "),
-              })
+            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
             : undefined
         }
         data-composer-context-control
@@ -310,11 +289,7 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         aria-label={
           isPanel
-            ? t("branch.runContext", {
-                labels: [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel]
-                  .filter(Boolean)
-                  .join(", "),
-              })
+            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
             : undefined
         }
         data-composer-context-control
@@ -341,7 +316,7 @@ const RunContextSelector = memo(function RunContextSelector({
         ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
           <>
             <MenuGroup>
-              <MenuGroupLabel>{t("branch.runOn")}</MenuGroupLabel>
+              <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
                 value={autoEnvironmentLabel ? "auto" : environmentId}
                 onValueChange={(value) =>
@@ -362,7 +337,7 @@ const RunContextSelector = memo(function RunContextSelector({
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ScaleIcon className="size-3" aria-hidden="true" />
                       <span className="min-w-0 truncate">
-                        {autoEnvironmentLabel ?? t("branch.autoBalance")}
+                        {autoEnvironmentLabel ?? "Auto balance"}
                       </span>
                     </span>
                   </MenuRadioItem>
@@ -388,7 +363,7 @@ const RunContextSelector = memo(function RunContextSelector({
                   <MenuSubTrigger>
                     <span className={ADD_TO_MACHINE_LABEL_CLASS}>
                       <PlusIcon className="size-3" />
-                      <span className="min-w-0 truncate">{t("branch.addToMachine")}</span>
+                      <span className="min-w-0 truncate">{t("addProject.title")}</span>
                     </span>
                   </MenuSubTrigger>
                   <MenuSubPopup {...(!isPanel ? composerFloatingLayerProps : {})}>
@@ -411,7 +386,7 @@ const RunContextSelector = memo(function RunContextSelector({
           </>
         ) : null}
         <MenuGroup>
-          <MenuGroupLabel>{t("branch.workspace")}</MenuGroupLabel>
+          <MenuGroupLabel>Workspace</MenuGroupLabel>
           <MenuRadioGroup
             value={effectiveEnvMode}
             onValueChange={(value) => {

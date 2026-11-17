@@ -65,20 +65,12 @@ const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
 
 /** Ticks once per second, and only while a retry is scheduled, so the list around it does not re-render. */
 function RetryCountdown({ retryAt }: { readonly retryAt: number }) {
-  const { t } = useTranslation("settings");
-  return useDeadlinePassed(retryAt) ? (
-    t("connDiagnosis.retrying")
-  ) : (
-    <RetryCountdownTicker retryAt={retryAt} />
-  );
+  return useDeadlinePassed(retryAt) ? "retrying" : <RetryCountdownTicker retryAt={retryAt} />;
 }
 
 function RetryCountdownTicker({ retryAt }: { readonly retryAt: number }) {
-  const { t } = useTranslation("settings");
   const seconds = Math.ceil((retryAt - useNowSecond()) / 1_000);
-  return (
-    <>{seconds > 0 ? t("connDiagnosis.retryingIn", { seconds }) : t("connDiagnosis.retrying")}</>
-  );
+  return <>{seconds > 0 ? `retrying in ${seconds}s` : "retrying"}</>;
 }
 
 /** The collapsed failure: the full headline, then the retry state and a Details toggle. */
@@ -139,12 +131,11 @@ export function ConnectionDiagnosisPanel({
   const { t } = useTranslation("settings");
   const { copyToClipboard } = useCopyToClipboard({
     target: "connection diagnostics",
-    onCopy: () => toastManager.add({ type: "success", title: t("connDiagnosis.copied") }),
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: t("connDiagnosis.copyFailed"),
+          title: "Could not copy diagnostics",
           description: error.message,
         }),
       ),
@@ -167,9 +158,7 @@ export function ConnectionDiagnosisPanel({
             <span>
               {hop.result === "failed"
                 ? t("connDiagnosis.hopFailed")
-                : hop.result === "unchecked"
-                  ? t("connDiagnosis.hopUnchecked")
-                  : ""}
+                : t("connDiagnosis.hopUnchecked")}
             </span>
           </li>
         ))}

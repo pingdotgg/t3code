@@ -4,7 +4,7 @@ import React, { use, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { getClientSettings } from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
 import type { DiffThemeName } from "../../lib/diffRendering";
 import {
   createIncrementalHighlightedDocument,
@@ -163,8 +163,10 @@ export function MarkdownCodeBlock({
         cause,
       ),
   });
-  const [wrapped, setWrapped] = useState(() => getClientSettings().wordWrap);
-  const wrapLabel = wrapped ? t("codeBlock.disableLineWrap") : t("codeBlock.wrapLines");
+  const defaultWrapped = useClientSettings((settings) => settings.wordWrap);
+  const [wrapOverride, setWrapOverride] = useState<boolean | null>(null);
+  const wrapped = wrapOverride ?? defaultWrapped;
+  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? t("codeBlock.copied") : t("codeBlock.copyCode");
   const command = code.trim();
   const canRun =
@@ -178,7 +180,7 @@ export function MarkdownCodeBlock({
     // make the rendered command differ from what the terminal would receive.
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
-  const handleCopy = () => copyToClipboard(code);
+  const handleCopy = () => copyToClipboard(code.endsWith("\n") ? code.slice(0, -1) : code);
 
   const copyButton = (
     <Tooltip>
@@ -233,7 +235,7 @@ export function MarkdownCodeBlock({
                     variant={wrapped ? "secondary" : "ghost-muted"}
                     size="icon-xs"
                     aria-pressed={wrapped}
-                    onClick={() => setWrapped((value) => !value)}
+                    onClick={() => setWrapOverride(!wrapped)}
                     aria-label={wrapLabel}
                   />
                 }
@@ -258,7 +260,7 @@ export function MarkdownCodeBlock({
               >
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
-              <TooltipPopup side="top">{t("codeBlock.runInTerminal")}</TooltipPopup>
+              <TooltipPopup side="top">Run in terminal</TooltipPopup>
             </Tooltip>
           ) : null}
           {viewToggle}
@@ -360,7 +362,7 @@ function UncachedShikiCodeBlock({
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
+        estimateHighlightedSize(highlightedHtml, cacheKey),
       );
     }
     return result;

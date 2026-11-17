@@ -44,12 +44,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { WorkLogRow } from "./WorkLog";
 
-import { translateDynamic } from "../../i18nCore";
-
-const td = (key: string, options?: Record<string, unknown>) =>
-  translateDynamic(`shell:${key}`, options);
-
-const accessLabel = (access: AuthMcpClientAccess) => td(accessConfig[access].label);
+const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
 
 /** Whether the agent left the machine for the user to pick. */
 const picksMachine = (item: LinkRequestItem) =>
@@ -91,8 +86,8 @@ function PendingLinkRequest(props: {
   readonly environmentId: EnvironmentId;
   readonly item: LinkRequestItem;
 }) {
-  const { item } = props;
   const { t } = useTranslation("chat");
+  const { item } = props;
   const [open, setOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +121,9 @@ function PendingLinkRequest(props: {
     >
       <div className="flex min-w-0 flex-col gap-1">
         <p className="text-sm font-medium text-foreground">
-          {picksMachine(item) ? t("link.cardTitleNoMachine") : t("link.cardTitle", { target })}
+          {picksMachine(item)
+            ? "Link a machine to this environment"
+            : `Link ${target} to this environment`}
         </p>
         {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
       </div>
@@ -147,7 +144,7 @@ function PendingLinkRequest(props: {
             {t("link.decline")}
           </Button>
           <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
-            {picksMachine(item) ? t("link.chooseMachine") : t("link.reviewLink")}
+            {picksMachine(item) ? "Choose machine…" : "Review link…"}
           </Button>
         </div>
       ) : (
@@ -172,8 +169,8 @@ function LinkRequestDialog(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const { item } = props;
   const { t } = useTranslation("chat");
+  const { item } = props;
   const formId = useId();
   const pickMachine = picksMachine(item);
   const listed = useLinkableMachines(props.environmentId, props.open);
@@ -300,16 +297,12 @@ function LinkRequestDialog(props: {
     >
       <WizardPopup>
         <WizardHeader
-          title={
-            pickMachine
-              ? t("link.dialogTitleNoMachine")
-              : t("link.dialogTitle", { target: targetName })
-          }
-          description={t("link.dialogDescription")}
+          title={pickMachine ? "Link a machine" : `Link ${targetName}`}
+          description="Agents here can then launch, message and wait on threads there. Revoke it in that machine's Sharing & access."
         >
           {steps.length > 1 && !useExisting ? (
             <WizardSteps
-              steps={[t("link.stepMachine"), t("link.stepAccess")]}
+              steps={["Machine", "Access"]}
               currentStep={steps.indexOf(current)}
               summaries={[target.kind === "none" ? null : targetName, null]}
               showSummaries
@@ -389,7 +382,7 @@ function LinkRequestDialog(props: {
                           spellCheck={false}
                         />
                         <span className="block text-xs text-muted-foreground">
-                          {t("link.pairingCodeHint", { target: targetName })}
+                          {t("link.createLinkOn", { target: targetName })}
                         </span>
                       </label>
                     )}
@@ -433,13 +426,7 @@ function LinkRequestDialog(props: {
             type="submit"
             disabled={busy || (finishesHere ? !ready : !machineReady)}
           >
-            {busy
-              ? t("link.linking")
-              : useExisting
-                ? t("link.useThisLink")
-                : finishesHere
-                  ? t("link.link")
-                  : t("link.continue")}
+            {busy ? "Linking…" : useExisting ? "Use this link" : finishesHere ? "Link" : "Continue"}
           </Button>
         </WizardFooter>
       </WizardPopup>
@@ -454,8 +441,8 @@ function MachinePicker(props: {
   readonly disabled: boolean;
   readonly onChange: (value: string) => void;
 }) {
-  const labelId = useId();
   const { t } = useTranslation("chat");
+  const labelId = useId();
   return (
     <div className="space-y-2">
       <span id={labelId} className="block text-xs font-medium">
