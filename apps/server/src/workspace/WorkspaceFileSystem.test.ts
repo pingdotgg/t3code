@@ -258,6 +258,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reports an optional file as absent when the workspace root was removed", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "removed-worktree");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "t3.json",
+          allowMissing: true,
+        });
+        expect(result).toEqual({
+          relativePath: "t3.json",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+        });
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ operation: "realpath-workspace-root" });
+      }),
+    );
+
     it.effect("finishes short reads before decoding UTF-8 text", () =>
       Effect.gen(function* () {
         const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -320,25 +346,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("reads ~/ paths from the server home outside the workspace", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        const home = yield* makeTempDir;
-        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
-        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+    it.effect.each(["~/.claude/CLAUDE.md", "~\\.claude/CLAUDE.md"])(
+      "reads %s from the server home outside the workspace",
+      (relativePath) =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const cwd = yield* makeTempDir;
+          const home = yield* makeTempDir;
+          yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+          yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
 
-        const result = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const result = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
 
-        expect(result).toEqual({
-          relativePath: "~/.claude/CLAUDE.md",
-          contents: "# Notes\n",
-          byteLength: 8,
-          truncated: false,
-        });
-      }),
+          expect(result).toEqual({
+            relativePath,
+            contents: "# Notes\n",
+            byteLength: 8,
+            truncated: false,
+          });
+        }),
     );
 
     it.effect("does not read server state files", () =>
