@@ -24,6 +24,13 @@ export interface ThreadGroupParticipant {
 
 type GroupLike = ThreadGroup | null | undefined;
 
+/**
+ * Thread events replace the whole thread, so an unchanged group arrives as a new object. Rows
+ * keep the old one while this holds, so their memoized markdown does not redraw.
+ */
+export const sameThreadGroup = (left: GroupLike, right: GroupLike): boolean =>
+  left === right || JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
 export const isGroupActive = (group: GroupLike): group is ThreadGroup => group?.status === "active";
 
 /** The server's own rule: a reply is a pass only when it says exactly `PASS`. */
@@ -36,9 +43,11 @@ const seatedSeats = (group: GroupLike): ReadonlyArray<ThreadGroupSeat> =>
 export const isSeatedSeatThread = (group: GroupLike, threadId: ThreadId): boolean =>
   seatedSeats(group).some((seat) => seat.threadId === threadId);
 
-/** The primary first, then each seated peer in invite order. */
-export function groupParticipants(group: GroupLike): ReadonlyArray<ThreadGroupParticipant> {
-  if (group == null) return [];
+function listedParticipants(
+  group: ThreadGroup,
+  seatedOnly: boolean,
+): ReadonlyArray<ThreadGroupParticipant> {
+  const seats = seatedOnly ? seatedSeats(group) : group.seats;
   return [
     {
       member: "primary",
@@ -46,7 +55,7 @@ export function groupParticipants(group: GroupLike): ReadonlyArray<ThreadGroupPa
       label: group.primary.label,
       isPrimary: true,
     },
-    ...seatedSeats(group).map((seat) => ({
+    ...seats.map((seat) => ({
       member: seat.threadId,
       handle: seat.handle,
       label: seat.label,
@@ -55,18 +64,53 @@ export function groupParticipants(group: GroupLike): ReadonlyArray<ThreadGroupPa
   ];
 }
 
-const sameHandle = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
-
-const participantForHandle = (
-  group: GroupLike,
-  handle: string,
-): ThreadGroupParticipant | undefined =>
-  groupParticipants(group).find((participant) => sameHandle(participant.handle, handle));
+/** The primary first, then each seated peer in invite order. */
+export function groupParticipants(group: GroupLike): ReadonlyArray<ThreadGroupParticipant> {
+  if (group == null) return [];
+  return listedParticipants(group, true);
+}
 
 // Clients trim before sending, so an address may end the prompt. The lookbehind keeps `me@astra`
 // an email address, and `@astra.ts` stays a file mention because only trailing punctuation goes.
 const ADDRESS_TOKEN = /(?<=^|[\s(])@(\S+)/g;
 const TRAILING_PUNCTUATION = /[.,:;!?)\]}'"]+$/;
+
+export interface GroupMentionOccurrence {
+  readonly start: number;
+  readonly end: number;
+  readonly source: string;
+  readonly label: string;
+  readonly isPrimary: boolean;
+  readonly member: ThreadGroupMember;
+}
+
+export function groupMentionOccurrences(
+  text: string,
+  group: GroupLike,
+  options?: { readonly seatedOnly?: boolean },
+): ReadonlyArray<GroupMentionOccurrence> {
+  if (group == null) return [];
+  const members = listedParticipants(group, options?.seatedOnly === true);
+  const byHandle = new Map(members.map((member) => [member.handle.toLowerCase(), member]));
+  const [primary] = members;
+  if (primary !== undefined) byHandle.set("primary", primary);
+  const occurrences: GroupMentionOccurrence[] = [];
+  for (const match of text.matchAll(ADDRESS_TOKEN)) {
+    const handle = (match[1] ?? "").replace(TRAILING_PUNCTUATION, "");
+    const participant = byHandle.get(handle.toLowerCase());
+    if (participant === undefined) continue;
+    const end = match.index + 1 + handle.length;
+    occurrences.push({
+      start: match.index,
+      end,
+      source: text.slice(match.index, end),
+      label: participant.label,
+      isPrimary: participant.isPrimary,
+      member: participant.member,
+    });
+  }
+  return occurrences;
+}
 
 /**
  * Who a composer prompt addresses. `@handle` tokens naming a seated member pick them, anything
@@ -78,14 +122,8 @@ export function groupAudienceForPrompt(
 ): "everyone" | ReadonlyArray<ThreadGroupMember> | undefined {
   if (!isGroupActive(group)) return undefined;
   const addressed = new Set<ThreadGroupMember>();
-  for (const [, token] of prompt.matchAll(ADDRESS_TOKEN)) {
-    const handle = token?.replace(TRAILING_PUNCTUATION, "") ?? "";
-    if (sameHandle(handle, "primary")) {
-      addressed.add("primary");
-      continue;
-    }
-    const participant = participantForHandle(group, handle);
-    if (participant !== undefined) addressed.add(participant.member);
+  for (const mention of groupMentionOccurrences(prompt, group, { seatedOnly: true })) {
+    addressed.add(mention.member);
   }
   return addressed.size === 0 ? "everyone" : [...addressed];
 }

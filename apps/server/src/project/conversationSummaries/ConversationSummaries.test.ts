@@ -42,10 +42,15 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -192,6 +197,44 @@ const verbose = () =>
 const isRollup = (call: Parameters<Generate>[0]) =>
   call.messages.some((message) => message.role === "summary");
 
+// An update returns once the service has pulled the next change, so its reaction has finished.
+// With no subscriber pulling, an update waits forever.
+const settingsLayer = (overrides: Parameters<typeof ServerSettings.layerTest>[0]) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const base = yield* ServerSettings.ServerSettingsService;
+      const changes = yield* Queue.unbounded<{
+        readonly settings: ServerSettingsSchema;
+        readonly handled: Deferred.Deferred<void>;
+      }>();
+      let handling: Deferred.Deferred<void> | undefined;
+      const stream = Stream.fromEffectRepeat(
+        Effect.gen(function* () {
+          if (handling !== undefined) yield* Deferred.succeed(handling, undefined);
+          const next = yield* Queue.take(changes);
+          handling = next.handled;
+          return next.settings;
+        }),
+      );
+      return {
+        ...base,
+        updateSettings: (patch) =>
+          base.updateSettings(patch).pipe(
+            Effect.tap((settings) =>
+              Effect.gen(function* () {
+                const handled = yield* Deferred.make<void>();
+                yield* Queue.offer(changes, { settings, handled });
+                yield* Deferred.await(handled);
+              }),
+            ),
+          ),
+        streamChanges: stream,
+        subscribeChanges: Effect.succeed(stream),
+      } satisfies ServerSettings.ServerSettingsService["Service"];
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
+
 const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
   Layer.merge(ConversationSummaries.layer, ContextHandoffService.layer).pipe(
     Layer.provide(
@@ -211,7 +254,7 @@ const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSetting
       ),
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest(settings)),
+    Layer.provideMerge(settingsLayer(settings)),
     Layer.provide(
       Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(EnvironmentId.make("summary-environment")),
@@ -464,6 +507,36 @@ it.effect(
   },
 );
 
+it.effect("sends a peer reply to the summary model as that peer", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seed;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const peer = item(1);
+    if (peer.type !== "assistant_message") return yield* Effect.die("Expected a peer reply");
+    yield* projections.apply({
+      id: EventId.make("peer-reply-attribution"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: { ...peer, speaker: { label: "Astra", model: "gpt-6-astra" } },
+    });
+    yield* summarize;
+    assert.deepEqual(model.calls[0]?.messages[1], {
+      ref: "M2",
+      role: "peer",
+      speaker: { label: "Astra", model: "gpt-6-astra" },
+      text: rawText(1),
+    });
+    assert.deepEqual(model.calls[0]?.messages[3], {
+      ref: "M4",
+      role: "assistant",
+      text: rawText(3),
+    });
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
   const model = citing();
   return Effect.gen(function* () {
@@ -666,6 +739,389 @@ it.effect("records an unavailable model as a failed pass without publishing a su
       reason: "No model",
       waitingMessages: 10,
     });
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+const failingStretch = (kind: "empty" | "invalid-output" | "unlabelled") =>
+  kind === "unlabelled"
+    ? new TextGenerationError({
+        operation: "generateConversationSummary",
+        detail: "Router rejected the request: the prompt is too long.",
+      })
+    : new TextGenerationError({
+        operation: "generateConversationSummary",
+        detail:
+          kind === "empty"
+            ? "Router returned no text."
+            : "Router returned a reply T3 Code couldn't read.",
+        kind,
+      });
+
+// An unlabelled failure fails the pass before any success, so it takes two more passes to skip.
+it.effect.each([
+  { kind: "empty", results: ["ran", "ran"] },
+  { kind: "invalid-output", results: ["ran", "ran"] },
+  { kind: "unlabelled", results: ["failed", "ran", "failed", "ran"] },
+] as const)(
+  "skips a stretch whose summary is always $kind while other stretches summarize, and rolls up past it",
+  ({ kind, results }) => {
+    const model = scripted((input) =>
+      input.messages[0]?.text === rawText(0)
+        ? Effect.fail(failingStretch(kind))
+        : Effect.succeed({
+            statements: [{ text: "A later stretch.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    const firstStretchCalls = () =>
+      model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
+    return Effect.gen(function* () {
+      // Five full leaves of 24 settled messages.
+      yield* seedThread(5 * 24 + 6);
+      const passes: Array<string | undefined> = [];
+      for (let pass = 0; pass < results.length; pass++) {
+        yield* Effect.exit(summarize);
+        passes.push((yield* list).lastPass?.result);
+      }
+      assert.deepEqual(passes, [...results]);
+      assert.equal(firstStretchCalls(), results.length);
+      const skipped = (yield* list).lastPass;
+      assert.include(skipped?.reason ?? "", "Skipped a stretch");
+      assert.equal(skipped?.waitingMessages, 0);
+      assert.notProperty(skipped, "chunkFailures");
+
+      yield* summarize;
+      assert.equal(firstStretchCalls(), results.length);
+      assert.isTrue(isRollup(model.calls.at(-1)!));
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const offered = yield* service.forHandoff({
+        projectId,
+        handoffs: [yield* prepareHandoff(5 * 24 + 6)],
+        itemIds: new Set(Array.from({ length: 5 * 24 }, (_, index) => itemId(index))),
+      });
+      const offeredIds = offered.flatMap((offer) => offer.coveredItemIds);
+      assert.notInclude(offeredIds, itemId(0));
+      assert.include(offeredIds, itemId(24));
+
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
+      });
+      yield* summarize;
+      yield* settings.updateSettings(optedIn);
+      yield* Effect.exit(summarize);
+      assert.equal(firstStretchCalls(), results.length + 1);
+
+      yield* settings.updateSettings({
+        textGenerationModelSelection: { instanceId, model: "gpt-5-mini" },
+      });
+      yield* Effect.exit(summarize);
+      assert.equal(firstStretchCalls(), results.length + 2);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect.each([
+  { recovered: messageId(0), stuck: undefined },
+  { recovered: messageId(24), stuck: rawText(0) },
+])(
+  "skips nothing while every summary comes back empty, then summarizes $recovered",
+  ({ recovered, stuck }) => {
+    let down = true;
+    const model = scripted((input) =>
+      down || input.messages[0]?.text === stuck
+        ? Effect.fail(failingStretch("empty"))
+        : Effect.succeed({
+            statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    return Effect.gen(function* () {
+      yield* seedThread(5 * 24 + 6);
+      const callsPerPass: Array<number> = [];
+      for (let pass = 0; pass < 3; pass++) {
+        const before = model.calls.length;
+        assert.isFalse((yield* summarize).hasMore);
+        callsPerPass.push(model.calls.length - before);
+      }
+      // Once every stretch is a suspect, one call per pass tests the model.
+      assert.deepEqual(callsPerPass, [3, 3, 1]);
+      assert.deepEqual((yield* list).summaries, []);
+
+      down = false;
+      yield* summarize;
+      assert.include(
+        (yield* list).summaries.flatMap((read) =>
+          read.state === "available"
+            ? read.summary.sources.flatMap((source) =>
+                source.kind === "message" ? [source.messageId] : [],
+              )
+            : [],
+        ),
+        recovered,
+      );
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("counts only a stretch's own failures beside a success after an outage", () => {
+  let down = true;
+  let flaky = rawText(0);
+  const model = scripted((input) =>
+    down || input.messages[0]?.text === flaky
+      ? Effect.fail(failingStretch("empty"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  return Effect.gen(function* () {
+    yield* seedThread(5 * 24 + 6);
+    yield* summarize;
+
+    down = false;
+    yield* summarize;
+    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+
+    flaky = rawText(48);
+    yield* summarize;
+    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+
+    flaky = "";
+    for (let pass = 0; pass < 2; pass++) yield* summarize;
+    assert.equal((yield* list).lastPass?.waitingMessages, 0);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("moves past three bad leaf stretches at the front and skips them", () => {
+  const bad = new Set([rawText(0), rawText(24), rawText(48)]);
+  const model = scripted((input) =>
+    bad.has(input.messages[0]!.text)
+      ? Effect.fail(failingStretch("invalid-output"))
+      : Effect.succeed({
+          statements: [{ text: "A later stretch.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const badCalls = () => model.calls.filter((call) => bad.has(call.messages[0]?.text ?? "")).length;
+  return Effect.gen(function* () {
+    yield* seedThread(8 * 24 + 6);
+    yield* summarize;
+    yield* summarize;
+    assert.isNotEmpty((yield* list).summaries);
+
+    for (let pass = 0; pass < 3; pass++) yield* summarize;
+    assert.include((yield* list).lastPass?.reason ?? "", "Skipped 3 stretches");
+    const settled = badCalls();
+    yield* summarize;
+    assert.equal(badCalls(), settled);
+    assert.isTrue(model.calls.some(isRollup));
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("moves past roll-ups that all contain one bad summary", () => {
+  const model = scripted((input) =>
+    isRollup(input) && input.messages.some((message) => message.text === "- Summary 2")
+      ? Effect.fail(failingStretch("invalid-output"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const badCalls = () =>
+    model.calls.filter((call) => call.messages.some((message) => message.text === "- Summary 2"))
+      .length;
+  return Effect.gen(function* () {
+    yield* seedThread(6 * 2 + 6 * 24 + 6);
+    for (let index = 0; index < 6; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1]);
+    yield* summarize;
+    assert.equal(badCalls(), 3);
+    yield* summarize;
+    const sources = (yield* list).summaries.flatMap((read) =>
+      read.state === "available" ? read.summary.sources : [],
+    );
+    assert.isTrue(
+      sources.some((source) => source.kind === "message" && source.messageId === messageId(12)),
+    );
+
+    for (let pass = 0; pass < 3; pass++) yield* summarize;
+    assert.equal((yield* list).lastPass?.waitingMessages, 0);
+    const settled = badCalls();
+    yield* summarize;
+    assert.equal(badCalls(), settled);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect.each([
+  { counted: "skipped", stretches: 70, passesBefore: 2, calls: 2 },
+  { counted: "failed once", stretches: 80, passesBefore: 1, calls: 3 },
+])(
+  "keeps a stretch $counted when an outage fills the failure ledger",
+  ({ stretches, passesBefore, calls }) => {
+    let down = false;
+    const model = scripted((input) =>
+      down || input.messages[0]?.text === rawText(1)
+        ? Effect.fail(failingStretch("empty"))
+        : Effect.succeed({
+            statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    const skippedCalls = () =>
+      model.calls.filter((call) => call.messages[0]?.text === rawText(1)).length;
+    return Effect.gen(function* () {
+      // Leaves over the even messages leave each odd message a stretch of its own.
+      yield* seedThread(stretches * 2 + 6);
+      for (let index = 0; index < stretches; index++) yield* persistSummary(index, [index * 2]);
+      for (let pass = 0; pass < passesBefore; pass++) yield* summarize;
+
+      down = true;
+      for (let pass = 0; pass < 25; pass++) yield* summarize;
+      down = false;
+      for (let pass = 0; pass < 10; pass++) yield* summarize;
+      assert.equal(skippedCalls(), calls);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("skips a stretch that fails twice when the ledger is full of skipped stretches", () => {
+  let down = true;
+  const lateStretch = rawText(66 * 2 + 1);
+  const model = scripted((input) =>
+    down || input.messages[0]?.text === lateStretch
+      ? Effect.fail(failingStretch("empty"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const lateCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === lateStretch).length;
+  return Effect.gen(function* () {
+    // Leaves over the even messages leave each odd message a stretch of its own.
+    const stretches = 71;
+    yield* seedThread(stretches * 2 + 6);
+    for (let index = 0; index < stretches; index++) yield* persistSummary(index, [index * 2]);
+    // An outage records the first 66 stretches, three a pass. Marking them skipped stands in
+    // for the hundreds of passes it takes to skip that many.
+    for (let pass = 0; pass < 22; pass++) yield* summarize;
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
+    `;
+    const stored: { chunkFailures: ReadonlyArray<{ readonly key: string }> } = JSON.parse(
+      row!.payload_json,
+    );
+    assert.lengthOf(stored.chunkFailures, 64);
+    const skipped = stored.chunkFailures.map(({ key }) => ({
+      key,
+      failures: 2,
+      skipped: true,
+      reason: "Router returned no text.",
+    }));
+    yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = ${JSON.stringify({ ...stored, chunkFailures: skipped })}
+      WHERE thread_id = ${threadId}
+    `;
+
+    down = false;
+    for (let pass = 0; pass < 30; pass++) yield* summarize;
+    assert.equal(lateCalls(), 2);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("summarizes the next stretch when the model cites none of the chunk", () => {
+  const model = scripted((input) =>
+    Effect.succeed({
+      statements: [
+        {
+          text: input.messages[0]?.text === rawText(0) ? "Uncited." : "The later stretch.",
+          citations: input.messages[0]?.text === rawText(0) ? ["M999"] : [input.messages[0]!.ref],
+        },
+      ],
+    }),
+  );
+  return Effect.gen(function* () {
+    yield* seedThread(38);
+    yield* summarize;
+    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(24)).length, 1);
+    assert.notInclude(
+      (yield* list).summaries.flatMap((read) =>
+        read.state === "available"
+          ? read.summary.sources.flatMap((source) =>
+              source.kind === "message" ? [source.messageId] : [],
+            )
+          : [],
+      ),
+      messageId(0),
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect.each([0, 1])(
+  "skips nothing while every summary after the first %i of a pass times out",
+  (healthy) => {
+    let down = true;
+    let callsThisPass = 0;
+    const model = scripted((input) =>
+      down && callsThisPass++ >= healthy
+        ? Effect.fail(
+            new TextGenerationError({
+              operation: "generateConversationSummary",
+              detail: "OpenCode did not finish generating in time.",
+            }),
+          )
+        : Effect.succeed({
+            statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    return Effect.gen(function* () {
+      yield* seedThread(5 * 24 + 6);
+      for (let pass = 0; pass < 4; pass++) {
+        callsThisPass = 0;
+        const exit = yield* Effect.exit(summarize);
+        if (healthy === 0) assert.isTrue(Exit.isFailure(exit));
+        assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+      }
+      if (healthy === 0) assert.deepEqual((yield* list).summaries, []);
+
+      down = false;
+      for (let pass = 0; pass < 3; pass++) yield* summarize;
+      assert.equal((yield* list).lastPass?.waitingMessages, 0);
+      assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
+it.effect("turning summaries back on during a pass still retries skipped stretches", () => {
+  let gate: { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
+  const model = scripted((input) =>
+    Effect.gen(function* () {
+      if (gate !== undefined) {
+        yield* Deferred.succeed(gate.entered, undefined);
+        yield* Deferred.await(gate.release);
+      }
+      if (input.messages[0]?.text === rawText(0)) return yield* failingStretch("empty");
+      return { statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }] };
+    }),
+  );
+  const firstStretchCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
+  return Effect.gen(function* () {
+    yield* seedThread(5 * 24 + 6);
+    yield* summarize;
+    yield* summarize;
+    assert.include((yield* list).lastPass?.reason ?? "", "Skipped a stretch");
+
+    gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+    const pass = yield* summarize.pipe(Effect.forkChild);
+    yield* Deferred.await(gate.entered);
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
+    });
+    yield* settings.updateSettings(optedIn);
+    yield* Deferred.succeed(gate.release, undefined);
+    yield* Fiber.join(pass);
+    gate = undefined;
+
+    yield* summarize;
+    assert.equal(firstStretchCalls(), 3);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
@@ -1127,6 +1583,43 @@ it.effect("records and retries a source change during model generation", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("rolls up covered roots before summarizing a later uncovered stretch", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    const coveredLeaves = 8;
+    const uncovered = 10;
+    yield* seedThread(coveredLeaves * 2 + uncovered + 6);
+    for (let index = 0; index < coveredLeaves; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1]);
+    yield* summarize;
+    assert.equal(model.calls.length, 3);
+    assert.isTrue(isRollup(model.calls[0]!));
+    assert.isTrue(isRollup(model.calls[1]!));
+    assert.equal(model.calls[0]!.messages.length, 4);
+    assert.equal(model.calls[2]!.messages[0]!.text, rawText(coveredLeaves * 2));
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("replaces a leaf beside a gap before rolling roots across that gap", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seedThread(22);
+    for (let index = 0; index < 8; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1], index === 3);
+    yield* summarize;
+    assert.isFalse(isRollup(model.calls[0]!));
+    assert.equal(model.calls[0]!.messages[0]!.text, rawText(6));
+    assert.isFalse(
+      model.calls.some(
+        (call) =>
+          isRollup(call) &&
+          call.messages.some((message) => message.text.includes("Summary 2")) &&
+          call.messages.some((message) => message.text.includes("Summary 4")),
+      ),
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("continues coverage and handoff lookup beyond the first 500 summaries", () => {
   const model = citing();
   return Effect.gen(function* () {
@@ -1140,11 +1633,10 @@ it.effect("continues coverage and handoff lookup beyond the first 500 summaries"
       yield* persistSummary(index, [index * 2, index * 2 + 1]);
 
     yield* summarize;
-    yield* summarize;
-    const leafCalls = model.calls.filter((call) => !isRollup(call));
-    assert.equal(leafCalls.length, 1);
-    assert.equal(leafCalls[0]!.messages[0]!.text, rawText(coveredMessages));
-    assert.deepInclude((yield* list).lastPass, { waitingMessages: 0 });
+    assert.isTrue(isRollup(model.calls[0]!));
+    // Summary 501 covers the two messages just before the uncovered stretch. If the page hid it,
+    // those messages would be waiting too.
+    assert.deepInclude((yield* list).lastPass, { waitingMessages: 10 });
 
     const service = yield* ConversationSummaries.ConversationSummaries;
     const sql = yield* SqlClient.SqlClient;

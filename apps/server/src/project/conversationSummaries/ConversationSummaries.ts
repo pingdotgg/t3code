@@ -2,6 +2,7 @@ import {
   ConversationSummary,
   ConversationSummaryError,
   ConversationSummaryPass,
+  ConversationSummarySourceRange,
   CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS,
   CONVERSATION_SUMMARY_MAX_SOURCES,
   conversationSummarySourceIdentity,
@@ -19,10 +20,12 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2MessageSpeaker,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
   type RunId,
+  type ServerSettings as ServerSettingsValue,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -42,9 +45,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
@@ -66,11 +71,13 @@ import {
 import {
   buildSummaryTree,
   childIds,
+  CONDENSE_FAN_IN,
   condensedPosition,
   handoffCover,
   isRangeRef,
   leafPosition,
   planCondensation,
+  rootsBeforeFirstGap,
   type StoredSummary,
   type SummaryNode,
   type SummaryTree,
@@ -81,6 +88,14 @@ const FRESH_TAIL_MESSAGES = 6;
 // Bounds the cost of opting in on a long thread; later passes continue where this one stopped.
 // Leaves and roll-ups share it.
 const MAX_SUMMARIES_PER_PASS = 3;
+// One empty or invalid reply can be a cold start. The second is the chunk, and retrying it
+// again only rehashes the thread.
+const CHUNK_FAILURES_BEFORE_SKIP = 2;
+// Live keys only survive a pass, so this bounds a thread with many failing stretches.
+const MAX_CHUNK_FAILURES = 64;
+// Trimming keeps skips, which are never re-recorded, over other failures, but only this many, so
+// failures still being counted always keep room to reach a skip.
+const MAX_SKIPPED_CHUNKS = 48;
 // Measured as delivery measures it, so a few roll-ups fit beside the verbatim tail of a 16 KB
 // handoff in any script. The prompt asks for fewer characters, so this cut is a backstop.
 const CONDENSED_MAX_BYTES = 1_536;
@@ -120,8 +135,26 @@ const encodeStatements = Schema.encodeSync(
   Schema.fromJsonString(ConversationSummary.fields.statements),
 );
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeModelSelection = Schema.encodeSync(
+  Schema.fromJsonString(ConversationSummary.fields.modelSelection),
+);
 const decodePass = Schema.decodeUnknownEffect(Schema.fromJsonString(ConversationSummaryPass));
-const encodePass = Schema.encodeSync(Schema.fromJsonString(ConversationSummaryPass));
+// Server-only. A key digests the summary model with the chunk, so another model gets a new chance.
+const ChunkFailure = Schema.Struct({
+  key: Schema.String,
+  failures: Schema.Int,
+  skipped: Schema.optionalKey(Schema.Boolean),
+  // Last failed in a pass where nothing succeeded, so that failure was not counted.
+  suspect: Schema.optionalKey(Schema.Boolean),
+  reason: Schema.String,
+});
+type ChunkFailure = typeof ChunkFailure.Type;
+const StoredPass = Schema.Struct({
+  ...ConversationSummaryPass.fields,
+  chunkFailures: Schema.optionalKey(Schema.Array(ChunkFailure)),
+});
+const decodeStoredPass = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredPass));
+const encodeStoredPass = Schema.encodeSync(Schema.fromJsonString(StoredPass));
 const isConversationSummaryError = Schema.is(ConversationSummaryError);
 const isConversationSummaryPassError = Schema.is(ConversationSummaryPassError);
 
@@ -147,6 +180,17 @@ const renderStatements = (summary: Pick<ConversationSummary, "sources" | "statem
     (statement) =>
       `- ${statement.text} [${statement.citations.map((id) => `#${position.get(id)}`).join(", ")}]`,
   );
+};
+
+export const renderSummaryForHandoff = (
+  summary: Pick<ConversationSummary, "id" | "projectId" | "threadId" | "sources" | "statements">,
+) => {
+  const condensed = summary.sources.some((source) => source.kind === "summary");
+  return [
+    `[Conversation summary ${summary.id}: written by a model from ${summary.sources.length} earlier ${condensed ? "summaries" : "source ranges"} of thread ${summary.threadId}. It is a summary, not the original evidence.]`,
+    `Read the exact source ranges with t3_conversation_summary_expand({projectId:"${summary.projectId}",threadId:"${summary.threadId}",summaryId:"${summary.id}"}); #n is the nth source.${condensed ? " A source that is a summary expands the same way, down to the original text." : ""} Follow nextOffset and nextTextOffset together to retrieve all text.`,
+    ...renderStatements(summary),
+  ].join("\n");
 };
 
 /** Keep statements in order while the rendered roll-up fits its byte budget. */
@@ -761,11 +805,11 @@ const make = Effect.gen(function* () {
   const recordPass = Effect.fn("ConversationSummaries.recordPass")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
-    pass: ConversationSummaryPass,
+    pass: typeof StoredPass.Type,
   ) {
     yield* sql`
       INSERT INTO conversation_summary_passes (thread_id, project_id, payload_json)
-      VALUES (${threadId}, ${projectId}, ${encodePass(pass)})
+      VALUES (${threadId}, ${projectId}, ${encodeStoredPass(pass)})
       ON CONFLICT (thread_id) DO UPDATE SET
         project_id = excluded.project_id,
         payload_json = excluded.payload_json
@@ -807,6 +851,40 @@ const make = Effect.gen(function* () {
       ) AND ${unreferenced}
     `;
   });
+
+  // Turning summaries back on is how a user retries skipped stretches.
+  const forgetFailuresOnReenable = Effect.fn("ConversationSummaries.forgetFailuresOnReenable")(
+    function* (before: ServerSettingsValue, after: ServerSettingsValue) {
+      const enabled = (settings: ServerSettingsValue, projectId: ProjectId) =>
+        resolveProjectSettings(settings, projectId).settings.enableConversationSummaries;
+      const rows = yield* sql<{ readonly project_id: ProjectId }>`
+        SELECT DISTINCT project_id FROM conversation_summary_passes
+        WHERE json_extract(payload_json, '$.chunkFailures') IS NOT NULL
+      `;
+      const reenabled = rows
+        .map((row) => row.project_id)
+        .filter((projectId) => !enabled(before, projectId) && enabled(after, projectId));
+      if (reenabled.length === 0) return;
+      yield* sql`
+        UPDATE conversation_summary_passes
+        SET payload_json = json_remove(payload_json, '$.chunkFailures')
+        WHERE ${sql.in("project_id", reenabled)}
+      `;
+    },
+  );
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  let lastSettings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+  yield* forkParked(
+    Stream.runForEach(settingsChanges, (settings) => {
+      const before = lastSettings;
+      lastSettings = settings;
+      return forgetFailuresOnReenable(before, settings).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not reset summary failures for re-enabled projects.", cause),
+        ),
+      );
+    }),
+  );
 
   const summarizeThread: ConversationSummaries["Service"]["summarizeThread"] = Effect.fn(
     "ConversationSummaries.summarizeThread",
@@ -852,6 +930,46 @@ const make = Effect.gen(function* () {
           )
           .map((row) => row.id);
       };
+      const priorRows = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
+      `;
+      const prior =
+        priorRows[0] === undefined
+          ? undefined
+          : yield* decodeStoredPass(priorRows[0].payload_json).pipe(
+              Effect.orElseSucceed(() => undefined),
+            );
+      const chunkFailures = new Map<string, ChunkFailure>(
+        (prior?.chunkFailures ?? []).map((failure) => [failure.key, failure]),
+      );
+      const charges: Array<{
+        readonly key: string;
+        readonly reason: string;
+        readonly suspect: boolean;
+      }> = [];
+      const charge = ({ key, reason, suspect }: (typeof charges)[number]) => {
+        const failures = (chunkFailures.get(key)?.failures ?? 0) + (suspect ? 0 : 1);
+        chunkFailures.delete(key);
+        chunkFailures.set(key, {
+          key,
+          failures,
+          ...(failures >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
+          ...(suspect ? { suspect: true } : {}),
+          reason: reason.slice(0, 300),
+        });
+      };
+      // Re-enabling summaries may clear the ledger while this pass runs. The reset wins, so only
+      // this pass's own failures survive it.
+      const keepReset = Effect.fnUntraced(function* () {
+        if (prior?.chunkFailures === undefined) return;
+        const cleared = yield* sql<{ readonly cleared: number }>`
+          SELECT json_extract(payload_json, '$.chunkFailures') IS NULL AS cleared
+          FROM conversation_summary_passes WHERE thread_id = ${threadId}
+        `;
+        if (cleared[0]?.cleared !== 1) return;
+        chunkFailures.clear();
+        for (const failure of charges) charge(failure);
+      });
       const finish = (
         result: ConversationSummaryPass["result"],
         reason: string | null,
@@ -861,16 +979,26 @@ const make = Effect.gen(function* () {
       ) =>
         cleanupSuperseded(superseded()).pipe(
           Effect.andThen(DateTime.now),
-          Effect.flatMap((now) =>
-            recordPass(projectId, threadId, {
+          Effect.tap(keepReset),
+          Effect.flatMap((now) => {
+            const failures = [...chunkFailures.values()];
+            const open = failures.filter((failure) => failure.skipped !== true);
+            const stored = [
+              ...open.filter((failure) => failure.failures === 0),
+              ...open.filter((failure) => failure.failures > 0),
+              ...failures.filter((failure) => failure.skipped === true).slice(-MAX_SKIPPED_CHUNKS),
+            ].slice(-MAX_CHUNK_FAILURES);
+            return recordPass(projectId, threadId, {
               runId,
               result,
               reason,
               generated,
               waitingMessages,
               at: DateTime.formatIso(now),
-            }),
-          ),
+              ...(stored.length === 0 ? {} : { chunkFailures: stored }),
+            });
+          }),
+          sql.withTransaction,
           Effect.as({ hasMore }),
         );
       if (records.thread.deletedAt !== null)
@@ -922,6 +1050,7 @@ const make = Effect.gen(function* () {
           createdAt: message.createdAt,
         });
       }
+      const speakers = yield* projections.getPeerSpeakers(threadId);
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
         const text = summaryToolText(item);
@@ -973,24 +1102,21 @@ const make = Effect.gen(function* () {
           for (const source of root.leafSources) covered.add(conversationSummarySourceKey(source));
       };
       rebuild();
-      const waiting = () =>
-        new Set(
-          settled
-            .filter((source) => !covered.has(conversationSummarySourceKey(source.ref)))
-            .map((source) => conversationSummarySourceIdentity(source.ref)),
-        ).size;
       let generated = 0;
-      const failPass = (reason: string) =>
-        finish("failed", reason.slice(0, 300), generated, waiting()).pipe(
-          Effect.andThen(Effect.fail(new ConversationSummaryPassError({ runId, cause: reason }))),
-        );
 
       const publish = Effect.fnUntraced(function* (input: {
-        readonly messages: ReadonlyArray<{
-          readonly role: "user" | "assistant" | "tool" | "summary";
-          readonly text: string;
-          readonly range?: ConversationSummaryRangeRef["range"];
-        }>;
+        readonly messages: ReadonlyArray<
+          {
+            readonly text: string;
+            readonly range?: (typeof ConversationSummarySourceRange)["Type"];
+          } & (
+            | { readonly role: "user" | "assistant" | "tool" | "summary" }
+            | {
+                readonly role: "peer";
+                readonly speaker: OrchestrationV2MessageSpeaker;
+              }
+          )
+        >;
         readonly sources: ReadonlyArray<ConversationSummarySourceRef>;
         readonly ranges: ReadonlyArray<ConversationSummaryRangeRef>;
         readonly position: string;
@@ -999,12 +1125,7 @@ const make = Effect.gen(function* () {
         const messages = input.messages.map((message, index) => {
           const ref = `M${index + 1}`;
           refs.set(ref, conversationSummarySourceKey(input.sources[index]!));
-          return {
-            ref,
-            role: message.role,
-            text: message.text,
-            ...(message.range === undefined ? {} : { range: message.range }),
-          };
+          return { ref, ...message };
         });
         const reply = yield* textGeneration
           .generateConversationSummary({
@@ -1016,10 +1137,14 @@ const make = Effect.gen(function* () {
             Effect.map((result) => ({ ok: true as const, statements: result.statements })),
             Effect.catchTags({
               TextGenerationError: (error) =>
-                Effect.succeed({ ok: false as const, detail: error.detail }),
+                Effect.succeed({
+                  ok: false as const,
+                  reason: error.detail,
+                  unusableReply: error.kind !== undefined,
+                }),
             }),
           );
-        if (!reply.ok) return { ok: false as const, reason: reply.detail };
+        if (!reply.ok) return reply;
         const cited: Array<ConversationSummaryStatement> = [];
         for (const statement of reply.statements.slice(0, MAX_STATEMENTS)) {
           const text = statement.text.trim().slice(0, MAX_STATEMENT_CHARS).trim();
@@ -1035,10 +1160,15 @@ const make = Effect.gen(function* () {
           return {
             ok: false as const,
             reason: "The model returned no statements citing the summarized sources.",
+            unusableReply: true,
           };
         const current = yield* readRanges({ projectId, threadId, sources: input.ranges });
         if (current.some((source) => source.state !== "available"))
-          return { ok: false as const, reason: "A source changed while it was being summarized." };
+          return {
+            ok: false as const,
+            reason: "A source changed while it was being summarized.",
+            unusableReply: false,
+          };
         // A child id already digests the child's exact ranges, so it stands in for a digest.
         const id = `summary:${yield* digest(
           [
@@ -1080,11 +1210,14 @@ const make = Effect.gen(function* () {
 
       const summarizeLeaf = (chunk: ReadonlyArray<SummarySource>) =>
         publish({
-          messages: chunk.map((source) => ({
-            role: source.role,
-            text: source.text,
-            ...(source.ref.range === undefined ? {} : { range: source.ref.range }),
-          })),
+          messages: chunk.map((source) => {
+            const speaker =
+              source.ref.kind === "message" ? speakers.get(source.ref.messageId) : undefined;
+            const range = source.ref.range === undefined ? {} : { range: source.ref.range };
+            return speaker === undefined
+              ? { role: source.role, text: source.text, ...range }
+              : { role: "peer" as const, speaker, text: source.text, ...range };
+          }),
           sources: chunk.map((source) => source.ref),
           ranges: chunk.map((source) => source.ref),
           position: leafPosition(DateTime.formatIso(chunk[0]!.createdAt), chunk[0]!.ref),
@@ -1116,30 +1249,160 @@ const make = Effect.gen(function* () {
         });
       });
 
-      // Leaves first: a replacement leaf must exist before its stretch rolls up, or its old
-      // neighbours would roll up without it and the broken path could never be rebuilt alone.
-      const nextWork = () => {
-        const chunk = planLeafChunks({ settled, covered })[0];
-        if (chunk !== undefined) return { kind: "leaf" as const, chunk };
-        const group = planCondensation(tree.roots);
-        return group === null ? null : { kind: "condense" as const, group };
+      const modelKey = encodeModelSelection(settings.textGenerationModelSelection);
+      const keys = new Map<string, string>();
+      const keyOf = Effect.fnUntraced(function* (raw: string) {
+        const known = keys.get(raw);
+        if (known !== undefined) return known;
+        const key = yield* digest(`${modelKey}\n${raw}`);
+        keys.set(raw, key);
+        return key;
+      });
+      const leafChunkKey = (chunk: ReadonlyArray<SummarySource>) =>
+        chunk
+          .map((source) => `${conversationSummarySourceKey(source.ref)}:${source.ref.digest}`)
+          .join("\n");
+      const rollupKey = (group: ReadonlyArray<SummaryNode>) =>
+        group.map((node) => node.row.id).join("\n");
+      for (const chunk of planLeafChunks({ settled, covered })) yield* keyOf(leafChunkKey(chunk));
+      for (let start = 0; start + CONDENSE_FAN_IN <= tree.roots.length; start++)
+        yield* keyOf(rollupKey(tree.roots.slice(start, start + CONDENSE_FAN_IN)));
+      const live = new Set(keys.values());
+      for (const key of chunkFailures.keys()) if (!live.has(key)) chunkFailures.delete(key);
+
+      const failureOf = (raw: string) => {
+        const key = keys.get(raw);
+        return key === undefined ? undefined : chunkFailures.get(key);
       };
-      while (generated < MAX_SUMMARIES_PER_PASS) {
-        const work = nextWork();
+      const isSkipped = (raw: string) => failureOf(raw)?.skipped === true;
+      const skippedSources = (chunks: ReadonlyArray<ReadonlyArray<SummarySource>>) =>
+        new Set(
+          chunks
+            .filter((chunk) => isSkipped(leafChunkKey(chunk)))
+            .flatMap((chunk) => chunk.map((source) => conversationSummarySourceKey(source.ref))),
+        );
+      const waiting = () => {
+        const skipped = skippedSources(planLeafChunks({ settled, covered }));
+        return new Set(
+          settled
+            .filter((source) => {
+              const key = conversationSummarySourceKey(source.ref);
+              return !covered.has(key) && !skipped.has(key);
+            })
+            .map((source) => conversationSummarySourceIdentity(source.ref)),
+        ).size;
+      };
+      // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
+      // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
+      // A skipped stretch gets no replacement, so it is no gap.
+      const selectFrom = (avoid: (raw: string) => boolean) => {
+        const held = (raw: string) => avoid(raw) || isSkipped(raw);
+        const chunks = planLeafChunks({ settled, covered });
+        const group = planCondensation(
+          rootsBeforeFirstGap({
+            roots: tree.roots,
+            order: settled.map((source) => conversationSummarySourceKey(source.ref)),
+            covered,
+            skipped: skippedSources(chunks),
+          }),
+          (run) => !held(rollupKey(run)),
+        );
+        if (group !== null) return { kind: "condense" as const, group, key: rollupKey(group) };
+        const chunk = chunks.find((candidate) => !held(leafChunkKey(candidate)));
+        return chunk === undefined
+          ? null
+          : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
+      };
+      const isSuspect = (raw: string) => failureOf(raw)?.suspect === true;
+      // Until a summary succeeds, suspects go last, so work that failed together cannot hold the
+      // front of every pass, and one suspect is enough to test a model that may be down. That one
+      // is the suspect that waited longest, so a stretch that keeps failing cannot hold every pass.
+      let suspectTried = false;
+      const selectWork = (blocked: ReadonlySet<string>) => {
+        if (generated > 0) return selectFrom((raw) => blocked.has(raw));
+        const fresh = selectFrom((raw) => blocked.has(raw) || isSuspect(raw));
+        if (fresh !== null || suspectTried) return fresh;
+        for (const failure of chunkFailures.values()) {
+          if (failure.suspect !== true) continue;
+          const work = selectFrom(
+            (raw) => blocked.has(raw) || (isSuspect(raw) && keys.get(raw) !== failure.key),
+          );
+          if (work !== null) return work;
+        }
+        return null;
+      };
+      const blocked = new Set<string>();
+      const failed: Array<{
+        readonly raw: string;
+        readonly reason: string;
+        readonly unusableReply: boolean;
+        readonly generatedBefore: number;
+      }> = [];
+      let stoppedBy: string | undefined;
+      let attempts = 0;
+      while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
+        const work = selectWork(blocked);
         if (work === null) break;
+        attempts += 1;
+        if (isSuspect(work.key)) suspectTried = true;
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
-        if (!published.ok) return yield* failPass(published.reason);
+        if (!published.ok) {
+          failed.push({
+            raw: work.key,
+            reason: published.reason,
+            unusableReply: published.unusableReply,
+            generatedBefore: generated,
+          });
+          blocked.add(work.key);
+          // Before any success, an outage or a rejected request fails the pass so it retries, but
+          // its work goes last.
+          if (!published.unusableReply && generated === 0) {
+            stoppedBy = published.reason;
+            break;
+          }
+          continue;
+        }
+        const key = keys.get(work.key);
+        if (key !== undefined) chunkFailures.delete(key);
         rows.set(published.row.id, published.row);
         rebuild();
         generated += 1;
       }
+      // With nothing succeeding, the model may be down or unable to answer at all. Blaming the
+      // chunk would skip the thread's whole history, so that failure is not counted. A timeout or
+      // rejection counts only when a summary succeeded after it: a provider that answers once and
+      // then stalls is still an outage.
+      for (const { raw, reason, unusableReply, generatedBefore } of failed) {
+        const counted = unusableReply ? generated > 0 : generated > generatedBefore;
+        const failure = { key: yield* keyOf(raw), reason, suspect: !counted };
+        charges.push(failure);
+        charge(failure);
+      }
+      if (stoppedBy !== undefined)
+        return yield* finish("failed", stoppedBy.slice(0, 300), generated, waiting()).pipe(
+          Effect.andThen(
+            Effect.fail(new ConversationSummaryPassError({ runId, cause: stoppedBy })),
+          ),
+        );
+      if (generated === 0 && failed.length > 0)
+        return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
+      const skipped = [...chunkFailures.values()].filter((failure) => failure.skipped);
+      const skipReason =
+        skipped.length === 0
+          ? null
+          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} failed summaries. ${skipped[0]!.reason}`.slice(
+              0,
+              300,
+            );
       return yield* finish(
         generated > 0 ? "ran" : "skipped",
-        generated > 0 ? null : "No settled stretch is long enough to summarize yet.",
+        skipReason ??
+          failed[0]?.reason.slice(0, 300) ??
+          (generated > 0 ? null : "No settled stretch is long enough to summarize yet."),
         generated,
         waiting(),
-        nextWork() !== null,
+        selectWork(new Set()) !== null,
       );
     },
     (effect, { runId }) =>
@@ -1151,15 +1414,6 @@ const make = Effect.gen(function* () {
         ),
       ),
   );
-
-  const renderForHandoff = (summary: ConversationSummary) => {
-    const condensed = summary.sources.some((source) => source.kind === "summary");
-    return [
-      `[Conversation summary ${summary.id}: written by a model from ${summary.sources.length} earlier ${condensed ? "summaries" : "source ranges"} of thread ${summary.threadId}. It is a summary, not the original evidence.]`,
-      `Read the exact source ranges with t3_conversation_summary_expand({projectId:"${summary.projectId}",threadId:"${summary.threadId}",summaryId:"${summary.id}"}); #n is the nth source.${condensed ? " A source that is a summary expands the same way, down to the original text." : ""} Follow nextOffset and nextTextOffset together to retrieve all text.`,
-      ...renderStatements(summary),
-    ].join("\n");
-  };
 
   const coveredUncarriedSources = Effect.fn("ConversationSummaries.coveredUncarriedSources")(
     function* (
@@ -1303,9 +1557,11 @@ const make = Effect.gen(function* () {
           if (nodes.length !== group.nodes.length) continue;
           offered.push({
             id: nodes[0]!.id,
+            projectId: nodes[0]!.projectId,
+            threadId: nodes[0]!.threadId,
             ...(nodes.length > 1 ? { summaryIds: nodes.map((summary) => summary.id) } : {}),
             text: [
-              ...nodes.map(renderForHandoff),
+              ...nodes.map(renderSummaryForHandoff),
               ...sourceItems.flatMap((item) => {
                 const attached = evidence?.textByItem.get(item.itemId);
                 return attached === undefined

@@ -19,6 +19,7 @@ import type { PendingOrchestrationEffectV2 } from "../../orchestration-v2/Effect
 /**
  * The summary pass after one completed run, or nothing when the project has not opted in. The
  * effect id is derived from the run, so a replayed finalization coalesces into the queued pass.
+ * The outbox keeps one pending pass per thread, so a later run does not start another chain.
  */
 export function conversationSummaryEffects(input: {
   readonly settings: ServerSettings;
@@ -59,6 +60,8 @@ export class ConversationSummaryPassError extends Schema.TaggedError<Conversatio
 /** A current summary that may stand in for the handoff items it covers. */
 export interface HandoffSummary {
   readonly id: ConversationSummaryId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
   readonly summaryIds?: ReadonlyArray<ConversationSummaryId>;
   /** Labelled as a generated summary, with the ids needed to expand its sources. */
   readonly text: string;

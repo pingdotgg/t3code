@@ -6,6 +6,7 @@ import * as HolographicMemory from "./project/knowledge/HolographicMemory.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
 import * as AssistedLearning from "./project/knowledge/AssistedLearning.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
+import * as ModelEvaluationSubagentRefresh from "./modelEvaluations/ModelEvaluationSubagentRefresh.ts";
 import * as ModelEvaluations from "./modelEvaluations/ModelEvaluations.ts";
 import * as ExternalHistory from "./project/externalHistory/ExternalHistory.ts";
 import * as CodeIndexReactor from "./project/knowledge/CodeIndexReactor.ts";
@@ -748,6 +749,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* ModelEvaluationSubagentRefresh.ModelEvaluationSubagentRefresh;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(ModelEvaluationSubagentRefresh.layer)),
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* GroupReactor.GroupReactor;

@@ -1,6 +1,8 @@
 import {
   ComposerContextId,
+  ThreadId,
   type OrchestrationMessageContext,
+  type OrchestrationV2ThreadGroup,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
@@ -264,15 +266,44 @@ describe("mobile composer context", () => {
         .map((token) => token.source),
     ).toEqual(["$babysit"]);
     const mentions = "@opus check @README.md and @Opus ";
+    const group: OrchestrationV2ThreadGroup = {
+      status: "active",
+      primary: { model: "fable-5", label: "Fable", handle: "fable" },
+      seats: [
+        {
+          threadId: ThreadId.make("thread-opus"),
+          handle: "opus",
+          label: "Opus",
+          status: "seated",
+          joinedAfterRun: 0,
+        },
+      ],
+      discussion: null,
+      closedBecause: null,
+      closedAt: null,
+    };
     expect(
       composerContextEditorTokens(
         mentions,
         collectComposerInlineTokens(mentions),
         composerSkillLabels([]),
         [],
-        ["opus"],
+        group,
+      ).map((token) => [token.type, token.source, "label" in token ? token.label : undefined]),
+    ).toEqual([
+      ["group", "@opus", "Opus"],
+      ["mention", "@README.md", undefined],
+      ["group", "@Opus", "Opus"],
+    ]);
+    expect(
+      composerContextEditorTokens(
+        "ask @opus",
+        collectComposerInlineTokens("ask @opus"),
+        composerSkillLabels([]),
+        [],
+        group,
       ).map((token) => token.source),
-    ).toEqual(["@README.md"]);
+    ).toEqual(["@opus"]);
   });
 
   it("removes deleted payloads but keeps the screenshot linked to a remaining annotation", () => {

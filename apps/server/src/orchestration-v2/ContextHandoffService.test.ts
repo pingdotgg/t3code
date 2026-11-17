@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
   MessageId,
+  NodeId,
   OrchestrationV2ContextHandoffJson,
   ProjectId,
   ProviderDriverKind,
@@ -21,7 +22,10 @@ import * as Schema from "effect/Schema";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
+import {
+  historyCost,
+  REPLACEMENT_HANDOFF_TOKEN_CAP,
+} from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
@@ -294,6 +298,84 @@ it.layer(layerTest)("ContextHandoffService provider handoff", (it) => {
         const delivered = yield* encodeHandoff(durable);
         assert.lengthOf(delivered.match(/COMMAND_EVIDENCE_SENTINEL/g) ?? [], 1);
         assert.lengthOf(delivered.match(/TOOL_EVIDENCE_SENTINEL/g) ?? [], 1);
+      }),
+  );
+
+  it.effect(
+    "keeps the six newest messages when a large subagent result fits the replacement budget",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+        const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+        const threadId = ThreadId.make("thread:fresh-tail");
+        const base = {
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          status: "completed" as const,
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        };
+        const say = (
+          id: string,
+          role: "user" | "assistant",
+          text: string,
+          ordinal: number,
+        ): OrchestrationV2TurnItem => importedItem({ role, id, text, ordinal });
+        const crowded = ["FRESH_4", "FRESH_5", "FRESH_6"].map((marker, index) =>
+          say(
+            marker,
+            index % 2 === 0 ? "user" : "assistant",
+            `${marker}\n${"m".repeat(18_000)}`,
+            index + 1,
+          ),
+        );
+        const subagent = {
+          ...base,
+          id: TurnItemId.make("item:large-subagent"),
+          ordinal: 4,
+          type: "subagent" as const,
+          subagentId: NodeId.make("node:large-subagent"),
+          origin: "app_owned" as const,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          childThreadId: null,
+          prompt: "Investigate the failure",
+          result: `SUBAGENT_RESULT\n${"s".repeat(45_000)}`,
+        } satisfies OrchestrationV2TurnItem;
+        const recent = ["FRESH_1", "FRESH_2", "FRESH_3"].map((marker, index) =>
+          say(marker, index % 2 === 0 ? "assistant" : "user", marker, index + 5),
+        );
+        const handoff = yield* service.prepareProviderHandoff({
+          threadId,
+          targetRunId: RunId.make("run:fresh-tail"),
+          transferId: null,
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("provider-thread:fresh-tail"),
+          fromProviderInstanceId: ProviderInstanceId.make("codex"),
+          toProviderInstanceId: ProviderInstanceId.make("codex"),
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "full_thread_summary",
+          tokenCap: REPLACEMENT_HANDOFF_TOKEN_CAP,
+          items: [say("opening", "user", "OPENING", 0), ...crowded, subagent, ...recent],
+          createdAt: now,
+        });
+        const kept = handoff.history?.messages.map((message) => message.text).join("\n") ?? "";
+        for (const marker of ["FRESH_1", "FRESH_2", "FRESH_3", "FRESH_4", "FRESH_5", "FRESH_6"]) {
+          assert.include(kept, marker, "the six newest messages stay in the handoff");
+        }
+        assert.notInclude(kept, "SUBAGENT_RESULT");
+        assert.include(handoff.history?.omittedItemIds ?? [], subagent.id);
+        assert.isAtMost(
+          historyCost(handoff.history?.messages ?? [], handoff.summaryText),
+          REPLACEMENT_HANDOFF_TOKEN_CAP,
+        );
       }),
   );
 });

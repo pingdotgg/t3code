@@ -6,6 +6,7 @@ import {
   ProjectId,
   RunId,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -84,6 +85,10 @@ export const ConversationSummarySourceResult = Schema.Union([
     title: Schema.String,
     /** "summary" when the source is a child summary; its text is that summary's statements. */
     role: Schema.Literals(["user", "assistant", "tool", "summary"]),
+    /** Set when an assistant message was spoken by another model in the thread. */
+    speaker: Schema.optionalKey(
+      Schema.Struct({ label: TrimmedNonEmptyString, model: TrimmedNonEmptyString }),
+    ),
     createdAt: IsoDateTime,
     archived: Schema.Boolean,
     /** Offset and total length within this source's recorded range. */

@@ -14,6 +14,7 @@ import {
   TurnItemId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -608,5 +609,146 @@ it.effect(
       yield* userMessage(forkId, forkRunId, "/compact");
 
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
+    }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect(
+  "loads finalized dynamic tool, search, and subagent results into turn-start history",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:tool-history");
+      const runId = RunId.make("run:tool-history");
+      const instanceId = ProviderInstanceId.make("codex");
+      yield* store.apply({
+        id: EventId.make("event:tool-history:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: threadId,
+          projectId: ProjectId.make("project:tool-history"),
+          title: "Tool history",
+          providerInstanceId: instanceId,
+          modelSelection: { instanceId, model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:tool-history:run"),
+        type: "run.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection: { instanceId, model: "test" },
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:tool-history"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const base = {
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const evidence = [
+        {
+          ...base,
+          id: TurnItemId.make("item:dynamic-tool"),
+          ordinal: 1,
+          type: "dynamic_tool" as const,
+          toolName: "verify_health",
+          input: { endpoint: "/health" },
+          output: { failure: "Expected HTTP 200, received 503" },
+        },
+        {
+          ...base,
+          id: TurnItemId.make("item:file-search"),
+          ordinal: 2,
+          type: "file_search" as const,
+          pattern: "health",
+          results: [{ fileName: "src/health.ts", line: 7, preview: "export const health = 200" }],
+        },
+        {
+          ...base,
+          id: TurnItemId.make("item:web-search"),
+          ordinal: 3,
+          type: "web_search" as const,
+          patterns: ["HTTP 503"],
+          results: [{ url: "https://example.com/status/503", title: "Service unavailable" }],
+        },
+        {
+          ...base,
+          id: TurnItemId.make("item:subagent"),
+          ordinal: 4,
+          type: "subagent" as const,
+          subagentId: NodeId.make("node:health-check"),
+          origin: "app_owned" as const,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: instanceId,
+          childThreadId: null,
+          prompt: "Check the health endpoint",
+          result: "The upstream service is unavailable",
+        },
+      ] satisfies ReadonlyArray<OrchestrationV2TurnItem>;
+      const reasoning = {
+        ...base,
+        id: TurnItemId.make("item:reasoning"),
+        ordinal: 5,
+        type: "reasoning" as const,
+        text: "private reasoning",
+        streaming: false,
+      } satisfies OrchestrationV2TurnItem;
+      for (const item of [...evidence, reasoning]) {
+        yield* store.apply({
+          id: EventId.make(`event:${item.id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: item,
+        });
+      }
+      assert.deepEqual(
+        (yield* store.getTurnStartHistory(threadId)).map((item) => item.id),
+        evidence.map((item) => item.id),
+      );
     }).pipe(Effect.provide(layerDatabase)),
 );

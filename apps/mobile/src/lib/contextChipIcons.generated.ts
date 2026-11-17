@@ -15,6 +15,7 @@ export const CONTEXT_CHIP_ICON_SOURCES = {
   server: require("../../assets/context-chip-icons/server.png"),
   skill: require("../../assets/context-chip-icons/skill.png"),
   terminal: require("../../assets/context-chip-icons/terminal.png"),
+  users: require("../../assets/context-chip-icons/users.png"),
 } as const satisfies Readonly<Record<string, ImageSourcePropType>>;
 
 export const PROVIDER_CHIP_ICONS: Readonly<

@@ -51,6 +51,7 @@ import { modelEvaluationEffects } from "../modelEvaluations/modelEvaluationSched
 import {
   ConversationSummaryPassError,
   ConversationSummaryRuntime,
+  conversationSummaryEffect,
 } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import {
   DeliveryScrubRunner,
@@ -197,6 +198,144 @@ it.effect("retries a failed summary pass before scheduling its continuation", ()
       yield* TestClock.adjust(100);
       assert.equal(yield* worker.drain(), 2);
       assert.equal(yield* Ref.get(calls), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("keeps at most one pending summary pass per thread", () =>
+  Effect.gen(function* () {
+    const threadA = ThreadId.make("thread:summary-one-pending");
+    const threadB = ThreadId.make("thread:summary-other");
+    const first = conversationSummaryEffect({
+      threadId: threadA,
+      runId: RunId.make("run:summary-one-pending-a"),
+    });
+    const second = conversationSummaryEffect({
+      threadId: threadA,
+      runId: RunId.make("run:summary-one-pending-b"),
+    });
+    const other = conversationSummaryEffect({
+      threadId: threadB,
+      runId: RunId.make("run:summary-one-pending-c"),
+    });
+    const layer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* outbox.enqueue([first, second, other]);
+      assert.isTrue(Option.isSome(yield* outbox.get(first.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(second.id)));
+      assert.isTrue(Option.isSome(yield* outbox.get(other.id)));
+
+      const workerId = "summary-dedupe";
+      const claimed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(claimed, (effect) => effect.id),
+        Option.some(first.id),
+      );
+      const otherClaimed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(otherClaimed, (effect) => effect.id),
+        Option.some(other.id),
+      );
+      assert.isTrue(yield* outbox.succeed({ effectId: other.id, workerId }));
+
+      const continuation = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-a"),
+        pass: 1,
+      });
+      const third = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-d"),
+      });
+      yield* outbox.enqueue([continuation, third]);
+      assert.isTrue(Option.isSome(yield* outbox.get(continuation.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(third.id)));
+
+      const retried = yield* outbox.retry({
+        effectId: first.id,
+        workerId,
+        error: "OpenCode did not finish generating in time.",
+        delayMs: 0,
+      });
+      assert.isTrue(retried);
+      assert.equal(
+        Option.map(yield* outbox.get(first.id), (row) => row.status).pipe(Option.getOrNull),
+        "cancelled",
+      );
+      const pendingContinuation = yield* outbox.get(continuation.id);
+      assert.isTrue(Option.isSome(pendingContinuation));
+      if (Option.isSome(pendingContinuation))
+        assert.equal(pendingContinuation.value.status, "pending");
+
+      const resumed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(resumed, (effect) => effect.id),
+        Option.some(continuation.id),
+      );
+      const successor = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-a"),
+        pass: 2,
+      });
+      yield* outbox.enqueue([successor]);
+      assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 1 });
+      assert.equal(
+        Option.map(yield* outbox.get(continuation.id), (row) => row.status).pipe(Option.getOrNull),
+        "cancelled",
+      );
+      const pendingSuccessor = yield* outbox.get(successor.id);
+      assert.isTrue(Option.isSome(pendingSuccessor));
+      if (Option.isSome(pendingSuccessor)) assert.equal(pendingSuccessor.value.status, "pending");
+
+      yield* TestClock.adjust(
+        Duration.sum(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.days(1)),
+      );
+      yield* outbox.pruneSettled;
+      assert.isTrue(Option.isNone(yield* outbox.get(first.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(continuation.id)));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("hands a later run's summary pass to a fresh row when the queued pass is retrying", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:summary-retrying");
+    const first = conversationSummaryEffect({
+      threadId,
+      runId: RunId.make("run:summary-retrying-a"),
+    });
+    const later = conversationSummaryEffect({
+      threadId,
+      runId: RunId.make("run:summary-retrying-b"),
+    });
+    const layer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const workerId = "summary-retrying";
+      yield* outbox.enqueue([first]);
+      yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.isTrue(
+        yield* outbox.retry({ effectId: first.id, workerId, error: "Timed out.", delayMs: 0 }),
+      );
+
+      // The retrying row may exhaust its attempts, so it cannot stand in for this run's pass.
+      yield* outbox.enqueue([later]);
+      assert.isTrue(Option.isSome(yield* outbox.get(later.id)));
+
+      const retried = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(retried, (effect) => effect.id),
+        Option.some(first.id),
+      );
+      assert.isTrue(
+        yield* outbox.retry({ effectId: first.id, workerId, error: "Timed out.", delayMs: 0 }),
+      );
+      const next = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(next, (effect) => effect.id),
+        Option.some(later.id),
+      );
     }).pipe(Effect.provide(layer));
   }),
 );

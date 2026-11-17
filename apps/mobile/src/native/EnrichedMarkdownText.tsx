@@ -1,3 +1,4 @@
+import { groupMentionOccurrences } from "@t3tools/client-runtime/state/thread-group";
 import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
@@ -217,6 +218,8 @@ function codeBlockElement(
   return undefined;
 }
 
+const NO_GROUP_MENTIONS: ReadonlyMap<string, string> = new Map();
+
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
@@ -243,9 +246,24 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : urls,
     );
   };
+  // Keyed by text so a streamed token that names nobody new keeps the regex and chips.
+  const groupMentionKey = [
+    ...new Set(
+      groupMentionOccurrences(markdown, props.group).map(
+        (mention) => `${mention.source}\t${mention.label}`,
+      ),
+    ),
+  ].join("\n");
+  const groupMentions = useMemo(
+    () =>
+      groupMentionKey
+        ? new Map(groupMentionKey.split("\n").map((line) => line.split("\t") as [string, string]))
+        : NO_GROUP_MENTIONS,
+    [groupMentionKey],
+  );
   const textLinkRegex = useMemo(
-    () => enrichedTextLinkRegex(props.skills, props.models),
-    [props.skills, props.models],
+    () => enrichedTextLinkRegex(props.skills, props.models, [...groupMentions.keys()]),
+    [props.skills, props.models, groupMentions],
   );
   // Recognized text links are added as the text is drawn, so
   // onLinksChange never reports them. Joined so a streaming tick keeps the value.
@@ -259,7 +277,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = textLinkKey
     ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    groupMentions,
+  );
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;

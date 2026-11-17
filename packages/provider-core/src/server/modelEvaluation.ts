@@ -1,5 +1,6 @@
 import {
   type BlindModelEvaluationPacket,
+  isOrchestrationV2WorkActive,
   ModelEvaluationVerdict,
   type ModelEvaluationRunOutcome,
   type OrchestrationV2ConversationMessage,
@@ -169,6 +170,16 @@ function evidenceText(item: OrchestrationV2TurnItem, redact: (text: string) => s
     default:
       return null;
   }
+}
+
+export function modelEvaluationAwaitsSubagents(
+  turnItems: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId" | "type" | "status">>,
+  runId: OrchestrationV2Run["id"],
+): boolean {
+  return turnItems.some(
+    (item) =>
+      item.runId === runId && item.type === "subagent" && isOrchestrationV2WorkActive(item.status),
+  );
 }
 
 export function buildModelEvaluationEvidence(input: {

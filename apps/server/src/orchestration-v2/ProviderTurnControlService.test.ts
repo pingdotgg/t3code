@@ -271,6 +271,7 @@ it.effect(
           getActiveGroupThreadIds: () => Effect.die("unused group read"),
           getTurnItem: () => Effect.die("unused turn item read"),
           getMessagesById: () => Effect.die("unused getMessagesById"),
+          getPeerSpeakers: () => Effect.die("unused getPeerSpeakers"),
           getThreadRecords: () => Effect.die("unused record read"),
           getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
           getRunningTurnContext: () => Effect.die("unused getRunningTurnContext"),

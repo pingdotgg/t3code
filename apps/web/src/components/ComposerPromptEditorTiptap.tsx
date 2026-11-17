@@ -281,8 +281,9 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
-  const member = actions.groupParticipants?.find(
-    (participant) => participant.handle.toLowerCase() === path.toLowerCase(),
+  const handle = path.toLowerCase();
+  const member = actions.groupParticipants?.find((participant) =>
+    handle === "primary" ? participant.isPrimary : participant.handle.toLowerCase() === handle,
   );
   if (member !== undefined) {
     return (

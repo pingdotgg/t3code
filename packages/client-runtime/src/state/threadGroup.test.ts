@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   groupAudienceForPrompt,
+  groupMentionOccurrences,
   groupParticipants,
   groupRowSpeaker,
   isQuietPass,
@@ -65,6 +66,51 @@ describe("groupAudienceForPrompt", () => {
     ["a file mention", group, "look at @astra.ts please", "everyone"],
   ])("%s", (_name, thread, prompt, expected) => {
     expect(groupAudienceForPrompt(thread, prompt)).toEqual(expected);
+  });
+});
+
+describe("groupMentionOccurrences", () => {
+  const mention = (
+    text: string,
+    source: string,
+    label: string,
+    isPrimary: boolean,
+    member: ThreadId | "primary",
+  ) => {
+    const start = text.indexOf(source);
+    return { start, end: start + source.length, source, label, isPrimary, member };
+  };
+  it.each([
+    ["an email address", "mail me@astra.com about it", []],
+    ["a bare email address", "me@astra", []],
+    ["a file mention", "look at @astra.ts please", []],
+    [
+      "trailing punctuation",
+      "@astra, what do you think?",
+      [mention("@astra, what do you think?", "@astra", "Astra", false, astra)],
+    ],
+    [
+      "the primary alias",
+      "hello @PRIMARY",
+      [mention("hello @PRIMARY", "@PRIMARY", "Fable", true, "primary")],
+    ],
+    ["an unknown handle", "@README.md please", []],
+    [
+      "a seat that left",
+      "ask @opus please",
+      [mention("ask @opus please", "@opus", "Opus", false, opus)],
+    ],
+    [
+      "the handle's own case",
+      "ask @Astra please",
+      [mention("ask @Astra please", "@Astra", "Astra", false, astra)],
+    ],
+  ])("%s", (_name, text, expected) => {
+    expect(groupMentionOccurrences(text, group)).toEqual(expected);
+  });
+
+  it("leaves a departed seat out of audience routing", () => {
+    expect(groupMentionOccurrences("ask @opus please", group, { seatedOnly: true })).toEqual([]);
   });
 });
 

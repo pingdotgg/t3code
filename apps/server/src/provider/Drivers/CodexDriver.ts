@@ -451,12 +451,10 @@ export const CodexDriver: ProviderDriver<
     const protect = <A>(operation: string, task: Effect.Effect<A, TextGenerationError>) =>
       withAccess(task).pipe(
         Effect.scoped,
-        Effect.mapError(
-          (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: cause.detail,
-            }),
+        Effect.mapError((cause) =>
+          cause._tag === "TextGenerationError"
+            ? cause
+            : new TextGenerationError({ operation, detail: cause.detail }),
         ),
       );
     const textGeneration: ProviderInstance["textGeneration"] = auth

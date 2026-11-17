@@ -231,6 +231,7 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
 ]);
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
+const SUMMARY_PASS_SUPERSEDED = "Superseded by a pending summary pass for the same thread.";
 /** Receipts deduplicate retries, and restart re-enqueues need far less than a week. Retain failed rows to keep deleted-thread worktrees. */
 export const SETTLED_EFFECT_RETENTION = Duration.days(7);
 const PRUNE_BATCH_SIZE = 500;
@@ -406,6 +407,17 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ).pipe(Effect.uninterruptible);
     };
     // Retry backoff must block later effects so turns cannot race a pending rollback.
+    // A pending pass for the same thread re-reads the whole thread, so this row has nothing left to do.
+    const summaryPassHasPendingSuccessor = sql`
+      orchestration_v2_effect_outbox.effect_type = 'conversation-summary.generate'
+      AND EXISTS (
+        SELECT 1 FROM orchestration_v2_effect_outbox AS pending_summary
+        WHERE pending_summary.thread_id = orchestration_v2_effect_outbox.thread_id
+          AND pending_summary.effect_type = 'conversation-summary.generate'
+          AND pending_summary.status = 'pending'
+      )
+    `;
+
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -505,7 +517,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 ${DateTime.formatIso(effect.availableAt ?? now)},
                 ${nowIso},
                 ${nowIso}
-              WHERE ${effect.request.type !== "project-knowledge.scrub-deliveries" || effect.request.afterId !== undefined ? sql`1 = 1` : sql`1 = 0`}
+              WHERE (
+                ${effect.request.type !== "project-knowledge.scrub-deliveries" || effect.request.afterId !== undefined ? sql`1 = 1` : sql`1 = 0`}
                 OR NOT EXISTS (
                   SELECT 1 FROM orchestration_v2_effect_outbox AS pending
                   WHERE pending.thread_id = ${effect.threadId}
@@ -513,6 +526,20 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                     AND pending.status = 'pending'
                     AND json_extract(pending.payload_json, '$.afterId') IS NULL
                 )
+              )
+              -- A running pass may enqueue its successor. Another pending pass would rehash the thread.
+              -- A retrying pass can still exhaust its attempts, so it does not stand in for this one.
+              AND ${
+                effect.request.type === "conversation-summary.generate"
+                  ? sql`NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_effect_outbox AS pending_summary
+                      WHERE pending_summary.thread_id = ${effect.threadId}
+                        AND pending_summary.effect_type = 'conversation-summary.generate'
+                        AND pending_summary.status = 'pending'
+                        AND pending_summary.attempt_count = 0
+                    )`
+                  : sql`1 = 1`
+              }
               ON CONFLICT(effect_id) DO NOTHING
             `,
             { concurrency: 1, discard: true },
@@ -614,6 +641,19 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
           RETURNING effect_id
         `;
+        // The successor was enqueued before the crash, so resuming this row too would run two passes.
+        const coveredRows = yield* sql<{ readonly effect_id: string }>`
+          UPDATE orchestration_v2_effect_outbox
+          SET
+            status = 'cancelled',
+            lease_owner = NULL,
+            completed_at = ${now},
+            updated_at = ${now},
+            last_error = ${SUMMARY_PASS_SUPERSEDED}
+          WHERE status = 'running'
+            AND ${summaryPassHasPendingSuccessor}
+          RETURNING effect_id
+        `;
         const requeuedRows = yield* sql<{ readonly effect_id: string }>`
           UPDATE orchestration_v2_effect_outbox
           SET
@@ -626,8 +666,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             AND effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
           RETURNING effect_id
         `;
-        if (requeuedRows.length > 0) yield* notifyAvailable(requeuedRows.length);
-        return { requeued: requeuedRows.length, cancelled: cancelledRows.length };
+        if (requeuedRows.length > 0 || coveredRows.length > 0)
+          yield* notifyAvailable(requeuedRows.length + coveredRows.length);
+        return {
+          requeued: requeuedRows.length,
+          cancelled: cancelledRows.length + coveredRows.length,
+        };
       }).pipe(
         Effect.mapError(
           (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),
@@ -756,6 +800,26 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           const availableAt = DateTime.formatIso(
             DateTime.add(now, { milliseconds: Math.max(0, delayMs) }),
           );
+          const yielded = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'cancelled',
+              lease_owner = NULL,
+              completed_at = ${nowIso},
+              updated_at = ${nowIso},
+              last_error = ${SUMMARY_PASS_SUPERSEDED}
+            WHERE effect_id = ${effectId}
+              AND status = 'running'
+              AND lease_owner = ${workerId}
+              AND ${summaryPassHasPendingSuccessor}
+            RETURNING effect_id
+          `;
+          if (yielded.length === 1) {
+            cancellationSignals.delete(effectId);
+            yield* signalSettled([effectId]);
+            yield* notifyAvailable();
+            return true;
+          }
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
             SET

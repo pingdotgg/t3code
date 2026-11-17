@@ -297,6 +297,7 @@ it.effect("reports Pi's turn error when the reply is empty", () =>
 
     assert.equal(error._tag, "TextGenerationError");
     assert.equal(error.detail, "Pi could not generate text: the model provider returned HTTP 401.");
+    assert.isUndefined(error.kind);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -330,6 +331,7 @@ it.effect("drops an earlier error once a later attempt succeeds", () =>
     ]).pipe(Effect.flip);
 
     assert.equal(error.detail, "Pi returned empty output.");
+    assert.equal(error.kind, "empty");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

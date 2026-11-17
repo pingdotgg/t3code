@@ -2,6 +2,10 @@ import {
   collectComposerModelMentions,
   type ComposerModelMentionOccurrence,
 } from "@t3tools/client-runtime/composer-model-mentions";
+import {
+  groupMentionOccurrences,
+  type ThreadGroup,
+} from "@t3tools/client-runtime/state/thread-group";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
@@ -192,22 +196,38 @@ export function composerContextEditorTokens(
   tokens: readonly ComposerInlineToken[],
   knownSkills: { has(name: string): boolean },
   modelTokens: ReadonlyArray<ComposerModelMentionOccurrence> = [],
-  groupHandles: ReadonlyArray<string> = [],
+  group: ThreadGroup | null | undefined = null,
 ) {
   const references = collectComposerContextReferences(text);
+  const math = composerMathRanges(text);
+  const overlaps = (start: number, end: number, range: { start: number; end: number }) =>
+    start < range.end && end > range.start;
+  const groupMentions = groupMentionOccurrences(text, group, { seatedOnly: true }).filter(
+    (mention) =>
+      !references.some((ref) => overlaps(mention.start, mention.end, ref)) &&
+      !math.some((range) => overlaps(mention.start, mention.end, range)),
+  );
   const inlineTokens = tokens.filter(
     (token) =>
       // `$HOME` and other `$name` text that is not one of the provider's skills stays prose.
       (token.type !== "skill" || knownSkills.has(token.value)) &&
-      (token.type !== "mention" || !groupHandles.includes(token.value.toLowerCase())) &&
-      !references.some((ref) => token.start < ref.end && token.end > ref.start),
+      !groupMentions.some((mention) => overlaps(token.start, token.end, mention)) &&
+      !references.some((ref) => overlaps(token.start, token.end, ref)),
   );
-  const taken = [...inlineTokens, ...references, ...composerMathRanges(text)];
+  const taken = [...inlineTokens, ...references, ...math, ...groupMentions];
   const models = modelTokens.filter(
-    (mention) => !taken.some((range) => mention.start < range.end && mention.end > range.start),
+    (mention) => !taken.some((range) => overlaps(mention.start, mention.end, range)),
   );
   return [
     ...inlineTokens,
+    ...groupMentions.map((mention) => ({
+      type: "group" as const,
+      value: mention.label,
+      label: mention.label,
+      source: mention.source,
+      start: mention.start,
+      end: mention.end,
+    })),
     ...references.map((ref) => ({
       type: "context" as const,
       value: ref.label,

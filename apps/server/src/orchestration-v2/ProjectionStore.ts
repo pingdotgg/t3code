@@ -76,6 +76,7 @@ import {
   orchestrationV2RunWorkStartedAt,
   RunId,
   MessageId,
+  type OrchestrationV2MessageSpeaker,
   RuntimeRequestId,
   CheckpointScopeId,
   CheckpointId,
@@ -100,6 +101,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
+import { turnStartHistoryTypes } from "@t3tools/provider-core/server/conversationEvidence";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
@@ -594,6 +596,11 @@ export interface ProjectionStoreV2Shape {
     ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>,
     ProjectionStoreV2Error
   >;
+  /** Speakers of peer replies in the thread, or of the named messages only. */
+  readonly getPeerSpeakers: (
+    threadId: ThreadId,
+    messageIds?: ReadonlyArray<MessageId>,
+  ) => Effect.Effect<ReadonlyMap<MessageId, OrchestrationV2MessageSpeaker>, ProjectionStoreV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -1149,11 +1156,23 @@ export function applyToProjection(
       };
     case "checkpoint.rollback-requested":
       return base;
-    case "context-handoff.updated":
-      return {
+    case "context-handoff.updated": {
+      const handoff = event.payload;
+      const contextHandoffs = upsertById(base.contextHandoffs, handoff);
+      const stale = (item: OrchestrationV2TurnItem) =>
+        item.type === "handoff" &&
+        item.runId === handoff.targetRunId &&
+        item.contextHandoffId === handoff.id &&
+        item.summary !== handoff.summaryText;
+      if (!base.turnItems.some(stale)) return { ...base, contextHandoffs };
+      return withLocalVisibleTurnItems({
         ...base,
-        contextHandoffs: upsertById(base.contextHandoffs, event.payload),
-      };
+        contextHandoffs,
+        turnItems: base.turnItems.map((item) =>
+          stale(item) ? { ...item, summary: handoff.summaryText } : item,
+        ),
+      });
+    }
     case "context-transfer.created":
     case "context-transfer.updated":
       return {
@@ -3213,6 +3232,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
+            `;
+              // The activity item shows the receipt, and a redelivery rewrites it from a later run.
+              yield* sql`
+              UPDATE orchestration_v2_projection_turn_items
+              SET payload_json = json_set(payload_json, '$.summary', ${event.payload.summaryText})
+              WHERE run_id = ${event.payload.targetRunId}
+                AND type = 'handoff'
+                AND json_extract(payload_json, '$.contextHandoffId') = ${event.payload.id}
+                AND json_extract(payload_json, '$.summary') IS NOT ${event.payload.summaryText}
             `;
               break;
             }
@@ -5365,8 +5393,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
-            AND type IN ('user_message','assistant_message','command_execution','error',
-              'run_interrupt_result','file_change','proposed_plan')
+            AND type IN ${sql.in(turnStartHistoryTypes)}
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -6640,6 +6667,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `;
         const messages = yield* decodeRows(decodeMessagePayload, threadId)(rows);
         return new Map(messages.map((message) => [message.id, message]));
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
+    // The type list and `json_valid` term match the message-ordinal index. Speaker fields sit
+    // outside it, so each hit decodes the payload.
+    const getPeerSpeakers = Effect.fn("ProjectionStore.getPeerSpeakers")(
+      function* (threadId: ThreadId, messageIds?: ReadonlyArray<MessageId>) {
+        const speakers = new Map<MessageId, OrchestrationV2MessageSpeaker>();
+        if (messageIds !== undefined && messageIds.length === 0) return speakers;
+        const rows = yield* sql<{
+          readonly message_id: string;
+          readonly label: string | null;
+          readonly model: string | null;
+        }>`
+          SELECT json_extract(payload_json, '$.messageId') AS message_id,
+            json_extract(payload_json, '$.speaker.label') AS label,
+            json_extract(payload_json, '$.speaker.model') AS model
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND type IN ('user_message', 'assistant_message')
+            AND json_valid(payload_json)
+            AND json_extract(payload_json, '$.speaker.label') IS NOT NULL
+            AND json_extract(payload_json, '$.speaker.model') IS NOT NULL
+            ${
+              messageIds === undefined
+                ? sql``
+                : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList([...new Set(messageIds)])}))`
+            }
+        `;
+        for (const row of rows)
+          if (row.label && row.model)
+            speakers.set(MessageId.make(row.message_id), { label: row.label, model: row.model });
+        return speakers;
       },
       (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
     );
@@ -9507,6 +9568,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getActiveGroupThreadIds: readOnReader(getActiveGroupThreadIds),
       getTurnItem: readOnReader(getTurnItem),
       getMessagesById: readOnReader(getMessagesById),
+      getPeerSpeakers: readOnReader(getPeerSpeakers),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),
       getRuntimeRequest: readOnReader(getRuntimeRequest),

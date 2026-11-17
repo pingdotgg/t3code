@@ -12,6 +12,13 @@ export const summaryToolTypes = [
   "error",
 ] as const;
 
+export const turnStartHistoryTypes = [
+  "user_message",
+  "assistant_message",
+  "run_interrupt_result",
+  ...summaryToolTypes,
+] as const;
+
 /** Only user-visible evidence; reasoning, credentials and approval payloads are not sources. */
 export function summaryToolText(item: OrchestrationV2TurnItem): string | null {
   if (!finalizedToolStatuses.some((status) => status === item.status)) return null;

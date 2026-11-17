@@ -12,7 +12,11 @@ import type {
 import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
-import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
+import type {
+  ConversationSummaryPromptMessage,
+  KnowledgeCandidatesPromptMessage,
+  ThreadTitleForkSource,
+} from "./textGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -111,14 +115,7 @@ export interface KnowledgeCandidatesGenerationInput {
   cwd: string;
   runOutcome: "completed" | "failed" | "interrupted";
   /** Finalized new evidence from one thread family, oldest first; `ref` is what citations name. */
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly threadId?: string;
-    readonly runId?: string;
-    readonly runOutcome?: "completed" | "failed" | "interrupted";
-    readonly role: "user" | "assistant";
-    readonly text: string;
-  }>;
+  messages: ReadonlyArray<KnowledgeCandidatesPromptMessage>;
   modelSelection: ModelSelection;
 }
 
@@ -137,12 +134,7 @@ export interface ConversationSummaryGenerationInput {
    * Consecutive finalized source ranges, or consecutive summaries for a roll-up, oldest first;
    * `ref` is what citations name.
    */
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly role: "user" | "assistant" | "tool" | "summary";
-    readonly text: string;
-    readonly range?: { readonly start: number; readonly end: number; readonly total: number };
-  }>;
+  messages: ReadonlyArray<ConversationSummaryPromptMessage>;
   modelSelection: ModelSelection;
 }
 

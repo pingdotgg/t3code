@@ -1,3 +1,94 @@
+/** One finalized exchange, as a leaf summary pass sends it. A peer carries the seat that spoke. */
+export type LeafMessage =
+  | { readonly role: "user" | "assistant"; readonly text: string }
+  | {
+      readonly role: "peer";
+      readonly text: string;
+      readonly speaker: { readonly label: string; readonly model: string };
+    };
+
+export interface LeafCase {
+  readonly id: string;
+  readonly kind: "bad" | "control";
+  readonly source: string;
+  readonly messages: ReadonlyArray<LeafMessage>;
+  /** Each regex must match some statement. */
+  readonly mustMention: ReadonlyArray<string>;
+  /** A statement matching `when` must also match `require`. */
+  readonly attributed: ReadonlyArray<{ readonly when: string; readonly require: string }>;
+  /** No statement may match these. */
+  readonly mustNot: ReadonlyArray<string>;
+}
+
+/** Words that keep a choice open or point away from Postgres before it is named. */
+const open = String.raw`(?:not|never|against|between|whether|if|or|wait|waiting|before|keep|keeping|rather than|instead of)`;
+/** `target` within the clause, with no `open` word before it. */
+const toward = (target: string) => String.raw`(?:(?!\b${open}\b)[^.;]){0,60}\b${target}\b`;
+
+/**
+ * Statements that hand the peer's Postgres proposal to the user or to the thread's agent, whom the
+ * summarizer sees as `assistant`. Regexes, so they miss paraphrase; read the statements too.
+ */
+const misattributed = [
+  String.raw`\buser asked to (?:drop Redis|use Postgres|keep Redis)`,
+  String.raw`\buser\s+(?:(?:is|has|had|then|also|later|finally|ultimately|eventually|now)\s+)*(?:decided|chose|chosen|picked|selected|opted|wants|wanted|going with|went with|goes with|settled on|agreed|accepted|approved|adopted|endorsed|signed off)\b${toward("(?:Postgres|Astra|proposal|suggestion)")}`,
+  String.raw`\buser's (?:decision|choice|pick|preference)\b${toward("Postgres")}`,
+  String.raw`\b(?:per|according to) the user\b${toward("Postgres")}`,
+  String.raw`\bPostgres\b[^.;]{0,60}(?:\b(?:per|according to|as (?:decided|requested|chosen|approved) by)\s+the user\b|\bat the user's (?:request|direction)\b)`,
+  String.raw`\b(?:agent|assistant)\s+(?:(?:also|first|then|initially|had|has)\s+)*(?:propos(?:ed|es)|suggest(?:ed|s)|recommend(?:ed|s)|push(?:ed|es) for|answered|said|replied|argued|wants|wanted)\b${toward("Postgres")}`,
+  String.raw`\b(?:agent|assistant)'s (?:proposal|suggestion|recommendation)\b${toward("Postgres")}`,
+];
+
+/** The leaf exchange: the user asks, Astra proposes, the agent disagrees. */
+const peerProposal: ReadonlyArray<LeafMessage> = [
+  { role: "user", text: "Where should sessions live? I have not decided." },
+  {
+    role: "peer",
+    speaker: { label: "Astra", model: "gpt-6-astra" },
+    text: "Drop Redis and use Postgres for sessions.",
+  },
+  {
+    role: "assistant",
+    text: "I disagree. Keep Redis for sessions. The choice is still open.",
+  },
+];
+
+const peerProposalSource =
+  'Group threads (ScriptedAlchemy/t3code#131): a seat model\'s published reply reached the summarizer as a plain assistant message with no name, and production summaries said "The assistant answered" for words the peer spoke.';
+
+export const leafCases: ReadonlyArray<LeafCase> = [
+  {
+    id: "leaf-peer-proposal-is-not-a-user-decision",
+    kind: "bad",
+    source: peerProposalSource,
+    messages: peerProposal,
+    mustMention: ["Astra", "Postgres"],
+    attributed: [
+      {
+        // A verb, not "the proposal", so a statement that credits no one stays open.
+        when: `(?:propos|suggest|recommend)(?:ed|es|s)\\b${toward("Postgres")}|Postgres\\b[^.]{0,80}\\b(?:propos|suggest|recommend)ed\\b`,
+        require: "Astra",
+      },
+    ],
+    mustNot: misattributed,
+  },
+  {
+    id: "leaf-ordinary-exchange-has-no-peer",
+    kind: "control",
+    source: "Control for peer attribution: an ordinary user and agent exchange with no peer.",
+    messages: [
+      { role: "user", text: "Add a README section on configuring the proxy." },
+      {
+        role: "assistant",
+        text: "I added the README section with an example config. The link checker has not run yet.",
+      },
+    ],
+    mustMention: ["README", "link checker|links"],
+    attributed: [],
+    mustNot: ["Astra"],
+  },
+];
+
 /** A roll-up input: four adjacent child summaries, oldest first, as the summary pass sends them. */
 export interface CondensedCase {
   readonly id: string;

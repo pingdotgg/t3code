@@ -112,13 +112,11 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
       const trimmed = (yield* Ref.get(outputRef)).trim();
       if (!trimmed) {
-        return yield* new TextGenerationError({
-          operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Grok ACP request was cancelled."
-              : "Grok Agent returned empty output.",
-        });
+        return yield* new TextGenerationError(
+          promptResult.stopReason === "cancelled"
+            ? { operation, detail: "Grok ACP request was cancelled." }
+            : { operation, detail: "Grok Agent returned empty output.", kind: "empty" },
+        );
       }
 
       return yield* TextGenerationOperations.decodeJsonReply(request, "Grok Agent", trimmed);

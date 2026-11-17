@@ -1,6 +1,7 @@
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ProjectId,
   ContextHandoffId,
   NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -39,6 +40,7 @@ const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
 
 const now = DateTime.makeUnsafe("2026-09-17T00:00:00Z");
 const threadId = ThreadId.make("thread:handoff");
+const summaryScope = { projectId: ProjectId.make("project:handoff"), threadId };
 const providerThread: OrchestrationV2ProviderThread = {
   id: ProviderThreadId.make("provider-thread:target"),
   driver: ProviderDriverKind.make("codex"),
@@ -621,6 +623,7 @@ describe("handoff delivery", () => {
               Effect.succeed([
                 {
                   id: `summary:${"a".repeat(64)}`,
+                  ...summaryScope,
                   coveredItemIds,
                   text: `Generated conversation summary with as-sent project evidence: ${"x".repeat(14_000)}`,
                 },
@@ -705,6 +708,8 @@ describe("handoff delivery", () => {
         const deliver = Effect.fn("test.deliverWithSummaries")(function* (
           summaries: ReadonlyArray<{
             readonly id: `summary:${string}`;
+            readonly projectId: ProjectId;
+            readonly threadId: ThreadId;
             readonly coveredItemIds: ReadonlyArray<TurnItemId>;
             readonly text: string;
             readonly knowledgeFactIds?: ReadonlyArray<ProjectFactId>;
@@ -748,6 +753,7 @@ describe("handoff delivery", () => {
         const baseline = yield* deliver([]);
         const old = {
           id: `summary:${"a".repeat(64)}` as const,
+          ...summaryScope,
           coveredItemIds: ids(1, 8),
           text: `OLD ${"o".repeat(8_000)}`,
           knowledgeFactIds: [ProjectFactId.make("fact:old")],
@@ -760,6 +766,7 @@ describe("handoff delivery", () => {
         );
         const recent = {
           id: `summary:${"b".repeat(64)}` as const,
+          ...summaryScope,
           coveredItemIds: ids(16, 23),
           text: `RECENT ${"r".repeat(1_200)}`,
           knowledgeFactIds: [ProjectFactId.make("fact:recent")],
@@ -781,7 +788,7 @@ describe("handoff delivery", () => {
       }),
   );
 
-  it.effect("keeps the newest messages ahead of tool results when a summary needs room", () =>
+  it.effect("keeps the newest messages ahead of tool results, with or without a summary", () =>
     Effect.gen(function* () {
       const tool = (id: string): OrchestrationV2HistoricalMessage => ({
         ...message(id, "assistant", "t".repeat(1_500)),
@@ -824,6 +831,7 @@ describe("handoff delivery", () => {
           Effect.succeed([
             {
               id: `summary:${"c".repeat(64)}` as const,
+              ...summaryScope,
               coveredItemIds: older.slice(1).map((entry) => entry.itemId),
               text: `OLDER ${"s".repeat(1_600)}`,
             },
@@ -839,6 +847,23 @@ describe("handoff delivery", () => {
       });
       assert.includeMembers([...verbatim], newest, "the six newest messages");
       assert.lengthOf(summarized, 19, "the summary of older history is delivered");
+
+      // Without a summary to offer, the tool result next to the oldest tail message gives way.
+      const unsummarized = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread: { ...providerThread, nativeThreadRef: null },
+        budget: historyCost(
+          [older[0]!, ...tail.filter((entry) => entry !== tail[1])],
+          "c".repeat(600),
+        ),
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.void,
+      });
+      assert.includeMembers(
+        unsummarized.messages.map((entry) => entry.itemId),
+        newest,
+        "the six newest messages without a summary",
+      );
     }),
   );
 
@@ -1200,5 +1225,293 @@ describe("handoff delivery", () => {
       assert.equal(result._tag, "Failure");
       assert.equal(calls, 0);
     }),
+  );
+
+  const summaryId = `summary:${"a".repeat(64)}` as const;
+  const summaryTools = "t3_conversation_summary_list and t3_conversation_summary_expand";
+
+  it.effect("names the summaries a delivery sent in the receipt, not in the prompt", () =>
+    Effect.gen(function* () {
+      const history = Array.from({ length: 30 }, (_, index) =>
+        message(`item:receipt-${index}`, index % 2 === 0 ? "user" : "assistant", "x".repeat(700)),
+      );
+      const covered = history.slice(16, 24).map((entry) => entry.itemId);
+      const source: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:summary-receipt"),
+        summaryText: [
+          "Coverage.",
+          `Some omitted items have conversation summaries; read one with ${summaryTools}.`,
+        ].join("\n"),
+        history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
+      };
+      let durable = source;
+      let context = "";
+      const delivery = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        summaries: () =>
+          Effect.succeed([
+            {
+              id: summaryId,
+              ...summaryScope,
+              coveredItemIds: covered,
+              text: `RECENT ${"r".repeat(1_200)}`,
+            },
+          ]),
+        inject: (input) => {
+          context = input.context;
+          return Effect.succeed(true);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      yield* delivery.delivered;
+      const line = `Replaced earlier spans with ${summaryId}; read one with ${summaryTools}.`;
+      assert.deepEqual(durable.delivery?.summaryIds, [summaryId]);
+      assert.equal(durable.summaryText, `Coverage.\n${line}`);
+      assert.notInclude(durable.summaryText, "RECENT");
+      // The delivered summary's own header names it and how to expand it.
+      assert.include(context, "RECENT");
+      assert.notInclude(context, "Replaced earlier spans");
+      assert.notInclude(context, "Not shown here");
+    }),
+  );
+
+  it.effect("points at the summary holding an omitted tool result that was not sent", () =>
+    Effect.gen(function* () {
+      const omitted: OrchestrationV2HistoricalMessage = {
+        ...message("item:receipt-omitted", "assistant", `Command: vp test\n${"o".repeat(20_000)}`),
+        kind: "command_execution",
+      };
+      const kept = message("item:receipt-kept", "user", "kept");
+      const source: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:omitted-summary"),
+        summaryText: "Coverage.",
+        history: {
+          messages: [omitted, kept],
+          coverage: "Coverage.",
+          omittedItems: 0,
+        },
+      };
+      let durable = source;
+      let context = "";
+      const delivery = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread,
+        budget: 8_000,
+        alreadyDeliveredItemIds: new Set(),
+        summaries: () =>
+          Effect.succeed([
+            {
+              id: summaryId,
+              ...summaryScope,
+              coveredItemIds: [omitted.itemId],
+              text: "S".repeat(40_000),
+            },
+          ]),
+        inject: (input) => {
+          context = input.context;
+          return Effect.succeed(false);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      yield* delivery.delivered;
+      const line = `Some omitted items have conversation summaries; read one with ${summaryTools}.`;
+      assert.isUndefined(durable.delivery?.summaryIds);
+      assert.isAbove(delivery.uncoveredItems, 0);
+      assert.equal(durable.summaryText, `Coverage.\n${line}`);
+      assert.notInclude(durable.summaryText, summaryId);
+      assert.include(
+        context,
+        `Not shown here: item:receipt-omitted (command_execution: Command: vp test). ${summaryId} holds the original text; read it with t3_conversation_summary_expand({projectId:"project:handoff",threadId:"thread:handoff",summaryId:"${summaryId}"}).`,
+      );
+      assert.notInclude(context, "SSSS");
+    }),
+  );
+
+  const listCall = `t3_conversation_summary_list({projectId:"project:handoff",threadId:"thread:handoff"})`;
+  it.effect.each([
+    {
+      budget: 6_000,
+      tailCount: 0,
+      grows: false,
+      shown: ["item:many-19", "item:many-18", "item:many-17"],
+      line: `17 more summaries hold omitted items; list them with ${listCall}.`,
+    },
+    {
+      budget: 1_400,
+      tailCount: 0,
+      grows: false,
+      shown: [],
+      line: `Not shown here: 20 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
+    {
+      budget: 16_000,
+      tailCount: 50,
+      grows: false,
+      shown: [],
+      line: `Not shown here: 20 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
+    {
+      budget: 3_448,
+      tailCount: 50,
+      grows: true,
+      shown: [],
+      line: `Not shown here: 10 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
+  ])(
+    "still points at unsent summaries when their lines do not all fit: $budget",
+    ({ budget, tailCount, grows, shown, line }) =>
+      Effect.gen(function* () {
+        const indexText = (index: number) => (grows ? String(index).padStart(2, "0") : index);
+        const tools = Array.from({ length: grows ? 30 : 20 }, (_, index) => ({
+          ...message(
+            `item:many-${indexText(index)}`,
+            "assistant",
+            `Command: step ${index}\n${"o".repeat(8_000)}`,
+          ),
+          kind: "command_execution" as const,
+        }));
+        const tail =
+          tailCount === 0
+            ? [message("item:many-kept", "user", "kept")]
+            : Array.from({ length: tailCount }, (_, index) =>
+                message(
+                  `item:tail-${indexText(index)}`,
+                  index % 2 === 0 ? "user" : "assistant",
+                  "k".repeat(grows ? 1 : 64),
+                ),
+              );
+        const idFor = (index: number) => `summary:${index.toString(16).padStart(64, "0")}`;
+        const source: OrchestrationV2ContextHandoff = {
+          ...handoff,
+          id: ContextHandoffId.make("handoff:many-unsent"),
+          summaryText: "Coverage.",
+          history: {
+            messages: [...tools, ...tail],
+            coverage: "Coverage.",
+            omittedItems: 0,
+          },
+        };
+        let injected = {
+          messages: [] as ReadonlyArray<OrchestrationV2HistoricalMessage>,
+          context: "",
+        };
+        const delivery = yield* deliverContextHandoffs({
+          handoffs: [source],
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          summaries: () =>
+            Effect.succeed(
+              (grows ? [...tools.slice(0, 9), tail[41]!] : tools.toReversed()).map(
+                (tool, index) => ({
+                  id: idFor(grows ? index : 19 - index),
+                  ...summaryScope,
+                  coveredItemIds: [tool.itemId],
+                  text: "S".repeat(40_000),
+                }),
+              ),
+            ),
+          inject: (input) => {
+            injected = input;
+            return Effect.succeed(false);
+          },
+          persist: () => Effect.void,
+        });
+        yield* delivery.delivered;
+        assert.include(injected.context, line);
+        assert.includeMembers(
+          injected.messages.map((entry) => entry.itemId),
+          tail.slice(-6).map((entry) => entry.itemId),
+        );
+        for (const index of [19, 18, 17, 16]) {
+          const named = `${idFor(index)} holds`;
+          if (shown.includes(`item:many-${index}`)) assert.include(injected.context, named);
+          else assert.notInclude(injected.context, named);
+        }
+        assert.isAtMost(historyCost(injected.messages, injected.context), budget);
+      }),
+  );
+
+  it.effect(
+    "replaces the receipt when the same handoff is delivered again with a different summary",
+    () =>
+      Effect.gen(function* () {
+        const history = Array.from({ length: 30 }, (_, index) =>
+          message(
+            `item:redeliver-${index}`,
+            index % 2 === 0 ? "user" : "assistant",
+            "x".repeat(700),
+          ),
+        );
+        const firstId = `summary:${"c".repeat(64)}` as const;
+        const secondId = `summary:${"d".repeat(64)}` as const;
+        let durable: OrchestrationV2ContextHandoff = {
+          ...handoff,
+          id: ContextHandoffId.make("handoff:redeliver"),
+          summaryText: "Coverage.",
+          history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
+        };
+        const deliver = (
+          summaryId: typeof firstId,
+          covered: ReadonlyArray<TurnItemId>,
+          nativeId: string,
+        ) =>
+          Effect.gen(function* () {
+            const delivery = yield* deliverContextHandoffs({
+              handoffs: [durable],
+              providerThread: {
+                ...providerThread,
+                nativeThreadRef: {
+                  driver: ProviderDriverKind.make("codex"),
+                  strength: "strong",
+                  nativeId,
+                },
+              },
+              budget: 16_000,
+              alreadyDeliveredItemIds: new Set(),
+              summaries: () =>
+                Effect.succeed([
+                  {
+                    id: summaryId,
+                    ...summaryScope,
+                    coveredItemIds: covered,
+                    text: `OFFER ${"r".repeat(1_200)}`,
+                  },
+                ]),
+              inject: () => Effect.succeed(true),
+              persist: (value) =>
+                Effect.sync(() => {
+                  durable = value;
+                }),
+            });
+            yield* delivery.delivered;
+          });
+        yield* deliver(
+          firstId,
+          history.slice(4, 12).map((entry) => entry.itemId),
+          "native:first",
+        );
+        assert.deepEqual(durable.delivery?.summaryIds, [firstId]);
+        yield* deliver(
+          secondId,
+          history.slice(16, 24).map((entry) => entry.itemId),
+          "native:second",
+        );
+        const line = `Replaced earlier spans with ${secondId}; read one with ${summaryTools}.`;
+        assert.equal(durable.summaryText, `Coverage.\n${line}`);
+        assert.deepEqual(durable.delivery?.summaryIds, [secondId]);
+        assert.notInclude(durable.summaryText, firstId);
+      }),
   );
 });

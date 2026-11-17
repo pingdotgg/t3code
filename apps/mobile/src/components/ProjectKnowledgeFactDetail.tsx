@@ -14,6 +14,7 @@ import type {
   ProjectKnowledgeStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
   isSupersededFact,
@@ -307,7 +308,7 @@ export function ProjectKnowledgeSourceInspector(props: {
       {source?.state === "available" ? (
         <>
           <AppText className="text-xs text-foreground-muted">
-            {source.title} · {source.role} · {source.createdAt}
+            {source.title} · {messageAuthorLabel(source.role, source.speaker)} · {source.createdAt}
             {source.archived ? " · archived" : ""}
           </AppText>
           <AppText selectable>{source.text}</AppText>

@@ -94,6 +94,16 @@ describe("Enriched link presentation", () => {
     ).toEqual(["$review", "model:codex/gpt-6.1"]);
   });
 
+  it.each([
+    ["@astra, what's @astra's take?", ["@astra"]],
+    ["(@astra) and @astra.", ["@astra", "@astra"]],
+    ["mail me@astra or @astra.ts", []],
+    ['@astra,x and "@astra"', []],
+  ])("chips group mentions the shared scan accepts: %s", (text, expected) => {
+    const regex = enrichedTextLinkRegex([], [], ["@astra"]);
+    expect(text.match(new RegExp(regex!.source, "gu")) ?? []).toEqual(expected);
+  });
+
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));

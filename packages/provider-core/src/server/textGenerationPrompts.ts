@@ -504,16 +504,29 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   return { prompt, outputSchema };
 }
 
+type PeerSpeaker = { readonly label: string; readonly model: string };
+
+/** A seat without a label is named by its model; say it once. */
+const peerDetails = (speaker: PeerSpeaker, extra?: string) =>
+  [
+    ...(speaker.label === speaker.model ? [] : [speaker.model]),
+    ...(extra === undefined ? [] : [extra]),
+  ].join(", ");
+
+export type KnowledgeCandidatesPromptMessage = {
+  readonly ref: string;
+  readonly threadId?: string;
+  readonly runId?: string;
+  readonly runOutcome?: "completed" | "failed" | "interrupted";
+  readonly text: string;
+} & (
+  | { readonly role: "user" | "assistant" }
+  | { readonly role: "peer"; readonly speaker: PeerSpeaker }
+);
+
 export interface KnowledgeCandidatesPromptInput {
   runOutcome: "completed" | "failed" | "interrupted";
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly threadId?: string;
-    readonly runId?: string;
-    readonly runOutcome?: "completed" | "failed" | "interrupted";
-    readonly role: "user" | "assistant";
-    readonly text: string;
-  }>;
+  messages: ReadonlyArray<KnowledgeCandidatesPromptMessage>;
 }
 
 export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptInput) {
@@ -545,10 +558,15 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
         ]),
     "",
     "Messages:",
-    ...input.messages.map(
-      (message) =>
-        `[${message.ref}] ${message.role}${message.runId === undefined ? "" : ` (${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome})`}:\n${message.text}\n`,
-    ),
+    ...input.messages.map((message) => {
+      const run =
+        message.runId === undefined
+          ? undefined
+          : `${threads.get(message.threadId ?? "") ?? "T?"}/${runs.get(message.runId)}, ${message.runOutcome ?? input.runOutcome}`;
+      const role = message.role === "peer" ? `peer ${message.speaker.label}` : message.role;
+      const details = message.role === "peer" ? peerDetails(message.speaker, run) : run;
+      return `[${message.ref}] ${role}${details ? ` (${details})` : ""}:\n${message.text}\n`;
+    }),
   ].join("\n");
   const outputSchema = Schema.Struct({
     candidates: Schema.Array(
@@ -566,13 +584,17 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
 /** The rolled-up statements must fit beside the verbatim tail of a small handoff. */
 const CONDENSED_SUMMARY_MAX_CHARS = 1_200;
 
+export type ConversationSummaryPromptMessage = {
+  readonly ref: string;
+  readonly text: string;
+  readonly range?: { readonly start: number; readonly end: number; readonly total: number };
+} & (
+  | { readonly role: "user" | "assistant" | "tool" | "summary" }
+  | { readonly role: "peer"; readonly speaker: PeerSpeaker }
+);
+
 export interface ConversationSummaryPromptInput {
-  messages: ReadonlyArray<{
-    readonly ref: string;
-    readonly role: "user" | "assistant" | "tool" | "summary";
-    readonly text: string;
-    readonly range?: { readonly start: number; readonly end: number; readonly total: number };
-  }>;
+  messages: ReadonlyArray<ConversationSummaryPromptMessage>;
 }
 
 export function buildConversationSummaryPrompt(input: ConversationSummaryPromptInput) {
@@ -595,10 +617,18 @@ export function buildConversationSummaryPrompt(input: ConversationSummaryPromptI
       : []),
     "",
     "Sources:",
-    ...input.messages.map(
-      (message) =>
-        `[${message.ref}] ${message.role}${message.range === undefined ? "" : ` (UTF-16 range ${message.range.start}–${message.range.end} of ${message.range.total})`}:\n${message.text}\n`,
-    ),
+    ...input.messages.map((message) => {
+      const details = message.role === "peer" ? peerDetails(message.speaker) : "";
+      const role =
+        message.role === "peer"
+          ? `peer ${message.speaker.label}${details ? ` (${details})` : ""}`
+          : message.role;
+      const range =
+        message.range === undefined
+          ? ""
+          : ` (UTF-16 range ${message.range.start}–${message.range.end} of ${message.range.total})`;
+      return `[${message.ref}] ${role}${range}:\n${message.text}\n`;
+    }),
   ].join("\n");
   const outputSchema = Schema.Struct({
     statements: Schema.Array(

@@ -58,12 +58,18 @@ const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
+const ClaudeResultStatus = {
+  subtype: Schema.optionalKey(Schema.String),
+  is_error: Schema.optionalKey(Schema.Boolean),
+};
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
+  ...ClaudeResultStatus,
 });
 const ClaudeOutputMessage = Schema.Struct({
   type: Schema.String,
   structured_output: Schema.optionalKey(Schema.Unknown),
+  ...ClaudeResultStatus,
 });
 const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
@@ -76,6 +82,7 @@ const decodeClaudeOutput = Schema.decodeEffect(
 // error_max_structured_output_retries report through `errors` instead.
 const ClaudeErrorResult = Schema.Struct({
   is_error: Schema.Literal(true),
+  subtype: Schema.optionalKey(Schema.String),
   result: Schema.optionalKey(Schema.String),
   errors: Schema.optionalKey(Schema.Array(Schema.String)),
 });
@@ -83,11 +90,14 @@ const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 // Claude reports JSON errors on stdout; stderr may contain only wrapper notices.
-function claudeErrorResult(stdout: string): string | undefined {
+function claudeErrorResults(stdout: string) {
   const output = Option.getOrUndefined(decodeJsonOption(stdout));
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
-  return messages
-    .filter(isClaudeErrorResult)
+  return messages.filter(isClaudeErrorResult);
+}
+
+function claudeErrorDetail(results: ReadonlyArray<typeof ClaudeErrorResult.Type>) {
+  return results
     .map((message) =>
       (
         message.result ??
@@ -321,9 +331,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         if (exitCode === 0) return Effect.succeed(stdout);
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
+        const results = claudeErrorResults(stdoutDetail);
         const detail =
-          claudeErrorResult(stdoutDetail) ??
-          (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+          claudeErrorDetail(results) ?? (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+        // The model answered, but never in the requested shape.
+        const modelAnswered = results.some(
+          (result) => result.subtype === "error_max_structured_output_retries",
+        );
         return Effect.fail(
           new TextGenerationError({
             operation,
@@ -331,6 +345,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               detail.length > 0
                 ? `Claude CLI command failed: ${detail}`
                 : `Claude CLI command failed with code ${exitCode}.`,
+            ...(modelAnswered ? { kind: "invalid-output" as const } : {}),
           }),
         );
       }),
@@ -362,6 +377,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const envelope = isClaudeOutputEnvelope(output)
       ? output
       : output.findLast((message) => message.type === "result");
+    // Only a reply the model gave is unreadable. Other error results stopped the run before one.
+    const modelAnswered =
+      envelope !== undefined &&
+      envelope.is_error !== true &&
+      (envelope.subtype ?? "success") === "success";
 
     const decodeOutput = Schema.decodeEffect(
       outputSchemaJson,
@@ -374,6 +394,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             new TextGenerationError({
               operation,
               detail: "Claude returned invalid structured output.",
+              ...(modelAnswered ? { kind: "invalid-output" as const } : {}),
               cause,
             }),
           ),

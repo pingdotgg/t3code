@@ -11,6 +11,7 @@ import {
   RunId,
   TextGenerationError,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -314,6 +315,171 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
     );
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
+
+/** Marks a message as a peer's reply, as a group conversation's published turn item does. */
+const speakAsPeer = (input: {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly messageId: string;
+  readonly text: string;
+}) =>
+  Effect.flatMap(ProjectionStore.ProjectionStoreV2, (projections) =>
+    projections.apply({
+      id: EventId.make(`peer:${input.messageId}`),
+      type: "turn-item.updated",
+      threadId: input.threadId,
+      providerInstanceId,
+      occurredAt: at,
+      payload: {
+        id: TurnItemId.make(`peer-item:${input.messageId}`),
+        threadId: input.threadId,
+        runId: input.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        type: "assistant_message",
+        messageId: MessageId.make(input.messageId),
+        text: input.text,
+        streaming: false,
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+      },
+    }),
+  );
+
+it.effect("sends a peer reply as that peer, not as the assistant", () => {
+  const model = scripted([{ candidates: [] }]);
+  const text = "Done. I converted the handlers to snake_case keys.";
+  return Effect.gen(function* () {
+    yield* seedRun;
+    yield* speakAsPeer({ threadId, runId, messageId: "learning-reply", text });
+    const runner = yield* AssistedLearningRunner;
+    yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
+    assert.deepEqual(model.calls[0]?.messages[1], {
+      ref: "M2",
+      role: "peer",
+      speaker: { label: "Astra", model: "gpt-6-astra" },
+      threadId,
+      runId,
+      runOutcome: "completed",
+      text,
+    });
+  }).pipe(Effect.provide(makeLayer(model.generate)));
+});
+
+it.effect(
+  "saves no peer words the user never cited, though the seat's own thread repeats them",
+  () => {
+    const decision = {
+      kind: "decision" as const,
+      content: "Sessions move from Redis to Postgres.",
+      entities: ["sessions"],
+      citations: ["M1", "M2"],
+    };
+    const model = scripted([{ candidates: [decision, { ...decision, kind: "convention" }] }]);
+    return Effect.gen(function* () {
+      yield* seedRun;
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { minutes: 10 })));
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const records = yield* projections.getThreadRecords(threadId, []);
+      const seatId = ThreadId.make("learning-seat");
+      yield* projections.apply({
+        id: EventId.make("create-seat"),
+        type: "thread.created",
+        threadId: seatId,
+        providerInstanceId,
+        occurredAt: at,
+        payload: {
+          ...records.thread,
+          id: seatId,
+          lineage: {
+            parentThreadId: threadId,
+            rootThreadId: threadId,
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      const runner = yield* AssistedLearningRunner;
+      const replies = [
+        [threadId, "peer-root", "Drop Redis and move sessions to Postgres."],
+        [seatId, "peer-seat", "I recommend Postgres for sessions instead of Redis."],
+      ] as const;
+      for (const [index, [replyThreadId, id, text]] of replies.entries()) {
+        const replyRunId = RunId.make(`${id}-run`);
+        yield* projections.apply({
+          id: EventId.make(`message:${id}`),
+          type: "message.updated",
+          threadId: replyThreadId,
+          providerInstanceId,
+          occurredAt: DateTime.add(at, { minutes: index }),
+          payload: {
+            id: MessageId.make(id),
+            threadId: replyThreadId,
+            runId: replyRunId,
+            nodeId: null,
+            role: "assistant",
+            text,
+            attachments: [],
+            streaming: false,
+            createdAt: DateTime.add(at, { minutes: index }),
+            updatedAt: at,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        });
+        if (replyThreadId === threadId) {
+          yield* projections.apply({
+            id: EventId.make(`run:${id}`),
+            type: "run.created",
+            threadId,
+            providerInstanceId,
+            occurredAt: at,
+            payload: {
+              id: replyRunId,
+              threadId,
+              ordinal: 2,
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-6-astra" },
+              providerThreadId: null,
+              userMessageId: MessageId.make(id),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: at,
+              startedAt: at,
+              completedAt: at,
+              checkpointId: null,
+              contextHandoffId: null,
+              publication: {
+                type: "peer_reply",
+                seatThreadId: seatId,
+                seatRunId: RunId.make("peer-seat-run"),
+              },
+            },
+          });
+          yield* speakAsPeer({ threadId, runId: replyRunId, messageId: id, text });
+        }
+        yield* runner.enqueueRun({
+          threadId: replyThreadId,
+          runId: replyRunId,
+          runOutcome: "completed",
+        });
+      }
+      yield* TestClock.adjust("31 minutes");
+      yield* runner.drainDue;
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const { facts } = yield* knowledge.list({ projectId, status: "saved" });
+      assert.deepEqual(facts, []);
+    }).pipe(Effect.provide(makeLayer(model.generate)));
+  },
+);
 
 it.effect("marks candidates from a failed run with that outcome", () => {
   const model = scripted([{ candidates: [snakeCase] }]);
