@@ -59,6 +59,32 @@ it("redacts credentials whose key names end in a credential word", () => {
   );
 });
 
+it("reports an oversized provider request as not retryable instead of the gateway's error page", () => {
+  for (const message of [
+    "413 <html>\n<head><title>413 Request Entity Too Large</title></head>\n<body>\n<center><h1>413 Request Entity Too Large</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>",
+    "unexpected status 413 Payload Too Large: request body exceeds the limit",
+    'API Error: 413 {"type":"error","error":{"type":"request_too_large"}}',
+  ]) {
+    const failure = makeProviderFailure({ message, class: "provider_error", retryable: true });
+
+    assert.equal(failure.class, "provider_error");
+    assert.equal(failure.retryable, false);
+    assert.equal(
+      failure.message,
+      "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+    );
+  }
+  for (const message of [
+    "Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested 41300.",
+    "Rate limited after 413 requests.",
+    "Tool result content too large to return.",
+  ]) {
+    const failure = makeProviderFailure({ message, retryable: true });
+    assert.equal(failure.message, message);
+    assert.equal(failure.retryable, true);
+  }
+});
+
 it("does not split a surrogate pair at the truncation boundary", () => {
   const failure = makeProviderFailure({
     message: `${"a".repeat(MAX_PROVIDER_FAILURE_MESSAGE_LENGTH - 2)}🚀tail`,
@@ -168,6 +194,23 @@ it("keeps unrecognized reasons and provider text out of category messages", () =
     }).message,
     "Provider turn failed.",
   );
+});
+
+it("names a managed Codex policy that refuses the thread's access mode", () => {
+  const message = makeProviderFailure({
+    cause: {
+      _tag: "ProviderAdapterTurnStartError",
+      cause: {
+        _tag: "CodexAppServerRequestError",
+        method: "turn/start",
+        code: -32600,
+        message:
+          "invalid thread settings override: invalid value for `sandbox_mode`: `DangerFullAccess` is not in the allowed set [ReadOnly, WorkspaceWrite] (set by /etc/codex/requirements.toml)",
+      },
+    },
+  }).message;
+  assert.notInclude(message, "Retry the turn");
+  assert.match(message, /requirements|policy/iu);
 });
 
 it("uses the innermost category without carrying an outer reason into it", () => {
