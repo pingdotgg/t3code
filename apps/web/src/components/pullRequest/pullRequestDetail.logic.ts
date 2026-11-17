@@ -1404,7 +1404,10 @@ export function buildPullRequestCommentContext(
       startIndex: 0,
       endIndex: 0,
       rangeLabel: "comment",
-      text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
+      text: remarkText(
+        `${author}: ${visibleTextFirst(body)}`.trim(),
+        reviewLineComments(comment, pullRequest),
+      ),
       diff: "",
       ...(comment.path === null
         ? {}
