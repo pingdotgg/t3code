@@ -37,6 +37,7 @@ import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThrea
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import { confirmCheckoutSwitch } from "../confirmCheckoutSwitch";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction, useRef, useState } from "react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
@@ -345,6 +346,18 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       !activeThread ||
       !localCheckoutBranchMismatch ||
       isRestoringThreadBranch
+    ) {
+      return;
+    }
+    if (
+      !(await confirmCheckoutSwitch({
+        environmentId,
+        projectId: activeThread.projectId,
+        threadId: activeThread.id,
+        worktreePath: null,
+        currentBranch: localCheckoutBranchMismatch.currentBranch,
+        nextBranch: localCheckoutBranchMismatch.threadBranch,
+      }))
     ) {
       return;
     }
