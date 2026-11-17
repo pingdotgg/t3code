@@ -23,10 +23,13 @@ import {
   estimateBurn,
   HOUR_MS,
   type Burn,
+  type DrySpan,
   type PoolProjection,
   type PoolProvider,
+  type ProviderDrySpan,
   type PoolSample,
   poolProviders,
+  type RefillEvent,
   projectedAccountAt,
   projectedAt,
   projectPool,
@@ -84,9 +87,9 @@ const poolColor = (driver: string) => POOL_COLORS[driver] ?? "#9b87f5";
 const poolLabel = (driver: string) => POOL_LABELS[driver] ?? driver;
 const driverRank = (driver: string) => DRIVER_ORDER.indexOf(driver) + 1 || 99;
 
-/** Dry time: a red apart from Claude's orange and the amber warning text. */
+/** Dry time and every runout in this widget: a red apart from Claude's orange. */
 const ROSE = "#ff6b81";
-const SPENT = "color-mix(in oklab, var(--foreground) 10%, transparent)";
+const SPENT = "color-mix(in oklab, var(--foreground) 4.5%, transparent)";
 /** Empty pip cells sit a little brighter than the chart's spent area so a dry account still shows. */
 const PIP_EMPTY = "color-mix(in oklab, var(--foreground) 18%, transparent)";
 const BASELINE = "color-mix(in oklab, var(--foreground) 14%, transparent)";
@@ -102,11 +105,18 @@ const NARROW_CARD = 760;
 const CARD_PADDING = 32;
 /** Refills smaller than this many points still step the chart but get no tag or headline. */
 const MIN_REFILL = 5;
-const TAG_MERGE_PX = 56;
+/** Points closer than this to the first one in a group share its tag. */
+const TAG_MERGE_PX = 44;
 const TAG_HEIGHT = 14;
 const TAG_GAP = 4;
-const DRY_LABEL_MIN_PX = 80;
-const PIPS_PER_ROW = 16;
+/** Clear space kept between neighbouring tags, and right of the NOW label. */
+const TAG_SPACING = 4;
+const NOW_LABEL_PX = 24;
+const POOL_DRY_LABEL_MIN_PX = 72;
+const PIPS_PER_ROW = 8;
+const PIP_GAP = 3;
+/** The rail's gap plus one text-xs line, for the "No limits" line. */
+const NO_LIMITS_PX = 28;
 /** Room a weekday label needs under the chart. */
 const DAY_LABEL_PX = 24;
 
@@ -288,8 +298,10 @@ export function PoolWidget({
   };
   const noLimits = driversWithoutLimits(presentations, providers);
 
-  const emptyNow = projection.dry.find((span) => span.from <= now);
-  const runsOut = projection.dry.find((span) => span.from > now && span.from < end);
+  const nextRefill = projection.refills.find(
+    (refill) => refill.at > now && refill.amount >= MIN_REFILL,
+  );
+  const status = headerStatus(model, nextRefill);
   useDebugValue("pool", {
     providers,
     burns: Object.fromEntries(burns),
@@ -302,47 +314,83 @@ export function PoolWidget({
     end,
   });
 
-  const status = emptyNow
-    ? `${poolLabel(emptyNow.driver)} empty until ${emptyNow.to ? formatReset(emptyNow.to) : "next week"}`
-    : runsOut
-      ? `${poolLabel(runsOut.driver)} runs out ${formatForecast(runsOut.from)}`
-      : providers.length > 0
-        ? "Lasts the week"
-        : null;
-
   return (
     <WidgetCard
       id="pool"
       icon={GaugeIcon}
       title="Pool"
-      meta={status}
-      metaTone={emptyNow || runsOut ? "warning" : undefined}
+      meta={
+        status?.dry ? <span style={{ color: ROSE }}>{status.text}</span> : (status?.text ?? null)
+      }
     >
       {providers.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">
           No provider reports subscription limits yet.
         </p>
       ) : (
-        <PoolBody model={model} noLimits={noLimits} />
+        <PoolBody model={model} noLimits={noLimits} nextRefill={nextRefill} />
       )}
     </WidgetCard>
   );
 }
 
+/**
+ * The whole pool running dry outranks any one provider; a provider empty now outranks one that
+ * runs out later. "until" is left out when the next refill already names that time.
+ */
+function headerStatus(
+  model: PoolModel,
+  nextRefill: RefillEvent | undefined,
+): { readonly text: string; readonly dry: boolean } | null {
+  if (model.providers.length === 0) return null;
+  const emptyText = (label: string, until: number | null, refillsThen: boolean) =>
+    until !== null && refillsThen
+      ? `${label} empty now`
+      : `${label} empty until ${until === null ? "next week" : formatReset(until)}`;
+  const poolDry = model.projection.poolDry.find(
+    (span) => span.from < model.end && (span.to === null || span.to > model.now),
+  );
+  if (poolDry) {
+    return {
+      dry: true,
+      text:
+        poolDry.from <= model.now
+          ? emptyText("Pool", poolDry.to, nextRefill?.at === poolDry.to)
+          : `Pool runs out ${formatForecast(poolDry.from)}`,
+    };
+  }
+  const emptyNow = model.projection.dry.find((span) => span.from <= model.now);
+  if (emptyNow) {
+    return {
+      dry: true,
+      text: emptyText(
+        poolLabel(emptyNow.driver),
+        emptyNow.to,
+        nextRefill?.driver === emptyNow.driver && nextRefill.at === emptyNow.to,
+      ),
+    };
+  }
+  const runsOut = model.projection.dry.find(
+    (span) => span.from > model.now && span.from < model.end,
+  );
+  return runsOut
+    ? { dry: true, text: `${poolLabel(runsOut.driver)} runs out ${formatForecast(runsOut.from)}` }
+    : { dry: false, text: "Lasts the week" };
+}
+
 function PoolBody({
   model,
   noLimits,
+  nextRefill,
 }: {
   readonly model: PoolModel;
   readonly noLimits: ReadonlyArray<string>;
+  readonly nextRefill: RefillEvent | undefined;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const { width } = useElementSize(ref);
   const narrow = width > 0 && width + CARD_PADDING < NARROW_CARD;
   const accounts = model.providers.reduce((sum, provider) => sum + provider.accounts.length, 0);
-  const nextRefill = model.projection.refills.find(
-    (refill) => refill.at > model.now && refill.amount >= MIN_REFILL,
-  );
   // Top of the stack first, as the bands read from the top down.
   const listed = model.providers.toReversed();
 
@@ -357,13 +405,16 @@ function PoolBody({
         </span>
         {nextRefill ? (
           <span className="ms-auto inline-flex min-w-0 items-baseline gap-1.5 ps-4 text-sm tabular-nums">
-            <span className="text-3xs tracking-wider text-muted-foreground uppercase">
-              Next refill
-            </span>
+            {narrow ? null : (
+              <span className="shrink-0 text-3xs tracking-wider text-muted-foreground uppercase">
+                Next refill
+              </span>
+            )}
             <Chip driver={nextRefill.driver} className="ms-1" />
-            <span className="font-medium">+{formatPercent(nextRefill.amount)}</span>
-            <span className="truncate text-muted-foreground">
-              {poolLabel(nextRefill.driver)} · {formatReset(nextRefill.at)}
+            <span className="shrink-0 font-medium">+{formatPercent(nextRefill.amount)}</span>
+            <span className="flex min-w-0 text-muted-foreground">
+              <span className="truncate">{poolLabel(nextRefill.driver)}</span>
+              <span className="shrink-0 whitespace-pre"> · {formatReset(nextRefill.at)}</span>
             </span>
           </span>
         ) : null}
@@ -379,13 +430,11 @@ function PoolBody({
                   <span key={provider.driver} className="inline-flex items-center gap-1.5">
                     <Hint
                       content={<ProviderHint model={model} provider={provider} />}
-                      className="inline-flex items-center gap-1.5"
+                      className="inline-flex items-baseline gap-1.5"
                     >
-                      <Chip driver={provider.driver} />
+                      <Chip driver={provider.driver} className="self-center" />
                       <span>{poolLabel(provider.driver)}</span>
-                      <span className="text-muted-foreground">
-                        {Math.round(provider.left)}/{provider.capacity}
-                      </span>
+                      <Capacity provider={provider} />
                     </Hint>
                     <Pips provider={provider} wrap={false} />
                     {status.kind === "lasts" ? null : <StatusText status={status} />}
@@ -395,40 +444,74 @@ function PoolBody({
             </div>
           ) : null}
         </div>
-        {narrow ? null : (
-          <div className="flex w-58 shrink-0 flex-col flex-wrap content-start justify-center gap-x-6 gap-y-3 overflow-hidden text-xs tabular-nums">
-            {listed.map((provider) => (
-              <div key={provider.driver} className="flex w-full flex-col gap-1.5">
-                <Hint
-                  content={<ProviderHint model={model} provider={provider} />}
-                  className="flex items-baseline gap-1.5"
-                >
-                  <Chip driver={provider.driver} className="self-center" />
-                  <span>{poolLabel(provider.driver)}</span>
-                  <span className="ms-auto">
-                    <span className="font-semibold">{formatPercent(provider.left)}</span>
-                    <span className="text-muted-foreground">/{provider.capacity}</span>
-                  </span>
-                </Hint>
-                <div className="flex items-start gap-3">
-                  <Pips provider={provider} wrap />
-                  <StatusText
-                    status={providerStatus(model, provider.driver)}
-                    className="ms-auto shrink-0 leading-3.75"
-                  />
-                </div>
-              </div>
-            ))}
-            {noLimits.map((driver) => (
-              <div key={driver} className="flex w-full items-center gap-1.5 text-muted-foreground">
-                <Chip driver={driver} className="opacity-50" />
-                {poolLabel(driver)} · no limits reported
-              </div>
-            ))}
-          </div>
-        )}
+        {narrow ? null : <Rail model={model} listed={listed} noLimits={noLimits} />}
       </div>
     </div>
+  );
+}
+
+function Rail({
+  model,
+  listed,
+  noLimits,
+}: {
+  readonly model: PoolModel;
+  readonly listed: ReadonlyArray<PoolProvider>;
+  readonly noLimits: ReadonlyArray<string>;
+}) {
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const rail = useElementSize(railRef);
+  const list = useElementSize(listRef);
+  const showNoLimits = noLimits.length > 0 && list.height + NO_LIMITS_PX <= rail.height;
+  return (
+    <div
+      ref={railRef}
+      className="flex w-48 shrink-0 flex-col justify-center-safe gap-3 overflow-hidden text-xs tabular-nums"
+    >
+      <div ref={listRef} className="flex flex-col gap-3">
+        {listed.map((provider) => (
+          <div key={provider.driver} className="flex flex-col gap-1.5">
+            <Hint
+              content={<ProviderHint model={model} provider={provider} />}
+              className="flex items-baseline gap-1.5"
+            >
+              <Chip driver={provider.driver} className="self-center" />
+              <span>{poolLabel(provider.driver)}</span>
+              <Capacity provider={provider} className="ms-auto" />
+            </Hint>
+            <div className="flex items-start gap-3">
+              <Pips provider={provider} wrap />
+              <StatusText
+                status={providerStatus(model, provider.driver)}
+                className="ms-auto shrink-0 leading-4.5"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+      {showNoLimits ? (
+        <div className="truncate text-muted-foreground">
+          No limits: {noLimits.map(poolLabel).join(", ")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Percent left over capacity, the same in the rail and the narrow legend. */
+function Capacity({
+  provider,
+  className,
+}: {
+  readonly provider: PoolProvider;
+  readonly className?: string;
+}) {
+  return (
+    <span className={className}>
+      <span className="font-semibold">{Math.round(provider.left)}</span>
+      <span className="text-muted-foreground">/{provider.capacity}%</span>
+    </span>
   );
 }
 
@@ -497,7 +580,7 @@ function StatusText({
     return <span className={cn("text-muted-foreground", className)}>lasts</span>;
   }
   return (
-    <span className={cn("text-warning", className)}>
+    <span className={className} style={{ color: ROSE }}>
       {status.kind === "out"
         ? `out ${formatForecast(status.at)}`
         : status.until === null
@@ -507,12 +590,16 @@ function StatusText({
   );
 }
 
-/** One dithered mini bar per account, filled to the percent it has left. */
+/** One dithered mini bar per account, filled to the percent it has left; none for a lone account. */
 function Pips({ provider, wrap }: { readonly provider: PoolProvider; readonly wrap: boolean }) {
+  if (provider.accounts.length < 2) return null;
   return (
     <span
-      className={cn("flex gap-0.5", wrap ? "flex-wrap" : "shrink-0")}
-      style={wrap ? { maxWidth: PIPS_PER_ROW * 8 - 2 } : undefined}
+      className={cn("flex", wrap ? "flex-wrap" : "shrink-0")}
+      style={{
+        gap: PIP_GAP,
+        maxWidth: wrap ? PIPS_PER_ROW * (3 * CELL + PIP_GAP) - PIP_GAP : undefined,
+      }}
     >
       {provider.accounts.map((account) => (
         <Hint
@@ -523,7 +610,7 @@ function Pips({ provider, wrap }: { readonly provider: PoolProvider; readonly wr
           }`}
         >
           <DitherCanvas
-            className="h-[15px] w-1.5"
+            className="h-[18px] w-[9px]"
             draw={(context, size, color) =>
               drawPip(context, size, color, account.left, provider.driver)
             }
@@ -652,71 +739,174 @@ function dayLabels(model: PoolModel, geometry: ChartGeometry, width: number): Da
   return labels;
 }
 
-interface RefillTag {
-  readonly key: string;
+const sumValues = (values: ReadonlyArray<number>) => values.reduce((total, v) => total + v, 0);
+
+/**
+ * Where a step in `driver`'s band lands just after `t`: the top of the whole stack, and the top
+ * of that provider's band (its zero point when it has just run dry).
+ */
+function stackAfter(
+  model: PoolModel,
+  geometry: ChartGeometry,
+  driver: string,
+  t: number,
+): { readonly stackY: number; readonly bandY: number } {
+  const after = valuesAt(model, t + model.projection.step);
+  const position = model.providers.findIndex((provider) => provider.driver === driver);
+  return {
+    stackY: geometry.yOf(sumValues(after)),
+    bandY: geometry.yOf(sumValues(after.slice(0, position + 1))),
+  };
+}
+
+function runoutLength(model: PoolModel, span: ProviderDrySpan | DrySpan): string {
+  return span.duration === null
+    ? `${formatSpan(model.end - span.from)}+`
+    : formatSpan(span.duration);
+}
+
+interface LanePoint {
+  readonly id: string;
   readonly x: number;
+  readonly stackY: number;
+  readonly tickTo: number;
+  readonly color: string;
+  readonly refill?: RefillEvent;
+  readonly runout?: { readonly driver: string; readonly length: string };
+}
+
+interface LaneTag {
+  readonly key: string;
+  readonly left: number;
+  readonly width: number;
   readonly top: number;
   readonly drivers: ReadonlyArray<string>;
   readonly amount: number;
+  readonly runout: string | null;
   readonly ticks: ReadonlyArray<{
+    readonly id: string;
     readonly x: number;
     readonly to: number;
     readonly color: string;
   }>;
 }
 
+let measureContext: CanvasRenderingContext2D | null | undefined;
+
+/** Width of a text-3xs medium label, for laying tags out before they render. */
+function tagTextWidth(text: string): number {
+  if (measureContext === undefined) {
+    measureContext = document.createElement("canvas").getContext("2d");
+  }
+  if (!measureContext) return text.length * 6;
+  measureContext.font = `500 10px ${getComputedStyle(document.body).fontFamily}`;
+  return Math.ceil(measureContext.measureText(text).width) + 1;
+}
+
+/** "Claude out · 3d" alone; several runouts in one tag drop their lengths to stay short. */
+function runoutText(points: ReadonlyArray<LanePoint>): string | null {
+  const runouts = points.flatMap((point) => (point.runout ? [point.runout] : []));
+  if (runouts.length === 0) return null;
+  if (runouts.length === 1) return `${poolLabel(runouts[0]!.driver)} out · ${runouts[0]!.length}`;
+  return `${[...new Set(runouts.map((runout) => poolLabel(runout.driver)))].join(", ")} out`;
+}
+
+/** One pill: border and padding, refill chips and amount, a divider, then the runouts. */
+function layoutTag(points: ReadonlyArray<LanePoint>, minLeft: number, width: number): LaneTag {
+  const refills = points.flatMap((point) => (point.refill ? [point.refill] : []));
+  const runout = runoutText(points);
+  const drivers = [...new Set(refills.map((refill) => refill.driver))];
+  const amount = refills.reduce((total, refill) => total + refill.amount, 0);
+  const items = [
+    ...drivers.map(() => 6),
+    ...(refills.length > 0 ? [tagTextWidth(`+${formatPercent(amount)}`)] : []),
+    ...(runout === null ? [] : [tagTextWidth(runout) + (refills.length > 0 ? 5 : 0)]),
+  ];
+  const tagWidth = 10 + sumValues(items) + 4 * (items.length - 1);
+  const center = sumValues(points.map((point) => point.x)) / points.length;
+  const left = Math.max(minLeft, Math.min(width - tagWidth, center - tagWidth / 2));
+  const top = Math.max(0, Math.min(...points.map((point) => point.stackY)) - TAG_GAP - TAG_HEIGHT);
+  return {
+    key: points.map((point) => point.id).join("|"),
+    left,
+    width: tagWidth,
+    top,
+    drivers,
+    amount,
+    runout,
+    // A tick only hangs from the pill itself, never from empty space beside it.
+    ticks: points
+      .filter((point) => point.x >= left + 1 && point.x <= left + tagWidth - 1)
+      .map((point) => ({
+        id: point.id,
+        x: Math.round(point.x),
+        to: point.tickTo,
+        color: point.color,
+      })),
+  };
+}
+
 /**
- * Tags sit just above the pool's silhouette where each refill lands, with a tick down to the
- * step in that provider's band. Small refills get no tag; refills close together share one.
+ * One lane of tags above the pool's silhouette: each refill where it lands, with a tick down to
+ * the step in its provider's band, and each runout where a band reaches zero. Points within
+ * TAG_MERGE_PX of a group's first point share a tag, and a tag that would still overlap the one
+ * before it merges into it.
  */
-function refillTags(model: PoolModel, geometry: ChartGeometry, width: number): RefillTag[] {
-  const points = model.projection.refills
+function laneTags(
+  model: PoolModel,
+  geometry: ChartGeometry,
+  width: number,
+  minLeft: number,
+): LaneTag[] {
+  const refills = model.projection.refills
     .filter(
       (refill) => refill.at > model.now && refill.at <= model.end && refill.amount >= MIN_REFILL,
     )
-    .map((refill) => {
-      const after = valuesAt(model, refill.at + model.projection.step);
-      const position = model.providers.findIndex((provider) => provider.driver === refill.driver);
-      const sum = (values: ReadonlyArray<number>) => values.reduce((total, v) => total + v, 0);
+    .map((refill): LanePoint => {
+      const { stackY, bandY } = stackAfter(model, geometry, refill.driver, refill.at);
       return {
-        refill,
+        id: `refill:${refill.account}:${refill.at}`,
         x: geometry.xOf(refill.at),
-        stackY: geometry.yOf(sum(after)),
-        stepY: geometry.yOf(sum(after.slice(0, position + 1))),
+        stackY,
+        tickTo: bandY,
+        color: poolColor(refill.driver),
+        refill,
       };
     });
-  const groups: Array<typeof points> = [];
+  const runouts = model.projection.dry
+    .filter((span) => span.from > model.now && span.from < model.end)
+    .map((span): LanePoint => {
+      const { stackY, bandY } = stackAfter(model, geometry, span.driver, span.from);
+      return {
+        id: `runout:${span.driver}:${span.from}`,
+        x: geometry.xOf(span.from),
+        stackY,
+        tickTo: bandY,
+        color: ROSE,
+        runout: { driver: span.driver, length: runoutLength(model, span) },
+      };
+    });
+  const points = [...refills, ...runouts].toSorted((left, right) => left.x - right.x);
+  const groups: LanePoint[][] = [];
   for (const point of points) {
     const group = groups.at(-1);
-    if (group && point.x - group.at(-1)!.x < TAG_MERGE_PX) group.push(point);
+    if (group && point.x - group[0]!.x < TAG_MERGE_PX) group.push(point);
     else groups.push([point]);
   }
-  const tags: RefillTag[] = [];
-  let rightEdge = Number.NEGATIVE_INFINITY;
+  const placed: Array<{ points: LanePoint[]; tag: LaneTag }> = [];
   for (const group of groups) {
-    const drivers = [...new Set(group.map((point) => point.refill.driver))];
-    const amount = group.reduce((total, point) => total + point.refill.amount, 0);
-    const estimate = 12 + drivers.length * 8 + formatPercent(amount).length * 6;
-    const center = group.reduce((total, point) => total + point.x, 0) / group.length;
-    const x = Math.min(width - estimate / 2, Math.max(estimate / 2, center));
-    // One row: a tag that would overlap the one before it is dropped.
-    if (x - estimate / 2 < rightEdge + 4) continue;
-    rightEdge = x + estimate / 2;
-    const top = Math.max(0, Math.min(...group.map((point) => point.stackY)) - TAG_GAP - TAG_HEIGHT);
-    tags.push({
-      key: group.map((point) => `${point.refill.account}:${point.refill.at}`).join("|"),
-      x,
-      top,
-      drivers,
-      amount,
-      ticks: group.map((point) => ({
-        x: Math.round(point.x),
-        to: point.stepY,
-        color: poolColor(point.refill.driver),
-      })),
-    });
+    let merged = group;
+    let tag = layoutTag(merged, minLeft, width);
+    let previous = placed.at(-1);
+    while (previous && tag.left < previous.tag.left + previous.tag.width + TAG_SPACING) {
+      placed.pop();
+      merged = previous.points.concat(merged);
+      tag = layoutTag(merged, minLeft, width);
+      previous = placed.at(-1);
+    }
+    placed.push({ points: merged, tag });
   }
-  return tags;
+  return placed.map((entry) => entry.tag);
 }
 
 function PoolChart({ model }: { readonly model: PoolModel }) {
@@ -725,21 +915,13 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
   const geometry = chartGeometry(width, height, model);
   const nowX = geometry.xOf(model.now);
   const days = dayLabels(model, geometry, width);
-  const dryLabels: Array<{ key: string; x: number; text: string }> = [];
-  for (const span of model.projection.dry) {
+  const poolDryLabels = model.projection.poolDry.flatMap((span) => {
     const from = Math.max(model.start, span.from);
     const to = Math.min(model.end, span.to ?? model.end);
     const x = geometry.xOf(from);
-    if (geometry.xOf(to) - x < DRY_LABEL_MIN_PX) continue;
-    if (dryLabels.some((label) => Math.abs(label.x - x) < 90)) continue;
-    const length =
-      span.duration === null ? `${formatSpan(model.end - span.from)}+` : formatSpan(span.duration);
-    dryLabels.push({
-      key: `${span.driver}:${span.from}`,
-      x,
-      text: `${poolLabel(span.driver)} dry ${length}`,
-    });
-  }
+    if (geometry.xOf(to) - x < POOL_DRY_LABEL_MIN_PX) return [];
+    return [{ key: String(span.from), x, text: `Pool dry · ${runoutLength(model, span)}` }];
+  });
 
   return (
     <>
@@ -758,16 +940,23 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
         >
           NOW
         </span>
-        {dryLabels.map((label) => (
+        {poolDryLabels.map((label) => (
           <span
             key={label.key}
-            className="pointer-events-none absolute rounded-sm bg-card/85 px-1 text-3xs leading-3.5 font-medium"
-            style={{ left: label.x + 3, top: geometry.baseline - 16, color: ROSE }}
+            className="pointer-events-none absolute text-3xs leading-3.5 font-medium"
+            style={{ left: label.x + 4, top: geometry.plotTop + 3, color: ROSE }}
           >
             {label.text}
           </span>
         ))}
-        {width > 0 ? <ChartHover model={model} geometry={geometry} width={width} /> : null}
+        {width > 0 ? (
+          <ChartHover
+            model={model}
+            geometry={geometry}
+            width={width}
+            minTagLeft={(nowX >= 14 ? nowX + NOW_LABEL_PX / 2 : NOW_LABEL_PX) + TAG_SPACING}
+          />
+        ) : null}
       </div>
       <div className="relative mt-1 h-3 text-3xs leading-3 tracking-wider text-muted-foreground">
         {days.map((day) => (
@@ -784,18 +973,20 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
   );
 }
 
-/** Refill tags, the crosshair and its readout; kept apart so hovering never repaints the canvas. */
+/** Lane tags, the crosshair and its readout; kept apart so hovering never repaints the canvas. */
 function ChartHover({
   model,
   geometry,
   width,
+  minTagLeft,
 }: {
   readonly model: PoolModel;
   readonly geometry: ChartGeometry;
   readonly width: number;
+  readonly minTagLeft: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const tags = refillTags(model, geometry, width);
+  const tags = laneTags(model, geometry, width, minTagLeft);
   const span = model.end - model.start;
   const hoverX = hover === null ? 0 : geometry.xOf(hover);
 
@@ -821,7 +1012,7 @@ function ChartHover({
             {tag.ticks.map((tick) =>
               tick.to > tag.top + TAG_HEIGHT ? (
                 <span
-                  key={tick.x}
+                  key={tick.id}
                   aria-hidden
                   className="absolute w-px"
                   style={{
@@ -834,13 +1025,26 @@ function ChartHover({
               ) : null,
             )}
             <span
-              className="absolute inline-flex -translate-x-1/2 items-center gap-1 rounded-sm border border-border bg-popover/90 px-1 text-3xs font-medium tabular-nums"
-              style={{ left: tag.x, top: tag.top, height: TAG_HEIGHT }}
+              className="absolute inline-flex items-center justify-center gap-1 rounded-sm border bg-popover/90 px-1 text-3xs font-medium whitespace-nowrap tabular-nums"
+              style={{
+                left: tag.left,
+                top: tag.top,
+                width: tag.width,
+                height: TAG_HEIGHT,
+                borderColor:
+                  tag.drivers.length === 0
+                    ? `color-mix(in oklab, ${ROSE} 45%, transparent)`
+                    : undefined,
+              }}
             >
               {tag.drivers.map((driver) => (
                 <Chip key={driver} driver={driver} className="size-1.5" />
               ))}
-              +{formatPercent(tag.amount)}
+              {tag.drivers.length > 0 ? `+${formatPercent(tag.amount)}` : null}
+              {tag.runout !== null && tag.drivers.length > 0 ? (
+                <span aria-hidden className="h-2 w-px bg-border" />
+              ) : null}
+              {tag.runout === null ? null : <span style={{ color: ROSE }}>{tag.runout}</span>}
             </span>
           </div>
         ))}
@@ -867,6 +1071,9 @@ function ChartHover({
   );
 }
 
+/** Per-account rows only while the whole pool has this few accounts. */
+const HOVER_ACCOUNT_ROWS_MAX = 4;
+
 function HoverReadout({
   model,
   t,
@@ -878,12 +1085,16 @@ function HoverReadout({
 }) {
   const recorded = t < model.now;
   const values = valuesAt(model, t);
+  const totalAccounts = model.providers.reduce(
+    (sum, provider) => sum + provider.accounts.length,
+    0,
+  );
   return (
     <div
-      className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-md border bg-popover/95 px-2.5 py-2 text-xs text-popover-foreground shadow-lg backdrop-blur-sm"
+      className="pointer-events-none absolute top-0 z-10 min-w-40 rounded-md border bg-popover/95 px-2.5 py-1.5 text-2xs leading-4 text-popover-foreground shadow-lg backdrop-blur-sm"
       style={style}
     >
-      <div className="mb-1 flex items-baseline justify-between gap-3">
+      <div className="flex items-baseline justify-between gap-3">
         <span className="font-medium tabular-nums">
           {recorded ? WEEKDAY_TIME.format(t) : formatForecast(t)}
         </span>
@@ -896,7 +1107,7 @@ function HoverReadout({
         .toReversed()
         .map(({ provider, value }) => {
           const accounts = accountValuesAt(model, provider, t);
-          const known = accounts.filter((left): left is number => left !== null);
+          const dry = accounts.filter((left) => left !== null && left < 0.5).length;
           return (
             <div key={provider.driver} className="tabular-nums">
               <div className="flex items-baseline justify-between gap-4">
@@ -904,35 +1115,51 @@ function HoverReadout({
                   <Chip driver={provider.driver} className="self-center" />
                   {poolLabel(provider.driver)}
                 </span>
-                <span className={cn(value < 0.5 && "text-warning")}>
-                  {value < 0.5 ? "empty" : `${formatPercent(value)} left`}
-                </span>
+                <DryValue left={value} suffix=" left" />
               </div>
-              {provider.accounts.length > 3 && known.length === accounts.length ? (
+              {totalAccounts <= HOVER_ACCOUNT_ROWS_MAX ? (
+                provider.accounts.length > 1 ? (
+                  provider.accounts.map((account, index) => {
+                    const left = accounts[index];
+                    if (left === null || left === undefined) return null;
+                    return (
+                      <div
+                        key={account.key}
+                        className="flex items-baseline justify-between gap-4 ps-3.5 text-muted-foreground"
+                      >
+                        <span className="truncate">{account.name}</span>
+                        <DryValue left={left} />
+                      </div>
+                    );
+                  })
+                ) : null
+              ) : dry > 0 ? (
                 <div className="ps-3.5 text-muted-foreground">
-                  {known.filter((left) => left < 0.5).length} of {accounts.length} dry
+                  {dry} of {accounts.length} dry
                 </div>
-              ) : provider.accounts.length > 1 && provider.accounts.length <= 3 ? (
-                provider.accounts.map((account, index) => {
-                  const left = accounts[index];
-                  if (left === null || left === undefined) return null;
-                  return (
-                    <div
-                      key={account.key}
-                      className="flex items-baseline justify-between gap-4 ps-3.5 text-muted-foreground"
-                    >
-                      <span className="truncate">{account.name}</span>
-                      <span className={cn(left < 0.5 && "text-warning")}>
-                        {left < 0.5 ? "empty" : formatPercent(left)}
-                      </span>
-                    </div>
-                  );
-                })
               ) : null}
             </div>
           );
         })}
+      <div className="mt-1 flex items-baseline justify-between gap-4 border-t pt-1 tabular-nums">
+        <span className="text-muted-foreground">Pool</span>
+        <span>
+          {formatPercent(sumValues(values))}
+          <span className="text-muted-foreground"> of {formatPercent(model.capacity)}</span>
+        </span>
+      </div>
     </div>
+  );
+}
+
+function DryValue({ left, suffix = "" }: { readonly left: number; readonly suffix?: string }) {
+  return left < 0.5 ? (
+    <span style={{ color: ROSE }}>empty</span>
+  ) : (
+    <span>
+      {formatPercent(left)}
+      {suffix}
+    </span>
   );
 }
 
@@ -1004,7 +1231,10 @@ function drawPool(
     const x0 = Math.round(xOf(from));
     const x1 = Math.round(xOf(to));
     if (dry.from > model.now) {
-      drawDottedLine(context, [x0, plotTop], [x0, baseline - 1], rose, 3, 1);
+      // From where the dying band reaches zero on the stack down to the baseline.
+      const { bandY } = stackAfter(model, geometry, dry.driver, dry.from);
+      if (bandY < baseline - 1)
+        drawDottedLine(context, [x0, bandY], [x0, baseline - 1], rose, 3, 1);
     }
     // A checkered 4px strip under the baseline for as long as the provider stays dry. The
     // checker is phased to the canvas, so two providers dry at once share one strip.
