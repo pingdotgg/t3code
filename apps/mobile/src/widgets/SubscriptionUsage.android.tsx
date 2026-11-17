@@ -96,19 +96,31 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
       }));
   });
 
+  // The snapshot keeps a few windows per provider; the rest still count toward "N more".
+  const dropped = providers.reduce(
+    (sum, provider) =>
+      lines.some((line) => line.type === "window" && line.provider === provider.name)
+        ? sum + Math.max(0, (provider.totalWindows ?? 0) - provider.windows.length)
+        : sum,
+    0,
+  );
+  const slots = lines.length + (dropped > 0 ? 1 : 0);
   // Roomy rows when every limit fits, thin bars when they would not.
   const fullRow = 34;
   const compactRow = 20;
-  const full = lines.length * fullRow <= contentHeight;
+  const full = slots * fullRow <= contentHeight;
   // Glance columns hold at most ten children, the overflow note included.
   const capacity = Math.max(
     1,
     Math.min(9, Math.floor(contentHeight / (full ? fullRow : compactRow))),
   );
+  const shown = slots > capacity ? lines.slice(0, capacity - 1) : lines;
+  const hidden = lines.length - shown.length + dropped;
   // Rows share any spare height so short lists do not bunch at the top.
-  const rowHeight = Math.min(full ? 52 : 28, contentHeight / Math.min(lines.length, capacity));
-  const shown = lines.length > capacity ? lines.slice(0, capacity - 1) : lines;
-  const hidden = lines.length - shown.length;
+  const rowHeight = Math.min(
+    full ? 52 : 28,
+    contentHeight / Math.max(1, shown.length + (hidden > 0 ? 1 : 0)),
+  );
 
   const low = (remaining: number) => remaining <= 10;
   const timeLeft = (account: WidgetLimitAccount) =>
