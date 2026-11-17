@@ -879,6 +879,13 @@ export const layer: Layer.Layer<
             );
           }
         }
+        const withdrawnRecordIds = new Set<string>(
+          cancelledRequestEvents.flatMap((event) =>
+            event.type === "node.updated" || event.type === "turn-item.updated"
+              ? [event.payload.id]
+              : [],
+          ),
+        );
         const finalization = {
           guardPendingRuntimeRequestCancellations: true,
           // Stopped runs capture rollback points for the next message; enqueue before later starts on this effect lane.
@@ -901,7 +908,12 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cancelledRequestEvents,
-            ...cascadedSubagentEvents,
+            // A later failed snapshot would replace the withdrawal and slip past the answer guard.
+            ...cascadedSubagentEvents.filter(
+              (event) =>
+                (event.type !== "node.updated" && event.type !== "turn-item.updated") ||
+                !withdrawnRecordIds.has(event.payload.id),
+            ),
             ...(yield* interruptLostToolCalls({
               run: input.run,
               toolCalls: input.lostToolCalls ?? [],

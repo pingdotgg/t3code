@@ -3405,6 +3405,111 @@ it.effect.each(["stream", "terminal", "continuing", "completed", "transferred"] 
     }),
 );
 
+it.effect("keeps withdrawn child approvals cancelled when the failed run cascades", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const key = "withdrawn-child-approval-cascade";
+    const scenario = backgroundScenarioIds(key);
+    const childRequestId = RuntimeRequestId.make(`request:${key}:child`);
+    const approvalNode: OrchestrationV2ExecutionNode = {
+      ...makeRunOwnedSubagentChildNodeFixture({ ids: scenario, status: "running" }),
+      id: NodeId.make(`node:${key}:child-approval`),
+      kind: "approval_request",
+      status: "waiting",
+      runtimeRequestId: childRequestId,
+    };
+    const approvalItem: OrchestrationV2TurnItem = {
+      id: TurnItemId.make(`turn-item:${key}:child-approval`),
+      threadId: scenario.childThreadId,
+      runId: null,
+      nodeId: approvalNode.id,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "waiting",
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "approval_request",
+      requestId: childRequestId,
+      requestKind: "command",
+      prompt: "rm -rf build",
+    };
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      normalize: (input) =>
+        Effect.succeed(
+          input.withdrawApprovals && input.threadId === scenario.childThreadId
+            ? [
+                {
+                  id: EventId.make(`event:${key}:withdraw-node`),
+                  type: "node.updated",
+                  threadId: input.threadId,
+                  occurredAt: now,
+                  payload: { ...approvalNode, status: "cancelled", completedAt: now },
+                },
+                {
+                  id: EventId.make(`event:${key}:withdraw-item`),
+                  type: "turn-item.updated",
+                  threadId: input.threadId,
+                  occurredAt: now,
+                  payload: { ...approvalItem, status: "cancelled", completedAt: now },
+                },
+              ]
+            : [],
+        ),
+      events: (ids) =>
+        Stream.make(
+          childThreadCreatedEvent(ids),
+          {
+            type: "subagent.updated",
+            driver,
+            subagent: makeRunOwnedSubagentFixture({
+              ids,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              childThreadId: ids.childThreadId,
+              driver,
+              status: "running",
+            }),
+          },
+          {
+            type: "runtime_request.updated",
+            driver,
+            threadId: ids.childThreadId,
+            runtimeRequest: {
+              id: childRequestId,
+              nodeId: approvalNode.id,
+              providerTurnId: ProviderTurnId.make(`provider-turn:${key}:child`),
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+              },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          { type: "node.updated", driver, node: approvalNode },
+          { type: "turn_item.updated", driver, turnItem: approvalItem },
+          rootTerminalEvent(ids, "failed"),
+        ),
+    });
+    const approvalStatuses = finalEvents.flatMap((event) =>
+      (event.type === "node.updated" || event.type === "turn-item.updated") &&
+      (event.payload.id === approvalNode.id || event.payload.id === approvalItem.id)
+        ? [`${event.type}:${event.payload.status}`]
+        : [],
+    );
+    assert.deepEqual(approvalStatuses, ["node.updated:cancelled", "turn-item.updated:cancelled"]);
+  }),
+);
+
 it.effect("records a provider's input rejection at turn start in the terminal error", () =>
   Effect.gen(function* () {
     const rejection = "goal objective must be at most 4000 characters";
