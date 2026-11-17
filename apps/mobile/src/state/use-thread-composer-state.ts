@@ -33,7 +33,6 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type ModelSelection,
-  type RuntimeMode,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -204,7 +203,7 @@ export function useThreadComposerState(input: {
   readonly startSideChat: (
     source: ScopedThreadRef,
     prompt: string,
-    settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+    settings: { readonly modelSelection: ModelSelection },
   ) => Promise<boolean>;
 }) {
   const {
@@ -663,7 +662,6 @@ export function useThreadComposerState(input: {
             { environmentId: thread.environmentId, threadId: thread.id },
             sideChatCommand.prompt,
             {
-              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
               modelSelection,
             },
           )

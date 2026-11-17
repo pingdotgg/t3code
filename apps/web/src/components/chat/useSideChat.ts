@@ -1,4 +1,4 @@
-import type { ModelSelection, RuntimeMode, ScopedThreadRef } from "@t3tools/contracts";
+import type { ModelSelection, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
@@ -18,15 +18,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
 /**
- * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
- * composer's settings, and shows the tab. It resolves false when the side chat did not
- * start, or another one is still starting.
+ * Starts a side chat with server-resolved permissions and the parent's composer model.
+ * Resolves false when unavailable, already starting, or the start fails.
  */
 export function useSideChat(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly readSettings: () => {
-    readonly runtimeMode: RuntimeMode;
     readonly modelSelection: ModelSelection | undefined;
   };
   readonly onError: (message: string) => void;
@@ -34,9 +31,6 @@ export function useSideChat(input: {
   const pendingRef = useRef(false);
   const forkSideChat = useAtomCommand(threadEnvironment.forkSideChat, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
-  const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
-    reportFailure: false,
-  });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
@@ -49,7 +43,7 @@ export function useSideChat(input: {
     input.onError(error instanceof Error ? error.message : fallback);
   };
   const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
-    const { runtimeMode, modelSelection } = input.readSettings();
+    const { modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
@@ -77,17 +71,6 @@ export function useSideChat(input: {
       discard();
       return false;
     }
-    if (runtimeMode !== sideChat.runtimeMode) {
-      const mode = await setThreadRuntimeMode({
-        environmentId: threadRef.environmentId,
-        input: { threadId: targetThreadId, runtimeMode, createdAt: new Date().toISOString() },
-      });
-      if (mode._tag === "Failure") {
-        reportFailure(mode, "Could not set the side chat's permission mode.");
-        discard();
-        return false;
-      }
-    }
     const text = prompt?.trim();
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
     if (text) {
@@ -98,7 +81,7 @@ export function useSideChat(input: {
           message: { messageId: newMessageId(), role: "user", text, attachments: [] },
           ...(modelSelection === undefined ? {} : { modelSelection }),
           titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
-          runtimeMode,
+          runtimeMode: sideChat.runtimeMode,
           interactionMode: "default",
           createdAt: new Date().toISOString(),
         },
