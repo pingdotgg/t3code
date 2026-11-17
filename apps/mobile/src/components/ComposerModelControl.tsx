@@ -1,4 +1,5 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { ComposerFavoriteFan } from "./ComposerFavoriteFan";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -19,6 +20,8 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
+  readonly favorites: ReadonlyArray<ModelOption>;
+  readonly onSelectFavorite: (model: ModelOption) => void;
   readonly onPress: () => void;
 }) {
   const descriptors = resolveProviderOptionDescriptors({
@@ -47,69 +50,80 @@ export function ComposerModelControl(props: {
     : null;
   const shortLabel = props.modelOption?.shortName ?? label;
   return (
-    <ComposerInlineControl
-      accessibilityLabel={[
-        "Model and reasoning settings",
-        label,
-        badge?.showBadge ? badge.displayName : null,
-        summary,
-      ]
-        .filter(Boolean)
-        .join(", ")}
-      size={props.size}
-      disabled={props.disabled}
-      emphasized
-      renderIcon={(size) =>
-        badge?.showBadge ? (
-          <ProviderInstanceIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            displayName={badge.displayName}
-            accentColor={badge.accentColor}
-            showBadge
-            surfaceColor={props.surfaceColor}
-            size={size}
-          />
-        ) : (
-          <ProviderIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            size={size}
-          />
-        )
-      }
-      label={providerNameLabel ?? shortLabel}
-      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
-      iconOnly={props.iconOnly}
-      suffixWidth={providerNameLabel ? 96 : undefined}
-      suffix={
-        providerNameLabel ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {shortLabel}
-            {summary ? ` · ${summary}` : ""}
-          </Text>
-        ) : summary ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {summary}
-          </Text>
-        ) : undefined
-      }
-      maxWidth="100%"
+    <ComposerFavoriteFan
+      models={props.favorites}
+      onSelect={props.onSelectFavorite}
       onPress={props.onPress}
-    />
+    >
+      {(gesture) => (
+        <ComposerInlineControl
+          {...(gesture
+            ? { tapOrHold: gesture, accessibilityHint: "Hold and slide to choose a favorite model" }
+            : {})}
+          accessibilityLabel={[
+            "Model and reasoning settings",
+            label,
+            badge?.showBadge ? badge.displayName : null,
+            summary,
+          ]
+            .filter(Boolean)
+            .join(", ")}
+          size={props.size}
+          disabled={props.disabled}
+          emphasized
+          renderIcon={(size) =>
+            badge?.showBadge ? (
+              <ProviderInstanceIcon
+                iconUrl={props.modelOption?.providerIconUrl}
+                provider={props.modelOption?.providerDriver}
+                displayName={badge.displayName}
+                accentColor={badge.accentColor}
+                showBadge
+                surfaceColor={props.surfaceColor}
+                size={size}
+              />
+            ) : (
+              <ProviderIcon
+                iconUrl={props.modelOption?.providerIconUrl}
+                provider={props.modelOption?.providerDriver}
+                size={size}
+              />
+            )
+          }
+          label={providerNameLabel ?? shortLabel}
+          labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
+          iconOnly={props.iconOnly}
+          suffixWidth={providerNameLabel ? 96 : undefined}
+          suffix={
+            providerNameLabel ? (
+              <Text
+                className={
+                  props.size === "large"
+                    ? "text-sm text-foreground-muted"
+                    : "text-xs text-foreground-muted"
+                }
+                numberOfLines={1}
+              >
+                {shortLabel}
+                {summary ? ` · ${summary}` : ""}
+              </Text>
+            ) : summary ? (
+              <Text
+                className={
+                  props.size === "large"
+                    ? "text-sm text-foreground-muted"
+                    : "text-xs text-foreground-muted"
+                }
+                numberOfLines={1}
+              >
+                {summary}
+              </Text>
+            ) : undefined
+          }
+          maxWidth="100%"
+          onPress={props.onPress}
+        />
+      )}
+    </ComposerFavoriteFan>
   );
 }

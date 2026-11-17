@@ -12,6 +12,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
+import { GestureDetector, type LegacyComposedGesture } from "react-native-gesture-handler";
 import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
@@ -39,6 +40,7 @@ export function ComposerInlineControl(props: {
   readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
   readonly onPress?: () => void;
+  readonly tapOrHold?: LegacyComposedGesture;
   readonly selected?: boolean;
   readonly static?: boolean;
   readonly chevronDirection?: "down" | "right";
@@ -49,6 +51,83 @@ export function ComposerInlineControl(props: {
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
+  const control = (
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityRole={props.static ? undefined : "button"}
+      accessibilityActions={props.tapOrHold ? [{ name: "activate" }] : undefined}
+      onAccessibilityAction={
+        props.tapOrHold
+          ? (event) => {
+              if (event.nativeEvent.actionName === "activate" && !props.disabled) {
+                props.onPress?.();
+              }
+            }
+          : undefined
+      }
+      accessibilityState={
+        props.static ? undefined : { disabled: props.disabled, selected: props.selected }
+      }
+      className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+      disabled={props.disabled || props.static}
+      onPress={props.tapOrHold ? undefined : props.onPress}
+      style={{ opacity: props.disabled ? 0.45 : 1 }}
+    >
+      {props.renderIcon ? (
+        <View
+          className="size-4 shrink-0 items-center justify-center"
+          style={{ width: iconSize, height: iconSize }}
+        >
+          {props.renderIcon(iconSize)}
+        </View>
+      ) : props.icon ? (
+        <SymbolView
+          name={props.icon}
+          size={iconSize}
+          tintColorClassName={
+            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+          }
+          type="monochrome"
+        />
+      ) : null}
+      {props.iconOnly ? null : (
+        <Animated.View
+          className="shrink"
+          entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
+        >
+          <Text
+            className={cn(
+              props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
+              props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+            )}
+            numberOfLines={1}
+            ellipsizeMode={props.labelEllipsizeMode}
+          >
+            {props.label}
+          </Text>
+        </Animated.View>
+      )}
+      {!props.iconOnly && props.suffix ? (
+        <View
+          className={cn("min-w-0", props.suffixWidth === undefined ? "shrink" : "shrink-0")}
+          style={{ width: props.suffixWidth }}
+        >
+          {props.suffix}
+        </View>
+      ) : null}
+      {props.showChevron === false ? null : (
+        <SymbolView
+          name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
+          size={Math.round((props.size === "large" ? 12 : 10) * scale)}
+          tintColorClassName={
+            props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
+          }
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
   return (
     <Animated.View
       style={{
@@ -56,71 +135,11 @@ export function ComposerInlineControl(props: {
         overflow: animatesLabel ? "hidden" : undefined,
       }}
     >
-      <Pressable
-        accessibilityLabel={props.accessibilityLabel ?? props.label}
-        accessibilityHint={props.accessibilityHint}
-        accessibilityRole={props.static ? undefined : "button"}
-        accessibilityState={
-          props.static ? undefined : { disabled: props.disabled, selected: props.selected }
-        }
-        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
-        disabled={props.disabled || props.static}
-        onPress={props.onPress}
-        style={{ opacity: props.disabled ? 0.45 : 1 }}
-      >
-        {props.renderIcon ? (
-          <View
-            className="size-4 shrink-0 items-center justify-center"
-            style={{ width: iconSize, height: iconSize }}
-          >
-            {props.renderIcon(iconSize)}
-          </View>
-        ) : props.icon ? (
-          <SymbolView
-            name={props.icon}
-            size={iconSize}
-            tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-            }
-            type="monochrome"
-          />
-        ) : null}
-        {props.iconOnly ? null : (
-          <Animated.View
-            className="shrink"
-            entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
-          >
-            <Text
-              className={cn(
-                props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
-                props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
-              )}
-              numberOfLines={1}
-              ellipsizeMode={props.labelEllipsizeMode}
-            >
-              {props.label}
-            </Text>
-          </Animated.View>
-        )}
-        {!props.iconOnly && props.suffix ? (
-          <View
-            className={cn("min-w-0", props.suffixWidth === undefined ? "shrink" : "shrink-0")}
-            style={{ width: props.suffixWidth }}
-          >
-            {props.suffix}
-          </View>
-        ) : null}
-        {props.showChevron === false ? null : (
-          <SymbolView
-            name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-            size={Math.round((props.size === "large" ? 12 : 10) * scale)}
-            tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-            }
-            type="monochrome"
-          />
-        )}
-      </Pressable>
+      {props.tapOrHold ? (
+        <GestureDetector gesture={props.tapOrHold}>{control}</GestureDetector>
+      ) : (
+        control
+      )}
     </Animated.View>
   );
 }
