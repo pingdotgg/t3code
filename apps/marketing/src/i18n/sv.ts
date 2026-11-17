@@ -9,7 +9,7 @@ export const sv: Messages = {
     homeLabel: "T3 Codes startsida",
     download: "Ladda ned",
     starsLabel: "Ge T3 Code en stjärna på GitHub, {stars} stjärnor",
-    githubStars: "{stars} stjärnor på GitHub",
+    githubStars: "{stars} GitHub-stjärnor",
     language: "Språk",
     mitLicensed: "MIT-licensierad",
     iosApp: "App för iOS",
