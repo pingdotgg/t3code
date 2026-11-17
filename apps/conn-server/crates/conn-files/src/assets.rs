@@ -415,6 +415,8 @@ impl Files {
             },
             // Tool output images live in turn items this server does not record yet.
             AssetResource::ToolOutputImage(_) => return Err(not_found(resource, None)),
+            // This server publishes no environment themes, so no theme has a background.
+            AssetResource::EnvironmentThemeBackground(_) => return Err(not_found(resource, None)),
             // Fetching a host's private media needs its credentials; callers refuse first.
             AssetResource::GithubMedia(_) => {
                 return Err(AssetsCreateUrlError::AssetGitHubMediaUrlValidationError(
