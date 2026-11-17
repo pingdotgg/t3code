@@ -210,21 +210,23 @@ function toViewerPermissions(raw: {
   readonly viewerPermission?: string | null | undefined;
   readonly issue: {
     readonly state: string;
+    readonly locked: boolean;
     readonly viewerCanUpdate: boolean;
     readonly viewerCanClose: boolean;
     readonly viewerCanReopen: boolean;
   } | null;
 }): IssueViewerPermissions {
   const canUpdate = raw.issue?.viewerCanUpdate !== false;
-  const canTriage = ["ADMIN", "MAINTAIN", "WRITE", "TRIAGE"].includes(
-    raw.viewerPermission?.trim().toUpperCase() ?? "",
-  );
+  const permission = raw.viewerPermission?.trim().toUpperCase() ?? "";
+  const canWrite = ["ADMIN", "MAINTAIN", "WRITE"].includes(permission);
+  const canTriage = canWrite || permission === "TRIAGE";
   return {
     // Triage may close and reopen an issue it may not edit, so this is not `viewerCanUpdate`.
     setState:
       raw.issue === null ||
       (raw.issue.state === "CLOSED" ? raw.issue.viewerCanReopen : raw.issue.viewerCanClose),
-    comment: true,
+    // A locked conversation takes comments only from collaborators with write access.
+    comment: raw.issue?.locked !== true || canWrite,
     edit: canUpdate,
     labels: canTriage,
     assignees: canTriage,

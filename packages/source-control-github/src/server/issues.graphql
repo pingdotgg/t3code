@@ -76,6 +76,7 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
         }
       }
       body
+      locked
       viewerCanUpdate
       viewerCanClose
       viewerCanReopen
