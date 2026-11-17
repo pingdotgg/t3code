@@ -484,6 +484,21 @@ describe("IssueService with a standalone tracker", () => {
         }),
       ).toMatchObject({ host: "github.com", writable: true });
 
+      const resolved = yield* bound
+        .resolveUrl("https://linear.app/acme/issue/ENG-1/issue-title", "web" as ProjectId)
+        .pipe(Effect.result);
+      expect(resolved).toMatchObject({
+        _tag: "Success",
+        success: {
+          projectId: "web",
+          tracker: LINEAR,
+          host: "linear.app",
+          scope: "ENG",
+          key: "ENG-1",
+          writable: true,
+        },
+      });
+
       // Unbound, the standalone scope is gone and its references are unsupported.
       listed.length = 0;
       const unbound = yield* makeService({ projects, trackers });
