@@ -767,11 +767,11 @@ type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: (input?: {
-    readonly maxRunningTitleGenerations?: number;
+    readonly maxRunningPerSlowEffectType?: number;
   }) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly nextClaimableAt: (input?: {
-    readonly maxRunningTitleGenerations?: number;
+    readonly maxRunningPerSlowEffectType?: number;
   }) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
@@ -1060,8 +1060,9 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       const livenessPollIntervalMs = Number.isFinite(requestedLivenessPollIntervalMs)
         ? Math.max(1, Math.floor(requestedLivenessPollIntervalMs))
         : DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS;
-      // Title generation can run for minutes; leave at least one worker free for turn work.
-      const claimLimits = concurrency > 1 ? { maxRunningTitleGenerations: concurrency - 1 } : {};
+      // Title generation can run for minutes and captures queue on a per-cwd lock while holding a
+      // worker; neither may take the last worker away from turn work.
+      const claimLimits = concurrency > 1 ? { maxRunningPerSlowEffectType: concurrency - 1 } : {};
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
