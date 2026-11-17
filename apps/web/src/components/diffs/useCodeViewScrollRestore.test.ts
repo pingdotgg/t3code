@@ -1,5 +1,5 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createCodeViewScrollRestore } from "./useCodeViewScrollRestore";
 
@@ -9,10 +9,13 @@ const LINE_HEIGHT = 20;
 function viewer(tops: Record<string, number>, collapsed: readonly string[] = []) {
   const items = new Map(Object.entries(tops));
   const instance = {
+    scrollTop: 0,
+    rendered: null as string[] | null,
     getHeight: () => 500,
+    getScrollTop: () => instance.scrollTop,
     getTopForItem: (id: string) => items.get(id),
     getRenderedItems: () =>
-      [...items.keys()].map((id) => ({
+      (instance.rendered ?? [...items.keys()]).map((id) => ({
         id,
         instance: {
           getNumericScrollAnchor: (localTop: number) => {
@@ -46,13 +49,32 @@ function mount(
   return restore;
 }
 
+function setup() {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  const runFrames = () => {
+    while (frames.length > 0) frames.shift()?.(0);
+  };
+  const scroll = (
+    restore: ReturnType<typeof mount>,
+    view: ReturnType<typeof viewer>,
+    top: number,
+  ) => {
+    view.instance.scrollTop = top;
+    restore.onScroll(top, view.instance);
+    runFrames();
+  };
+  return { runFrames, scroll };
+}
+
 describe("createCodeViewScrollRestore", () => {
   it("puts a remounted viewer back on its scope's file and line, not its pixel offset", () => {
+    const { scroll } = setup();
     const first = viewer({ a: 0, b: 4000, c: 9000 });
     // 104px into file b: line 7 is the first under the sticky header, 16px below its edge.
-    mount("thread-a", first).onScroll(4104, first.instance);
+    scroll(mount("thread-a", first), first, 4104);
     const other = viewer({ a: 0, b: 4000 });
-    mount("thread-b", other).onScroll(1200, other.instance);
+    scroll(mount("thread-b", other), other, 1200);
 
     // The remounted viewer estimates file a shorter, so file b starts elsewhere.
     const again = viewer({ a: 0, b: 2500, c: 6000 });
@@ -62,16 +84,35 @@ describe("createCodeViewScrollRestore", () => {
     ]);
   });
 
+  it("reads the anchor from the viewport Pierre renders after the scroll, not the one before", () => {
+    const { runFrames } = setup();
+    const first = viewer({ a: 0, b: 4000, c: 8000 });
+    first.instance.rendered = ["a"];
+    const restore = mount("thread-e", first);
+    // A scrollbar jump notifies before the viewer renders file c.
+    first.instance.scrollTop = 8104;
+    restore.onScroll(8104, first.instance);
+    first.instance.rendered = ["c"];
+    runFrames();
+
+    const again = viewer({ a: 0, b: 2500, c: 6000 });
+    mount("thread-e", again);
+    expect(again.scrolls).toEqual([
+      { type: "line", id: "c", align: "start", lineNumber: 7, offset: 16 },
+    ]);
+  });
+
   it("loads more files until the anchored file has loaded, then falls back to the file", () => {
+    const { scroll } = setup();
     const first = viewer({ a: 0, b: 4000 });
-    mount("thread-c", first).onScroll(4104, first.instance);
+    scroll(mount("thread-c", first), first, 4104);
 
     const loading = viewer({ a: 0 });
     let batches = 0;
     const restore = mount("thread-c", loading, false, () => {
       batches += 1;
     });
-    restore.onScroll(0, loading.instance);
+    scroll(restore, loading, 0);
     restore.flush();
     expect(loading.scrolls).toEqual([]);
     expect(batches).toBe(2);
@@ -92,9 +133,10 @@ describe("createCodeViewScrollRestore", () => {
   });
 
   it("forgets a position that a reveal or collapsing every file replaced", () => {
+    const { scroll } = setup();
     const first = viewer({ a: 0, b: 4000 });
     const restore = mount("thread-d", first);
-    restore.onScroll(4104, first.instance);
+    scroll(restore, first, 4104);
     restore.discard();
 
     const again = viewer({ a: 0, b: 4000 });

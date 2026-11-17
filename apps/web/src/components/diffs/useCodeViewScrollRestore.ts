@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 interface Viewer {
   getHeight(): number;
+  getScrollTop(): number;
   getRenderedItems(): readonly {
     id: string;
     instance: {
@@ -71,6 +72,15 @@ export function createCodeViewScrollRestore() {
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
   let pending: ScrollAnchor | null = null;
+  let captureQueued = false;
+  const capture = (source: object) => {
+    captureQueued = false;
+    if (!handle || source !== viewer || pending !== null || scopeKey === null) return;
+    const scrollTop = viewer.getScrollTop();
+    const anchor = anchorAt(viewer, scrollTop);
+    if (anchor) anchorByScopeKey.set(scopeKey, anchor);
+    else if (scrollTop <= 0) anchorByScopeKey.delete(scopeKey);
+  };
   const flush = () => {
     if (pending === null || !viewer || !handle || viewer.getHeight() === 0) return;
     const item = handle.getItem(pending.id);
@@ -103,11 +113,12 @@ export function createCodeViewScrollRestore() {
       }
       flush();
     },
-    onScroll(scrollTop: number, source: object) {
-      if (!viewer || source !== viewer || pending !== null || scopeKey === null) return;
-      const anchor = anchorAt(viewer, scrollTop);
-      if (anchor) anchorByScopeKey.set(scopeKey, anchor);
-      else anchorByScopeKey.delete(scopeKey);
+    onScroll(_scrollTop: number, source: object) {
+      if (source !== viewer || pending !== null || captureQueued) return;
+      captureQueued = true;
+      // Pierre notifies before it renders the new viewport in the next frame, so the rendered
+      // items are read in the frame after that.
+      requestAnimationFrame(() => requestAnimationFrame(() => capture(source)));
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {
