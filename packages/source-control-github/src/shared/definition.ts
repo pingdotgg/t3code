@@ -7,6 +7,7 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
   repositoryUrlFromPagePath,
   projectChangeRequestHost,
@@ -14,7 +15,7 @@ import {
   type SourceControlAppSignIn,
 } from "@t3tools/source-control-core/shared/definition";
 
-import { gitHubMediaUrl } from "./gitHubMedia.ts";
+import { gitHubMediaUrl, gitHubRawFileUrl } from "./gitHubMedia.ts";
 import { icon } from "./icon.ts";
 import { gitHubReferenceAutolinks } from "./referenceAutolinks.ts";
 
@@ -100,6 +101,8 @@ export const definition = defineSourceControl({
   parseCommitUrl: (url, known) =>
     known || isGitHubHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  // `/issues/` is too generic a path to believe from a host that is not GitHub's.
+  parseIssueUrl: (url) => (isGitHubHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null),
   repositoryUrlFromPage: (url) =>
     isGitHubHost(url.hostname) ? repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH) : null,
   // GitHub writes every bare reference through `/issues/`, including pull requests.
@@ -157,5 +160,6 @@ export const definition = defineSourceControl({
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   mediaUrl: gitHubMediaUrl,
+  rawFileUrl: gitHubRawFileUrl,
   settings,
 });

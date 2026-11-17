@@ -7,7 +7,17 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -54,12 +64,16 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
+  importContextFragment,
+  literalText = false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  literalText?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -78,6 +92,8 @@ function Composer({
       }}
       onPaste={() => {}}
       onCommandKeyDown={onCommandKeyDown}
+      importContextFragment={importContextFragment}
+      literalText={literalText}
     />
   );
 }
@@ -467,6 +483,70 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+// regression: #25180 Tiptap's paste rules styled the pasted text a second time
+it.each([
+  "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+  "see `**x**` now",
+])("sends pasted %s as pasted", async (pasted) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+it.each([
+  { literalText: false, imports: 1 },
+  { literalText: true, imports: 0 },
+])(
+  "imports a copied snapshot's context over its image file: %o",
+  async ({ literalText, imports }) => {
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: ComposerContextId.make("image_snapshot"),
+      label: "shot.png",
+      attachmentId: "snapshot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } satisfies ComposerContextRecord;
+    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    await using screen = await render(
+      <Composer
+        value=""
+        richTextEnabled
+        skills={[]}
+        literalText={literalText}
+        importContextFragment={importContextFragment}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(
+        new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      );
+      clipboardData.setData("text/plain", formatComposerContextReference(record));
+      clipboardData.setData(
+        COMPOSER_CONTEXT_CLIPBOARD_MIME,
+        encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("snapshot-source") },
+          records: [record],
+        })!,
+      );
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+  },
+);
+
 it.each(["x\r\n\r\ny", "x\r\ry"])(
   "pastes %j with the same blank line as x\\n\\ny",
   async (text) => {
@@ -516,6 +596,23 @@ async function focusAt(editor: Editor, position: number | "end") {
   await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
   vi.runOnlyPendingTimers();
 }
+
+it("reopens a long draft scrolled to its caret without taking focus", async () => {
+  // App CSS is not loaded here; give the editor its own scroll box.
+  const style = document.head.appendChild(document.createElement("style"));
+  // The bottom padding stands in for space reserved under overlaid controls.
+  style.textContent =
+    ".composer-tiptap { max-height: 120px; overflow-y: auto; padding-bottom: 48px; }";
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const value = Array.from({ length: 40 }, (_, line) => `line ${line + 1}`).join("\n");
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  const scroller = editor.view.dom;
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+  expect(document.activeElement).not.toBe(scroller);
+  const caret = editor.view.coordsAtPos(editor.state.selection.head);
+  expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
+});
 
 describe("Markdown markers around styled text", () => {
   it.each([
@@ -598,6 +695,31 @@ describe("Markdown markers around styled text", () => {
       keys: "{Shift>}{Enter}{/Shift}",
       expected: "**bo**\n**ld** after",
       marks: { bold: ["bo", "ld"] },
+    },
+    {
+      name: "a line break after typed inline code leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "`Test`{Shift>}{Enter}{/Shift}f",
+      expected: "`Test`\nf",
+      marks: { code: ["Test"] },
+    },
+    {
+      name: "a line break after typed bold leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "**Test**{Shift>}{Enter}{/Shift}f",
+      expected: "**Test**\nf",
+      marks: { bold: ["Test"] },
+    },
+    {
+      name: "bold turned on after typed bold carries across a line break",
+      value: "",
+      caret: 1,
+      keys: `**Test**${isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}"}{Shift>}{Enter}{/Shift}f`,
+      expected: "**Test**\n**f**",
+      // The caret beside f shows it as source.
+      marks: { bold: ["Test"] },
     },
     {
       name: "splitting a list item inside bold keeps both halves bold",

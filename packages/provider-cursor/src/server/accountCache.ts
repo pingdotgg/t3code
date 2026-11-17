@@ -25,8 +25,13 @@ interface CursorFetchRange {
 export function isCursorCacheFresh(
   cache: CursorAccountCache | undefined,
   nowMs: number,
+  retentionStartMs: number,
 ): cache is CursorAccountCache {
-  return cache !== undefined && nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS;
+  return (
+    cache !== undefined &&
+    cache.sinceMs <= retentionStartMs &&
+    nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS
+  );
 }
 
 export function cursorFetchRange(
@@ -61,6 +66,7 @@ export function mergeCursorFetch(
   }
   const changed =
     cache === undefined ||
+    cache.sinceMs > retentionStartMs ||
     pruned ||
     replacedKeys.size !== added.length ||
     added.some((record) => !replacedKeys.has(record.dedupeKey));
@@ -82,8 +88,8 @@ export function mergeCursorFetch(
 }
 
 /** Versioned files isolate caches for different server versions sharing a state directory. */
-export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v1.json";
-const CURSOR_ACCOUNT_CACHE_VERSION = 1;
+export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v2.json";
+const CURSOR_ACCOUNT_CACHE_VERSION = 2;
 
 type SerializedRecord = readonly [
   timestampMs: number,
