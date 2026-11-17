@@ -84,19 +84,18 @@ export function SubagentTooltipContent(props: {
             descriptor.type === "boolean" &&
             typeof saved?.value === "boolean"
           ) {
-            return getTraitsSpeedDisplay(provider.driver, {
+            return getTraitsSpeedDisplay({
               ...descriptor,
               currentValue: saved.value,
             });
           }
           if (
-            provider.driver === "codex" &&
             descriptor.id === "serviceTier" &&
             descriptor.type === "select" &&
             typeof saved?.value === "string" &&
             descriptor.options.some((option) => option.id === saved.value)
           ) {
-            return getTraitsSpeedDisplay(provider.driver, {
+            return getTraitsSpeedDisplay({
               ...descriptor,
               currentValue: saved.value,
             });
@@ -130,7 +129,7 @@ export function SubagentTooltipContent(props: {
             showBadge={showInstanceBadge && entry?.accentColor !== undefined}
             badgeContent="none"
             badgeClassName="h-2 min-w-2 px-0"
-            iconClassName="size-3 shrink-0 grayscale opacity-60"
+            iconClassName="size-3 shrink-0 opacity-60"
           />
         ) : (
           <BotIcon className="size-3 shrink-0" />

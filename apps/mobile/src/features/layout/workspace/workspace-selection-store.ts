@@ -157,9 +157,8 @@ export async function launchWorkspaceURL(): Promise<string | null> {
   await metrics;
   const reopens = selections.threadsShown === true || workspaceHasColumns();
   if (!thread || !reopens || !workspaceSelectionCheck.thread(thread)) return null;
-  return Linking.createURL(
-    `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,
-  );
+  // createURL runs encodeURI over its path, which would encode each segment a second time.
+  return `${Linking.createURL("/")}threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }
 
 /** Whether the workspace shows its first detail page, directly above its list. */

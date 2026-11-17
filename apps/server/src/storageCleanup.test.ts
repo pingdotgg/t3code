@@ -2,17 +2,22 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import type * as Digest from "effect/crypto/Digest";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Sqlite from "./persistence/Sqlite.ts";
+import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
 import {
   DEFAULT_SERVER_SETTINGS,
   type WorktreeKeepWhen,
@@ -25,16 +30,20 @@ import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
+import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  CheckpointScopeId,
   EventId,
   ProjectId,
   ProviderDriverKind,
@@ -44,6 +53,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -204,6 +214,13 @@ describe("V2 storage cleanup eligibility", () => {
       idle: false,
     },
     {
+      name: "never armed because its reset is days overdue",
+      armed: false,
+      autoResumeSetting: true,
+      resetIn: -5 * DAY_MS,
+      idle: true,
+    },
+    {
       name: "not armed with recovery settings off",
       armed: false,
       settingsOff: true,
@@ -316,6 +333,7 @@ const cleanupFixture = (
     worktreeAfterDays: 8,
     worktreeOnDelete: true,
   },
+  sqlOverride?: SqlClient.SqlClient,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -345,9 +363,12 @@ const cleanupFixture = (
     let editBeforeRemoval = false;
     let openSessionCwd: string | null = null;
     let sessionLive = true;
+    let sessionLiveChecks = 0;
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
+    let scheduledThreadIds: string[] = [];
     let fullStatusCalls = 0;
+    let gitInspections = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -357,6 +378,7 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            gitInspections++;
             // Before Git's own clean check: inside `git worktree remove`, or on
             // Windows the same status check the removal makes before deleting.
             if (
@@ -414,46 +436,84 @@ const cleanupFixture = (
         getThreadShell: (threadId: ThreadId) =>
           Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
       } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        getShellSnapshot: (input?: { threadIds?: ReadonlyArray<ThreadId> }) =>
+          Effect.sync(() => ({
+            threads: threads.filter((thread) => input?.threadIds?.includes(thread.id) ?? true),
+            archivedThreads: [],
+          })),
+        dispatch: (command: OrchestrationV2ServerCommand) =>
+          Effect.sync(() => {
+            if (command.type === "thread.metadata.update" && command.branch != null) {
+              const branch = command.branch;
+              threads = threads.map((thread) =>
+                thread.id === command.threadId && thread.branch === command.expectedBranch
+                  ? { ...thread, branch }
+                  : thread,
+              );
+            }
+            return { sequence: 0, storedEvents: [] };
+          }),
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      Effect.provideService(GitWorkflowService.GitWorkflowService, {
+        currentBranch: (cwd: string) =>
+          command(cwd, ["branch", "--show-current"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+          ),
+      } as unknown as GitWorkflowService.GitWorkflowService["Service"]),
       Effect.provideService(ProviderSessionManager.ProviderSessionManagerV2, {
         isLive: () =>
-          Effect.sync(() => sessionLive).pipe(Effect.tap(() => Effect.suspend(() => onLiveCheck))),
+          Effect.sync(() => {
+            sessionLiveChecks++;
+            return sessionLive;
+          }).pipe(Effect.tap(() => Effect.suspend(() => onLiveCheck))),
       } as unknown as ProviderSessionManager.ProviderSessionManagerV2["Service"]),
       Effect.provideService(Orchestrator.OrchestratorV2, {
         streamDomainEvents: Stream.suspend(() => events),
       } as unknown as Orchestrator.OrchestratorV2["Service"]),
-      Effect.provideService(SqlClient.SqlClient, ((strings: TemplateStringsArray) =>
-        Effect.sync(() =>
-          openSessionCwd !== null && strings.join("").includes("projection_provider_sessions")
-            ? [
-                {
-                  payload_json: JSON.stringify({
-                    id: "session-1",
-                    driver: "codex",
-                    providerInstanceId: "codex",
-                    status: "ready",
-                    cwd: openSessionCwd,
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: "2026-06-01T12:00:00.000Z",
-                    updatedAt: "2026-06-01T12:00:00.000Z",
-                    lastError: null,
-                  }),
-                },
-              ]
-            : outboxStatus !== null && strings.join("").includes("orchestration_v2_effect_outbox")
-              ? [{ status: outboxStatus }]
-              : strings.join("").includes("deleted_at IS NOT NULL")
-                ? deletedThreads.map((thread) => ({
-                    payload_json: JSON.stringify(thread),
-                    workspaceRoot: repo,
-                  }))
-                : strings.join("").includes('AS "worktreePath"')
+      Effect.provideService(
+        SqlClient.SqlClient,
+        sqlOverride ??
+          (((strings: TemplateStringsArray) =>
+            Effect.sync(() =>
+              strings.join("").includes("retained_checkpoint_threads")
+                ? []
+                : openSessionCwd !== null &&
+                    strings.join("").includes("projection_provider_sessions")
                   ? [
-                      ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                      ...storedWorktreePaths,
-                    ].map((worktreePath) => ({ worktreePath }))
-                  : [],
-        )) as unknown as SqlClient.SqlClient),
+                      {
+                        payload_json: JSON.stringify({
+                          id: "session-1",
+                          driver: "codex",
+                          providerInstanceId: "codex",
+                          status: "ready",
+                          cwd: openSessionCwd,
+                          model: null,
+                          capabilities: CodexProviderCapabilitiesV2,
+                          createdAt: "2026-06-01T12:00:00.000Z",
+                          updatedAt: "2026-06-01T12:00:00.000Z",
+                          lastError: null,
+                        }),
+                      },
+                    ]
+                  : outboxStatus !== null &&
+                      strings.join("").includes("orchestration_v2_effect_outbox")
+                    ? [{ status: outboxStatus }]
+                    : strings.join("").includes("deleted_at IS NOT NULL")
+                      ? deletedThreads.map((thread) => ({
+                          payload_json: JSON.stringify(thread),
+                          workspaceRoot: repo,
+                        }))
+                      : strings.join("").includes('AS "worktreePath"')
+                        ? [
+                            ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                            ...storedWorktreePaths,
+                          ].map((worktreePath) => ({ worktreePath }))
+                        : strings.join("").includes("scheduled_tasks")
+                          ? scheduledThreadIds.map((threadId) => ({ threadId }))
+                          : [],
+            )) as unknown as SqlClient.SqlClient),
+      ),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
@@ -512,11 +572,15 @@ const cleanupFixture = (
       setThreads: (next: typeof threads) => {
         threads = next;
       },
+      threadBranches: () => threads.map((thread) => thread.branch),
       setOnLiveCheck: (hook: Effect.Effect<void>) => {
         onLiveCheck = hook;
       },
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
+      },
+      setScheduledThreadIds: (next: string[]) => {
+        scheduledThreadIds = next;
       },
       setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
         deletedThreads = next;
@@ -549,8 +613,10 @@ const cleanupFixture = (
             ...paths,
           },
         }) ?? Effect.void,
+      gitInspections: () => gitInspections,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
+      sessionLiveChecks: () => sessionLiveChecks,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -583,17 +649,249 @@ const cleanupTestLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "storage-cleanup-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+const annexWorktree = Effect.fnUntraced(function* (
+  fixture: Effect.Success<ReturnType<typeof cleanupFixture>>,
+  worktree: string,
+) {
+  const adminDir = (yield* fixture.command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout;
+  yield* fixture.fs.remove(`${worktree}/.git`);
+  yield* fixture.fs.symlink(adminDir.trim(), `${worktree}/.git`);
+});
+
 const runCleanupTest = <A, E>(
   effect: Effect.Effect<
     A,
     E,
     | FileSystem.FileSystem
+    | Digest.Digest
     | ServerConfig.ServerConfig
     | GitVcsDriver.GitVcsDriver
     | Path.Path
     | Scope.Scope
   >,
-) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
+) => effect.pipe(Effect.provide(cleanupTestLayer));
+
+const legacyCheckpointRef = (threadId: string, turn: number) =>
+  `refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turn}`;
+
+const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const fixture = yield* cleanupFixture(DEFAULT_SERVER_SETTINGS.storageCleanup, sql);
+  const { repo, worktree, command } = fixture;
+  const timestamp = DateTime.formatIso(at(0));
+  yield* sql`INSERT INTO projection_projects ${sql.insert({
+    project_id: "project-1",
+    title: "Checkpoint cleanup",
+    workspace_root: repo,
+    scripts_json: "[]",
+    created_at: timestamp,
+    updated_at: timestamp,
+    deleted_at: timestamp,
+  })}`;
+  const addThread = Effect.fn("test.addCheckpointThread")(function* (
+    id: string,
+    options: { deleted?: boolean; archived?: boolean; source?: string; legacyOnly?: boolean } = {},
+  ) {
+    const scopeId = CheckpointScopeId.make(`scope:${id}`);
+    yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
+      thread_id: id,
+      project_id: "project-1",
+      title: id,
+      default_provider: "codex",
+      runtime_mode: "full-access",
+      interaction_mode: "default",
+      created_at: timestamp,
+      updated_at: timestamp,
+      archived_at: options.archived ? timestamp : null,
+      deleted_at: options.deleted ? timestamp : null,
+      payload_json: JSON.stringify({
+        worktreePath: worktree,
+        forkedFrom: options.source ? { type: "run", threadId: options.source } : null,
+      }),
+    })}`;
+    if (!options.legacyOnly)
+      yield* sql`INSERT INTO orchestration_v2_projection_checkpoint_scopes ${sql.insert({
+        scope_id: scopeId,
+        thread_id: id,
+        node_id: `node:${id}`,
+        kind: "root_run",
+        ordinal_within_parent: 0,
+        advances_app_run_count: 1,
+        created_at: timestamp,
+        payload_json: JSON.stringify({ cwd: worktree }),
+      })}`;
+    const refs: string[] = options.legacyOnly
+      ? [legacyCheckpointRef(id, 0)]
+      : [
+          yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 0 }),
+          yield* checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 1 }),
+          legacyCheckpointRef(id, 0),
+        ];
+    for (const ref of refs) yield* command(repo, ["update-ref", ref, "HEAD"]);
+    return refs;
+  });
+  const listRefs = () =>
+    git
+      .execute({
+        operation: "cleanup-test.list-checkpoints",
+        cwd: repo,
+        args: ["for-each-ref", "--format=%(refname)", "refs/t3/"],
+        maxOutputBytes: 16 * 1024 * 1024,
+      })
+      .pipe(Effect.map(({ stdout }) => stdout.trim().split("\n").filter(Boolean).sort()));
+  return { ...fixture, sql, addThread, listRefs };
+});
+
+describe("checkpoint ref cleanup", () => {
+  it.live("prunes refs owned by deleted threads after their worktree is removed", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, repo, worktree, command, addThread, listRefs } =
+          yield* checkpointCleanupFixture();
+        yield* addThread("deleted", { deleted: true });
+        yield* addThread("imported-deleted", { deleted: true, legacyOnly: true });
+        const retained = [
+          ...(yield* addThread("active")),
+          ...(yield* addThread("archived", { archived: true })),
+          legacyCheckpointRef("unknown-owner", 0),
+        ];
+        yield* command(repo, ["update-ref", retained.at(-1)!, "HEAD"]);
+        yield* command(repo, ["pack-refs", "--all"]);
+        yield* command(repo, ["worktree", "remove", worktree]);
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual(retained.sort());
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  it.live("keeps deleted fork ancestry while a live or archived descendant needs it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, sql, addThread, listRefs } = yield* checkpointCleanupFixture();
+        const root = yield* addThread("root", { deleted: true });
+        const intermediate = yield* addThread("intermediate", { deleted: true, source: "root" });
+        const child = yield* addThread("child", { archived: true, source: "intermediate" });
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([...root, ...intermediate, ...child].sort());
+        yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'deleted' WHERE thread_id = 'child'`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  it.live("waits for a deleted thread's pending checkpoint effects", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, sql, addThread, listRefs } = yield* checkpointCleanupFixture();
+        const refs = yield* addThread("capturing", { deleted: true });
+        yield* sql`INSERT INTO orchestration_v2_effect_outbox ${sql.insert({
+          effect_id: "capture",
+          command_id: "capture",
+          thread_id: "capturing",
+          effect_type: "checkpoint.capture",
+          payload_json: "{}",
+          status: "running",
+          available_at: "2026-01-01T00:00:00Z",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        })}`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual(refs.toSorted());
+        yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  it.live("deletes a symbolic checkpoint ref without its target or neighbouring refs", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, repo, command, addThread, listRefs } = yield* checkpointCleanupFixture();
+        const refs = yield* addThread("deleted", { deleted: true });
+        yield* command(repo, ["symbolic-ref", refs[0]!, "refs/heads/main"]);
+        const retained = [
+          "refs/t3/unrelated/0",
+          `${refs[1]}-other`,
+          refs[1]!.replace(/1$/, "2/nested"),
+        ];
+        for (const ref of retained) yield* command(repo, ["update-ref", ref, "HEAD"]);
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual(retained.sort());
+        yield* command(repo, ["show-ref", "--verify", "refs/heads/main"]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  it.live("cleans more checkpoint refs than default git output holds", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, repo, addThread, listRefs } = yield* checkpointCleanupFixture();
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const prefix = (yield* addThread("many-checkpoints", { deleted: true }))[0]!.slice(0, -1);
+        yield* git.execute({
+          operation: "cleanup-test.seed-checkpoints",
+          cwd: repo,
+          args: ["update-ref", "--stdin"],
+          stdin: Array.from(
+            { length: 12_283 },
+            (_, ordinal) => `update ${prefix}${ordinal} HEAD\n`,
+          ).join(""),
+        });
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+});
+
+it.live.each(["repository", "uppercase", "bare"] as const)(
+  "keeps a worktree holding an ignored nested %s",
+  (kind) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy("tracked-changes");
+        const nested = `${worktree}/dist/nested`;
+        if (kind === "uppercase") {
+          yield* command(repo, ["worktree", "add", "-b", "nested", nested]);
+        } else {
+          yield* command(repo, [
+            "clone",
+            "--no-hardlinks",
+            ...(kind === "bare" ? ["--bare"] : []),
+            repo,
+            nested,
+          ]);
+        }
+        if (kind === "uppercase") yield* fs.rename(`${nested}/.git`, `${nested}/.GIT`);
+        yield* fs.writeFileString(`${nested}/uncommitted.txt`, "irreplaceable work\n");
+        expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+        const report = yield* service.runNow;
+        expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+          outcome: "kept",
+          reason: "Contains a nested Git repository",
+        });
+        expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("irreplaceable work\n");
+        expect(
+          (yield* command(nested, [
+            ...(kind === "uppercase"
+              ? [
+                  `--git-dir=${(yield* fs.readFileString(`${nested}/.GIT`)).trim().slice(8)}`,
+                  "--work-tree=.",
+                ]
+              : []),
+            "-c",
+            "safe.bareRepository=all",
+            "rev-parse",
+            "--is-bare-repository",
+          ])).stdout.trim(),
+        ).toBe(String(kind === "bare"));
+      }),
+    ),
+);
 
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
@@ -619,11 +917,71 @@ const submoduleCleanupFixture = () =>
     return { ...fixture, submodule, child, recordSubmodules };
   });
 
+it.live("inspects a pnpm store excluded from reclaimed bytes for nested repositories", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+      setPolicy("tracked-changes");
+      const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-store-" });
+      const nested = `${worktree}/node_modules/.pnpm/nested`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
+      yield* fs.writeFileString(
+        `${worktree}/node_modules/.modules.yaml`,
+        JSON.stringify({ storeDir, virtualStoreDir: ".pnpm" }),
+      );
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Contains a nested Git repository",
+      });
+      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
+
+it.live("keeps an ignored repository inside a registered submodule", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, worktree, submodule, command, setPolicy } =
+        yield* submoduleCleanupFixture();
+      setPolicy("tracked-changes");
+      const nested = `${submodule}/dist/nested`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
+      yield* fs.writeFileString(`${nested}/uncommitted.txt`, "keep me");
+      const report = yield* service.runNow;
+      expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+        outcome: "kept",
+        reason: "Contains a nested Git repository",
+      });
+      expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
+
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, repo, worktree, submodule, command, recordSubmodules } =
-        yield* submoduleCleanupFixture();
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      let editedDuringClean = false;
+      const { service, repo, worktree, submodule, command, recordSubmodules, setPolicy } =
+        yield* submoduleCleanupFixture().pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, {
+            ...git,
+            execute: (input) =>
+              git.execute(input).pipe(
+                Effect.tap(() => {
+                  if (input.args[0] !== "clean") return Effect.void;
+                  editedDuringClean = true;
+                  return fs.writeFileString(`${input.cwd}/tracked.txt`, "late edit\n");
+                }),
+              ),
+          }),
+        );
+      setPolicy("tracked-changes");
+      yield* fs.writeFileString(`${worktree}/notes.txt`, "untracked\n");
+      yield* fs.writeFileString(`${worktree}/.env`, "ignored\n");
       yield* command(submodule, [
         "-c",
         "protocol.file.allow=always",
@@ -632,10 +990,55 @@ it.live("removes clean submodules recursively, including deinitialized repositor
         repo,
         "stored",
       ]);
+      const legacy = `${worktree}/legacy`;
+      yield* command(repo, ["clone", "--no-hardlinks", repo, legacy]);
+      yield* command(worktree, ["submodule", "add", repo, "legacy"]);
+      expect((yield* fs.stat(`${legacy}/.git`)).type).toBe("Directory");
+      yield* command(legacy, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        repo,
+        "child",
+      ]);
+      yield* command(legacy, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        repo,
+        "stored",
+      ]);
+      yield* command(legacy, [
+        "-c",
+        "user.name=Cleanup test",
+        "-c",
+        "user.email=cleanup@example.test",
+        "commit",
+        "-am",
+        "record legacy children",
+      ]);
+      yield* command(legacy, ["push", "origin", "HEAD:legacy"]);
+      yield* command(legacy, ["submodule", "deinit", "stored"]);
       yield* recordSubmodules();
       yield* command(submodule, ["submodule", "deinit", "stored"]);
+      const checkpoint = (yield* command(submodule, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "HEAD",
+        "-m",
+        "checkpoint",
+      ])).stdout.trim();
+      yield* command(submodule, [
+        "update-ref",
+        "refs/t3/orchestration-v2/checkpoints/test",
+        checkpoint,
+      ]);
       const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       const report = yield* service.runNow;
+      expect(editedDuringClean).toBe(false);
       expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
         outcome: "removed",
       });
@@ -741,15 +1144,21 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
 it.live("keeps submodules when stored repository metadata is malformed", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, worktree, submodule, child, command } = yield* submoduleCleanupFixture();
+      const { service, fs, worktree, submodule, child, command, setPolicy } =
+        yield* submoduleCleanupFixture();
+      setPolicy("tracked-changes");
       const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       yield* command(submodule, ["submodule", "deinit", "child"]);
       yield* fs.writeFileString(`${childGit}/HEAD`, "not a ref\n");
+      yield* fs.writeFileString(`${worktree}/notes.txt`, "keep while the worktree stays\n");
       expect(
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("inspected") });
       expect(yield* fs.exists(worktree)).toBe(true);
       expect(yield* fs.readFileString(`${childGit}/HEAD`)).toBe("not a ref\n");
+      expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe(
+        "keep while the worktree stays\n",
+      );
     }),
   ),
 );
@@ -869,10 +1278,10 @@ describe("subagent worktree ownership", () => {
                   ? "Thread is running or has pending work"
                   : "Not settled",
       });
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
-  it.live.each([
+  it.effect.each([
     "parent-unsettled",
     "parent-resettled",
     "child-unsettled",
@@ -881,6 +1290,7 @@ describe("subagent worktree ownership", () => {
   ] as const)("cancels inherited settlement during measurement (%s)", (change) =>
     runCleanupTest(
       Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
         const fixture = yield* pausedMeasurementFixture({
           ...DEFAULT_SERVER_SETTINGS.storageCleanup,
           worktreeSettledAfterDays: 0,
@@ -937,6 +1347,8 @@ describe("subagent worktree ownership", () => {
   it.effect.each([
     "idle",
     "grandchild",
+    "branchless",
+    "branchless-running",
     "null-branch",
     "stale-branch",
     "isolated-owner",
@@ -968,7 +1380,7 @@ describe("subagent worktree ownership", () => {
         },
       });
       const root = shell({
-        branch: "feature",
+        branch: ["branchless", "branchless-running"].includes(scenario) ? null : "feature",
         worktreePath: fixture.worktree,
         settledAt: scenario === "child-settled-only" ? null : at(-20 * DAY_MS),
         ...(scenario === "isolated-owner" || scenario === "fork-owner"
@@ -1010,7 +1422,7 @@ describe("subagent worktree ownership", () => {
                 : "subagent",
           ...(scenario === "side-chat" ? { sideChat: true } : {}),
         },
-        status: scenario === "running" ? "running" : "completed",
+        status: ["running", "branchless-running"].includes(scenario) ? "running" : "completed",
         pendingBackgroundTasks: scenario === "pending" ? [{ taskId: "task", kind: "command" }] : [],
         latestRunCompletedAt:
           scenario === "recent-activity" || scenario === "recent-inactive"
@@ -1059,7 +1471,7 @@ describe("subagent worktree ownership", () => {
         outcome: removed ? "removed" : "kept",
         reason: removed
           ? "Settled for 20 days"
-          : scenario === "running" || scenario === "pending"
+          : ["running", "pending", "branchless-running"].includes(scenario)
             ? "Thread is running or has pending work"
             : shared
               ? "Shared by 2 threads"
@@ -1071,12 +1483,60 @@ describe("subagent worktree ownership", () => {
                     ? "Inactive for 2 of 8 days"
                     : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
                       ? "Settled moments ago"
-                      : "Not settled",
+                      : scenario === "branchless"
+                        ? "Thread has no branch"
+                        : "Not settled",
       });
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
-  it.live.each([
+  it.effect("keeps a checkout two top-level threads store through a symlinked parent", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeSettledAfterDays: 8,
+      });
+      const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+      yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+      const settled = { branch: "feature", settledAt: at(-20 * DAY_MS) };
+      fixture.setThreads([
+        shell({ ...settled, worktreePath: fixture.worktree }),
+        shell({ ...settled, id: ThreadId.make("other"), worktreePath: `${linkedParent}/feature` }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+      ]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect("keeps a checkout two top-level threads store in different case on Windows", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeSettledAfterDays: 8,
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      const settled = { branch: "feature", settledAt: at(-20 * DAY_MS) };
+      fixture.setThreads([
+        shell({ ...settled, worktreePath: fixture.worktree }),
+        shell({
+          ...settled,
+          id: ThreadId.make("other"),
+          worktreePath: fixture.worktree.toUpperCase(),
+        }),
+      ]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries).toEqual([
+        expect.objectContaining({ outcome: "kept", reason: "Shared by 2 threads" }),
+      ]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect.each([
     "running",
     "pending",
     "activity",
@@ -1088,6 +1548,7 @@ describe("subagent worktree ownership", () => {
   ] as const)("cancels removal when a child changes during measurement (%s)", (change) =>
     runCleanupTest(
       Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
         const fixture = yield* pausedMeasurementFixture();
         const root = shell({ branch: "feature", worktreePath: fixture.worktree });
         const child = {
@@ -1177,7 +1638,29 @@ describe("deleted thread worktrees", () => {
           reason: "Thread was deleted",
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect("leaves a deleted owner's subagent on the owner's saved branch", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnDelete: true,
+      });
+      const owner = parent(fixture.worktree);
+      fixture.setDeletedThreads([owner]);
+      fixture.setThreads([subagent(owner)]);
+      yield* fixture.command(fixture.worktree, ["switch", "-c", "renamed"]);
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        threadId: owner.id,
+        outcome: "kept",
+        reason: "Repository or branch changed",
+      });
+      // The deleted owner cannot follow, so moving its subagent would split their records.
+      expect(fixture.threadBranches()).toEqual(["feature"]);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
   it.effect("applies the remaining subagent's rules when deletion cleanup is off", () =>
@@ -1199,7 +1682,7 @@ describe("deleted thread worktrees", () => {
         reason: "Inactive for 30 days",
       });
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   // Releases one stopped-session event after the startup sweep and returns the snapshot reads it caused.
@@ -1258,7 +1741,7 @@ describe("deleted thread worktrees", () => {
       const fixture = yield* cleanupFixture();
       const reads = yield* stopSessionAfterStartupSweep(fixture, ThreadId.make("thread-1"));
       expect(reads, "a live thread's stopped session re-read every thread").toBe(0);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("removes a deleted thread's worktree once its session stops", () =>
@@ -1280,7 +1763,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBeGreaterThan(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("removes a deleted thread's worktree once a live thread's session in it stops", () =>
@@ -1310,7 +1793,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBeGreaterThan(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1356,7 +1839,7 @@ describe("deleted thread worktrees", () => {
         );
         expect(reads).toBeGreaterThan(0);
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1389,7 +1872,7 @@ describe("deleted thread worktrees", () => {
         );
         expect(reads).toBeGreaterThan(0);
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("does not sweep for a kept deleted worktree when a session elsewhere stops", () =>
@@ -1411,7 +1894,7 @@ describe("deleted thread worktrees", () => {
       );
       expect(reads).toBe(0);
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1441,7 +1924,7 @@ describe("deleted thread worktrees", () => {
           fixture.repo,
         );
         expect(reads).toBe(0);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect(
@@ -1515,7 +1998,7 @@ describe("deleted thread worktrees", () => {
         yield* Deferred.await(delivered);
         yield* fixture.service.drain;
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("waits out the settle grace of a subagent that just settled", () =>
@@ -1536,7 +2019,7 @@ describe("deleted thread worktrees", () => {
         reason: "Settled moments ago",
       });
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+    }).pipe(Effect.provide(cleanupTestLayer)),
   );
 });
 
@@ -1625,7 +2108,7 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.live.each(["nested", "direct"] as const)(
+  it.live.each(["nested", "direct", "annexed"] as const)(
     "reports a linked orphan's size without removing its files (%s)",
     (location) =>
       runCleanupTest(
@@ -1634,8 +2117,13 @@ describe("orphan worktree reports", () => {
           fixture.setThreads([]);
           const orphan = `${fixture.config.worktreesDir}/${location === "nested" ? "repository/" : ""}orphan`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
-          const sizes = yield* Effect.forEach(yield* fixture.fs.readDirectory(orphan), (name) =>
-            allocatedBytes(fixture.fs, `${orphan}/${name}`),
+          if (location === "annexed") yield* annexWorktree(fixture, orphan);
+          const sizes = yield* Effect.forEach(
+            // Links are not measured, and the annexed `.git` is one.
+            (yield* fixture.fs.readDirectory(orphan)).filter(
+              (name) => location !== "annexed" || name !== ".git",
+            ),
+            (name) => allocatedBytes(fixture.fs, `${orphan}/${name}`),
           );
           const outside = yield* fixture.fs.makeTempDirectoryScoped();
           yield* fixture.fs.writeFileString(`${outside}/external`, "outside data");
@@ -1745,6 +2233,57 @@ describe("orphan worktree reports", () => {
       ),
   );
 
+  it.live.each([
+    { home: "an installed", worktreeHome: false, customFolderOutcome: "removed" },
+    { home: "a git worktree's dev", worktreeHome: true, customFolderOutcome: "kept" },
+  ] as const)(
+    "on $home home, a custom worktrees folder ends $customFolderOutcome",
+    ({ worktreeHome, customFolderOutcome }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig.ServerConfig;
+          const checkout = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-dev-checkout-" });
+          yield* fs.writeFileString(`${checkout}/.git`, "gitdir: /repo/.git/worktrees/dev\n");
+          const baseDir = worktreeHome ? `${checkout}/.t3` : config.baseDir;
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(ServerConfig.ServerConfig, {
+              ...config,
+              baseDir,
+              worktreesDir: `${baseDir}/worktrees`,
+            }),
+          );
+          const customFolder = yield* fs.realPath(
+            yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-real-worktrees-" }),
+          );
+          const realWorktree = `${customFolder}/seeded`;
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "seeded", realWorktree]);
+          fixture.setSettings({ worktreesDirectory: customFolder });
+          fixture.setThreads([
+            shell({ branch: "feature", worktreePath: fixture.worktree }),
+            shell({
+              id: ThreadId.make("seeded"),
+              lineage: {
+                rootThreadId: ThreadId.make("seeded"),
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              branch: "seeded",
+              worktreePath: realWorktree,
+            }),
+          ]);
+
+          const { entries } = yield* fixture.service.runNow;
+
+          expect(entries.find((entry) => entry.path === realWorktree)?.outcome).toBe(
+            customFolderOutcome,
+          );
+          expect(yield* fs.exists(realWorktree)).toBe(customFolderOutcome === "kept");
+          expect(yield* fs.exists(fixture.worktree)).toBe(false);
+        }),
+      ),
+  );
+
   it.live("skips symbolic links at both directory levels and disabled cleanup", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -1787,6 +2326,71 @@ describe("orphan worktree reports", () => {
         ]);
         expect(report.bytesFreed).toBe(0);
         expect(yield* fixture.fs.readFileString(`${folder}/payload`)).toBe("leftover data");
+      }),
+    ),
+  );
+
+  it.live("reports linked worktrees nested deeper inside a plain folder", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const replay = `${fixture.config.worktreesDir}/repository/replay`;
+        const deep = `${fixture.config.worktreesDir}/repository/deep`;
+        const worktrees = [`${deep}/a/b`, `${replay}/1376`];
+        for (const [index, worktree] of worktrees.entries()) {
+          yield* fixture.command(fixture.repo, [
+            "worktree",
+            "add",
+            "-b",
+            `nested-${index}`,
+            worktree,
+          ]);
+        }
+        for (const folder of [...worktrees, `${deep}/a`, deep, replay]) {
+          yield* fixture.fs.utimes(folder, 1, 1);
+        }
+        const report = yield* fixture.service.runNow;
+        expect(
+          report.entries
+            .map((entry) => ({ path: entry.path, reason: entry.reason }))
+            .sort((left, right) => String(left.path).localeCompare(String(right.path))),
+        ).toEqual(worktrees.map((path) => ({ path, reason: "No thread uses this worktree" })));
+      }),
+    ),
+  );
+
+  it.live("still reports a plain folder whose nested worktree registration is stale", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const replay = `${fixture.config.worktreesDir}/repository/replay`;
+        const worktree = `${replay}/1376`;
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "locked", worktree]);
+        yield* fixture.command(fixture.repo, ["worktree", "lock", worktree]);
+        yield* fixture.fs.rename(worktree, `${replay}/moved`);
+        yield* fixture.fs.makeDirectory(worktree);
+        yield* fixture.fs.utimes(replay, 1, 1);
+        expect((yield* fixture.service.runNow).entries.map((entry) => entry.path)).toEqual([
+          replay,
+        ]);
+      }),
+    ),
+  );
+
+  it.live("does not report nested worktrees inside a project checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const project = `${fixture.config.worktreesDir}/repository/replay/project`;
+        const worktree = `${project}/nested`;
+        yield* fixture.fs.makeDirectory(project, { recursive: true });
+        fixture.setProjectRoots([fixture.repo, project]);
+        yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "nested", worktree]);
+        for (const folder of [worktree, project]) yield* fixture.fs.utimes(folder, 1, 1);
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
       }),
     ),
   );
@@ -1897,6 +2501,107 @@ describe("orphan worktree reports", () => {
 });
 
 describe("storage cleanup reports and local file policies", () => {
+  it.effect.each([true, false])(
+    "sweeps on runtime retirement rather than live error metadata, worktreeOnDelete=%s",
+    (worktreeOnDelete) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fixture = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: 8,
+            worktreeOnDelete,
+          });
+          fixture.setThreads([]);
+          fixture.setDeletedThreads([
+            shell({ branch: "feature", worktreePath: fixture.worktree, deletedAt: at(0) }),
+          ]);
+          yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "agent edit\n");
+          const events = yield* Queue.unbounded<{
+            readonly event: OrchestrationV2DomainEvent;
+            readonly processed: Deferred.Deferred<void>;
+          }>();
+          yield* fixture.activate(
+            Stream.fromQueue(events).pipe(
+              Stream.flatMap(({ event, processed }) =>
+                Stream.succeed(event).pipe(
+                  Stream.concat(
+                    // The next pull acknowledges that the listener handled this event.
+                    Stream.fromEffect(Deferred.succeed(processed, undefined)).pipe(Stream.drain),
+                  ),
+                ),
+              ),
+            ),
+          );
+          yield* fixture.service.reports.pipe(
+            Stream.filter((report) => report !== null),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          yield* fixture.service.drain;
+          const startupReads = fixture.snapshotReads();
+          const publish = Effect.fn("StorageCleanupTest.publish")(function* (
+            event: OrchestrationV2DomainEvent,
+          ) {
+            const processed = yield* Deferred.make<void>();
+            yield* Queue.offer(events, { event, processed });
+            yield* Deferred.await(processed);
+            yield* fixture.service.drain;
+          });
+          const sessionUpdated = (
+            status: "ready" | "error" | "stopped",
+            text: string,
+          ): OrchestrationV2DomainEvent => ({
+            id: EventId.make(`event:session:${status}:${text}`),
+            type: "provider-session.updated",
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: at(0),
+            payload: {
+              id: ProviderSessionId.make("session-1"),
+              driver: ProviderDriverKind.make("pi"),
+              providerInstanceId: ProviderInstanceId.make("pi"),
+              status,
+              cwd: fixture.worktree,
+              model: null,
+              capabilities: CodexProviderCapabilitiesV2,
+              extensionStatuses: text === "" ? [] : [{ key: "watch", text }],
+              createdAt: at(-DAY_MS),
+              updatedAt: at(0),
+              lastError: status === "error" ? "Rate limited" : null,
+            },
+          });
+          yield* publish(sessionUpdated("ready", "Watching"));
+          expect(fixture.snapshotReads()).toBe(startupReads);
+          expect(fixture.sessionLiveChecks()).toBe(0);
+          for (let index = 0; index < 5; index++) {
+            yield* publish(sessionUpdated("error", `Watching ${index} files`));
+            expect(fixture.snapshotReads()).toBe(startupReads);
+          }
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 5 : 0);
+
+          // Release removes the live entry before publishing its final error update.
+          fixture.setSessionLive(false);
+          yield* publish(sessionUpdated("error", ""));
+          expect(fixture.snapshotReads()).toBe(startupReads + Number(worktreeOnDelete));
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+
+          yield* publish(sessionUpdated("stopped", ""));
+          expect(fixture.snapshotReads()).toBe(startupReads + 2 * Number(worktreeOnDelete));
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+
+          fixture.setSessionLive(true);
+          yield* publish({
+            id: EventId.make("event:thread:deleted"),
+            type: "thread.deleted",
+            threadId: ThreadId.make("thread-1"),
+            occurredAt: at(0),
+            payload: { ...shell({ deletedAt: at(0) }), lastVisitedAt: null },
+          });
+          // Deletion always sweeps so the deleted thread's checkpoint refs are pruned.
+          expect(fixture.snapshotReads()).toBe(startupReads + 2 * Number(worktreeOnDelete) + 1);
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
+        }),
+      ),
+  );
   it.effect("automatically removes an eligible archived thread checkout", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -1932,18 +2637,153 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live.each(["before-check", "while-measuring"] as const)(
-    "keeps a worktree protected by a missing project root (%s)",
-    (timing) =>
+  it.effect("removes an idle No project thread's scratch folder past the retention", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const scratchRoot = `${fixture.config.baseDir}/scratch`;
+        const folder = `${scratchRoot}/quiet-otter`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        fixture.setProjectRoots([scratchRoot]);
+        fixture.setStoredWorktreePaths([]);
+        // Only this rule lets cleanup delete untracked files, which is all a scratch folder has.
+        fixture.setPolicy("tracked-changes");
+        fixture.setThreads([
+          shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: folder, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(folder)).toBe(false);
+      }),
+    ),
+  );
+  it.effect.each([
+    {
+      name: "a Git repository in a subfolder",
+      policy: "tracked-changes",
+      repository: "clone/.git",
+      reason: "Contains a nested Git repository",
+    },
+    {
+      name: "a Git repository of its own",
+      policy: "tracked-changes",
+      repository: ".git",
+      reason: "Contains a nested Git repository",
+    },
+    { name: "files under the default keep rule", reason: "Has local files (notes.md)" },
+    {
+      name: "a scheduled task",
+      policy: "tracked-changes",
+      scheduled: true,
+      reason: "Thread has a scheduled task",
+    },
+  ] as const)(
+    "keeps an idle No project thread's scratch folder with $name",
+    ({
+      policy,
+      repository,
+      scheduled,
+      reason,
+    }: {
+      readonly policy?: WorktreeKeepWhen;
+      readonly repository?: string;
+      readonly scheduled?: boolean;
+      readonly reason: string;
+    }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fixture = yield* cleanupFixture();
+          const scratchRoot = `${fixture.config.baseDir}/scratch`;
+          const folder = `${scratchRoot}/quiet-otter`;
+          yield* fixture.fs.makeDirectory(
+            repository === undefined ? folder : `${folder}/${repository}`,
+            { recursive: true },
+          );
+          yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+          // No thread owns this one, so it is listed and never removed.
+          const leftover = `${scratchRoot}/leftover`;
+          yield* fixture.fs.makeDirectory(leftover);
+          yield* fixture.fs.utimes(leftover, 1, 1);
+          fixture.setProjectRoots([scratchRoot]);
+          fixture.setStoredWorktreePaths([]);
+          if (policy !== undefined) fixture.setPolicy(policy);
+          if (scheduled) fixture.setScheduledThreadIds(["thread-1"]);
+          fixture.setThreads([
+            shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
+          ]);
+          const report = yield* fixture.service.runNow;
+          expect(
+            report.entries.map(({ path, outcome, reason }) => ({ path, outcome, reason })),
+          ).toEqual([
+            { path: leftover, outcome: "kept", reason: "No thread uses this folder" },
+            { path: folder, outcome: "kept", reason },
+          ]);
+          expect(yield* fixture.fs.exists(`${folder}/notes.md`)).toBe(true);
+        }),
+      ),
+  );
+  it.effect("keeps a thread's worktree folder that lost its .git link", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, archivedAt: at(-DAY_MS) }),
+        ]);
+        yield* fixture.fs.remove(`${fixture.worktree}/.git`);
+        yield* fixture.fs.makeDirectory(`${fixture.worktree}/node_modules`);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: fixture.worktree, outcome: "kept" }),
+        ]);
+        expect(yield* fixture.fs.exists(`${fixture.worktree}/node_modules`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("skips a stored worktree path whose parent is a regular file", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const legacyRoot = `${fixture.config.worktreesDir}/legacy-root`;
+        yield* fixture.fs.writeFileString(legacyRoot, "");
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: `${legacyRoot}/stored-workspace` }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([]);
+        expect(report.counts).toEqual({ removed: 0, kept: 0, failed: 0 });
+      }),
+    ),
+  );
+  it.live.each([
+    ["before-check", "stored"],
+    ["while-measuring", "stored"],
+    ["before-check", "symlinked parent"],
+    ["while-measuring", "symlinked parent"],
+  ] as const)(
+    "keeps a worktree protected by a missing project root (%s, %s spelling)",
+    ([timing, spelling]) =>
       runCleanupTest(
         Effect.gen(function* () {
           const fixture = yield* pausedMeasurementFixture();
+          let worktree = fixture.worktree;
+          if (spelling === "symlinked parent") {
+            const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+            yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+            worktree = `${linkedParent}/feature`;
+            fixture.setThreads([shell({ branch: "feature", worktreePath: worktree })]);
+          }
           if (timing === "before-check")
-            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+            fixture.setProjectRoots([fixture.repo, `${worktree}/removed-checkout`]);
           const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
           if (timing === "while-measuring") {
             yield* Deferred.await(fixture.measuring);
-            fixture.setProjectRoots([fixture.repo, `${fixture.worktree}/removed-checkout`]);
+            fixture.setProjectRoots([fixture.repo, `${worktree}/removed-checkout`]);
           }
           yield* Deferred.succeed(fixture.resume, undefined);
           const report = yield* Fiber.join(cleanup);
@@ -1993,9 +2833,14 @@ describe("storage cleanup reports and local file policies", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "pnpm-store-" });
+          const statted: string[] = [];
           const { service, worktree, setPolicy } = yield* cleanupFixture().pipe(
             Effect.provideService(FileSystem.FileSystem, {
               ...fs,
+              lstat: (target) => {
+                statted.push(target);
+                return fs.lstat(target);
+              },
               stat: (target) =>
                 fs
                   .stat(target)
@@ -2036,6 +2881,9 @@ describe("storage cleanup reports and local file policies", () => {
           );
           const report = yield* service.runNow;
           expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes });
+          expect(statted.includes(`${nodeModules}/.pnpm/pkg@1.0.0/index.js`)).toBe(
+            store !== "same-device",
+          );
         }),
       ),
   );
@@ -2069,7 +2917,78 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("still removes a worktree when measuring its size fails", () =>
+  it.effect.each([
+    { days: 8, reason: "Inactive for 1 of 8 days" },
+    { days: null, reason: "No rules apply" },
+  ])("keeps an ineligible age/delete-only worktree without Git ($days)", ({ days, reason }) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: days,
+          worktreeOnDelete: true,
+        });
+        fixture.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: fixture.worktree,
+            latestUserMessageAt: at(-DAY_MS),
+          }),
+        ]);
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "local edit\n");
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason,
+          bytes: null,
+        });
+        expect(fixture.gitInspections()).toBe(0);
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("lets a turn acquire the checkout during accounting and protects its new activity", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        yield* withWorkspaceLease(
+          fixture.worktree,
+          Effect.sync(() => {
+            fixture.setThreads([
+              shell({
+                branch: "feature",
+                worktreePath: fixture.worktree,
+                status: "running",
+              }),
+            ]);
+          }),
+        );
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(cleanup);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Thread activity or shared worktree changed since check",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("removes a worktree whose .git file git-annex replaced with a symlink", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const { service, worktree, fs } = fixture;
+        yield* annexWorktree(fixture, worktree);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+  );
+  it.live("keeps a worktree when the inspection cannot read its directories", () =>
     runCleanupTest(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -2080,13 +2999,48 @@ describe("storage cleanup reports and local file policies", () => {
           }),
         );
         const report = yield* service.runNow;
-        expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes: null, files: null });
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Worktree could not be fully inspected",
+          bytes: null,
+          files: null,
+        });
         expect(report.bytesFreed).toBe(0);
-        expect(yield* fs.exists(worktree)).toBe(false);
+        expect(yield* fs.exists(worktree)).toBe(true);
       }),
     ),
   );
-  it.live.each([
+  it.effect("removes a worktree owned by a repository other than the project root", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        const { fs, command, config } = fixture;
+        const oldRepo = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-old-repo-" }),
+        );
+        yield* command(oldRepo, ["init", "-b", "main"]);
+        yield* command(oldRepo, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(oldRepo, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${oldRepo}/tracked.txt`, "original\n");
+        yield* command(oldRepo, ["add", "."]);
+        yield* command(oldRepo, ["commit", "-m", "initial"]);
+        yield* fs.makeDirectory(`${config.worktreesDir}/old-repo`, { recursive: true });
+        const oldWorktree = `${config.worktreesDir}/old-repo/feature`;
+        yield* command(oldRepo, ["worktree", "add", "-b", "feature", oldWorktree]);
+        fixture.setThreads([shell({ branch: "feature", worktreePath: oldWorktree })]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries.find((entry) => entry.path === oldWorktree)).toMatchObject({
+          outcome: "removed",
+        });
+        expect(yield* fs.exists(oldWorktree)).toBe(false);
+        expect((yield* command(oldRepo, ["worktree", "list", "--porcelain"])).stdout).not.toContain(
+          oldWorktree,
+        );
+      }),
+    ),
+  );
+  it.effect.each([
     [
       "its owner's branch is cleared",
       (worktree: string) => [shell({ branch: null, worktreePath: worktree, updatedAt: at(0) })],
@@ -2123,6 +3077,7 @@ describe("storage cleanup reports and local file policies", () => {
   ] as const)("keeps a worktree when %s during size measurement", ([, threadsWhileMeasuring]) =>
     runCleanupTest(
       Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
         const fixture = yield* pausedMeasurementFixture();
         const { fs, worktree } = fixture;
         fixture.setPolicy("tracked-changes");
@@ -2140,6 +3095,20 @@ describe("storage cleanup reports and local file policies", () => {
         expect(report.bytesFreed).toBe(0);
         expect(yield* fs.exists(worktree)).toBe(true);
         expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe("untracked\n");
+      }),
+    ),
+  );
+  it.live("follows a branch switched while nothing watched the worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, worktree, command, threadBranches } = yield* cleanupFixture();
+        yield* command(worktree, ["switch", "-c", "renamed"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Repository or branch changed",
+        });
+        expect(threadBranches()).toEqual(["renamed"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
       }),
     ),
   );
@@ -2174,24 +3143,39 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps a worktree for a live session in a missing folder under its stored alias", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const linkedParent = `${yield* fixture.fs.makeTempDirectoryScoped({ prefix: "cleanup-link-" })}/worktrees`;
+        yield* fixture.fs.symlink(fixture.config.worktreesDir, linkedParent);
+        fixture.setThreads([shell({ branch: "feature", worktreePath: `${linkedParent}/feature` })]);
+        fixture.setOpenSessionCwd(`${linkedParent}/feature/removed-folder`);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Provider session is still open",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
   it.live("compares the checked-out branch without a full status", () =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, fs, repo, worktree, command, setThreads, fullStatusCalls } =
+        const { service, fs, repo, worktree, command, fullStatusCalls, threadBranches } =
           yield* cleanupFixture();
         const changed = { outcome: "kept", reason: "Repository or branch changed" };
         yield* command(worktree, ["checkout", "--detach"]);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* command(worktree, ["switch", "--orphan", "other"]);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
-        yield* command(worktree, ["switch", "-c", "(feature)", "feature"]);
-        setThreads([shell({ branch: "(feature)", worktreePath: worktree })]);
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
-        setThreads([shell({ branch: "feature", worktreePath: worktree })]);
         yield* command(worktree, ["tag", "feature", "feature"]);
         // Newer Git refuses to create a tag named HEAD, but still reads one.
         yield* command(worktree, ["update-ref", "refs/tags/HEAD", "refs/heads/feature"]);
         yield* command(worktree, ["switch", "feature"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
+        expect(threadBranches()).toEqual(["feature"]);
         const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
         yield* fs.writeFileString(`${index.trim()}.lock`, "");
         const locked = (yield* service.runNow).entries[0];
@@ -2258,7 +3242,7 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live.each([
+  it.effect.each([
     ["unchanged", "removed", "No commits beyond the project branch"],
     ["unmerged", "kept", "Has commits beyond the project branch"],
     ["detached", "kept", "Project branch is unavailable"],
@@ -2266,6 +3250,7 @@ describe("storage cleanup reports and local file policies", () => {
   ] as const)("cleans archived local-only worktrees: %s", ([state, outcome, reason]) =>
     runCleanupTest(
       Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
         const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
           ...DEFAULT_SERVER_SETTINGS.storageCleanup,
           worktreeUnchanged: state !== "merged-only",
@@ -2288,15 +3273,55 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps an unsettled new thread's unchanged worktree after its first turn", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSettledAfterDays: 11,
+          worktreeOnMerge: true,
+          worktreeUnchanged: true,
+        });
+        const now = yield* DateTime.now;
+        const minutesAgo = (minutes: number) => DateTime.subtract(now, { minutes });
+        const thread = shell({
+          branch: "feature",
+          worktreePath: worktree,
+          status: "completed",
+          createdAt: minutesAgo(40),
+          latestUserMessageAt: minutesAgo(40),
+          latestRunRequestedAt: minutesAgo(40),
+          latestRunStartedAt: minutesAgo(40),
+          latestRunCompletedAt: minutesAgo(20),
+          updatedAt: minutesAgo(20),
+        });
+        setThreads([thread]);
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+        expect(yield* fs.exists(worktree)).toBe(true);
+
+        setThreads([{ ...thread, settledAt: minutesAgo(10), updatedAt: minutesAgo(10) }]);
+        const settled = yield* service.runNow;
+        expect(settled.entries[0]).toMatchObject({
+          outcome: "removed",
+          reason: "No commits beyond the project branch",
+        });
+      }),
+    ),
+  );
   it.live(
     "discovers trunk without a remote HEAD or tracking ref and removes an integrated worktree",
     () =>
       runCleanupTest(
         Effect.gen(function* () {
-          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+          const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
             ...DEFAULT_SERVER_SETTINGS.storageCleanup,
             worktreeUnchanged: true,
           });
+          setThreads([
+            shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) }),
+          ]);
           const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
           yield* command(remote, ["init", "--bare", "-b", "trunk"]);
           yield* command(repo, ["remote", "add", "origin", remote]);
@@ -2318,10 +3343,13 @@ describe("storage cleanup reports and local file policies", () => {
     () =>
       runCleanupTest(
         Effect.gen(function* () {
-          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+          const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
             ...DEFAULT_SERVER_SETTINGS.storageCleanup,
             worktreeUnchanged: true,
           });
+          setThreads([
+            shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) }),
+          ]);
           const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
           yield* command(remote, ["init", "--bare", "-b", "trunk"]);
           yield* command(repo, ["remote", "add", "origin", remote]);
@@ -2346,10 +3374,11 @@ describe("storage cleanup reports and local file policies", () => {
   it.live("keeps the worktree when the remote default is unavailable even if main exists", () =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
           ...DEFAULT_SERVER_SETTINGS.storageCleanup,
           worktreeUnchanged: true,
         });
+        setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
         const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
         yield* command(remote, ["init", "--bare", "-b", "trunk"]);
         yield* command(repo, ["remote", "add", "origin", remote]);
@@ -2426,6 +3455,120 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fs.exists(worktree)).toBe(true);
       }),
     ),
+  );
+  it.live.each(["--assume-unchanged", "--skip-worktree"] as const)(
+    "keeps tracked edits that git status hides (%s)",
+    (flag) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* command(worktree, ["update-index", flag, "tracked.txt"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "hidden edit\n");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("hidden edit\n");
+        }),
+      ),
+  );
+  // macOS and Windows file systems reject names that are not valid UTF-8.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "keeps hidden edits to files whose names are not valid UTF-8",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          // Git unquotes C-quoted paths on stdin, which reaches a name a JS string cannot.
+          const quoted = '"bad-\\377.txt"';
+          const stdin = (args: string[], input: string) =>
+            git.execute({ operation: "cleanup-test", cwd: worktree, args, stdin: input });
+          const blob = (content: string) =>
+            stdin(["hash-object", "-w", "--stdin"], content).pipe(
+              Effect.map((result) => result.stdout.trim()),
+            );
+          const original = yield* blob("original\n");
+          yield* stdin(["update-index", "--index-info"], `100644 ${original}\t${quoted}\n`);
+          yield* stdin(["checkout-index", "--stdin"], `${quoted}\n`);
+          yield* command(worktree, ["commit", "-m", "bad name"]);
+          // The committed content moves on while the file on disk keeps the other version.
+          const edited = yield* blob("edited\n");
+          yield* stdin(["update-index", "--index-info"], `100644 ${edited}\t${quoted}\n`);
+          yield* command(worktree, ["commit", "-m", "edit"]);
+          yield* stdin(["update-index", "--assume-unchanged", "--stdin"], `${quoted}\n`);
+          expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect((yield* fs.readDirectory(worktree)).some((name) => name.startsWith("bad-"))).toBe(
+            true,
+          );
+        }),
+      ),
+  );
+  it.live("removes worktrees whose flagged files are unchanged or outside a sparse checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        yield* command(worktree, ["update-index", "--assume-unchanged", ".gitignore"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live.each([
+    ["missing", "symlink"],
+    ["tracked.txt", "symlink"],
+    ["missing", "file"],
+    ["tracked.txt", "file"],
+  ] as const)("compares flagged tracked symlinks by target (%s as a %s)", ([target, kind]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* fs.symlink("tracked.txt", `${worktree}/link`);
+        yield* command(worktree, ["add", "link"]);
+        yield* command(worktree, ["commit", "-m", "link"]);
+        yield* command(worktree, ["update-index", "--assume-unchanged", "link"]);
+        yield* fs.remove(`${worktree}/link`);
+        // Without core.symlinks, Git checks a link out as a regular file holding its target.
+        if (kind === "file") {
+          yield* command(worktree, ["config", "core.symlinks", "false"]);
+          yield* fs.writeFileString(`${worktree}/link`, target);
+        } else yield* fs.symlink(target, `${worktree}/link`);
+        expect((yield* service.runNow).entries[0]).toMatchObject(
+          target === "missing"
+            ? { outcome: "kept", reason: expect.stringContaining("(link)") }
+            : { outcome: "removed" },
+        );
+      }),
+    ),
+  );
+  it.live.each([
+    ["uncommitted-changes", "untracked", "Local changes exceed the inspection limit"],
+    ["any-local-files", "ignored", "Ignored files exceed the inspection limit"],
+  ] as const)(
+    "keeps a worktree under %s when its %s file listing exceeds the inspection limit",
+    ([policy, kind, reason]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy } = yield* cleanupFixture();
+          setPolicy(policy);
+          const files = Array.from({ length: 3000 }, (_, i) =>
+            kind === "untracked"
+              ? `${worktree}/many/untracked-file-with-a-long-name-${i}.txt`
+              : `${worktree}/many/ignored-directory-with-a-long-name-${i}/.env`,
+          );
+          yield* fs.makeDirectory(`${worktree}/many`);
+          yield* Effect.forEach(
+            files,
+            (file) =>
+              Effect.gen(function* () {
+                if (kind === "ignored") yield* fs.makeDirectory(file.slice(0, -"/.env".length));
+                yield* fs.writeFileString(file, "local\n");
+              }),
+            { concurrency: 64, discard: true },
+          );
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept", reason });
+          expect(yield* fs.exists(files[0]!)).toBe(true);
+        }),
+      ),
   );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(
@@ -2541,11 +3684,12 @@ describe("storage cleanup reports and local file policies", () => {
 });
 
 describe("settled worktree rechecks", () => {
-  it.live.each(["autoResumeLimitedThreads", "snoozeLimitedThreads"] as const)(
+  it.effect.each(["autoResumeLimitedThreads", "snoozeLimitedThreads"] as const)(
     "keeps a usage-limited checkout when %s is enabled during measurement",
     (preference) =>
       runCleanupTest(
         Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
           const fixture = yield* pausedMeasurementFixture();
           fixture.setSettings({ autoResumeLimitedThreads: false, snoozeLimitedThreads: false });
           fixture.setThreads([
@@ -2563,16 +3707,20 @@ describe("settled worktree rechecks", () => {
           fixture.setSettings({ [preference]: true });
           yield* Deferred.succeed(fixture.resume, undefined);
           const report = yield* Fiber.join(run);
-          expect(report.entries[0]?.outcome).toBe("kept");
+          expect(report.entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Settings changed since check",
+          });
           expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
         }),
       ),
   );
-  it.live.each([{ settledAt: null }, { settledAt: at(DAY_MS) }])(
+  it.effect.each([{ settledAt: null }, { settledAt: at(DAY_MS) }])(
     "keeps a checkout changed during measurement (%j)",
     (change) =>
       runCleanupTest(
         Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
           const fixture = yield* pausedMeasurementFixture();
           const thread = shell({
             branch: "feature",
@@ -2600,9 +3748,10 @@ describe("settled worktree rechecks", () => {
   );
 });
 
-it.live("keeps saved usage data when removing a settled checkout", () =>
+it.effect("keeps saved usage data when removing a settled checkout", () =>
   runCleanupTest(
     Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
       const fixture = yield* cleanupFixture();
       fixture.setSettings({
         storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeSettledAfterDays: 0 },
