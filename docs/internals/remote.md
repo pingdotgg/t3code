@@ -166,9 +166,10 @@ every other request. That is why it works over any connection method. Three choi
 undo by accident:
 
 - **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
-  `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list `*,<-loopback>`, in
-  that order: everything is direct except loopback. `<-loopback>` also takes link-local addresses,
-  which the listener refuses, so those fail instead of going direct. A fixed proxy also has no
+  `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list
+  `*,<-loopback>,169.254.0.0/16,fe80::/10`, in that order, since the last matching rule wins:
+  everything is direct except loopback. `<-loopback>` also takes link-local addresses, so the last
+  two rules hand them back to the direct route. A fixed proxy also has no
   direct retry, so a failed tunnel is a connection error and never the reviewer's own localhost.
   The rule matches hostnames, not resolved addresses, so a custom name that resolves to loopback
   still goes direct.
