@@ -21,12 +21,12 @@ import {
 } from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   azureDevOpsReactionType,
   closedStateNames,
   workItemStates,
   decodeCommentsJson,
+  decodeProfileJson,
   decodeUpdatesJson,
   decodeWorkItemJson,
   decodeWorkItemsJson,
@@ -144,6 +144,18 @@ function parseScope(
   return { organization: `https://${host}/${encodeURIComponent(organization)}`, project };
 }
 
+/**
+ * The organization's account service, where profiles live: `az` finds no `profile` area on the
+ * organization URL itself, and takes only a URL that names an organization.
+ */
+function profileOrganization(organization: string): string {
+  const url = new URL(organization);
+  const name = url.hostname.toLowerCase().endsWith(".visualstudio.com")
+    ? url.hostname.split(".")[0]
+    : url.pathname.split("/")[1];
+  return `https://vssps.dev.azure.com/${name}`;
+}
+
 function parseNumber(key: string): number | null {
   return /^[1-9]\d{0,9}$/.test(key) ? Number(key) : null;
 }
@@ -185,9 +197,7 @@ function parseCursor(cursor: string): { readonly date: string; readonly id: numb
   return match === null ? null : { date: match[1]!, id: Number(match[2]) };
 }
 
-function reasonFor(
-  error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError,
-): IssueTrackerError["reason"] {
+function reasonFor(error: AzureDevOpsCli.AzureDevOpsCliError): IssueTrackerError["reason"] {
   switch (error._tag) {
     case "AzureDevOpsCliUnavailableError":
       return "missing-tool";
@@ -205,23 +215,19 @@ function reasonFor(
 export const make: Effect.Effect<
   IssueTrackerApi,
   never,
-  | AzureDevOpsCli.AzureDevOpsCli
-  | AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli
-  | FileSystem.FileSystem
+  AzureDevOpsCli.AzureDevOpsCli | FileSystem.FileSystem
 > = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
-  const pullRequests = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const fs = yield* FileSystem.FileSystem;
 
-  const fail =
-    (operation: string) => (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
-      new IssueTrackerError({
-        tracker: KIND,
-        operation,
-        reason: reasonFor(error),
-        detail: error.detail,
-        cause: error,
-      });
+  const fail = (operation: string) => (error: AzureDevOpsCli.AzureDevOpsCliError) =>
+    new IssueTrackerError({
+      tracker: KIND,
+      operation,
+      reason: reasonFor(error),
+      detail: error.detail,
+      cause: error,
+    });
 
   const refused = (operation: string, detail: string, cause?: unknown) =>
     new IssueTrackerError({
@@ -586,10 +592,38 @@ export const make: Effect.Effect<
     kind: KIND,
     capabilities: CAPABILITIES,
 
-    // Not `profile/profiles/me`: an organization need not list a `profile` area, and az refuses one
-    // that does not.
+    // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
+    // `uniqueName` every identity on a work item carries, so the two compare.
     getViewer: (input) =>
-      pullRequests.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      scoped("getViewer", input).pipe(
+        Effect.flatMap((scope) =>
+          read({
+            cwd: input.cwd,
+            operation: "getViewer",
+            args: [
+              "devops",
+              "invoke",
+              "--detect",
+              "false",
+              "--organization",
+              profileOrganization(scope.organization),
+              "--area",
+              "profile",
+              "--resource",
+              "profiles",
+              "--api-version",
+              REST_API_VERSION,
+              "--route-parameters",
+              "id=me",
+            ],
+            decode: decodeProfileJson,
+          }),
+        ),
+        Effect.filterOrFail(
+          (login) => login !== null,
+          () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
+        ),
+      ),
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
