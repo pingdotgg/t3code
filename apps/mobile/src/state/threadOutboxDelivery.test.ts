@@ -158,6 +158,7 @@ import { pendingThreadCreationOutcomesAtom } from "./pending-thread-creation";
 import { clearThreadComposerError, threadComposerErrorsAtom } from "./thread-composer-error";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
+import { startComposerDraftOperation } from "./composerDraftOperations";
 import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
@@ -840,6 +841,22 @@ describe("thread outbox recovery rollback", () => {
     } finally {
       resume.resolve();
       writeSpy.mockRestore();
+      await composerDrafts.flushComposerDrafts();
+    }
+  });
+
+  it("cancels a paste that finishes preparing after recovery returns", async () => {
+    const message = queuedMessage({ messageId: "failed-unfinished-paste", text: "Original" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [sourceKey]: { text: "Follow-up", attachments: [] },
+    });
+    const paste = startComposerDraftOperation(sourceKey);
+    try {
+      await recoverFailedThreadDraft(message);
+      expect(paste.signal.aborted).toBe(true);
+    } finally {
+      paste.finish();
       await composerDrafts.flushComposerDrafts();
     }
   });

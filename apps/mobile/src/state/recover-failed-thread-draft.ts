@@ -1,6 +1,7 @@
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { abortComposerDraftOperations } from "./composerDraftOperations";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import {
   appendComposerDraftAttachments,
@@ -14,7 +15,10 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
   const sourceKey = scopedThreadKey(message.environmentId, message.threadId);
   const targetKey = restoredNewTaskDraftKey(message.messageId);
   const source = getComposerDraftSnapshot(sourceKey);
-  if (source.text.length === 0 && source.attachments.length === 0) return;
+  if (source.text.length === 0 && source.attachments.length === 0) {
+    abortComposerDraftOperations(sourceKey);
+    return;
+  }
 
   await mergeComposerDraftContent(targetKey, {
     text: source.text,
@@ -26,6 +30,7 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
     restore: true,
   });
   await flushComposerDrafts();
+  abortComposerDraftOperations(sourceKey);
   // A paste still preparing can land in the source during the saves; move it with its reference.
   const sourceIds = new Set(source.attachments.map((attachment) => attachment.id));
   appendComposerDraftAttachments(
