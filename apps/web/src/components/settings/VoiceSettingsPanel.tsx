@@ -69,6 +69,7 @@ import {
   chooseTranscriptCleanup,
   useCleanupGrant,
 } from "../../speech/voiceConsent";
+import { isElectron } from "../../env";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import {
@@ -202,16 +203,19 @@ function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) 
 }
 
 // The scope picker above only changes serverScoped rows, so rows saved on this client say so.
-function DeviceSettingTitle(props: { children: string }) {
+// Not "This device": that names the primary environment elsewhere, and web saves per browser.
+const CLIENT_LABEL = isElectron ? "This app" : "This browser";
+
+function ClientSettingTitle(props: { children: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {props.children}
       <Tooltip>
         <TooltipTrigger render={<Badge variant="outline" size="sm" tabIndex={0} />}>
-          This device
+          {CLIENT_LABEL}
         </TooltipTrigger>
         <TooltipPopup side="top">
-          Saved on this device, whatever scope is selected above.
+          Saved in {CLIENT_LABEL.toLowerCase()}, whatever scope is selected above.
         </TooltipPopup>
       </Tooltip>
     </span>
@@ -1306,7 +1310,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id="voice-input" title="Input">
         <SettingsRow
           {...searchableSetting("voice-microphone")}
-          title={<DeviceSettingTitle>Microphone</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Microphone</ClientSettingTitle>}
           description="Audio is recorded on this device and transcribed wherever you choose under Transcription. Voice input uses the first connected microphone in this list."
           control={
             <Tooltip>
@@ -1338,7 +1342,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          title={<DeviceSettingTitle>Dictation shortcut</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Dictation shortcut</ClientSettingTitle>}
           description={`${SHORTCUT_MODES[settings.voiceShortcutMode].hint}.`}
           control={
             <Select
@@ -1371,7 +1375,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id="voice-transcription" title="Transcription">
         <SettingsRow
           {...searchableSetting("voice-transcription-destination")}
-          title="Transcribe with"
+          title={<ClientSettingTitle>Transcribe with</ClientSettingTitle>}
           description={
             destination.environmentId && chosenUnsupported
               ? `${chosenEnvironment.label} can’t transcribe audio locally. Choose another destination.`
@@ -1522,7 +1526,7 @@ export function VoiceSettingsPanel() {
         {(model || destination.cloudProvider) && (
           <SettingsRow
             {...searchableSetting("speech-language")}
-            title={<DeviceSettingTitle>Language</DeviceSettingTitle>}
+            title={<ClientSettingTitle>Language</ClientSettingTitle>}
             description={
               destination.cloudProvider
                 ? "The provider detects your language automatically."
@@ -1539,7 +1543,7 @@ export function VoiceSettingsPanel() {
         )}
         {model?.supportsTranslation ? (
           <SettingsRow
-            title={<DeviceSettingTitle>Translate to English</DeviceSettingTitle>}
+            title={<ClientSettingTitle>Translate to English</ClientSettingTitle>}
             description="Speak any language and get English text."
             control={
               <Switch
@@ -1554,7 +1558,7 @@ export function VoiceSettingsPanel() {
         ) : null}
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
-          title={<DeviceSettingTitle>Silence filtering</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Silence filtering</ClientSettingTitle>}
           description={
             destination.cloudProvider === "openai"
               ? "OpenAI handles silence itself."
@@ -1573,7 +1577,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
-          title={<DeviceSettingTitle>Remove filler words</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Remove filler words</ClientSettingTitle>}
           description="Drop “um” and “uh” from transcripts."
           control={
             <Switch
@@ -1603,7 +1607,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id="voice-dictionary" title="Dictionary">
         <SettingsRow
           {...searchableSetting("speech-dictionary")}
-          title={<DeviceSettingTitle>Your dictionary</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Your dictionary</ClientSettingTitle>}
           description="Names and terms to spell your way."
         >
           <div className="mt-3 pb-2">
@@ -1619,7 +1623,7 @@ export function VoiceSettingsPanel() {
 
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
-          title={<DeviceSettingTitle>Clean up transcripts</DeviceSettingTitle>}
+          title={<ClientSettingTitle>Clean up transcripts</ClientSettingTitle>}
           description="Off by default. Sends the transcript and nearby draft text, never audio, to the cleanup model."
           control={
             <Switch
@@ -1631,7 +1635,7 @@ export function VoiceSettingsPanel() {
         />
         {cleanupEnabled ? (
           <SettingsRow
-            title={<DeviceSettingTitle>Instructions</DeviceSettingTitle>}
+            title={<ClientSettingTitle>Instructions</ClientSettingTitle>}
             description={
               settings.speechPostProcessingPrompt.mode === "custom"
                 ? "Your own instructions for cleanup."
@@ -1689,7 +1693,7 @@ export function VoiceSettingsPanel() {
         {cleanupEnabled ? (
           <SettingsRow
             {...searchableSetting("speech-correction-word")}
-            title={<DeviceSettingTitle>Correction cue</DeviceSettingTitle>}
+            title={<ClientSettingTitle>Correction cue</ClientSettingTitle>}
             description="The phrase you say to fix a mistake, like “scratch that”."
             control={
               <Input
