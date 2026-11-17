@@ -50,7 +50,7 @@ Workers merge their own PRs. Nobody re-verifies a merged PR. When something on m
 
 ## Dispatcher
 
-Runs only in the maestro thread. There are no loops and no sleeps: each tick runs once and the turn ends. A tick runs when:
+Runs only in the maestro thread. There are no loops and no sleeps: each tick runs once and the turn ends. Spend as few tokens as you can: a tick with nothing to reap, requeue, dispatch or report ends with no message at all. A tick runs when:
 
 - the thread starts or the master nudges it;
 - a worker finishes, which wakes this thread with `Delegated task <id> (<title>) [completed|failed|...]: <result>`;
@@ -62,7 +62,7 @@ Runs only in the maestro thread. There are no loops and no sleeps: each tick run
 2. Call `orchestrator_capabilities` once.
 3. Find your own thread id: `t3_thread_list` with `titleContains: "maestro <owner/repo>"`.
 4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue whose last claim comment is `maestro: claimed` and that has no running child is an orphan; other `in-progress` issues belong to another session, so leave them alone. With `needs-help` too, its worker asked for help before this thread restarted: remove `in-progress` and notify the master (below). Otherwise treat it under Requeue.
-5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 300000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
+5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `freshSession: true`, `schedule: {type: "interval", everyMs: 300000}`, prompt `maestro tick`. A fresh session per heartbeat reads only this skill and GitHub, not the thread's whole history; such a tick starts by redoing steps 3 and 4, since its worker map is gone. Keep its `scheduledTaskId`.
 
 ### Each tick
 
