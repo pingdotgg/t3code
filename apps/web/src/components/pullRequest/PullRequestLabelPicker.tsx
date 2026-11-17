@@ -1,8 +1,7 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * Putting labels on, and taking them off, from the row that says which it already wears. Presses
- * only tick the boxes; the changes are sent together when the menu closes, one request for what
- * was put on and one for what was taken off.
+ * only tick the boxes; the changes are sent together when the menu closes.
  */
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
 import { TagIcon } from "lucide-react";
@@ -11,6 +10,13 @@ import { useState } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  emptySelection,
+  isSelected,
+  changeBatches,
+  selectionChanges,
+  toggleSelection,
+} from "@t3tools/client-runtime/pull-request-selection";
 
 import { Checkbox } from "../ui/checkbox";
 import { toastManager } from "../ui/toast";
@@ -38,9 +44,7 @@ export function PullRequestLabelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // What the reader has ticked this time the menu is open, by label name, against what the host
-  // says is applied. A label ticked back to where it started is dropped rather than sent.
-  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
@@ -52,62 +56,43 @@ export function PullRequestLabelPicker({
   const all = candidatesQuery.data?.candidates ?? [];
   const candidates = all.filter((entry) => matches(entry, query));
   const isChecked = (candidate: PullRequestLabelCandidate) =>
-    toggled.get(candidate.name) ?? candidate.isApplied;
+    isSelected(draft, candidate.name, candidate.isApplied);
   const appliedCount = all.filter(isChecked).length;
 
-  const toggle = (candidate: PullRequestLabelCandidate) => {
-    setToggled((previous) => {
-      const next = new Map(previous);
-      const checked = !(previous.get(candidate.name) ?? candidate.isApplied);
-      if (checked === candidate.isApplied) next.delete(candidate.name);
-      else next.set(candidate.name, checked);
-      return next;
+  const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+    for (const batch of changeBatches(labels)) await sendBatch(batch, applied);
+  };
+  const sendBatch = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+    const names = labels.map((label) => label.name);
+    const result = await setLabels({
+      environmentId,
+      input: { ...reference, labels: names, applied },
+    });
+    if (result._tag === "Success") return;
+    toastManager.add({
+      type: "error",
+      title: applied
+        ? `Could not put ${names.join(", ")} on`
+        : `Could not take ${names.join(", ")} off`,
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        "The host refused it. Check that you have triage access on this repository.",
+      ),
     });
   };
 
-  // Each direction is its own request, so one can land while the other is refused. Whatever the
-  // host refused is named in the toast; what it took is already on the pull request. Each change
-  // shows at once and queues behind the one before it on the host.
-  const save = async (changes: ReadonlyMap<string, boolean>) => {
-    const add = [...changes].flatMap(([name, applied]) => (applied ? [name] : []));
-    const remove = [...changes].flatMap(([name, applied]) => (applied ? [] : [name]));
-    if (add.length === 0 && remove.length === 0) return;
-    const failed: string[] = [];
-    let failure: unknown = null;
-    for (const [labels, applied] of [
-      [add, true],
-      [remove, false],
-    ] as const) {
-      if (labels.length === 0) continue;
-      const result = await setLabels({ environmentId, input: { ...reference, labels, applied } });
-      if (result._tag === "Failure") {
-        failed.push(...labels);
-        failure = squashAtomCommandFailure(result);
-      }
-    }
-    if (failed.length > 0) {
-      toastManager.add({
-        type: "error",
-        title:
-          failed.length === 1
-            ? `Could not change ${failed[0]}`
-            : `Could not change ${failed.length} labels`,
-        description: readableFailure(
-          failure,
-          "The host refused it. Check that you have triage access on this repository.",
-        ),
-      });
-    }
-  };
-
-  const onOpenChange = (next: boolean) => {
-    setOpen(next);
-    if (!next) {
-      const changes = toggled;
-      setToggled(new Map());
-      setQuery("");
-      void save(changes);
-    }
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) return;
+    const latest = candidatesQuery.data?.candidates ?? [];
+    const { add, remove } = selectionChanges(
+      draft,
+      (name, label) => latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
+    );
+    setDraft(emptySelection());
+    setQuery("");
+    // Adding first keeps the Labels row from showing empty between the two writes.
+    void send(add, true).then(() => send(remove, false));
   };
 
   return (
@@ -131,8 +116,11 @@ export function PullRequestLabelPicker({
       truncated={candidatesQuery.data?.truncated === true}
       truncatedLabel="This repository has more labels than are listed here. Apply the rest on the host."
       candidateKey={(candidate) => candidate.name}
-      disabled={false}
-      onSelect={toggle}
+      onSelect={(candidate) =>
+        setDraft((current) =>
+          toggleSelection(current, candidate.name, candidate, candidate.isApplied),
+        )
+      }
       footer={
         candidatesQuery.data ? (
           <span className="flex flex-col gap-0.5">

@@ -12,7 +12,7 @@ import { Navigate, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
-import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { closeLayoutThread } from "../layout/layoutActions";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -239,7 +239,7 @@ export function ThreadRouteView({
 
   return (
     <BackgroundThreadContext value={background}>
-      {view}
+      <HiddenThreadContext value={background}>{view}</HiddenThreadContext>
       {background || !focused ? null : redirect}
     </BackgroundThreadContext>
   );

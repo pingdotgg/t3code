@@ -9,10 +9,11 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 
-const { permissions } = vi.hoisted(() => ({
+const { permissions, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
+  reads: { diff: [] as unknown[] },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -52,6 +53,28 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh: vi.fn(),
   })) as never,
 }));
+vi.mock(import("~/state/pullRequests"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    usePullRequestList: () => ({
+      data: null,
+      error: null,
+      isPending: false,
+      observations: [],
+      refresh: vi.fn(),
+    }),
+    usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
+    usePullRequestTurnRefreshes: () => [],
+    pullRequestEnvironment: {
+      ...actual.pullRequestEnvironment,
+      diff: ((target: unknown) => {
+        reads.diff.push(target);
+        return actual.pullRequestEnvironment.diff(target as never);
+      }) as never,
+    },
+  };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
@@ -92,19 +115,6 @@ vi.mock(import("~/hooks/useSidebarProjectGroups"), () => ({
     },
   ]) as never,
 }));
-vi.mock(import("~/state/pullRequests"), async (original) => ({
-  ...(await original()),
-  usePullRequestList: () => ({
-    data: null,
-    error: null,
-    isPending: false,
-    observations: [],
-    refresh: vi.fn(),
-  }),
-  usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
-  usePullRequestTurnRefreshes: () => [],
-}));
-
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { PullRequestsPage } from "./PullRequestsPage";
 import { SidebarProvider } from "../ui/sidebar";
@@ -192,6 +202,7 @@ const panel = (attach = false, shortcutsEnabled = false) => (
 function setup() {
   permissions.checkout = true;
   permissions.operate = true;
+  reads.diff = [];
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {} });
 }
@@ -221,6 +232,24 @@ it("can still add conflict resolution to an existing composer without checkout s
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
   expect(draft?.prompt).toContain(detail.url);
+});
+
+it("reads the first diff page once the pointer rests on the Code tab", async () => {
+  setup();
+  await using screen = await render(panel());
+  using _timers = fakeTimers({ now: 0 });
+  const code = screen.getByRole("button", { name: "Code", exact: true });
+  await expect.element(code).toBeVisible();
+
+  await userEvent.hover(code);
+  await act(() => vi.advanceTimersByTime(149));
+  expect(reads.diff).toEqual([]);
+  await act(() => vi.advanceTimersByTime(1));
+  // The page the Code tab reads first, keyed as the tab keys it, so a click paints from it.
+  expect(reads.diff).toContainEqual({
+    environmentId,
+    input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
+  });
 });
 
 it("copies the pull request's link from the copy link shortcut", async () => {
