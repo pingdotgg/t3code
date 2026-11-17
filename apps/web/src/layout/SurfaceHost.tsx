@@ -1009,8 +1009,11 @@ export function LayoutSurfaceHost({
   useEffect(() => {
     if (!active) {
       useLayoutStore.getState().setOnScreenThreadKeys(new Set());
+      useLayoutStore.getState().setScrolledOffTabIds(new Set());
       return;
     }
+    // Staged and stacked panes do not sit on a scrolled strip.
+    if (staged || stacked) useLayoutStore.getState().setScrolledOffTabIds(new Set());
     if (dragging || staged || stacked) return;
     const scroller = scrollerRef.current;
     // Focus follows the view, as in niri: once a sideways scroll of the
@@ -1057,6 +1060,7 @@ export function LayoutSurfaceHost({
         followView(viewStart, viewEnd);
       }
       const keys = new Set<string>();
+      const scrolledOff = new Set<string>();
       const seen: string[] = [];
       const peeks: UnseenPeeks = { left: null, right: null };
       for (const slot of slots) {
@@ -1065,6 +1069,7 @@ export function LayoutSurfaceHost({
           Math.min(slot.rect.left + slot.rect.width, viewEnd) - Math.max(slot.rect.left, viewStart);
         const unseen = unseenTabIds.has(slot.activeTabId);
         if (inside < slot.rect.width * ON_SCREEN_MIN_SHARE) {
+          scrolledOff.add(slot.activeTabId);
           if (unseen) {
             const side = slot.rect.left < viewStart ? "left" : "right";
             if (peeks[side] === null) peeks[side] = slot.activeTabId;
@@ -1081,6 +1086,7 @@ export function LayoutSurfaceHost({
         }
       }
       useLayoutStore.getState().setOnScreenThreadKeys(keys);
+      useLayoutStore.getState().setScrolledOffTabIds(scrolledOff);
       useLayoutStore.getState().markTabsSeen(seen);
       setUnseenPeeks((current) =>
         current.left === peeks.left && current.right === peeks.right ? current : peeks,
@@ -1121,7 +1127,13 @@ export function LayoutSurfaceHost({
     unseenTabIds,
   ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared on-screen thread registry when the strip unmounts
-  useEffect(() => () => useLayoutStore.getState().setOnScreenThreadKeys(new Set()), []);
+  useEffect(
+    () => () => {
+      useLayoutStore.getState().setOnScreenThreadKeys(new Set());
+      useLayoutStore.getState().setScrolledOffTabIds(new Set());
+    },
+    [],
+  );
 
   const surfaceSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = surfaceTabsById.get(tabId);
@@ -1274,6 +1286,7 @@ export function LayoutSurfaceHost({
       className="relative h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
       inert={background}
       ref={rootRef}
+      data-strip-under-controls={active && split && !staged ? "" : undefined}
     >
       <div
         ref={scrollerRef}

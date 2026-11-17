@@ -92,6 +92,12 @@ function classStrings(
       }
       recurse(expression.right);
       break;
+    case "BinaryExpression":
+      if (expression.operator === "+") {
+        recurse(expression.left);
+        recurse(expression.right);
+      }
+      break;
     case "CallExpression":
       for (const argument of expression.arguments as Array<unknown>) recurse(argument);
       break;

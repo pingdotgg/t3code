@@ -2548,6 +2548,7 @@ function TimelineChangedFilesCard() {
   const [expanded, setExpanded] = useState(true);
   return (
     <ChangedFilesCard
+      threadRef={null}
       runId={RunId.make("run-1")}
       files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
         path,

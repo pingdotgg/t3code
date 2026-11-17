@@ -431,7 +431,7 @@ const DRAFT_PROJECT_ROW_BUTTON_CLASS =
 const DRAFT_PROJECT_ROW_LABEL_CLASS =
   "min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground";
 const DRAFT_PROJECT_ROW_ACTION_CLASS =
-  "flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-focus-within/row:-ml-1 group-focus-within/row:w-7 group-focus-within/row:pe-2 group-focus-within/row:opacity-100 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100";
+  "flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100 group-has-focus-visible/row:-ml-1 group-has-focus-visible/row:w-7 group-has-focus-visible/row:pe-2 group-has-focus-visible/row:opacity-100 has-data-popup-open:-ml-1 has-data-popup-open:w-7 has-data-popup-open:pe-2 has-data-popup-open:opacity-100";
 
 function DraftProjectRowRoot(props: Omit<ComponentProps<"div">, "className" | "role">) {
   return <div role="listitem" {...props} className={DRAFT_PROJECT_ROW_CLASS} />;

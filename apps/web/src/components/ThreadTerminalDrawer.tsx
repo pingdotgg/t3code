@@ -55,7 +55,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import {
+  COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
+  COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+} from "~/workspaceTitlebar";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -1891,7 +1894,9 @@ export default function ThreadTerminalDrawer({
         <div
           className={cn(
             "flex h-11 shrink-0 items-center gap-1",
-            mode === "pane" ? "relative ps-1.5 pe-2 md:ps-0" : "px-1.5 pt-1",
+            mode === "pane"
+              ? cn("relative ps-1.5 pe-2 md:ps-0", COLLAPSED_SIDEBAR_INSET_EASE_CLASS)
+              : "px-1.5 pt-1",
             mode === "pane" && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             mode === "pane" && trailingEdge && "wco:pr-(--workspace-native-controls-inset)",
           )}
