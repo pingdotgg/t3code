@@ -89,15 +89,19 @@ function BoringSidebarMultilineRow() {
 
 /** This device only. Switching reloads the window. */
 function FastMarkdownRow() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   return (
     <SettingsRow
       {...searchableSetting("fast-markdown")}
-      description="Render Markdown in chat and pull requests with a faster renderer. Long threads open and stream with less work. Switching reloads the window."
+      description={gt(
+        "Render Markdown in chat and pull requests with a faster renderer. Long threads open and stream with less work. Switching reloads the window.",
+      )}
       control={
         <Switch
           checked={FAST_MARKDOWN}
           onCheckedChange={(checked) => setFastMarkdown(Boolean(checked))}
-          aria-label="Fast Markdown rendering"
+          aria-label={gt("Fast Markdown rendering")}
         />
       }
     />

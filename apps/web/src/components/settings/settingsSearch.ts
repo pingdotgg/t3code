@@ -503,10 +503,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fast-markdown",
-    title: "Fast Markdown rendering",
+    title: msg("Fast Markdown rendering"),
     to: "/settings/labs",
     searchTerms: [
-      "beta markdown renderer parser speed performance chat messages pull request comments",
+      msg("beta markdown renderer parser speed performance chat messages pull request comments"),
     ],
   },
   {
