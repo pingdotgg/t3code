@@ -591,6 +591,50 @@ it.layer(
     SqlitePersistence.layerMemory,
   ).pipe(Layer.provideMerge(NodeServices.layer)),
 )("resume, streaming, and default runtime mode", (it) => {
+  it.effect("never lets an agent change the owner's controls over what agents receive", () =>
+    Effect.gen(function* () {
+      const scope = threadScope();
+      const caller = liveThreadShell(threadId);
+      const ownerOnly = {
+        t3AgentInstructions: false,
+        claudeInstructionFiles: false,
+        claudeAutoMemory: false,
+        claudeGitContext: false,
+        claudeSkillList: false,
+        claudeContextLists: false,
+        claudeHooks: false,
+        t3ContextHandoff: false,
+        t3SideChatContext: false,
+        t3RestartNote: false,
+        t3WakeOnDelegateFinished: false,
+        t3WakeOnDelegateQuestion: false,
+        t3WakeOnPullRequestUpdate: false,
+        t3GoalContinuation: false,
+        agentMessagePolicy: "block",
+      } as const;
+      const stored = reloadSettings.pipe(Effect.provide(restartedSettings()));
+      const before = yield* stored;
+      yield* Effect.flatMap(EnvironmentToolkit, (toolkit) =>
+        finalResult(
+          toolkit.handle("t3_environment_preferences_update", {
+            ...ownerOnly,
+            snoozeLimitedThreads: !before.snoozeLimitedThreads,
+          } as never),
+        ),
+      ).pipe(Effect.provide(environmentLayer(scope, caller, restartedSettings())), Effect.exit);
+      const after = yield* stored;
+      for (const key of Object.keys(ownerOnly) as Array<keyof typeof ownerOnly>) {
+        expect([key, after[key]]).toEqual([key, before[key]]);
+      }
+      const read = yield* Effect.flatMap(EnvironmentToolkit, (toolkit) =>
+        finalResult(toolkit.handle("t3_environment_read", {})),
+      ).pipe(Effect.provide(environmentLayer(scope, caller, restartedSettings())));
+      expect(read?.encodedResult).toMatchObject({
+        preferences: { claudeHooks: true, agentMessagePolicy: "allow" },
+      });
+    }),
+  );
+
   it.effect("round-trips the unrestricted fields and only lowers defaultRuntimeMode", () =>
     Effect.gen(function* () {
       const scope = threadScope();
