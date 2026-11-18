@@ -25,7 +25,7 @@ const state = vi.hoisted(() => ({
   workflow: null as unknown,
   queuedRunMerge: true as boolean | undefined,
   commands: [] as Array<readonly [string, unknown]>,
-  results: [] as Array<"Success" | "Failure">,
+  results: [] as Array<unknown>,
   commandResult: undefined as unknown,
 }));
 
@@ -83,7 +83,7 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomCommand: ((command: { readonly label: string }) => async (value: unknown) => {
     state.commands.push([command.label.split(":").at(-1) ?? command.label, value]);
-    return state.commandResult ?? { _tag: state.results.shift() ?? "Success" };
+    return state.commandResult ?? state.results.shift() ?? { _tag: "Success" };
   }) as never,
 }));
 
@@ -363,6 +363,8 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   expect(column.scrollHeight).toBe(column.clientHeight);
 });
 
+const refused = () => AsyncResult.failure(Cause.fail(new Error("Refused")));
+
 function queueOfTwo(workflow: Record<string, unknown>) {
   state.workflow = {
     activeRun: { id: "run:active" },
@@ -414,7 +416,7 @@ it.each([
 it("sends nothing when combining fails", async () => {
   setup();
   queueOfTwo({});
-  state.results = ["Failure"];
+  state.results = [refused()];
   await using _screen = await renderQueue();
 
   await sendAllAsOne().click();
@@ -425,7 +427,7 @@ it("sends nothing when combining fails", async () => {
 it("steers queued messages one by one and stops at the first failure", async () => {
   setup();
   queueOfTwo({});
-  state.results = ["Failure"];
+  state.results = [refused()];
   await using _screen = await renderQueue();
 
   await sendOneByOne().click();
