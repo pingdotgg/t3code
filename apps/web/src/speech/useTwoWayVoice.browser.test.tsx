@@ -9,6 +9,22 @@ import { voiceSpeakingAtom } from "./voiceReplies";
 const TWO_WAY_PAUSE_MS = 1_500;
 
 type Input = Parameters<typeof useTwoWayVoice>[0];
+type Status = NonNullable<Input["speech"]["status"]>;
+
+const READY = {
+  supported: true,
+  state: "ready",
+  modelId: "parakeet",
+  model: "Parakeet",
+  size: 1,
+  supportsStreaming: true,
+  supportsTranslation: false,
+  acceleration: "auto",
+  modelUnloadTimeout: "min_15",
+  gpuDevices: [],
+  benchmarkTier: "cpu",
+} as unknown as Status;
+const MISSING_MODEL = { ...READY, state: "missing-model" } as Status;
 
 function Probe(props: Input) {
   useTwoWayVoice(props);
@@ -24,7 +40,13 @@ function voice() {
   const onStopped = vi.fn();
   const ui = (
     phase: VoiceInputPhase,
-    options: { active?: boolean; heard?: string; error?: string } = {},
+    options: {
+      active?: boolean;
+      heard?: string;
+      error?: string;
+      setupOpen?: boolean;
+      modelReady?: boolean;
+    } = {},
   ) => (
     <AppAtomRegistryProvider>
       <Probe
@@ -37,6 +59,8 @@ function voice() {
           start,
           cancel,
           submitAfterDictation,
+          setup: { open: options.setupOpen ?? false },
+          status: options.modelReady === false ? MISSING_MODEL : READY,
         }}
         onSpoken={onSpoken}
         onStopped={onStopped}
@@ -100,6 +124,67 @@ it("stops when voice input needs setting up first", async () => {
       "Finish setting up voice input, then turn two-way voice on again.",
     ),
   );
+});
+
+it("opens model setup first, and listens once the model is ready", async () => {
+  using fake = voice();
+  fake.start.mockResolvedValueOnce(false);
+  await using screen = await render(fake.ui("idle", { setupOpen: true, modelReady: false }));
+  await act(async () => {});
+  expect(fake.onStopped).not.toHaveBeenCalled();
+  await screen.rerender(fake.ui("idle", { setupOpen: true }));
+  expect(fake.start).toHaveBeenCalledOnce();
+  await screen.rerender(fake.ui("idle"));
+  expect(fake.start).toHaveBeenCalledTimes(2);
+  expect(fake.onStopped).not.toHaveBeenCalled();
+});
+
+it("keeps the recording that model setup starts", async () => {
+  using fake = voice();
+  fake.start.mockResolvedValueOnce(false);
+  await using screen = await render(fake.ui("idle", { setupOpen: true, modelReady: false }));
+  await act(async () => {});
+  await screen.rerender(fake.ui("recording"));
+  expect(fake.start).toHaveBeenCalledOnce();
+  await screen.rerender(fake.ui("idle"));
+  expect(fake.start).toHaveBeenCalledTimes(2);
+});
+
+it("returns to one-way when model setup closes unfinished", async () => {
+  using fake = voice();
+  fake.start.mockResolvedValueOnce(false);
+  await using screen = await render(fake.ui("idle", { setupOpen: true, modelReady: false }));
+  await act(async () => {});
+  await screen.rerender(fake.ui("idle", { modelReady: false }));
+  expect(fake.start).toHaveBeenCalledOnce();
+  expect(fake.onStopped).toHaveBeenCalledWith(
+    "Finish setting up voice input, then turn two-way voice on again.",
+  );
+});
+
+// regression: a start that opens model setup flips the phase, which started it again in a loop
+it("waits for a pending start instead of starting again", async () => {
+  using fake = voice();
+  let finish!: (began: boolean) => void;
+  fake.start.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  await using screen = await render(fake.ui("idle"));
+  await screen.rerender(fake.ui("preparing"));
+  await screen.rerender(fake.ui("idle"));
+  expect(fake.start).toHaveBeenCalledOnce();
+  await act(() => finish(false));
+  expect(fake.onStopped).toHaveBeenCalledOnce();
+});
+
+it("cancels a recording that began after two-way voice was turned off", async () => {
+  using fake = voice();
+  let finish!: (began: boolean) => void;
+  fake.start.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+  await using screen = await render(fake.ui("idle"));
+  await screen.rerender(fake.ui("preparing", { active: false }));
+  expect(fake.cancel).not.toHaveBeenCalled();
+  await act(() => finish(true));
+  expect(fake.cancel).toHaveBeenCalledOnce();
+  expect(fake.onStopped).not.toHaveBeenCalled();
 });
 
 it("listens again after silence but reports any other failure", async () => {
