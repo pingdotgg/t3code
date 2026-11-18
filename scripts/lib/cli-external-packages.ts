@@ -13,6 +13,8 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@transcribe-cpp/",
   "koffi",
   "@koromix/",
+  // The local speech worker imports it from disk to encode MP3 off the server's thread.
+  "@breezystack/lamejs",
   "@napi-rs/keyring",
   "@clerk/electron-passkeys",
   "node-gyp-build",

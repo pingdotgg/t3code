@@ -965,7 +965,7 @@ const make = Effect.gen(function* () {
           .link(SPEECH_MODELS, source)
           .pipe(Effect.mapError((cause) => speechError("model linking", cause))),
       );
-      const first = linked[0];
+      const first = linked[0]?.id;
       if (first === undefined) return yield* new SpeechModelNotFoundError({ modelId: source });
       if (!(yield* store.isReady(selectedModel(settings))))
         yield* writeSettings("model linking", { speechModelId: first });

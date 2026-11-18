@@ -20,7 +20,10 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../os-jank.ts";
 import type { SpeechModel } from "./model.ts";
 
-type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256">;
+/** `filename` is the path inside the Hugging Face repository; `url` replaces that source. */
+export type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256"> & {
+  readonly url?: string;
+};
 
 class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadError>()(
   "SpeechModelDownloadError",
@@ -57,12 +60,12 @@ export class SpeechModelStore extends Context.Service<
     >;
     /**
      * Installs catalog files already on this machine as symlinks, never copies.
-     * `source` is a file or a folder to search; returns the ids it installed.
+     * `source` is a file or a folder to search; returns the files it installed.
      */
     readonly link: (
       models: ReadonlyArray<ModelFile>,
       source: string,
-    ) => Effect.Effect<ReadonlyArray<string>, PlatformError>;
+    ) => Effect.Effect<ReadonlyArray<ModelFile>, PlatformError>;
     /** The outside file a linked model points at. */
     readonly linkedFrom: (model: ModelFile) => Effect.Effect<string | undefined>;
     /** Removes T3 Code's file or link; a linked file itself is left in place. */
@@ -72,7 +75,7 @@ export class SpeechModelStore extends Context.Service<
 
 const DOWNLOAD_ATTEMPTS = 3;
 const PARTIAL_FILENAME =
-  /\.gguf\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
+  /\.(?:gguf|tar\.gz|zip)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
 
 const LINK_SEARCH_DEPTH = 5;
 const LINK_SEARCH_ENTRIES = 5_000;
@@ -92,7 +95,7 @@ const make = Effect.gen(function* () {
       yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.ignore);
     }
   }
-  const modelPath = (model: ModelFile) => path.join(directory, model.filename);
+  const modelPath = (model: ModelFile) => path.join(directory, path.basename(model.filename));
   const appDataDirectories =
     platform === "darwin"
       ? [path.join(home, "Library", "Application Support")]
@@ -112,7 +115,7 @@ const make = Effect.gen(function* () {
       model.filename,
     ),
     ...appDataDirectories.map((appData) =>
-      path.join(appData, "com.pais.handy", "models", model.filename),
+      path.join(appData, "com.pais.handy", "models", path.basename(model.filename)),
     ),
   ];
   // Files whose digest failed, by identity, so status polls stop calling them ready.
@@ -246,10 +249,11 @@ const make = Effect.gen(function* () {
         ),
       );
       yield* fs.makeDirectory(directory, { recursive: true });
-      const linked: string[] = [];
+      // By file, since several files can come from one repository.
+      const linked = new Set<ModelFile>();
       for (const { file, size } of yield* filesUnder(root)) {
         for (const model of models) {
-          if (model.size !== size || linked.includes(model.id)) continue;
+          if (model.size !== size || linked.has(model)) continue;
           const finalPath = modelPath(model);
           // Pointing at T3 Code's own model folder must not replace a file with a link to itself.
           if ((yield* realPath(file)) === (yield* realPath(finalPath))) continue;
@@ -279,10 +283,10 @@ const make = Effect.gen(function* () {
           yield* fs
             .writeFileString(`${finalPath}.verified`, marker, { mode: 0o600 })
             .pipe(Effect.ignore);
-          linked.push(model.id);
+          linked.add(model);
         }
       }
-      return linked;
+      return [...linked];
     },
   );
 
@@ -297,7 +301,9 @@ const make = Effect.gen(function* () {
         if (linked.length > 0) return finalPath;
       }
       const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
-      const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
+      const url =
+        model.url ??
+        `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
       return yield* Effect.gen(function* () {
         for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
           const offset = Number((yield* statFile(partialPath))?.size ?? 0);

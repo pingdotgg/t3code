@@ -196,6 +196,27 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Read replies aloud
+
+Choose a speech provider in **Settings → Voice → Read aloud**, then use **Read aloud**
+beside a completed assistant reply. Select it again to stop playback. Leaving the
+thread stops it. Code blocks are skipped by default.
+
+System voices run on your device. OpenAI, Grok TTS, OpenRouter, and ElevenLabs send the reply text
+through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
+voice, then use the preview to try it.
+
+**Local model** reads replies on your selected environment, so the text never leaves it.
+Download a model once from the same settings page. Kokoro (about 220 MB) is the default, with
+natural English voices plus Spanish, French, Hindi, Italian, and Portuguese. Supertonic 3
+(330–360 MB) speaks 31 languages and is fastest with a GPU. Pocket TTS (about 200 MB) speaks
+English and stays fast on machines without one. Like dictation models, they reuse a copy already in the Hugging Face
+cache, and on web or desktop you can paste the path of a copy elsewhere and choose **Use
+existing**. Local models use the GPU through Metal on Apple silicon Macs and Vulkan on Windows
+and Linux, and run on macOS, Windows, and Linux with glibc 2.28 or newer.
+
+On mobile, **Background playback** allows speech to continue while the app is in the background.
+
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio

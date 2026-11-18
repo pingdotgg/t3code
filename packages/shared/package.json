@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./read-aloud": "./src/readAloud.ts",
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

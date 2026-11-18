@@ -140,6 +140,22 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
   }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("fetches a file from its own URL and keeps a repository subfolder out of the store", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    h.bodies.current = () => Stream.succeed(bytes);
+    const archive = {
+      ...h.model,
+      filename: "runtime/library.tar.gz",
+      url: "https://example.test/library.tar.gz",
+    };
+    const installed = yield* h.store.download(archive);
+    expect(h.requests.map((request) => request.url)).toEqual([archive.url]);
+    expect(installed).toBe(`${h.directory}/library.tar.gz`);
+    expect(yield* h.store.installedPath(archive)).toBe(installed);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("rejects a same-size download whose SHA-256 differs from the catalog", () =>
   Effect.gen(function* () {
     const h = yield* harness;
@@ -182,11 +198,25 @@ it.effect("links a verified model file from another folder and never deletes it"
     const existing = path.join(nested, "renamed-by-the-other-app.gguf");
     yield* h.fs.writeFile(impostor, new Uint8Array(bytes.length));
     yield* h.fs.writeFile(existing, bytes);
+    // A second file from the same repository, such as a voice beside its model.
+    const voiceBytes = bytes.subarray(0, 32);
+    const voice = {
+      ...h.model,
+      filename: "voice.safetensors",
+      size: voiceBytes.length,
+      sha256: Hex.encode(
+        yield* (yield* Digest.Digest).digest(Digest.sha256, voiceBytes).pipe(Effect.orDie),
+      ),
+    };
+    yield* h.fs.writeFile(path.join(nested, "voice.safetensors"), voiceBytes);
 
     expect(yield* h.store.link([h.model], impostor)).toEqual([]);
     expect(yield* h.store.linkedFrom(h.model)).toBeUndefined();
 
-    expect(yield* h.store.link([h.model], elsewhere)).toEqual([h.model.id]);
+    expect(new Set(yield* h.store.link([h.model, voice], elsewhere))).toEqual(
+      new Set([h.model, voice]),
+    );
+    expect(yield* h.store.installedPath(voice)).toBeDefined();
     expect(yield* h.store.linkedFrom(h.model)).toBe(existing);
     expect(yield* h.store.installedPath(h.model)).toBe(h.stale);
     expect(h.requests).toHaveLength(0);

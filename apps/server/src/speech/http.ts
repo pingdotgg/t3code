@@ -1,3 +1,4 @@
+import { SpeechSynthesisError } from "@t3tools/contracts";
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
   AuthFilesystemReadScope,
@@ -7,6 +8,7 @@ import {
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
   type EnvironmentSpeechModels,
+  type SpeechSynthesisCatalog,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
 } from "@t3tools/contracts";
@@ -25,7 +27,9 @@ import {
 } from "../auth/http.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
@@ -64,12 +68,47 @@ const withoutHostPaths = Effect.fnUntraced(function* (result: EnvironmentSpeechM
   return { models: result.models.map(({ linkedFrom: _, ...model }) => model) };
 });
 
+// Untraced: it runs inside each handler's own span.
+const withoutCatalogHostPaths = Effect.fnUntraced(function* (catalog: SpeechSynthesisCatalog) {
+  const session = yield* EnvironmentAuthenticatedPrincipal;
+  if (session.scopes.has(AuthFilesystemReadScope)) return catalog;
+  return {
+    ...catalog,
+    models: catalog.models.map(({ install, ...model }) => {
+      if (!install) return model;
+      const { linkedFrom: _, ...visible } = install;
+      return { ...model, install: visible };
+    }),
+  };
+});
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
     const cloud = yield* CloudSpeech.CloudSpeech;
+    const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
+    const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+    const mapInstallError = <A, R>(
+      effect: Effect.Effect<A, LocalSpeechSynthesis.LocalSynthesisInstallError, R>,
+    ) =>
+      effect.pipe(
+        Effect.catchTags({
+          // Untraced: it runs inside each handler's own span.
+          LocalSynthesisInstallError: Effect.fnUntraced(function* (error) {
+            if (error.reason === "failed")
+              return yield* failEnvironmentInternal("internal_error", error);
+            return yield* failEnvironmentInvalidRequest(
+              error.reason === "unknown-model" || error.reason === "not-found"
+                ? "invalid_command"
+                : error.reason === "busy"
+                  ? "speech_busy"
+                  : "speech_unavailable",
+            );
+          }),
+        }),
+      );
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
@@ -79,6 +118,82 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* requireEnvironmentScope(scope);
     });
     return handlers
+      .handle(
+        "synthesisModels",
+        Effect.fn("environment.voice.synthesisModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          if (args.params.provider === "local")
+            return yield* local.catalog.pipe(Effect.flatMap(withoutCatalogHostPaths));
+          return yield* cloud.synthesisModels(args.params.provider).pipe(
+            Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
+              ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
+      .handle(
+        "startSynthesis",
+        Effect.fn("environment.voice.startSynthesis")(function* (args) {
+          yield* guard(args.endpoint.name);
+          const token = yield* synthesisStreams.start(args.params.provider, args.payload).pipe(
+            Effect.catchTags({
+              SpeechSynthesisError: (error) =>
+                Effect.fail(
+                  new SpeechSynthesisError({ provider: error.provider, reason: error.reason }),
+                ),
+              ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+          return { token };
+        }),
+      )
+      .handle(
+        "prepareSynthesisModel",
+        Effect.fn("environment.voice.prepareSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name);
+          yield* local.prepare(args.payload.model);
+        }),
+      )
+      .handle(
+        "downloadSynthesisModel",
+        Effect.fn("environment.voice.downloadSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local
+            .download(args.payload.modelId)
+            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
+        }),
+      )
+      .handle(
+        "cancelSynthesisModel",
+        Effect.fn("environment.voice.cancelSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local
+            .cancel(args.payload.modelId)
+            .pipe(Effect.flatMap(withoutCatalogHostPaths));
+        }),
+      )
+      .handle(
+        "removeSynthesisModel",
+        Effect.fn("environment.voice.removeSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local
+            .remove(args.payload.modelId)
+            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
+        }),
+      )
+      .handle(
+        "linkSynthesisModels",
+        Effect.fn("environment.voice.linkSynthesisModels")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          // The request names a path on this machine and the result reveals what is there.
+          yield* requireEnvironmentScope(AuthFilesystemReadScope);
+          return yield* local.link(args.payload.path).pipe(mapInstallError);
+        }),
+      )
       .handle(
         "cloudKeys",
         Effect.fn("environment.voice.cloudKeys")(function* (args) {

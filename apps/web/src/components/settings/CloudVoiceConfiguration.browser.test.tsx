@@ -1,5 +1,9 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -7,6 +11,7 @@ import { render } from "../../../test/render";
 import "~/index.css";
 import { chooseAudioDestination } from "../../speech/voiceConsent";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 
@@ -15,30 +20,34 @@ vi.mock("../../env", async (original) => ({
   ...(await original<typeof import("../../env")>()),
   isSecretsFeatureEnabled: true,
 }));
-vi.mock("../../state/environments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../state/environments")>()),
-  useEnvironments: () => ({
-    environments: [
-      {
-        environmentId: "voice-host",
-        label: "Laptop",
-        connection: { phase: "available" },
-        serverConfig: {
-          secretReferences: true,
-          settings: {
-            secretProviders: {
-              work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
+vi.mock("../../state/environments", async (importOriginal) => {
+  const presentationById = new Map();
+  return {
+    ...(await importOriginal<typeof import("../../state/environments")>()),
+    useEnvironments: () => ({
+      presentationById,
+      environments: [
+        {
+          environmentId: "voice-host",
+          label: "Laptop",
+          connection: { phase: "available" },
+          serverConfig: {
+            secretReferences: true,
+            settings: {
+              secretProviders: {
+                work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
+              },
+            },
+            environment: {
+              platform: { os: "linux", arch: "x64" },
+              capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
             },
           },
-          environment: {
-            platform: { os: "linux", arch: "x64" },
-            capabilities: { voiceTranscription: true, cloudVoiceTranscription: true },
-          },
         },
-      },
-    ],
-  }),
-}));
+      ],
+    }),
+  };
+});
 
 const id = EnvironmentId.make("voice-host");
 const grantKey = "t3code:voice-audio-grant:v1";
@@ -261,4 +270,93 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       expect(writes).toEqual([]);
     },
   );
+});
+
+it("confirms a read-aloud provider in its key dialog, after the key lookup", async () => {
+  let finishLookup: () => void = () => {};
+  const lookup = new Promise<void>((resolve) => {
+    finishLookup = resolve;
+  });
+  const writes: unknown[] = [];
+  const previous = getClientSettings().readAloud;
+  await updateClientSettings({ readAloud: DEFAULT_READ_ALOUD_SETTINGS });
+  try {
+    await withVoicePanel(
+      (url, request, init) => {
+        if (url.pathname === "/api/voice/cloud/keys")
+          return lookup.then(() => Response.json({ openai: false, xai: false, openrouter: false }));
+        if (url.pathname === "/api/voice/cloud/xai/key")
+          return new Request(request, init).json().then((body) => {
+            writes.push(body);
+            return new Response(null, { status: 204 });
+          });
+        if (url.pathname === "/api/voice/synthesis/xai/models")
+          return Promise.resolve(
+            Response.json({
+              ...EMPTY_SPEECH_SYNTHESIS_CATALOG,
+              apiKeyProvider: "xai",
+              defaultModel: "server-default",
+              supportsModelSelection: true,
+              models: [{ id: "server-default", name: "Server default", voices: [] }],
+            }),
+          );
+        return null;
+      },
+      async (screen) => {
+        const provider = screen.getByRole("combobox", { name: "Read-aloud provider" });
+        const dialog = page.getByRole("dialog");
+        await provider.click();
+        await page.getByRole("option", { name: "Grok TTS via Laptop" }).click();
+        await dialog.getByRole("button", { name: "Cancel" }).click();
+        await expect.element(dialog).not.toBeInTheDocument();
+        await expect.element(provider).toHaveTextContent("Off");
+        await provider.click();
+        await page.getByRole("option", { name: "Grok TTS via Laptop" }).click();
+        await expect.element(dialog.getByText(/Checking for an API key/)).toBeVisible();
+        await expect
+          .element(dialog.getByLabelText("xAI API key", { exact: true }))
+          .not.toBeInTheDocument();
+        finishLookup();
+        await dialog.getByLabelText("xAI API key", { exact: true }).fill("test-speech-key");
+        await dialog.getByRole("button", { name: "Save and enable" }).click();
+        await expect.element(dialog).not.toBeInTheDocument();
+        expect(writes).toEqual([{ key: "test-speech-key" }]);
+        await expect.element(provider).toHaveTextContent("Grok TTS via Laptop");
+        await expect
+          .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
+          .toHaveTextContent("Server default");
+      },
+    );
+  } finally {
+    await updateClientSettings({ readAloud: previous });
+  }
+});
+
+it("shows a catalog transport failure instead of empty model controls", async () => {
+  const previous = getClientSettings().readAloud;
+  await updateClientSettings({
+    readAloud: { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "xai", environmentId: id },
+  });
+  try {
+    await withVoicePanel(
+      (url) =>
+        url.pathname === "/api/voice/synthesis/xai/models"
+          ? Promise.resolve(new Response(null, { status: 500 }))
+          : null,
+      async (screen) => {
+        await expect
+          .element(
+            screen.getByText(
+              "Could not load speech models. Check the selected environment and provider configuration.",
+            ),
+          )
+          .toBeVisible();
+        await expect
+          .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
+          .not.toBeInTheDocument();
+      },
+    );
+  } finally {
+    await updateClientSettings({ readAloud: previous });
+  }
 });

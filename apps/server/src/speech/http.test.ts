@@ -10,8 +10,11 @@ import {
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   CloudSpeechError,
+  SpeechSynthesisError,
+  EMPTY_SPEECH_SYNTHESIS_CATALOG,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
+  SPEECH_SYNTHESIS_MAX_TEXT,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -28,6 +31,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
+import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -49,6 +54,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
 
 const dependencies = Layer.mergeAll(
   Layer.mock(CloudSpeech.CloudSpeech)({}),
+  Layer.mock(SpeechSynthesisStreams.SpeechSynthesisStreams)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
     getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -66,6 +72,99 @@ const dependencies = Layer.mergeAll(
   ),
 );
 
+effectIt.effect.each([false, true])(
+  "guards speech generation and model discovery with operate scope (%s)",
+  (allowed) =>
+    Effect.gen(function* () {
+      const start = vi.fn<SpeechSynthesisStreams.SpeechSynthesisStreams["Service"]["start"]>(() =>
+        Effect.succeed("stream-token"),
+      );
+      const synthesisModels = vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG));
+      const local = { download: vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG)) };
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)(local)),
+          Layer.provide(
+            principal(allowed ? AuthOrchestrationOperateScope : AuthSettingsWriteScope),
+          ),
+          Layer.provide(Layer.mock(CloudSpeech.CloudSpeech)({ synthesisModels })),
+          Layer.provide(Layer.mock(SpeechSynthesisStreams.SpeechSynthesisStreams)({ start })),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const payload = {
+        text: "Hello.",
+        model: "speech",
+        voice: "reader",
+        speed: 1,
+        language: "auto",
+      };
+      const call = (text: string, provider = "xai") =>
+        Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/synthesis/${provider}/stream`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...payload, text }),
+            }),
+            context,
+          ),
+        );
+      const response = yield* call(payload.text);
+      const catalog = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/synthesis/xai/models"), context),
+      );
+      expect(response.status).toBe(allowed ? 200 : 403);
+      expect(catalog.status).toBe(allowed ? 200 : 403);
+      // Installing a local model downloads hundreds of megabytes, so it needs settings access.
+      const install = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/synthesis/local/models/download", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ modelId: "supertonic-3" }),
+          }),
+          context,
+        ),
+      );
+      expect(install.status).toBe(allowed ? 403 : 200);
+      expect(local.download).toHaveBeenCalledTimes(allowed ? 0 : 1);
+      expect((yield* call(payload.text, "local")).status).toBe(allowed ? 200 : 403);
+      expect(start).toHaveBeenCalledTimes(allowed ? 2 : 0);
+      if (allowed) {
+        expect(yield* Effect.promise(() => response.json())).toEqual({ token: "stream-token" });
+        expect(start).toHaveBeenCalledWith("xai", payload);
+        expect(start).toHaveBeenCalledWith("local", payload);
+        expect((yield* call("a".repeat(SPEECH_SYNTHESIS_MAX_TEXT + 1))).status).toBe(400);
+        expect(start).toHaveBeenCalledTimes(2);
+        start.mockReturnValueOnce(
+          Effect.fail(
+            new SpeechSynthesisError({
+              provider: "xai",
+              reason: "unavailable",
+              cause: new Error("private provider diagnostic"),
+            }),
+          ),
+        );
+        const failure = yield* call(payload.text);
+        expect(failure.status).toBe(422);
+        const body = yield* Effect.promise(() => failure.json());
+        expect(body).toMatchObject({ provider: "xai", reason: "unavailable" });
+        expect(body).not.toHaveProperty("cause");
+        expect(JSON.stringify(body)).not.toContain("private provider diagnostic");
+      } else {
+        expect(synthesisModels).not.toHaveBeenCalled();
+      }
+    }).pipe(Effect.scoped),
+);
+
 effectIt.live("rejects oversized chunked audio without invoking transcription", () =>
   Effect.gen(function* () {
     const transcribe = vi.fn(() => Effect.succeed("unexpected"));
@@ -73,6 +172,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       HttpApi.make("environment").add(EnvironmentVoiceHttpApi),
     ).pipe(
       Layer.provide(speechHttpApiLayer),
+      Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
       Layer.provide(principal(AuthOrchestrationOperateScope)),
       Layer.provide(
         Layer.succeed(SpeechService.SpeechService, {
@@ -161,9 +261,32 @@ effectIt.effect(
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
+      const linkSynthesis = vi.fn();
+      const local = Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({
+        catalog: Effect.succeed({
+          ...EMPTY_SPEECH_SYNTHESIS_CATALOG,
+          models: [
+            {
+              id: "fixture-voice",
+              name: "Fixture voice",
+              voices: [],
+              install: {
+                state: "installed",
+                size: 1,
+                linkedFrom: "/home/someone/models/voice.gguf",
+              },
+            },
+          ],
+        }),
+        link: (source) => {
+          linkSynthesis(source);
+          return Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG);
+        },
+      });
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
+          Layer.provide(local),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
@@ -254,21 +377,26 @@ effectIt.effect(
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
       // Naming a path on the environment needs filesystem access, not only settings access.
-      const link = yield* Effect.promise(() =>
-        handler(
-          new Request("http://localhost/api/voice/models/link", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ path: "/models" }),
-          }),
-          context,
-        ),
-      );
-      expect(link.status).toBe(403);
-      const listed = yield* Effect.promise(() =>
-        handler(new Request("http://localhost/api/voice/models"), context),
-      );
-      expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      for (const path of ["models/link", "synthesis/local/models/link"]) {
+        const link = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/${path}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ path: "/models" }),
+            }),
+            context,
+          ),
+        );
+        expect(link.status).toBe(403);
+      }
+      expect(linkSynthesis).not.toHaveBeenCalled();
+      for (const path of ["models", "synthesis/local/models"]) {
+        const listed = yield* Effect.promise(() =>
+          handler(new Request(`http://localhost/api/voice/${path}`), context),
+        );
+        expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      }
     }),
 );
 
@@ -322,6 +450,7 @@ effectIt.effect.each([
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(speechHttpApiLayer),
+          Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
           Layer.provide(principal(AuthOrchestrationOperateScope)),
           Layer.provide(service),
           Layer.provide(HttpServer.layerServices),

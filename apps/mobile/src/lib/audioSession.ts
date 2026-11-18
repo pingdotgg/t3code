@@ -63,6 +63,7 @@ export function isAudioSessionOwner(token: AudioSessionToken): boolean {
 export function activateAudioSession(
   token: AudioSessionToken,
   nativePlayback = false,
+  backgroundPlayback = false,
 ): Promise<boolean> {
   return enqueue(async () => {
     if (!isAudioSessionOwner(token)) return false;
@@ -72,7 +73,7 @@ export function activateAudioSession(
       allowsRecording: token.kind === "recording",
       interruptionMode: "doNotMix",
       playsInSilentMode: true,
-      shouldPlayInBackground: false,
+      shouldPlayInBackground: backgroundPlayback,
     });
     if (!isAudioSessionOwner(token)) return false;
     await setIsAudioActiveAsync(true);
@@ -104,7 +105,9 @@ export function releaseAudioSession(token: AudioSessionToken): Promise<void> {
 export function createAudioPlaybackSession(
   player: { play(): void; pause(deactivateSession?: boolean): void },
   nativePlayback = false,
-  onRequestedChange?: (requested: boolean) => void,
+  onRequestedChange?: (requested: boolean, reason?: "pause" | "focus-loss" | "stop") => void,
+  backgroundPlayback = false,
+  retainSessionOnPause = false,
 ) {
   let token: AudioSessionToken | null = null;
   const stopPlayer = () => {
@@ -114,15 +117,16 @@ export function createAudioPlaybackSession(
       else pauseAudioPlayer(player);
     } catch {}
   };
-  const pause = () => {
+  const pause = (reason: "pause" | "focus-loss" | "stop" = "pause") => {
     const previous = token;
-    token = null;
-    onRequestedChange?.(false);
+    const retain = reason === "pause" && retainSessionOnPause;
+    if (!retain) token = null;
+    onRequestedChange?.(false, reason);
     stopPlayer();
-    if (previous) void releaseAudioSession(previous).catch(() => {});
+    if (previous && !retain) void releaseAudioSession(previous).catch(() => {});
   };
   const acquire = () => {
-    const next = acquireAudioSession("playback", pause, stopPlayer);
+    const next = acquireAudioSession("playback", () => pause("focus-loss"), stopPlayer);
     if (!isAudioSessionOwner(next)) {
       stopPlayer();
       return null;
@@ -132,20 +136,23 @@ export function createAudioPlaybackSession(
     return next;
   };
   return {
-    pause,
+    pause: () => pause(),
+    stop: () => pause("stop"),
     get requested() {
       return token !== null;
     },
+    /** False when another owner refused playback; losing focus later pauses instead. */
     async play(prepare?: () => Promise<void>) {
       const current = token ?? acquire();
-      if (!current) return;
+      if (!current) return false;
       try {
         await prepare?.();
-        if (!(await activateAudioSession(current, nativePlayback))) return;
-        if (token !== current || !isAudioSessionOwner(current)) return;
+        if (!(await activateAudioSession(current, nativePlayback, backgroundPlayback))) return true;
+        if (token !== current || !isAudioSessionOwner(current)) return true;
         player.play();
+        return true;
       } catch (error) {
-        if (token === current) pause();
+        if (token === current) pause("stop");
         throw error;
       }
     },

@@ -32,6 +32,24 @@ export const LinuxLibc = Context.Reference<"gnu" | "musl">(
   },
 );
 
+/** The running glibc, such as `2.39`; undefined off glibc. */
+export const GlibcVersion = Context.Reference<string | undefined>(
+  "@t3tools/shared/HostProcess/GlibcVersion",
+  {
+    defaultValue: () => {
+      try {
+        const report = process.report?.getReport() as
+          | { header?: { glibcVersionRuntime?: unknown } }
+          | undefined;
+        const version = report?.header?.glibcVersionRuntime;
+        return typeof version === "string" ? version : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+  },
+);
+
 export const Hostname = Context.Reference<string>("@t3tools/shared/HostProcess/Hostname", {
   defaultValue: () => NodeOS.hostname(),
 });

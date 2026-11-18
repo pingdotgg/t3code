@@ -68,7 +68,7 @@ import { SecretInput } from "./SecretInput";
 import { SecretSourceSelect } from "./SecretSourceInput";
 
 // Per dialog instance, not an Atom.family: key presence must be read fresh each time it opens.
-function useCloudRead<A, E>(
+export function useCloudRead<A, E>(
   prepared: PreparedConnection | null,
   read: (prepared: PreparedConnection) => Effect.Effect<A, E, HttpClient.HttpClient>,
 ) {

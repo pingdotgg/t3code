@@ -1,3 +1,12 @@
+import {
+  SpeechSynthesisProvider,
+  SpeechSynthesisRequest,
+  SpeechSynthesisCatalog,
+  SpeechSynthesisError,
+  SpeechSynthesisModelRequest,
+  SpeechSynthesisPrepareRequest,
+  SpeechSynthesisStream,
+} from "./readAloud.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -841,6 +850,66 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("synthesisModels", "/api/voice/synthesis/:provider/models", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, SpeechSynthesisError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("startSynthesis", "/api/voice/synthesis/:provider/stream", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ provider: SpeechSynthesisProvider }),
+      payload: SpeechSynthesisRequest,
+      success: SpeechSynthesisStream,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentRequestInvalidError,
+        SpeechSynthesisError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareSynthesisModel", "/api/voice/synthesis/local/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisPrepareRequest,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadSynthesisModel", "/api/voice/synthesis/local/models/download", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelSynthesisModel", "/api/voice/synthesis/local/models/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("linkSynthesisModels", "/api/voice/synthesis/local/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisModel", "/api/voice/synthesis/local/models/remove", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
       headers: OptionalBearerHeaders,

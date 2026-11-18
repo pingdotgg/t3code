@@ -1,8 +1,14 @@
+import type { SpeechSynthesisProvider, SpeechSynthesisRequest } from "@t3tools/contracts";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import {
+  CloudSpeechError,
+  SPEECH_STREAM_PATH,
+  SPEECH_SYNTHESIS_AUDIO_PATH,
+  SpeechSynthesisError,
+} from "@t3tools/contracts";
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
@@ -25,6 +31,7 @@ import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const isCloudSpeechError = Schema.is(CloudSpeechError);
+const isSpeechSynthesisError = Schema.is(SpeechSynthesisError);
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -310,4 +317,97 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const getSpeechSynthesisModels = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.synthesisModels({ params: { provider } }),
+    run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider } }),
+  });
+
+/** Starts synthesis and resolves, once audio exists, with the URL of its live MP3 stream. */
+export const startSpeechSynthesis = (
+  prepared: PreparedConnection,
+  provider: SpeechSynthesisProvider,
+  payload: SpeechSynthesisRequest,
+) => {
+  let endpoint = prepared.httpBaseUrl;
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: 130_000,
+    path: (urls) => {
+      endpoint = urls.startSynthesis({ params: { provider } });
+      return endpoint;
+    },
+    run: ({ client, headers }) => client.startSynthesis({ headers, params: { provider }, payload }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)
+        ? error.cause
+        : error,
+    ),
+    Effect.map(({ token }) => {
+      const url = new URL(SPEECH_SYNTHESIS_AUDIO_PATH, endpoint);
+      url.searchParams.set("token", token);
+      return url.toString();
+    }),
+  );
+};
+
+/** Loads the environment's local model ahead of playback; an empty model is its default. */
+export const prepareSpeechSynthesis = (prepared: PreparedConnection, model: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.prepareSynthesisModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.prepareSynthesisModel({ headers, payload: { model } }),
+  });
+
+export const downloadSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.downloadSynthesisModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.downloadSynthesisModel({ headers, payload: { modelId } }),
+  });
+
+export const cancelSpeechSynthesisModelDownload = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.cancelSynthesisModel(),
+    run: ({ client, headers }) => client.cancelSynthesisModel({ headers, payload: { modelId } }),
+  });
+
+export const linkSpeechSynthesisModels = (prepared: PreparedConnection, path: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.linkSynthesisModels(),
+    // Hashing the model, then fetching the runtime, takes longer than an ordinary request.
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.linkSynthesisModels({ headers, payload: { path } }),
+  });
+
+export const removeSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.removeSynthesisModel(),
+    run: ({ client, headers }) => client.removeSynthesisModel({ headers, payload: { modelId } }),
   });
