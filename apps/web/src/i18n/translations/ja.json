@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "t3@{version} の更新はロールバックされました。",
   "31dc4da5813e0846": "t3@{version} の更新に失敗しました。",
   "b060872e18e91755": "サーバーの更新に失敗しました。",
+  "77231250643f4943": "この {build, select, nightly {Nightly} other {安定版}} ビルドは {saved, select, nightly {Nightly} other {安定版}} トラックから単独では更新できません。更新トラックを {build, select, nightly {Nightly} other {安定版}} に戻すか、更新トラックの横にある「レビュー」を使って {saved, select, nightly {Nightly} other {安定版}} への切り替えを再試行してください。",
+  "43ed503038717b90": "サーバーの更新に失敗しました：",
   "a8cb0a2b46270859": "環境のデータを同期できませんでした。",
   "4731d4616735186c": "{count, plural, other {{count} 個のサブエージェントを開始しました}}",
   "885110d4e416d2cd": "{count, plural, other {{count} 個のサブエージェントを実行しました}}",

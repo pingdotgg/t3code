@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "Uppdateringen till t3@{version} återställdes.",
   "31dc4da5813e0846": "Uppdateringen till t3@{version} misslyckades.",
   "b060872e18e91755": "Serveruppdateringen misslyckades.",
+  "77231250643f4943": "Den här {build, select, nightly {Nightly} other {Stable}}-versionen kan inte uppdatera sig själv från spåret {saved, select, nightly {Nightly} other {Stable}}. Byt tillbaka uppdateringsspåret till {build, select, nightly {Nightly} other {Stable}}, eller använd Granska bredvid Uppdateringsspår för att försöka byta till {saved, select, nightly {Nightly} other {Stable}} igen.",
+  "43ed503038717b90": "Serveruppdateringen misslyckades:",
   "a8cb0a2b46270859": "Kunde inte synkronisera miljöns data.",
   "4731d4616735186c": "{count, plural, one {Startade {count} subagent} other {Startade {count} subagenter}}",
   "885110d4e416d2cd": "{count, plural, one {Körde {count} subagent} other {Körde {count} subagenter}}",

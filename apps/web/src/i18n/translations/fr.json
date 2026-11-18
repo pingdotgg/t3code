@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "La mise à jour t3@{version} a été annulée.",
   "31dc4da5813e0846": "La mise à jour t3@{version} a échoué.",
   "b060872e18e91755": "Échec de la mise à jour du serveur.",
+  "77231250643f4943": "Cette version {build, select, nightly {Nightly} other {Stable}} ne peut pas se mettre à jour seule depuis le canal {saved, select, nightly {Nightly} other {Stable}}. Remettez le canal de mise à jour sur {build, select, nightly {Nightly} other {Stable}}, ou utilisez Consulter à côté de Canal de mise à jour pour relancer le passage à {saved, select, nightly {Nightly} other {Stable}}.",
+  "43ed503038717b90": "Échec de la mise à jour du serveur :",
   "a8cb0a2b46270859": "Impossible de synchroniser les données de l’environnement.",
   "4731d4616735186c": "{count, plural, one {{count} sous-agent lancé} other {{count} sous-agents lancés}}",
   "885110d4e416d2cd": "{count, plural, one {{count} sous-agent exécuté} other {{count} sous-agents exécutés}}",

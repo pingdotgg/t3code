@@ -371,6 +371,7 @@ function getAutoUpdateDisabledReason(args: {
 const trackLabel = (channel: DesktopUpdateChannel) =>
   channel === "nightly" ? "Nightly" : "Stable";
 
+// Clients localize `trackMismatch`; this English text serves older renderers and remote reports.
 const trackMismatchMessage = (build: DesktopUpdateChannel, saved: DesktopUpdateChannel) =>
   `This ${trackLabel(build)} build can't update from the ${trackLabel(saved)} track on its own. Switch the update track back to ${trackLabel(build)}, or use Review beside Update track to retry the switch to ${trackLabel(saved)}.`;
 
@@ -433,6 +434,7 @@ export const make = Effect.gen(function* () {
             state,
             trackMismatchMessage(buildChannel, state.channel),
             checkedAt,
+            { buildChannel },
           )
         : reduceDesktopUpdateStateOnNoUpdate(state, checkedAt);
     });
@@ -1164,7 +1166,7 @@ export const make = Effect.gen(function* () {
 
     if (Option.isNone(activeAction)) {
       const checkedAt = yield* currentIsoTimestamp;
-      yield* updateState((current) => ({
+      yield* updateState(({ trackMismatch: _trackMismatch, ...current }) => ({
         ...current,
         status: "error",
         message: error.message,

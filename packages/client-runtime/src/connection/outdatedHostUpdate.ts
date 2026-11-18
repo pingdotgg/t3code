@@ -24,7 +24,11 @@ import * as Socket from "effect/socket/Socket";
 
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
-import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "../state/server.ts";
+import {
+  isLegacyUpdateHandoffLoss,
+  localizeServerSelfUpdateError,
+  resolveServerUpdateProgressResult,
+} from "../state/server.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
@@ -206,7 +210,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
         }
         return updateResult;
       }),
-    );
+    ).pipe(Effect.mapError(localizeServerSelfUpdateError));
 
     yield* onStage("resuming");
     const pollUrls = [

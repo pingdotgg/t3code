@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "A atualização t3@{version} foi revertida.",
   "31dc4da5813e0846": "A atualização t3@{version} falhou.",
   "b060872e18e91755": "Falha ao atualizar o servidor.",
+  "77231250643f4943": "Esta build {build, select, nightly {Nightly} other {Estável}} não consegue se atualizar sozinha pelo canal {saved, select, nightly {Nightly} other {Estável}}. Volte o canal de atualização para {build, select, nightly {Nightly} other {Estável}} ou use Revisar ao lado de Canal de atualização para tentar de novo a mudança para {saved, select, nightly {Nightly} other {Estável}}.",
+  "43ed503038717b90": "Falha ao atualizar o servidor:",
   "a8cb0a2b46270859": "Não foi possível sincronizar os dados do ambiente.",
   "4731d4616735186c": "{count, plural, one {{count} subagente iniciado} other {{count} subagentes iniciados}}",
   "885110d4e416d2cd": "{count, plural, one {{count} subagente executado} other {{count} subagentes executados}}",

@@ -1200,6 +1200,7 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "error");
         assert.equal(state.errorContext, "check");
         assert.isTrue(state.canRetry);
+        assert.deepEqual(state.trackMismatch, { buildChannel: "latest" });
         assert.deepEqual(harness.checkAllowedDowngrade, [false]);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -1220,6 +1221,19 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "error");
         assert.equal(state.errorContext, "check");
         assert.isTrue(state.canRetry);
+        assert.deepEqual(state.trackMismatch, { buildChannel: "latest" });
+
+        // A later failure has its own reason, so the mismatch must not stay attached to it.
+        harness.emit("error", new Error("background updater failure"));
+        yield* flushCallbacks;
+        assert.isUndefined((yield* updates.getState).trackMismatch);
+
+        harness.emit("update-not-available");
+        yield* flushCallbacks;
+        assert.isDefined((yield* updates.getState).trackMismatch);
+        yield* updates.check("menu");
+        assert.equal((yield* updates.getState).status, "checking");
+        assert.isUndefined((yield* updates.getState).trackMismatch);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

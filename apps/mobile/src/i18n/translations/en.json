@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "The t3@{version} update rolled-back.",
   "31dc4da5813e0846": "The t3@{version} update failed.",
   "b060872e18e91755": "Server update failed.",
+  "77231250643f4943": "This {build, select, nightly {Nightly} other {Stable}} build can't update from the {saved, select, nightly {Nightly} other {Stable}} track on its own. Switch the update track back to {build, select, nightly {Nightly} other {Stable}}, or use Review beside Update track to retry the switch to {saved, select, nightly {Nightly} other {Stable}}.",
+  "43ed503038717b90": "Server update failed:",
   "a8cb0a2b46270859": "Could not synchronize environment data.",
   "4731d4616735186c": "{count, plural, one {Kicked off {count} subagent} other {Kicked off {count} subagents}}",
   "885110d4e416d2cd": "{count, plural, one {Ran {count} subagent} other {Ran {count} subagents}}",

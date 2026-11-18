@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "La actualización a t3@{version} se revirtió.",
   "31dc4da5813e0846": "La actualización a t3@{version} falló.",
   "b060872e18e91755": "Falló la actualización del servidor.",
+  "77231250643f4943": "Esta compilación {build, select, nightly {Nightly} other {Estable}} no puede actualizarse por sí sola desde el canal {saved, select, nightly {Nightly} other {Estable}}. Vuelve a poner el canal de actualizaciones en {build, select, nightly {Nightly} other {Estable}} o usa Revisar junto a Canal de actualizaciones para reintentar el cambio a {saved, select, nightly {Nightly} other {Estable}}.",
+  "43ed503038717b90": "Falló la actualización del servidor:",
   "a8cb0a2b46270859": "No se pudieron sincronizar los datos del entorno.",
   "4731d4616735186c": "{count, plural, one {Se inició {count} subagente} other {Se iniciaron {count} subagentes}}",
   "885110d4e416d2cd": "{count, plural, one {Se ejecutó {count} subagente} other {Se ejecutaron {count} subagentes}}",

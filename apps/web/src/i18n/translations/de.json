@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "Das Update auf t3@{version} wurde zurückgerollt.",
   "31dc4da5813e0846": "Das Update auf t3@{version} ist fehlgeschlagen.",
   "b060872e18e91755": "Server-Update fehlgeschlagen.",
+  "77231250643f4943": "Dieser {build, select, nightly {Nightly} other {Stable}}-Build kann sich über den Kanal {saved, select, nightly {Nightly} other {Stable}} nicht selbst aktualisieren. Stelle den Update-Kanal wieder auf {build, select, nightly {Nightly} other {Stable}} um oder nutze Review neben Update-Kanal, um den Wechsel zu {saved, select, nightly {Nightly} other {Stable}} erneut zu versuchen.",
+  "43ed503038717b90": "Server-Update fehlgeschlagen:",
   "a8cb0a2b46270859": "Die Umgebungsdaten konnten nicht synchronisiert werden.",
   "4731d4616735186c": "{count, plural, one {{count} Subagent gestartet} other {{count} Subagenten gestartet}}",
   "885110d4e416d2cd": "{count, plural, one {{count} Subagent ausgeführt} other {{count} Subagenten ausgeführt}}",

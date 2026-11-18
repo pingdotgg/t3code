@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "t3@{version} 업데이트가 롤백되었습니다.",
   "31dc4da5813e0846": "t3@{version} 업데이트에 실패했습니다.",
   "b060872e18e91755": "서버 업데이트에 실패했습니다.",
+  "77231250643f4943": "이 {build, select, nightly {Nightly} other {Stable}} 빌드는 {saved, select, nightly {Nightly} other {Stable}} 트랙에서 스스로 업데이트할 수 없습니다. 업데이트 트랙을 다시 {build, select, nightly {Nightly} other {Stable}}(으)로 바꾸거나, 업데이트 트랙 옆의 검토를 사용해 {saved, select, nightly {Nightly} other {Stable}}(으)로 전환을 다시 시도하세요.",
+  "43ed503038717b90": "서버 업데이트에 실패했습니다:",
   "a8cb0a2b46270859": "환경 데이터를 동기화할 수 없습니다.",
   "4731d4616735186c": "{count, plural, other {서브에이전트 {count}개 시작함}}",
   "885110d4e416d2cd": "{count, plural, other {서브에이전트 {count}개 실행함}}",

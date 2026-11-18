@@ -680,6 +680,8 @@
   "b50da99bbfd59a6d": "t3@{version} 更新已回滚。",
   "31dc4da5813e0846": "t3@{version} 更新失败。",
   "b060872e18e91755": "服务器更新失败。",
+  "77231250643f4943": "此 {build, select, nightly {Nightly 版} other {稳定版}} 构建无法自行从 {saved, select, nightly {Nightly 版} other {稳定版}} 通道更新。请将更新通道切回 {build, select, nightly {Nightly 版} other {稳定版}}，或使用“更新通道”旁的“查看”重新尝试切换到 {saved, select, nightly {Nightly 版} other {稳定版}}。",
+  "43ed503038717b90": "服务器更新失败：",
   "a8cb0a2b46270859": "无法同步环境数据。",
   "4731d4616735186c": "{count, plural, other {已启动 {count} 个子智能体}}",
   "885110d4e416d2cd": "{count, plural, other {已运行 {count} 个子智能体}}",
