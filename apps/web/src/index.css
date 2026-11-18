@@ -1776,6 +1776,9 @@ html[data-theme-scene]
 html[data-theme-scene] [data-thread-terminal-drawer] {
   --terminal-background: transparent;
 }
+html[data-theme-scene] [data-preview-panel-mode]:has([data-thread-terminal-drawer]) {
+  background: transparent;
+}
 
 #root {
   height: 100%;
