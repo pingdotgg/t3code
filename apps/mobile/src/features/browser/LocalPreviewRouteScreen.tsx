@@ -51,6 +51,7 @@ export function LocalPreviewScreen(props: {
   const [requested, setRequested] = useState(initialUrl);
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
+  const [disconnected, setDisconnected] = useState(false);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const bar = useBarFollowsScroll();
   // After a failed load the webview reports no URL, so the address stays on the one asked for.
@@ -128,6 +129,7 @@ export function LocalPreviewScreen(props: {
             setPage(next);
           }}
           onScrollDirection={onMaximize ? undefined : bar.follow}
+          onAccess={(available) => setDisconnected(!available)}
           onLoadError={(failure) => {
             if (failure.unsupported) return setUnsupported(failure.description);
             // A link to another port fails with that port's address, not the one typed earlier.
@@ -157,8 +159,16 @@ export function LocalPreviewScreen(props: {
             <View className="w-full max-w-md">
               <EmptyState
                 variant="plain"
-                title={`Can't reach ${hostOf(current)}`}
-                detail={`Nothing is listening on ${portOf(current)} on ${environmentLabel}. Start the server there, then try again.`}
+                title={
+                  disconnected
+                    ? `Not connected to ${environmentLabel}`
+                    : `Can't reach ${hostOf(current)}`
+                }
+                detail={
+                  disconnected
+                    ? `Pages on ${environmentLabel}'s localhost load through its connection. Try again once it reconnects.`
+                    : `Nothing is listening on ${portOf(current)} on ${environmentLabel}. Start the server there, then try again.`
+                }
                 actionLabel="Try again"
                 onAction={retry}
               />
