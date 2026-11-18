@@ -147,3 +147,34 @@ where the image shows:
 ```
 
 Delete the image file to remove it.
+
+### Animated scene
+
+A published theme can run an animated scene behind the app, such as a WebGL or canvas
+background. Save an HTML page of up to 4 MB beside the theme file: `nightfall.html` beside
+`nightfall.json`. Web and desktop clients run it in a sandboxed frame that cannot reach T3 Code,
+your session, or its storage. It can load scripts from the web, so it needs a connection to do
+so.
+
+The page receives the pointer position as messages, so it can follow the mouse:
+
+```js
+window.addEventListener("message", ({ data }) => {
+  if (data?.type === "t3-theme-scene:pointer") console.log(data.x, data.y);
+  if (data?.type === "t3-theme-scene:pointer-leave") console.log("left");
+});
+```
+
+While a scene runs, the page root has `data-theme-scene`. The theme's CSS decides which surfaces
+let it show through:
+
+```css
+[data-theme-scene] [data-slot="sidebar-inset"],
+[data-theme-scene] [data-chat-view],
+[data-theme-scene] [data-workspace-area="conversation"] {
+  background: transparent;
+}
+```
+
+A scene keeps drawing while the window is visible, so a heavy one costs battery. Delete the HTML
+file to remove it.

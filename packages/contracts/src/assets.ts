@@ -70,6 +70,9 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("environment-theme-background", {
     themeId: EnvironmentThemeId,
   }),
+  Schema.TaggedStruct("environment-theme-scene", {
+    themeId: EnvironmentThemeId,
+  }),
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),

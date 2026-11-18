@@ -215,7 +215,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("serves the background image published beside an environment theme", () =>
+  it.effect("serves the background image and scene published beside an environment theme", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
@@ -236,6 +236,24 @@ describe("AssetAccess", () => {
 
       yield* fs.remove(imagePath);
       expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toBeNull();
+
+      const scenePath = `${environmentThemesDir}/frieren.html`;
+      yield* fs.writeFileString(scenePath, "<script>parent.document.cookie</script>");
+      const scene = yield* issueAssetUrl({
+        resource: { _tag: "environment-theme-scene", themeId: "frieren" },
+      });
+      const sceneSuffix = scene.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const sceneSeparator = sceneSuffix.indexOf("/");
+      const sceneAsset = yield* resolveAsset(
+        sceneSuffix.slice(0, sceneSeparator),
+        sceneSuffix.slice(sceneSeparator + 1),
+      );
+      expect(sceneAsset).toMatchObject({ kind: "file", path: yield* fs.realPath(scenePath) });
+      if (sceneAsset?.kind !== "file") return;
+      const sceneResponse = yield* assetFileResponse(sceneAsset);
+      expect(sceneResponse.headers["content-type"]).toBe("text/html; charset=utf-8");
+      // Scene scripts must run with an opaque origin, away from the app's session.
+      expect(sceneResponse.headers["content-security-policy"]).toMatch(/^sandbox allow-scripts/);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

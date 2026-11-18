@@ -61,6 +61,9 @@ const MAX_THEME_TOTAL_BYTES = 2 * 1024 * 1024;
 /** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
 const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
 const MAX_THEME_BACKGROUND_BYTES = 16 * 1024 * 1024;
+/** A theme's animated scene is `<id>.html`, served with an opaque sandboxed origin. */
+const THEME_SCENE_EXTENSIONS = ["html"] as const;
+const MAX_THEME_SCENE_BYTES = 4 * 1024 * 1024;
 
 interface PublishedThemes {
   readonly seq: number;
@@ -185,16 +188,15 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
   }
 };
 
-/**
- * The background image published beside `themeId`, if any. Symlinks and oversized files are
- * skipped. `entries` lets a directory scan skip lookups for names it did not list.
- */
-export function findThemeBackground(
+/** A file published beside `themeId`. Symlinks and oversized files are skipped. */
+function findThemeFile(
   themesDir: string,
   themeId: string,
-  entries?: ReadonlySet<string>,
+  extensions: ReadonlyArray<string>,
+  maxBytes: number,
+  entries: ReadonlySet<string> | undefined,
 ): { readonly path: string; readonly revision: string } | null {
-  for (const extension of THEME_BACKGROUND_EXTENSIONS) {
+  for (const extension of extensions) {
     const name = `${themeId}.${extension}`;
     if (entries !== undefined && !entries.has(name)) continue;
     // Native separators: the asset route refuses a path that differs from its canonical form.
@@ -205,13 +207,36 @@ export function findThemeBackground(
     } catch {
       continue;
     }
-    if (!info.isFile() || info.size > MAX_THEME_BACKGROUND_BYTES) continue;
+    if (!info.isFile() || info.size > maxBytes) continue;
     return {
       path: filePath,
       revision: [info.ino, info.size, info.mtimeNs].map((part) => part.toString(36)).join("-"),
     };
   }
   return null;
+}
+
+/**
+ * The background image published beside `themeId`, if any. `entries` lets a directory scan skip
+ * lookups for names it did not list.
+ */
+export function findThemeBackground(
+  themesDir: string,
+  themeId: string,
+  entries?: ReadonlySet<string>,
+) {
+  return findThemeFile(
+    themesDir,
+    themeId,
+    THEME_BACKGROUND_EXTENSIONS,
+    MAX_THEME_BACKGROUND_BYTES,
+    entries,
+  );
+}
+
+/** The scene page published beside `themeId`, if any. */
+export function findThemeScene(themesDir: string, themeId: string, entries?: ReadonlySet<string>) {
+  return findThemeFile(themesDir, themeId, THEME_SCENE_EXTENSIONS, MAX_THEME_SCENE_BYTES, entries);
 }
 
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
@@ -275,7 +300,13 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
 
     const background = findThemeBackground(themesDir, id, entryNames);
-    themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
+    const scene = findThemeScene(themesDir, id, entryNames);
+    themes.push({
+      id,
+      ...file,
+      ...(background ? { background: background.revision } : {}),
+      ...(scene ? { scene: scene.revision } : {}),
+    });
   }
   return themes;
 });

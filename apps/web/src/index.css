@@ -1743,6 +1743,27 @@ body {
   overflow: hidden;
 }
 
+/* A theme's scripted scene sits between the page background and the app; theme CSS clears the
+   surfaces it should show through. The page background is an inline style, so the scene goes above it. */
+.theme-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease-out;
+}
+.theme-scene[data-loaded] {
+  opacity: 1;
+}
+html[data-theme-scene] #root {
+  position: relative;
+  z-index: 1;
+}
+
 #root {
   height: 100%;
   width: 100%;

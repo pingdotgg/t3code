@@ -655,6 +655,8 @@ export const EnvironmentTheme = Schema.Struct({
   ...environmentThemeFields,
   /** Revision of the image file published beside the theme; absent without one. */
   background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
+  /** Revision of the scripted HTML scene published beside the theme; absent without one. */
+  scene: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 

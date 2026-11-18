@@ -33,6 +33,7 @@ import {
 import { m } from "./i18n/messages";
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
 import { applyThemeBackground } from "./themeBackground";
+import { applyThemeScene } from "./themeScene";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
@@ -1750,6 +1751,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const palette = getThemeDefinition(theme);
   applyThemeCss(palette?.css);
   applyThemeBackground(palette?.id);
+  applyThemeScene(palette?.id);
 
   if (palette) {
     root.dataset.themeId = palette.id;

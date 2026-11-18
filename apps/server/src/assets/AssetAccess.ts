@@ -53,7 +53,7 @@ import * as AssetSigner from "./AssetSigner.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import { findThemeBackground } from "../environmentTheme.ts";
+import { findThemeBackground, findThemeScene } from "../environmentTheme.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -179,6 +179,12 @@ const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("environment-theme-background"),
+    themeId: EnvironmentThemeId,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("environment-theme-scene"),
     themeId: EnvironmentThemeId,
     expiresAt: Schema.Number,
   }),
@@ -866,6 +872,17 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = `${input.resource.themeId}-background`;
       break;
     }
+    case "environment-theme-scene": {
+      claims = {
+        version: 1,
+        kind: "environment-theme-scene",
+        themeId: input.resource.themeId,
+        expiresAt,
+      };
+      // The .html name makes the asset route serve it with an opaque sandboxed origin.
+      fileName = `${input.resource.themeId}-scene.html`;
+      break;
+    }
     case "native-app-icon": {
       claims = {
         version: 1,
@@ -1014,22 +1031,23 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
   }
 
-  if (claims.kind === "environment-theme-background") {
+  if (claims.kind === "environment-theme-background" || claims.kind === "environment-theme-scene") {
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     // The themes directory may be a symlink; openMediaFile refuses any path that is not canonical.
     const themesDir = yield* fileSystem
       .realPath(config.environmentThemesDir)
       .pipe(Effect.orElseSucceed(() => null));
-    const background = themesDir === null ? null : findThemeBackground(themesDir, claims.themeId);
-    if (background === null) return null;
-    const file = yield* openMediaFile(background.path).pipe(
+    const find = claims.kind === "environment-theme-scene" ? findThemeScene : findThemeBackground;
+    const published = themesDir === null ? null : find(themesDir, claims.themeId);
+    if (published === null) return null;
+    const file = yield* openMediaFile(published.path).pipe(
       Effect.tapError((cause) =>
-        Effect.logError("Failed to open theme background.", { path: background.path, cause }),
+        Effect.logError("Failed to open theme file.", { path: published.path, cause }),
       ),
       Effect.orElseSucceed(() => null),
     );
-    return file ? ({ kind: "file", path: background.path, file } satisfies ResolvedAsset) : null;
+    return file ? ({ kind: "file", path: published.path, file } satisfies ResolvedAsset) : null;
   }
 
   if (claims.kind === "native-app-icon") {
