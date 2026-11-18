@@ -255,6 +255,61 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
     ),
   );
 
+  // agent-device records a device claim's workspace from its own cwd (the nearest `.git` above it)
+  // and refuses install/uninstall/push from a different workspace, even for the same session.
+  it.effect(
+    "gives agent-device one workspace for its session whatever shell directory runs it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-cwd-" });
+        const entryPath = path.join(dir, "cli.mjs");
+        yield* fs.writeFileString(entryPath, "console.log(process.cwd());");
+        const command = yield* bindAgentDeviceLauncher({
+          entryPath,
+          stateDir: dir,
+          session: "t3-a",
+          targetArgs: [
+            "--platform",
+            "ios",
+            "--udid",
+            "UDID-1",
+            "--config",
+            "/h.json",
+            "--session",
+            "t3-a",
+          ],
+        });
+        const launchFrom = Effect.fn(function* (repo: string, args: ReadonlyArray<string>) {
+          const cwd = path.join(dir, repo);
+          yield* fs.makeDirectory(path.join(cwd, ".git"), { recursive: true });
+          const { stdout } = yield* Effect.promise(() =>
+            exec(
+              process.execPath,
+              [path.join(path.dirname(command), "agent-device-launcher.mjs"), ...args],
+              {
+                cwd,
+              },
+            ),
+          );
+          return stdout.trim();
+        });
+        const opened = yield* launchFrom("mobile-app", ["open", "com.example.app"]);
+        const installed = yield* launchFrom("coordinator", [
+          "install",
+          "com.example.app",
+          "/b/App.app",
+        ]);
+        expect(installed).toBe(opened);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+  );
+
   it("tells a released session from a close that failed or timed out", () => {
     const result = (code: number | null, stderr = "", timedOut = false) => ({
       stdout: "",
