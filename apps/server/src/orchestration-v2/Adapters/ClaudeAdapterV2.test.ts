@@ -7817,6 +7817,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "tells an Auto-routed turn its level and reopens the process when the level changes",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        const opus = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const routed = (level: string, effort: string) =>
+          ({
+            ...opus,
+            options: [
+              { id: "effort", value: effort },
+              { id: "auto", value: level },
+            ],
+          }) satisfies ModelSelection;
+        const appendText = () =>
+          (harness.getOpenedOptions()?.systemPrompt as { readonly append?: string } | undefined)
+            ?.append ?? "";
+        const runTurn = Effect.fnUntraced(function* (ordinal: number, selection: ModelSelection) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-auto-level:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              modelSelection: selection,
+            }),
+          );
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          return harness.getOpenedOptions();
+        });
+
+        const handPicked = yield* runTurn(1, {
+          ...opus,
+          options: [{ id: "effort", value: "medium" }],
+        });
+        assert.notInclude(appendText(), "Auto level:");
+
+        const medium = yield* runTurn(2, routed("medium", "medium"));
+        assert.notStrictEqual(medium, handPicked);
+        assert.isTrue(appendText().endsWith("\n\nAuto level: medium"));
+
+        // Only the effort differs between these levels, which would otherwise change live.
+        const high = yield* runTurn(3, routed("high", "xhigh"));
+        assert.notStrictEqual(high, medium);
+        assert.isTrue(appendText().endsWith("\n\nAuto level: high"));
+        assert.deepEqual(harness.liveSelectionChanges, []);
+
+        assert.strictEqual(yield* runTurn(4, routed("high", "xhigh")), high);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
   it.effect("applies a model change sent with a steer to the running turn", () =>
     Effect.gen(function* () {
