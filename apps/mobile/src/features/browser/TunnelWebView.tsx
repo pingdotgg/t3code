@@ -46,6 +46,7 @@ const NativeTunnelWebView = requireNativeView<
         description: string;
         url: string;
         debug?: string;
+        cause?: string;
       }>,
     ) => void;
     readonly onPageScroll: (event: NativeSyntheticEvent<{ y: number }>) => void;
@@ -76,8 +77,13 @@ export function TunnelWebView({
     readonly url: string;
     readonly unsupported: boolean;
     readonly description: string;
-    /** TEMPORARY: what the native proxy saw, while we debug real devices. */
+    /** What the native proxy saw, shown with the error so a report carries it. iOS only. */
     readonly debug?: string;
+    /**
+     * iOS only: whether the environment itself was out of reach (`environment`) or answered that
+     * nothing listens on the port (`port`).
+     */
+    readonly cause?: "environment" | "port";
   }) => void;
   /** Whether the last connection could get into the environment's tunnel at all. */
   readonly onAccess?: (available: boolean) => void;
@@ -115,6 +121,10 @@ export function TunnelWebView({
             unsupported: nativeEvent.code === -1 && nativeEvent.url === "",
             description: nativeEvent.description,
             debug: nativeEvent.debug,
+            cause:
+              nativeEvent.cause === "environment" || nativeEvent.cause === "port"
+                ? nativeEvent.cause
+                : undefined,
           })
         }
       />

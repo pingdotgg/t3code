@@ -228,6 +228,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       "description": error.localizedDescription,
       "url": failingUrl ?? "",
       "debug": "\(error.domain) \(error.code), port \(proxyPort.map(String.init) ?? "none"), " + T3TunnelDiagnostics.shared.summary,
+      "cause": environmentId
+        .flatMap { T3EnvironmentProxy.forEnvironment($0).lastFailure?.rawValue } ?? "",
     ])
   }
 }
@@ -312,6 +314,8 @@ private final class T3EnvironmentProxy {
       }
     )
   }
+
+  var lastFailure: T3TunnelFailure? { listener?.lastFailure }
 
   private func ready(_ port: UInt16) {
     self.port = port

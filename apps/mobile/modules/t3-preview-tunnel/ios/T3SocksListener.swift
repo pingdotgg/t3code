@@ -11,6 +11,10 @@ final class T3SocksListener {
   private let requestAccess: AccessRequest
   private var listener: NWListener?
   private var connections: [ObjectIdentifier: T3SocksConnection] = [:]
+  private var failure: T3TunnelFailure?
+
+  /// Why the latest tunnel failed, or nil once one opened. The page's error alone can't tell.
+  var lastFailure: T3TunnelFailure? { queue.sync { failure } }
 
   init(requestAccess: @escaping AccessRequest) {
     self.requestAccess = requestAccess
@@ -43,10 +47,14 @@ final class T3SocksListener {
       T3TunnelDiagnostics.shared.note { $0.accepted += 1 }
       guard let self else { return connection.cancel() }
       let socks = T3SocksConnection(
-        connection: connection, queue: queue, requestAccess: requestAccess
-      ) { [weak self] socks in
-        self?.connections.removeValue(forKey: ObjectIdentifier(socks))
-      }
+        connection: connection,
+        queue: queue,
+        requestAccess: requestAccess,
+        onOutcome: { [weak self] failure in self?.failure = failure },
+        onClose: { [weak self] socks in
+          self?.connections.removeValue(forKey: ObjectIdentifier(socks))
+        }
+      )
       connections[ObjectIdentifier(socks)] = socks
       socks.start()
     }
@@ -60,6 +68,11 @@ final class T3SocksListener {
       connections.removeAll()
     }
   }
+}
+
+enum T3TunnelFailure: String {
+  case environment
+  case port
 }
 
 private let replySucceeded: UInt8 = 0
@@ -114,6 +127,7 @@ private final class T3SocksConnection {
   private let connection: NWConnection
   private let queue: DispatchQueue
   private let requestAccess: T3SocksListener.AccessRequest
+  private let onOutcome: (T3TunnelFailure?) -> Void
   private let onClose: (T3SocksConnection) -> Void
   private var received: [UInt8] = []
   private var greeted = false
@@ -127,11 +141,13 @@ private final class T3SocksConnection {
     connection: NWConnection,
     queue: DispatchQueue,
     requestAccess: @escaping T3SocksListener.AccessRequest,
+    onOutcome: @escaping (T3TunnelFailure?) -> Void,
     onClose: @escaping (T3SocksConnection) -> Void
   ) {
     self.connection = connection
     self.queue = queue
     self.requestAccess = requestAccess
+    self.onOutcome = onOutcome
     self.onClose = onClose
   }
 
@@ -197,6 +213,7 @@ private final class T3SocksConnection {
   private func openTunnel(base: String?, port: UInt16) {
     guard !closed else { return }
     guard let base, var components = URLComponents(string: base) else {
+      onOutcome(.environment)
       return finish(socksReply(replyFailure))
     }
     components.queryItems = (components.queryItems ?? []) + [
@@ -212,7 +229,14 @@ private final class T3SocksConnection {
       if let error { T3TunnelDiagnostics.shared.note { $0.tunnelError = error.localizedDescription } }
       self?.queue.async {
         guard let self, !self.closed else { return }
-        if error != nil { return self.finish(socksReply(replyFailure)) }
+        if error != nil {
+          // The environment refuses a dead or blocked port before upgrading; no reply means
+          // the environment itself is out of reach.
+          let status = (tunnel.response as? HTTPURLResponse)?.statusCode
+          self.onOutcome(status == 502 || status == 403 ? .port : .environment)
+          return self.finish(socksReply(replyFailure))
+        }
+        self.onOutcome(nil)
         self.connection.send(content: socksReply(replySucceeded), completion: .idempotent)
         if !self.received.isEmpty {
           let early = Data(self.received)
@@ -324,7 +348,7 @@ struct T3HostSwap {
   }
 }
 
-// TEMPORARY: what the proxy saw, shown on the error screen while we debug real devices.
+// What the proxy saw, shown with the page error so a report carries it.
 final class T3TunnelDiagnostics {
   struct Counts {
     var accepted = 0
