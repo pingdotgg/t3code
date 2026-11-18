@@ -399,6 +399,26 @@ describe("AgentScope service", () => {
     },
   );
 
+  it.effect("warns about an invalid memory policy without logging its value", () => {
+    const memoryPolicy = "invalid-".repeat(256);
+    const logs: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => logs.push(message));
+    memory.total = 16 * GiB;
+    return withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(calls.some((args) => args.includes(`MemoryMax=${12 * GiB}`))).toBe(true);
+          expect(logs).toContainEqual([
+            "Unknown agent slice memory policy; using automatic limits",
+            { memoryPolicy: "unknown", memoryPolicyLength: memoryPolicy.length },
+          ]);
+          expect(JSON.stringify(logs)).not.toContain(memoryPolicy);
+        }),
+      { memoryPolicy },
+    ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+  });
+
   it.effect("stops agents a killed server left before startup completes", () =>
     withFakeSystemd(
       ({ scope, calls, stateDir }) =>

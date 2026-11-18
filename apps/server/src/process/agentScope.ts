@@ -209,7 +209,8 @@ export const make = Effect.gen(function* () {
         memoryPolicy !== "host-managed"
       ) {
         yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits", {
-          memoryPolicy,
+          memoryPolicy: "unknown",
+          memoryPolicyLength: memoryPolicy.length,
         });
       }
       const hostManagedMemory = memoryPolicy === "host-managed";
