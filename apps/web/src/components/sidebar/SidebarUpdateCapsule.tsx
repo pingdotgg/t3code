@@ -18,6 +18,7 @@ import {
 } from "./updateEverything.logic";
 import {
   dismissSettledUpdateRunMachines,
+  hideHandedOffUpdateRun,
   postponeUpdateRestart,
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
@@ -81,6 +82,13 @@ function useUpdateRun(run: UpdateEverythingRun, local: UpdateRunLocalState) {
     runAction,
     failed: machines.some(({ status }) => status === "failed"),
     settled: !hasActiveMachine && run.localVersion === null,
+    // After a relaunch the run only waits on handed-off servers, which can take half an hour.
+    waitsOnHandoff:
+      run.localVersion === null &&
+      run.machines.some(({ result }) => result === null) &&
+      run.machines.every(
+        ({ result, handedOffVersion }) => result !== null || handedOffVersion !== null,
+      ),
     label: view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label,
   };
 }
@@ -182,7 +190,7 @@ function UpdateRunDetails({
   run,
   local,
   onRestart,
-  runView: { machines, now, view, runAction, failed, settled },
+  runView: { machines, now, view, runAction, failed, settled, waitsOnHandoff },
 }: UpdateRunProps & { readonly runView: ReturnType<typeof useUpdateRun> }) {
   return (
     <div className="flex flex-col gap-1 text-xs">
@@ -237,6 +245,12 @@ function UpdateRunDetails({
         <div className="mt-1 flex justify-end">
           <Button size="xs" variant="outline" onClick={runAction}>
             Later
+          </Button>
+        </div>
+      ) : waitsOnHandoff ? (
+        <div className="mt-1 flex justify-end">
+          <Button size="xs" variant="ghost" onClick={hideHandedOffUpdateRun}>
+            Hide
           </Button>
         </div>
       ) : null}

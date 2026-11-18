@@ -290,4 +290,38 @@ describe("DesktopUpdateButton update run", () => {
       .element(screen.getByRole("button", { name: "Update 0.0.50-nightly.2 ready to download" }))
       .not.toHaveAttribute("aria-disabled");
   });
+
+  it("lets the header leave the wait for an offline handed-off server", async () => {
+    setup(nightlyUpdate([]));
+    setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId: EnvironmentId.make("offline"),
+          label: "offline",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "0.0.50-nightly.2",
+          startedAt: 0,
+          result: null,
+          failure: null,
+          providerFailure: null,
+        },
+      ],
+    }));
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <DesktopUpdateButton />
+      </AppAtomRegistryProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /^offline restarting/ }));
+    await userEvent.click(page.getByRole("button", { name: "Hide" }));
+
+    await expect
+      .element(screen.getByRole("button", { name: "Update 0.0.50-nightly.2 ready to download" }))
+      .not.toHaveAttribute("aria-disabled");
+  });
 });
