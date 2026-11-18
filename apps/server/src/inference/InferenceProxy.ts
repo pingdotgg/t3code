@@ -536,11 +536,11 @@ const make = Effect.gen(function* () {
     yield* store.set("inference-proxy-state", new TextEncoder().encode(yield* encodeSaved(state)));
     cached = state;
   }, Effect.uninterruptible);
-  const stop = Effect.gen(function* () {
+  const stop: Effect.Effect<void> = Effect.gen(function* () {
     if (running) yield* Scope.close(running.scope, Exit.void);
     running = undefined;
+    yield* Cache.invalidateAll(routeProbes);
   });
-  yield* Effect.addFinalizer(() => stop);
   const writeConfig = Effect.fn("InferenceProxy.writeConfig")(function* (
     routing: NonNullable<Saved["routing"]>,
     runtime: Pick<NonNullable<typeof running>, "file" | "port" | "key" | "management">,
@@ -605,6 +605,8 @@ const make = Effect.gen(function* () {
         .spawn(
           ChildProcess.make(executable, ["-config", file, "-local-model"], {
             cwd: directory,
+            // Desktop updates terminate the backend process group if graceful shutdown stalls.
+            detached: false,
             env: {
               HOME: directory,
               USERPROFILE: directory,
@@ -1019,9 +1021,10 @@ const make = Effect.gen(function* () {
 
   const watchChild = Effect.fn("InferenceProxy.watchChild")(function* () {
     const child = yield* Queue.take(children);
-    yield* child.exitCode;
+    yield* refreshLocalProviders().pipe(Effect.ignoreCause({ log: true }));
+    // A signal exit is reported as a failed exitCode by the Node spawner.
+    yield* Effect.ignore(child.exitCode);
     if (running?.child !== child) return;
-    // Local providers call the sidecar directly, so their next turn cannot wake a stopped host.
     yield* Effect.sleep("1 second");
     yield* mutex
       .withPermit(
@@ -1032,7 +1035,6 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.retry({ times: 2, schedule: Schedule.exponential("1 second") }));
   });
-  yield* watchChild().pipe(Effect.ignore, Effect.forever, Effect.forkScoped);
 
   const status = mutex
     .withPermit(
@@ -1186,7 +1188,27 @@ const make = Effect.gen(function* () {
     );
     const available =
       release.version.localeCompare(current, "en", { numeric: true }) > 0 ? release.version : null;
-    if (operation === "checkUpdate" || !available) return { update: { current, available } };
+    if (operation === "checkUpdate") return { update: { current, available } };
+    if (!available) {
+      yield* mutex.withPermit(
+        Effect.gen(function* () {
+          const before = yield* read;
+          const previous = running;
+          const runtime = yield* ensureWatched(before);
+          if (runtime !== previous) return;
+          yield* jsonRequest(
+            runtime.baseUrl + "/v0/management/auth-files",
+            runtime.management,
+            Files,
+          ).pipe(
+            Effect.catch(() =>
+              stop.pipe(Effect.andThen(ensureWatched(before)), Effect.uninterruptible),
+            ),
+          );
+        }),
+      );
+      return { update: { current, available } };
+    }
     yield* install(directory, release).pipe(
       Effect.provide(installContext),
       Effect.mapError(safeFailure("Could not install the verified CLIProxyAPI update.")),
@@ -2235,7 +2257,7 @@ const make = Effect.gen(function* () {
     targetInstanceId?: ProviderInstanceId,
   ) {
     const hostId = yield* environment.getEnvironmentId;
-    const { enabled, routePools = [], traexHosts } = yield* read;
+    const { enabled, routePools = [], traexHosts } = yield* mutex.withPermit(read);
     const currentSettings = yield* settings.getSettings;
     const catalogs = yield* Cache.make({
       capacity: 64,
@@ -2379,6 +2401,8 @@ const make = Effect.gen(function* () {
       return refreshRouteCatalogs(false, instanceId).pipe(Effect.ignoreCause);
     return fresh ? invalidateCatalog.pipe(Effect.andThen(refreshCatalog)) : refreshCatalog;
   };
+  yield* Effect.addFinalizer(() => stop);
+  yield* watchChild().pipe(Effect.ignore, Effect.forever, Effect.forkScoped);
   yield* watchLocalCodexAuth.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
   yield* watchLocalClaudeAuth.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
   yield* read.pipe(
