@@ -166,13 +166,19 @@ const mediaBlockedMessage = (devices: ReadonlyArray<MediaDevice>): string =>
  */
 const ensureSystemMediaAccess = async (
   platform: NodeJS.Platform,
-  device: MediaDevice,
+  devices: ReadonlyArray<MediaDevice>,
 ): Promise<boolean> => {
   if (platform !== "darwin") return true;
-  const status = systemPreferences.getMediaAccessStatus(device);
-  if (status === "granted") return true;
-  if (status !== "not-determined") return false;
-  return systemPreferences.askForMediaAccess(device).catch(() => false);
+  const statuses = devices.map((device) => systemPreferences.getMediaAccessStatus(device));
+  if (statuses.some((status) => status !== "granted" && status !== "not-determined")) return false;
+  const results = await Promise.all(
+    devices.map((device, index) =>
+      statuses[index] === "granted"
+        ? true
+        : systemPreferences.askForMediaAccess(device).catch(() => false),
+    ),
+  );
+  return results.every(Boolean);
 };
 
 /** The camera and microphone answers given in one preview Session. */
@@ -311,6 +317,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let permissionPromptOpen = false;
+  let mediaRecoveryOpen = false;
   /** Settles with `undefined` when the user gave no answer: another prompt was open or the dialog failed. */
   const promptPermission = (
     requester: WebContents | null,
@@ -321,21 +328,26 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     },
     callback: (answer: boolean | undefined) => void,
   ): void => {
-    if (permissionPromptOpen) {
+    if (permissionPromptOpen || requester?.isDestroyed()) {
       callback(undefined);
       return;
     }
     permissionPromptOpen = true;
+    const dismiss = new AbortController();
+    const abandon = () => dismiss.abort();
+    requester?.once("destroyed", abandon);
     const settle = (answer: boolean | undefined) =>
       Effect.sync(() => {
         permissionPromptOpen = false;
-        callback(answer);
+        requester?.off("destroyed", abandon);
+        callback(dismiss.signal.aborted || requester?.isDestroyed() ? undefined : answer);
       });
     runFork(
       electronDialog
         .showMessageBox(
           {
             type: "question",
+            signal: dismiss.signal,
             buttons: [...prompt.buttons],
             // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
             defaultId: 1,
@@ -713,22 +725,21 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             }
             // A reset while a prompt or the macOS check is pending must not grant or remember.
             const resets = mediaConsent.resets;
-            const isStale = () => mediaConsent.resets !== resets;
+            const isStale = () =>
+              mediaConsent.resets !== resets || requester?.isDestroyed() === true;
             const finish = (granted: boolean) => {
               if (!granted || isStale()) {
                 callback(false);
                 return;
               }
-              void Promise.all(
-                devices.map((device) => ensureSystemMediaAccess(platform, device)),
-              ).then(
-                (results) => {
+              void ensureSystemMediaAccess(platform, devices).then(
+                (systemGranted) => {
                   if (isStale()) {
                     callback(false);
                     return;
                   }
-                  const systemGranted = results.every(Boolean);
-                  if (!systemGranted) {
+                  if (!systemGranted && !mediaRecoveryOpen) {
+                    mediaRecoveryOpen = true;
                     runFork(
                       electronDialog
                         .showMessageBox(
@@ -744,7 +755,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                           },
                           previewHostWindow(requester),
                         )
-                        .pipe(Effect.ignore),
+                        .pipe(
+                          Effect.ignore,
+                          Effect.ensuring(
+                            Effect.sync(() => {
+                              mediaRecoveryOpen = false;
+                            }),
+                          ),
+                        ),
                     );
                   }
                   callback(systemGranted);
@@ -763,6 +781,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               finish(true);
               return;
             }
+            const undecided = devices.filter(
+              (device) => !mediaDecisions.has(mediaKey(origin, device)),
+            );
             promptPermission(
               requester,
               {
@@ -770,11 +791,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                   m(msg("Allow", { $context: "button, grants a site permission" })),
                   m(msg("Block", { $context: "button, denies a site permission" })),
                 ],
-                message: mediaRequestMessage(devices, truncateForPrompt(origin)),
+                message: mediaRequestMessage(undecided, truncateForPrompt(origin)),
               },
               (answer) => {
                 if (answer !== undefined && !isStale()) {
-                  for (const device of devices)
+                  for (const device of undecided)
                     mediaDecisions.set(mediaKey(origin, device), answer);
                 }
                 finish(answer === true);
@@ -826,7 +847,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 return (
                   origin !== null &&
                   device !== null &&
-                  mediaDecisions.get(mediaKey(origin, device)) === true
+                  mediaDecisions.get(mediaKey(origin, device)) === true &&
+                  (platform !== "darwin" ||
+                    systemPreferences.getMediaAccessStatus(device) === "granted")
                 );
               }
               return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
@@ -879,8 +902,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
+      const selected = selectSessions(sessions, partitions);
+      for (const [, browserSession] of selected) forgetMediaDecisions(browserSession);
       yield* Effect.forEach(
-        selectSessions(sessions, partitions),
+        selected,
         ([partition, browserSession]) =>
           Effect.gen(function* () {
             const cleared = yield* Effect.tryPromise({
@@ -901,7 +926,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 }),
             }).pipe(Effect.result);
             // Approvals go even when the storage clear fails, since the user asked to forget them.
-            forgetMediaDecisions(browserSession);
             yield* revokeCertificates(partition, browserSession);
             if (Result.isFailure(cleared)) return yield* cleared.failure;
           }),

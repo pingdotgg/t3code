@@ -442,7 +442,7 @@ describe("BrowserSession", () => {
         checkHandler(null, "media", origin, { mediaType }) as boolean;
 
       showMessageBox.mockReset();
-      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(1);
       getMediaAccessStatus.mockReturnValue("granted");
 
       assert.isFalse(checkMedia("https://allowed.test", "video"));
@@ -461,6 +461,13 @@ describe("BrowserSession", () => {
       assert.isFalse(checkMedia("https://blocked.test", "video"));
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
 
+      assert.isFalse(yield* requestMedia("https://allowed.test/", ["video", "audio"]));
+      assert.strictEqual(
+        showMessageBox.mock.calls[2]?.[0].message,
+        "https://allowed.test wants to use your microphone",
+      );
+      assert.isTrue(yield* requestMedia("https://allowed.test/", ["video"]));
+      assert.isTrue(checkMedia("https://allowed.test", "video"));
       assert.isFalse(yield* requestMedia("https://allowed.test/", []));
     }).pipe(Effect.provide(layer)),
   );
@@ -498,12 +505,14 @@ describe("BrowserSession", () => {
       // macOS denied one of two devices: the page gets nothing and the user learns where to fix it.
       askForMediaAccess.mockReset();
       getMediaAccessStatus.mockImplementation((device) =>
-        device === "camera" ? "granted" : "denied",
+        device === "camera" ? "not-determined" : "denied",
       );
       const recoveryShown = yield* Deferred.make<void>();
+      const recoveryAnswer = Promise.withResolvers<number>();
       showMessageBox.mockImplementation((options) => {
         if (options.message.startsWith("macOS blocked")) {
           Deferred.doneUnsafe(recoveryShown, Effect.void);
+          return recoveryAnswer.promise;
         }
         return 0;
       });
@@ -519,6 +528,13 @@ describe("BrowserSession", () => {
         showMessageBox.mock.calls[2]?.[0].message,
         "macOS blocked T3 Code from using your camera and microphone",
       );
+      assert.isFalse(yield* requestMedia("https://second.test/", ["video", "audio"]));
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
+      recoveryAnswer.resolve(0);
+      const checkHandler = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isFalse(checkHandler(null, "media", "https://second.test", { mediaType: "audio" }));
+      getMediaAccessStatus.mockReturnValue("granted");
+      assert.isTrue(checkHandler(null, "media", "https://second.test", { mediaType: "audio" }));
     }).pipe(Effect.provide(layerDarwin)),
   );
 
@@ -562,6 +578,34 @@ describe("BrowserSession", () => {
       assert.isFalse(checkCamera());
       assert.isFalse(yield* requestCamera());
       assert.strictEqual(showMessageBox.mock.calls.length, 3);
+
+      yield* browserSessions.clearCookies([partition]);
+      showMessageBox.mockReturnValue(0);
+      assert.isTrue(yield* requestCamera());
+      yield* browserSessions.getSession("scope-b");
+      const otherPartition = yield* browserSessions.getPartition("scope-b");
+      const otherRequest =
+        sessions.get(otherPartition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const otherCheck = sessions.get(otherPartition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isTrue(
+        yield* Effect.callback<boolean>((resume) => {
+          otherRequest(null, "media", (value: boolean) => resume(Effect.succeed(value)), {
+            requestingUrl: "https://page.test/",
+            mediaTypes: ["video"],
+            isMainFrame: true,
+          });
+        }),
+      );
+      browserSession.clearStorageData.mockRejectedValueOnce(new Error("clear failed"));
+      const pendingClear = Promise.withResolvers<void>();
+      sessions
+        .get(otherPartition)
+        ?.clearStorageData.mockImplementationOnce(() => pendingClear.promise);
+      const cleared = yield* Effect.result(browserSessions.clearCookies());
+      assert.strictEqual(cleared._tag, "Failure");
+      assert.isFalse(checkCamera());
+      assert.isFalse(otherCheck(null, "media", "https://page.test", { mediaType: "video" }));
+      pendingClear.resolve();
     }).pipe(Effect.provide(layer)),
   );
 
@@ -573,10 +617,14 @@ describe("BrowserSession", () => {
       const requestHandler =
         sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
       const checkHandler = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      const guest = Object.assign(new NodeEvents.EventEmitter(), {
+        hostWebContents: null,
+        isDestroyed: vi.fn<() => boolean>(() => false),
+      });
       const requestCamera = () => {
         const granted = Deferred.makeUnsafe<boolean>();
         requestHandler(
-          null,
+          guest,
           "media",
           (value: boolean) => Deferred.doneUnsafe(granted, Effect.succeed(value)),
           { requestingUrl: "https://page.test/", mediaTypes: ["video"], isMainFrame: true },
@@ -621,6 +669,23 @@ describe("BrowserSession", () => {
       systemAnswer.resolve(true);
       assert.isFalse(yield* Fiber.join(pendingSystem));
       assert.isFalse(checkCamera());
+
+      const tabPromptShown = yield* Deferred.make<void>();
+      const tabAnswer = Promise.withResolvers<number>();
+      showMessageBox.mockImplementationOnce(() => {
+        Deferred.doneUnsafe(tabPromptShown, Effect.void);
+        return tabAnswer.promise;
+      });
+      const pendingTab = yield* Effect.forkChild(requestCamera());
+      yield* Deferred.await(tabPromptShown);
+      const promptSignal = showMessageBox.mock.lastCall?.[0].signal;
+      guest.isDestroyed.mockReturnValue(true);
+      guest.emit("destroyed");
+      assert.isTrue(promptSignal?.aborted);
+      tabAnswer.resolve(0);
+      assert.isFalse(yield* Fiber.join(pendingTab));
+      assert.isFalse(checkCamera());
+      assert.strictEqual(askForMediaAccess.mock.calls.length, 1);
     }).pipe(Effect.provide(layerDarwin)),
   );
 
