@@ -360,6 +360,8 @@ async function archive(path: string): Promise<Map<string, string>> {
   return files;
 }
 
+const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
+
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
@@ -374,7 +376,8 @@ function* notebook(source: string): Generator<string, void> {
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
-    const kind = "cell_type" in cell && cell.cell_type === "code" ? "code" : "markdown";
+    const cellType = "cell_type" in cell ? cell.cell_type : undefined;
+    const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
     if ("outputs" in cell && Array.isArray(cell.outputs)) {
