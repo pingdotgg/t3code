@@ -10,6 +10,7 @@ import type {
   PullRequestActor,
   PullRequestCheck,
   PullRequestComment,
+  PullRequestLabel,
   PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestState,
@@ -25,6 +26,8 @@ const RawIdentitySchema = Schema.Struct({
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
   imageUrl: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const RawLabelSchema = Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) });
 
 const RawPullRequestSchema = Schema.Struct({
   pullRequestId: Schema.Int,
@@ -45,6 +48,8 @@ const RawPullRequestSchema = Schema.Struct({
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
+  /** `az repos pr list` fills this; `az repos pr show` returns null. */
+  labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelSchema))),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -158,6 +163,7 @@ export interface AzureDevOpsPullRequest {
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -169,6 +175,15 @@ function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | unde
   return login === null
     ? null
     : { login, name: trimmed(raw?.displayName), avatarUrl: trimmed(raw?.imageUrl) };
+}
+
+function toLabels(
+  raw: ReadonlyArray<Schema.Schema.Type<typeof RawLabelSchema>> | null | undefined,
+): ReadonlyArray<PullRequestLabel> {
+  return (raw ?? []).flatMap((label) => {
+    const name = trimmed(label.name);
+    return name === null ? [] : [{ name, color: null }];
+  });
 }
 
 function toState(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): PullRequestState {
@@ -259,6 +274,7 @@ function toPullRequest(
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
+    labels: toLabels(raw.labels),
     location: toLocation(raw),
     autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
@@ -271,6 +287,8 @@ const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
+const decodeLabelPage = decodeJsonResult(Schema.Struct({ value: Schema.Array(Schema.Unknown) }));
+const decodeLabelEntry = Schema.decodeUnknownExit(RawLabelSchema);
 const decodePolicyEvaluations = decodeJsonResult(Schema.Array(RawPolicyEvaluationSchema));
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
@@ -318,6 +336,21 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
   return Result.isSuccess(decoded)
     ? Result.succeed(trimmed(decoded.success.user?.name))
     : Result.fail(decoded.failure);
+}
+
+export function decodeLabelsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<PullRequestLabel>, DecodeFailure> {
+  const decoded = decodeLabelPage(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    toLabels(
+      decoded.success.value.flatMap((entry) => {
+        const label = decodeLabelEntry(entry);
+        return Exit.isFailure(label) ? [] : [label.value];
+      }),
+    ),
+  );
 }
 
 export function decodeThreadsJson(
@@ -579,18 +612,22 @@ export function decodeIterationChangesJson(
     const decodedChange = decodeChangeEntry(entry);
     if (Exit.isFailure(decodedChange)) continue;
     const change = decodedChange.value;
-    const path = toRepositoryPath(change.item?.path);
+    // Azure uses either field for renames, depending on route/version.
+    const sourcePath =
+      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath);
+    const deleted = toChangeKind(change.changeType, false) === "deleted";
+    // A deleted file has no `item.path`; only the source fields name it.
+    const path = toRepositoryPath(change.item?.path) ?? (deleted ? sourcePath : null);
     if (path === null) continue;
     if (change.item?.isFolder === true) continue;
     if ((change.item?.gitObjectType ?? "blob").toLowerCase() !== "blob") continue;
-    // Azure uses either field for renames, depending on route/version.
-    const oldPath =
-      toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
+    const oldPath = sourcePath ?? path;
     changes.push({
       path,
       oldPath,
       changeKind: toChangeKind(change.changeType, oldPath !== path),
-      objectId: trimmed(change.item?.objectId),
+      // Viewed marks read a deleted file at the empty revision, not a blob id.
+      objectId: deleted ? null : trimmed(change.item?.objectId),
       originalObjectId: trimmed(change.item?.originalObjectId),
     });
   }
