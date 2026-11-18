@@ -7562,6 +7562,32 @@
       "v": "v"
     }
   ],
+  "c5cf4921e9b53824": "Chrome DevTools MCP no se instaló. Inténtalo de nuevo.",
+  "75b1a7d1af613c5d": "Terminar más tarde",
+  "290cac9bd85be15a": "Usar las pestañas de tu navegador",
+  "2709455317e2d538": [
+    "Los agentes se conectan al navegador de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " que tiene la depuración remota activada. En ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ", abre la página del navegador que aparece abajo y activa la depuración remota. El navegador pide permitir cada conexión, así que alguien en ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " tiene que aprobarla."
+  ],
+  "2e844dc004983ebb": "No se encontró ningún navegador Chromium. Instala Chrome, Edge, Brave, Helium o Chromium.",
+  "99859ef84af13eb3": "Activada",
   "a2fc467e1a6e2e29": "No se pudieron preparar los cambios. Consulta Avanzado para obtener ayuda.",
   "9c09c0fc3f65c734": "Atajo guardado",
   "b1d65f0c09819ac5": "Usa {shortcut} desde otra app.",
@@ -7991,7 +8017,6 @@
   "82a12d86994dfd17": "Hacer clic, escribir y leer controles en otras apps.",
   "c07fc2cd79fb94c4": "Grabación de pantalla",
   "4bbac051622766c1": "Ver la pantalla para decidir qué hacer a continuación.",
-  "75b1a7d1af613c5d": "Terminar más tarde",
   "a9b9096280be6466": [
     "Permitir que los agentes usen ",
     {
@@ -8355,6 +8380,11 @@
   "d18307275ee97e9a": "Restablecer el uso del ordenador al valor predeterminado",
   "1419352c258bc7de": "Esta conexión no puede cambiar ajustes en este host.",
   "b26ad48726dd8132": "El uso del ordenador está activado, pero Cua Driver no pudo reiniciarse. Vuelve a abrir la configuración.",
+  "024b1791e74e4875": "Requiere configuración",
+  "565cc034918e3732": "Usando {browser}",
+  "ce62c408d095401d": "Activa la depuración remota en tu navegador",
+  "2541722d5b0f9ccd": "Permite que los agentes usen las pestañas abiertas y las sesiones iniciadas de tu navegador en {host} mediante Chrome DevTools MCP.",
+  "b714ba7431dc4989": "Pestañas del navegador para agentes",
   "b395b88284e3bca2": "Muestra la vista previa flotante cuando un agente abre un navegador o dispositivo, salvo que el agente indique lo contrario.",
   "6aadfd59cf60b4b5": "Restablecer mostrar automáticamente la vista previa flotante al valor predeterminado",
   "e4a7ec61190bc1f9": "Mostrar automáticamente la vista previa flotante",
@@ -11546,6 +11576,7 @@
   "345075be6cacc171": "hosts de dispositivos ssh remoto mac mini identidad clave conexión eas expo nube simlock grupo gateway simuladores locales",
   "a6b742430b05d6cc": "Los agentes pueden usar dispositivos",
   "1d5d7418a83575c2": "permitir simulador emulador ios android controlar herramientas sesiones",
+  "9a44b2704adff236": "chrome devtools pestañas sesiones sesión iniciada navegador depuración remota edge brave",
   "04050ac46c68cdaa": "cua driver apps escritorio pantalla clic escribir agentes control uso del ordenador mac linux windows",
   "60f0825756e404dc": "Usar dispositivos",
   "907782e153a139a3": "hub de dispositivos simulador emulador ios android instalar iniciar versión",

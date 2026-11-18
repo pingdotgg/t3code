@@ -7568,6 +7568,32 @@
       "v": "v"
     }
   ],
+  "c5cf4921e9b53824": "Chrome DevTools MCP installerades inte. Försök igen.",
+  "75b1a7d1af613c5d": "Slutför senare",
+  "290cac9bd85be15a": "Använd dina webbläsarflikar",
+  "2709455317e2d538": [
+    "Agenter ansluter till webbläsaren på ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " som har fjärrfelsökning på. Öppna webbläsarens sida nedan på ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " och slå på fjärrfelsökning. Webbläsaren ber om att tillåta varje anslutning, så någon vid ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " måste godkänna den."
+  ],
+  "2e844dc004983ebb": "Ingen Chromium-webbläsare hittades. Installera Chrome, Edge, Brave, Helium eller Chromium.",
+  "99859ef84af13eb3": "På",
   "a2fc467e1a6e2e29": "Kunde inte förbereda ändringarna. Se Avancerat för hjälp.",
   "9c09c0fc3f65c734": "Kortkommandot sparades",
   "b1d65f0c09819ac5": "Använd {shortcut} från en annan app.",
@@ -7997,7 +8023,6 @@
   "82a12d86994dfd17": "Klicka, skriva och läsa kontroller i andra appar.",
   "c07fc2cd79fb94c4": "Skärminspelning",
   "4bbac051622766c1": "Se skärmen för att avgöra vad som ska göras härnäst.",
-  "75b1a7d1af613c5d": "Slutför senare",
   "a9b9096280be6466": [
     "Låt agenter använda ",
     {
@@ -8363,6 +8388,11 @@
   "d18307275ee97e9a": "Återställ datoranvändning till standard",
   "1419352c258bc7de": "Den här anslutningen kan inte ändra inställningar på den här värden.",
   "b26ad48726dd8132": "Datoranvändning är på, men Cua Driver kunde inte startas om. Öppna konfigurationen igen.",
+  "024b1791e74e4875": "Behöver konfigureras",
+  "565cc034918e3732": "Använder {browser}",
+  "ce62c408d095401d": "Slå på fjärrfelsökning i din webbläsare",
+  "2541722d5b0f9ccd": "Låt agenter använda de öppna flikarna och inloggningarna i din webbläsare på {host} via Chrome DevTools MCP.",
+  "b714ba7431dc4989": "Agenters webbläsarflikar",
   "b395b88284e3bca2": "Visa den flytande förhandsvisningen när en agent öppnar en webbläsare eller enhet, om inte agenten säger något annat.",
   "6aadfd59cf60b4b5": "Återställ automatisk visning av flytande förhandsvisning till standard",
   "e4a7ec61190bc1f9": "Visa flytande förhandsvisning automatiskt",
@@ -11559,6 +11589,7 @@
   "345075be6cacc171": "enhetsvärdar ssh fjärr mac mini identitet nyckel anslutning eas expo moln simlock pool gateway lokala simulatorer",
   "a6b742430b05d6cc": "Agenter kan använda enheter",
   "1d5d7418a83575c2": "tillåt simulator emulator ios android styr verktyg sessioner",
+  "9a44b2704adff236": "chrome devtools flikar inloggningar inloggad webbläsare fjärrfelsökning edge brave",
   "04050ac46c68cdaa": "cua driver appar skrivbord skärm klicka skriva agenter styrning datoranvändning mac linux windows",
   "60f0825756e404dc": "Använd enheter",
   "907782e153a139a3": "enhetshubb simulator emulator ios android installera starta version",
