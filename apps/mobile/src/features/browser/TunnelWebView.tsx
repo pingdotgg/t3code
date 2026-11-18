@@ -46,6 +46,7 @@ export function TunnelWebView({
   onNavigationChange,
   onLoadError,
   onScrollDirection,
+  onAccess,
   ...props
 }: ViewProps & {
   readonly environmentId: EnvironmentId;
@@ -61,6 +62,8 @@ export function TunnelWebView({
     readonly unsupported: boolean;
     readonly description: string;
   }) => void;
+  /** Whether the last connection could get into the environment's tunnel at all. */
+  readonly onAccess?: (available: boolean) => void;
   /** Reported every few dozen points the page scrolls; "up" also at the top. */
   readonly onScrollDirection?: (direction: "up" | "down") => void;
 }) {
@@ -74,9 +77,10 @@ export function TunnelWebView({
         environmentId={environmentId}
         url={url}
         onAccessRequest={({ nativeEvent }) => {
-          void readPreviewTunnelUrl(environmentId).then((tunnelUrl) =>
-            PreviewTunnel.resolveAccess(nativeEvent.requestId, tunnelUrl),
-          );
+          void readPreviewTunnelUrl(environmentId).then((tunnelUrl) => {
+            onAccess?.(tunnelUrl !== null);
+            PreviewTunnel.resolveAccess(nativeEvent.requestId, tunnelUrl);
+          });
         }}
         onNavigationChange={({ nativeEvent }) => onNavigationChange(nativeEvent)}
         onPageScroll={({ nativeEvent }) => {
