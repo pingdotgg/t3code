@@ -778,12 +778,9 @@ export function describePullRequestListFilters(
       : state === "all"
         ? resolve(msg("Any state is shown."))
         : resolve(
-            msg(
-              "{state, select, closed {State is closed.} other {State is merged.}}",
-              {
-                state,
-              },
-            ),
+            msg("{state, select, closed {State is closed.} other {State is merged.}}", {
+              state,
+            }),
           ),
     involvement === "authored"
       ? resolve(msg("Only yours are shown."))

@@ -3276,10 +3276,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3291,10 +3288,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(wer es ausführt, erhält diesen Zugriff)"
-      ]
+      "c": [" ", "(wer es ausführt, erhält diesen Zugriff)"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",

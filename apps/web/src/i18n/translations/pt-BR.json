@@ -3275,10 +3275,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "no computador que abriu esta página"
-      ]
+      "c": [" ", "no computador que abriu esta página"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3290,10 +3287,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(quem executar recebe este acesso)"
-      ]
+      "c": [" ", "(quem executar recebe este acesso)"]
     }
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",

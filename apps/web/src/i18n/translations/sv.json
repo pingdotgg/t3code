@@ -3275,10 +3275,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3290,10 +3287,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(den som kör den får den här åtkomsten)"
-      ]
+      "c": [" ", "(den som kör den får den här åtkomsten)"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
