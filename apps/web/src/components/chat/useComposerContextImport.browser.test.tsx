@@ -48,6 +48,7 @@ function deferred<T>() {
 it.each([
   { kind: "file", edit: "delete" },
   { kind: "image", edit: "delete" },
+  { kind: "image", edit: "retain" },
   { kind: "file", edit: "undo" },
   { kind: "file", edit: "retain" },
   { kind: "file", edit: "switch" },
@@ -124,7 +125,17 @@ it.each([
   const attachment = (
     kind === "file"
       ? { ...attachmentFields, kind: "file" as const }
-      : { ...attachmentFields, kind: "image" as const }
+      : {
+          ...attachmentFields,
+          kind: "image" as const,
+          source: {
+            kind: "snap-shot" as const,
+            appName: "Finder",
+            windowTitle: "Downloads",
+            capturedAt: "2026-01-01T00:00:00.000Z",
+            accessibleText: "Downloads",
+          },
+        }
   ) satisfies ComposerContextRecord;
   const annotation = {
     version: 1,
@@ -182,6 +193,10 @@ it.each([
   const draft = store.getComposerDraft(target)!;
   expect(draft.prompt).toBe(promptRef.current);
   const attachments = kind === "file" ? draft.files : draft.images;
+  if (kind === "image" && edit === "retain")
+    expect(draft.images[0]?.source).toEqual(
+      attachment.kind === "image" ? attachment.source : undefined,
+    );
   expect(attachments.map((file) => file.name)).toEqual(
     edit === "undo" ||
       edit === "retain" ||

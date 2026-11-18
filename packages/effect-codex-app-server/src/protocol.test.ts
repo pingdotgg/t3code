@@ -992,6 +992,38 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("reports the process exit when a write fails because the process exited", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1, pid: 123 });
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          ...baseStdio,
+          stdout: () =>
+            Sink.forEach(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "Stdio",
+                  method: "stdout",
+                  cause: new Error("EPIPE"),
+                }),
+              ),
+            ),
+        }),
+        terminationError: Effect.succeed(exitError),
+      });
+
+      const failure = yield* transport.request("initialize", {}).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the exited process to fail the request"),
+        }),
+      );
+      assert.strictEqual(failure, exitError);
+    }),
+  );
+
   it.effect("reports a process exit that follows input end", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
