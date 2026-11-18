@@ -284,7 +284,9 @@ export default function ProjectScriptsControl({
               onClick={() => onRunScript?.(script)}
             >
               <ScriptIcon icon={script.icon} className="size-4" />
-              <MenuItemLabel>{projectScriptMenuLabel(script, messages)}</MenuItemLabel>
+              <MenuItemLabel>
+                {script.runOnWorktreeCreate ? gt("{name} (setup)", { name: script.name }) : script.name}
+              </MenuItemLabel>
               <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end ps-4">
                 {shortcutLabel ? (
                   // The key caps yield their slot to the edit pencil on hover.
