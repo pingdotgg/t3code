@@ -9,6 +9,7 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import {
   useEffect,
   useEffectEvent,
@@ -145,6 +146,7 @@ export function AnnotatableCodeView({
   renderHeaderPrefix,
   onFileCollapsedChange,
 }: AnnotatableCodeViewProps) {
+  const gt = useGT();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
@@ -296,7 +298,9 @@ export function AnnotatableCodeView({
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
       gutterUtilityLabel={
-        commentShortcutLabel ? `Add comment (${commentShortcutLabel})` : "Add comment"
+        commentShortcutLabel
+          ? gt("Add comment ({shortcut})", { shortcut: commentShortcutLabel })
+          : gt("Add comment")
       }
       {...(viewerRef ? { viewerRef } : {})}
       {...(onScroll ? { onScroll } : {})}

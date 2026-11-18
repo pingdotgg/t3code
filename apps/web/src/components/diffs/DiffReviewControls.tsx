@@ -1,12 +1,10 @@
+import { T, useGT, Var } from "gt-react";
 import { CheckIcon, FileIcon } from "lucide-react";
 
 import { Checkbox } from "../ui/checkbox";
 import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useIsDiffReviewCursorFile } from "./useDiffReviewKeyboard";
-
-const withShortcut = (label: string, shortcut: string | null) =>
-  shortcut ? `${label} (${shortcut})` : label;
 
 /** The viewed count; once every file is viewed it reads as a finished review. */
 export function DiffViewedCount({ viewed, total }: { viewed: number; total: number }) {
@@ -20,7 +18,9 @@ export function DiffViewedCount({ viewed, total }: { viewed: number; total: numb
   return (
     <span className="inline-flex items-center gap-1 text-success-foreground">
       <CheckIcon aria-hidden className="size-3.5" />
-      All {total}
+      <T>
+        All <Var>{total}</Var>
+      </T>
     </span>
   );
 }
@@ -51,7 +51,14 @@ export function DiffViewedToggle({
   shortcutLabel: string | null;
   onViewedChange: (viewed: boolean, extendRange: boolean) => void;
 }) {
-  const action = withShortcut(viewed ? "Mark as not viewed" : "Mark as viewed", shortcutLabel);
+  const gt = useGT();
+  const action = viewed
+    ? shortcutLabel
+      ? gt("Mark as not viewed ({shortcut})", { shortcut: shortcutLabel })
+      : gt("Mark as not viewed")
+    : shortcutLabel
+      ? gt("Mark as viewed ({shortcut})", { shortcut: shortcutLabel })
+      : gt("Mark as viewed");
   return (
     <Tooltip>
       <TooltipTrigger
@@ -64,7 +71,11 @@ export function DiffViewedToggle({
         }
       >
         <Checkbox
-          aria-label={`${stale ? "Changed" : "Viewed"} ${filePath}`}
+          aria-label={
+            stale
+              ? gt("Changed {path}", { path: filePath, $context: "file changed since viewed" })
+              : gt("Viewed {path}", { path: filePath, $context: "file marked as viewed" })
+          }
           checked={viewed}
           onCheckedChange={(next, details) =>
             onViewedChange(
@@ -74,13 +85,19 @@ export function DiffViewedToggle({
           }
         />
         {stale ? (
-          <span className="text-warning-foreground">Changed</span>
+          <span className="text-warning-foreground">
+            <T context="file changed since viewed">Changed</T>
+          </span>
         ) : (
-          <span className="@max-xs:hidden">Viewed</span>
+          <span className="@max-xs:hidden">
+            <T context="file marked as viewed">Viewed</T>
+          </span>
         )}
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {stale ? `This file has been pushed to since you marked it viewed. ${action}` : action}
+        {stale
+          ? `${gt("This file has been pushed to since you marked it viewed.")} ${action}`
+          : action}
       </TooltipPopup>
     </Tooltip>
   );
@@ -95,7 +112,13 @@ export function DiffSingleFileToggle({
   shortcutLabel: string | null;
   onToggle: () => void;
 }) {
-  const label = singleFile ? "Show all files" : "Show one file at a time";
+  const gt = useGT();
+  const label = singleFile ? gt("Show all files") : gt("Show one file at a time");
+  const tooltip = shortcutLabel
+    ? singleFile
+      ? gt("Show all files ({shortcut})", { shortcut: shortcutLabel })
+      : gt("Show one file at a time ({shortcut})", { shortcut: shortcutLabel })
+    : label;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -111,7 +134,7 @@ export function DiffSingleFileToggle({
       >
         <FileIcon className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="top">{withShortcut(label, shortcutLabel)}</TooltipPopup>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }
