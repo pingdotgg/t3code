@@ -145,8 +145,20 @@ type MediaDevice = "camera" | "microphone";
 const mediaDeviceFor = (mediaType: string | undefined): MediaDevice | null =>
   mediaType === "video" ? "camera" : mediaType === "audio" ? "microphone" : null;
 
-const describeMediaDevices = (devices: ReadonlyArray<MediaDevice>): string =>
-  devices.length === 2 ? "camera and microphone" : (devices[0] ?? "media devices");
+// Whole sentences per device set, so each language can phrase them its own way.
+const mediaRequestMessage = (devices: ReadonlyArray<MediaDevice>, origin: string): string =>
+  devices.length === 2
+    ? m(msg("{origin} wants to use your camera and microphone"), { origin })
+    : devices[0] === "microphone"
+      ? m(msg("{origin} wants to use your microphone"), { origin })
+      : m(msg("{origin} wants to use your camera"), { origin });
+
+const mediaBlockedMessage = (devices: ReadonlyArray<MediaDevice>): string =>
+  devices.length === 2
+    ? m(msg("macOS blocked T3 Code from using your camera and microphone"))
+    : devices[0] === "microphone"
+      ? m(msg("macOS blocked T3 Code from using your microphone"))
+      : m(msg("macOS blocked T3 Code from using your camera"));
 
 /**
  * macOS gates capture devices per app and lists an app under Privacy & Security
@@ -717,15 +729,22 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                   }
                   const systemGranted = results.every(Boolean);
                   if (!systemGranted) {
-                    promptPermission(
-                      requester,
-                      {
-                        buttons: ["OK", "Close"],
-                        message: `macOS blocked T3 Code from using your ${describeMediaDevices(devices)}`,
-                        detail:
-                          "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
-                      },
-                      () => undefined,
+                    runFork(
+                      electronDialog
+                        .showMessageBox(
+                          {
+                            type: "info",
+                            buttons: [m(msg("OK"))],
+                            message: mediaBlockedMessage(devices),
+                            detail: m(
+                              msg(
+                                "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
+                              ),
+                            ),
+                          },
+                          previewHostWindow(requester),
+                        )
+                        .pipe(Effect.ignore),
                     );
                   }
                   callback(systemGranted);
@@ -747,8 +766,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             promptPermission(
               requester,
               {
-                buttons: ["Allow", "Block"],
-                message: `${truncateForPrompt(origin)} wants to use your ${describeMediaDevices(devices)}`,
+                buttons: [
+                  m(msg("Allow", { $context: "button, grants a site permission" })),
+                  m(msg("Block", { $context: "button, denies a site permission" })),
+                ],
+                message: mediaRequestMessage(devices, truncateForPrompt(origin)),
               },
               (answer) => {
                 if (answer !== undefined && !isStale()) {
