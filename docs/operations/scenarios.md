@@ -68,16 +68,13 @@ configured.
 ### Getting to the screen
 
 Most scenarios that could not run stopped on the way to the screen the bug is on, not on the
-bug. Three rules avoid that:
+bug. Two rules avoid that:
 
 - **Open by link, not by sidebar.** `await t3.open(thread)` lands on the thread
   ([`thread-opens-by-link.e2e.ts`](../../scripts/scenarios/thread-opens-by-link.e2e.ts)), and
   `await t3.open("/settings/general")` on a settings page. A sidebar row is a button that covers
   its own title, so a tap on `getByText("Earlier work")` is intercepted. When the sidebar is what
   the scenario is about, target the row's button: `screen.getByRole("button", "Earlier work")`.
-- **Let `t3.open` do the navigating.** It waits until the pairing page has signed in before it
-  goes anywhere. A second `app.open` straight after the pairing link cancels the sign-in and
-  shows the pairing page again.
 - **Seed before opening.** Create projects and threads first, then call `t3.open`. With no
   project the app opens its first-run page instead of the one the scenario expects.
 
