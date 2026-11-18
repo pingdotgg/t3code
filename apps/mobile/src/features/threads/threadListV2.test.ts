@@ -277,6 +277,20 @@ describe("canMarkThreadUnread", () => {
       can: false,
     },
     {
+      name: "a cancelled run with a completion timestamp",
+      latestRun: { ...completed, status: "cancelled" },
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "an interrupted run with a completion timestamp",
+      latestRun: { ...completed, status: "interrupted" },
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
       name: "no completed run",
       latestRun: undefined,
       lastVisitedAt: NOW,
