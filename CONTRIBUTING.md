@@ -115,6 +115,9 @@ the open PR limit.
 - If you make our lives harder as reviewers and maintainers, you will be banned. Examples are repeated
   pings, a fight over a closure, and a second account to get around a limit.
 
+A banned account is denounced in [.github/VOUCHED.td](.github/VOUCHED.td). Any issue or PR it opens
+is closed when it is opened.
+
 <a id="closure-and-reconsideration"></a>
 
 ## When your PR is closed

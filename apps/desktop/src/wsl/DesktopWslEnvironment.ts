@@ -110,10 +110,7 @@ export class DesktopWslEnvironment extends Context.Service<
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-    readonly probeRuntime: (
-      distro: string | null,
-      linuxAppRoot: string,
-    ) => Effect.Effect<ProbeWslRuntimeResult>;
+    readonly probeRuntime: (distro: string | null) => Effect.Effect<ProbeWslRuntimeResult>;
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -483,11 +480,9 @@ require("node-pty");
 NODE`;
 
 // Resolve version-managed Node for providers without making runtime readiness depend on it.
-export const buildWslRuntimeProbeScript = (linuxAppRoot: string) =>
-  [
-    `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`,
-    `${shellQuote(`${linuxAppRoot}/t3`)} --version >/dev/null 2>&1`,
-  ].join("\n");
+// The install script already ran the staged t3, so running it again here only adds a second startup.
+export const buildWslRuntimeProbeScript = () =>
+  `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`;
 
 const TOOLCHAIN_CHECK_SCRIPT = [
   "for tool in node make g++ python3; do",
@@ -601,29 +596,16 @@ const formatMissingToolsReason = (
 
 const probeWslRuntimeImpl = Effect.fn("DesktopWslEnvironment.probeWslRuntimeImpl")(function* (
   distro: string | null,
-  linuxAppRoot: string,
 ): Effect.fn.Return<ProbeWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
-  const probe = yield* runWslShell(
-    distro,
-    buildWslRuntimeProbeScript(linuxAppRoot),
-    PROBE_TIMEOUT,
-    {
-      resolveNode: false,
-    },
-  );
+  const probe = yield* runWslShell(distro, buildWslRuntimeProbeScript(), PROBE_TIMEOUT, {
+    resolveNode: false,
+  });
   const transportFailureReason = formatWslShellTransportFailureReason(
     probe.transportFailure,
-    "the staged runtime",
+    "the login-shell PATH",
   );
   if (transportFailureReason !== null) {
     return { ok: false, reason: transportFailureReason } as const;
-  }
-  if (probe.exitCode !== 0) {
-    const trimmedTail = probe.stderr.trim().slice(-500);
-    return {
-      ok: false,
-      reason: `${linuxAppRoot}/t3 --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
-    } as const;
   }
   const resolvedPath = parseResolvedPath(probe.stdout);
   if (resolvedPath === null) {
@@ -1035,7 +1017,7 @@ const preWarmImpl = (
     }),
   ).pipe(Effect.timeoutOption(PRE_WARM_TIMEOUT), Effect.ignore);
 
-const windowsToWslPathImpl = (
+export const windowsToWslPathImpl = (
   distro: string | null,
   windowsPath: string,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> => {
@@ -1046,7 +1028,8 @@ const windowsToWslPathImpl = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "wslpath", "-u", normalized],
+        // --exec skips the distro shell, which would expand `$`, `&` or `;` in folder names.
+        [...buildDistroArgs(distro), "--exec", "wslpath", "-u", normalized],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -1174,7 +1157,7 @@ export interface DesktopWslEnvironmentTestStub {
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-  readonly probeRuntime?: (distro: string | null, linuxAppRoot: string) => ProbeWslRuntimeResult;
+  readonly probeRuntime?: (distro: string | null) => ProbeWslRuntimeResult;
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -1221,16 +1204,14 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
           return stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void;
         },
       ),
-      probeRuntime: Effect.fn("DesktopWslEnvironment.probeRuntime")(
-        function (distro, linuxAppRoot) {
-          return Effect.succeed(
-            stub.probeRuntime?.(distro, linuxAppRoot) ?? {
-              ok: true,
-              resolvedPath: "/usr/bin:/bin",
-            },
-          );
-        },
-      ),
+      probeRuntime: Effect.fn("DesktopWslEnvironment.probeRuntime")(function (distro) {
+        return Effect.succeed(
+          stub.probeRuntime?.(distro) ?? {
+            ok: true,
+            resolvedPath: "/usr/bin:/bin",
+          },
+        );
+      }),
       ensureNodePty: Effect.fn("DesktopWslEnvironment.ensureNodePty")(
         function (distro, linuxAppRoot, options) {
           return Effect.succeed(
@@ -1320,8 +1301,8 @@ export const layer = Layer.effect(
       invalidateRuntime: Effect.fn("desktop.wsl.invalidateRuntime")(function (distro, runtimeId) {
         return provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId));
       }),
-      probeRuntime: Effect.fn("desktop.wsl.probeRuntime")(function (distro, linuxAppRoot) {
-        return provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot));
+      probeRuntime: Effect.fn("desktop.wsl.probeRuntime")(function (distro) {
+        return provideSpawner(probeWslRuntimeImpl(distro));
       }),
       ensureNodePty: Effect.fn("desktop.wsl.ensureNodePty")(
         function (distro, linuxAppRoot, options) {
