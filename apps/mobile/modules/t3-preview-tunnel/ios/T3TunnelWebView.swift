@@ -19,7 +19,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var failedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
   private var reportedScrollY: CGFloat = 0
-  private var tallestTopInset: CGFloat = 0
+  private var scrolledDistance: CGFloat = 0
+  private var lastOffsetY: CGFloat = 0
   private var topInset: CGFloat = 0
 
   /// JavaScript remounts the view for another environment, so only the first one counts.
@@ -94,7 +95,6 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   func setTopInset(_ inset: CGFloat) {
     guard inset != topInset else { return }
     topInset = inset
-    tallestTopInset = max(tallestTopInset, inset)
     if let webView { applyTopInset(to: webView) }
   }
 
@@ -120,10 +120,15 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     }
   }
 
-  /// Reports the page's scroll position in steps, enough for the bar to follow its direction.
+  /// Reports how far the user has scrolled, in steps, enough for the bar to follow its direction.
   private func reportScroll(_ scrollView: UIScrollView) {
-    // Measured from the tallest bar, so the bar resizing itself never reads as a scroll.
-    let y = max(0, scrollView.contentOffset.y + tallestTopInset)
+    let offset = scrollView.contentOffset.y
+    defer { lastOffsetY = offset }
+    // WebKit's own offset changes while loading, and the bar resizing, aren't the user scrolling.
+    let userScrolling = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+    if userScrolling { scrolledDistance = max(0, scrolledDistance + offset - lastOffsetY) }
+    if offset <= -scrollView.contentInset.top + 1 { scrolledDistance = 0 }
+    let y = scrolledDistance
     guard abs(y - reportedScrollY) >= 24 || (y == 0 && reportedScrollY != 0) else { return }
     reportedScrollY = y
     onPageScroll(["y": y])
