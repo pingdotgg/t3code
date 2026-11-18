@@ -2294,13 +2294,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "marks a shell OpenCode started on its own before T3 runs the wake, ended first=%s",
-    (endedFirst) =>
+  it.effect.each(["running", "exited", "held"] as const)(
+    "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
+    (shell) =>
       Effect.gen(function* () {
         const shellID = "sh_wake";
         const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const shellReport = (state: string) =>
+          event("session.inbox.enqueued", {
+            inboxID: "msg_shell_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<shell id="${shellID}" state="${state}">done</shell>`,
+                description: "vp test",
+                metadata: { source: "shell", shellID, state },
+              },
+              delivery: "steer",
+            },
+          });
         const { runtime, thread } = yield* resumed([
           ...backgroundLaunch(CHILD),
           event("session.execution.succeeded", { sessionID: SESSION }),
@@ -2325,22 +2339,24 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             undefined,
             2,
           ),
+          event("shell.created", {
+            info: {
+              id: shellID,
+              status: "running",
+              command: "vp test",
+              cwd: WORK,
+              shell: "bash",
+              file: "/tmp/sh_wake.log",
+              metadata: { sessionID: SESSION },
+              time: { started: 1 },
+            },
+          }),
+          ...(shell === "held" ? [shellReport("completed")] : []),
           event("session.execution.succeeded", { sessionID: SESSION }),
-          ...(endedFirst
+          ...(shell === "exited"
             ? [
-                event("session.inbox.enqueued", {
-                  inboxID: "msg_shell_report",
-                  sessionID: SESSION,
-                  item: {
-                    type: "synthetic",
-                    payload: {
-                      text: `<shell id="${shellID}" state="completed">done</shell>`,
-                      description: "vp test",
-                      metadata: { source: "shell", shellID, state: "completed" },
-                    },
-                    delivery: "steer",
-                  },
-                }),
+                event("shell.exited", { id: shellID, exit: 7, status: "exited" }),
+                shellReport("error"),
               ]
             : []),
           // Routed once the held execution ended, so its update proves the launch reached the adapter.
@@ -2348,11 +2364,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
           }),
-          out("shell.output", "<any>"),
-          reply("shell.output", {
-            location: { directory: WORK },
-            data: { output: "", cursor: 0, size: 0, truncated: false },
-          }),
+          ...Array.from({ length: shell === "held" ? 2 : 1 }, () => [
+            out("shell.output", "<any>"),
+            reply("shell.output", {
+              location: { directory: WORK },
+              data: { output: "", cursor: 0, size: 0, truncated: false },
+            }),
+          ]).flat(),
         ]).pipe(
           Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
             offer: (request) =>
@@ -2365,13 +2383,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         // One reader: the runtime's event queue hands each event to only one taker.
         const launchSeen = yield* Deferred.make<void>();
         const marked = yield* Deferred.make<boolean | undefined>();
-        const settled = yield* Deferred.make<void>();
+        const settled =
+          yield* Deferred.make<import("@t3tools/contracts").OrchestrationV2TurnItem>();
         yield* runtime.events.pipe(
           Stream.tap((e) =>
             e.type === "turn_item.updated" &&
             e.turnItem.type === "command_execution" &&
-            e.turnItem.status === "completed"
-              ? Deferred.succeed(settled, undefined)
+            e.turnItem.status !== "running"
+              ? Deferred.succeed(settled, e.turnItem)
               : e.type !== "provider_thread.updated"
                 ? Effect.void
                 : Effect.gen(function* () {
@@ -2396,13 +2415,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          { matched: endedFirst ? [] : [shellID] },
+          { matched: shell === "running" ? [shellID] : [] },
         );
         yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-        if (!endedFirst) return assert.isTrue(yield* Deferred.await(marked));
+        if (shell === "running") return assert.isTrue(yield* Deferred.await(marked));
         // A shell that ended before the wake ran never holds the thread.
-        yield* Deferred.await(settled);
-        assert.isFalse(yield* Deferred.isDone(marked));
+        assert.deepInclude(
+          yield* Deferred.await(settled),
+          shell === "exited" ? { status: "failed", exitCode: 7 } : { status: "completed" },
+        );
+        const listed = yield* Deferred.poll(marked);
+        if (Option.isSome(listed)) assert.notStrictEqual(yield* listed.value, true);
       }),
   );
 

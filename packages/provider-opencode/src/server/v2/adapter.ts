@@ -314,7 +314,10 @@ interface Wake {
   readonly children: Set<string>;
   readonly awaited: Set<string>;
   /** Held shell launches whose end report arrived first; the report already cleared their status. */
-  readonly ended: Map<string, "completed" | "failed" | "interrupted">;
+  readonly ended: Map<
+    string,
+    { readonly status: "completed" | "failed" | "interrupted"; readonly exit?: number }
+  >;
 }
 
 interface OpenBlock {
@@ -1015,7 +1018,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const wake = heldLaunch(state, taskId);
       return wake === undefined ||
         wake.ended.has(taskId) ||
-        (shellInfo.get(taskId)?.status ?? "running") !== "running"
+        (shellInfo.get(taskId)?.status ?? "running") !== "running" ||
+        // An end report held with the launch replays after it.
+        wake.events.some(
+          (event) =>
+            event.type === "session.inbox.enqueued" &&
+            event.data.item.type === "synthetic" &&
+            stringField(event.data.item.payload.metadata, "source") === "shell" &&
+            stringField(event.data.item.payload.metadata, "shellID") === taskId,
+        )
         ? undefined
         : wake;
     };
@@ -2868,23 +2879,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               output: "",
               cursor: 0,
             });
-            yield* readShellOutput(shellId).pipe(Effect.ignore({ log: true }));
             const known = shellInfo.get(shellId);
             const ended = replaying?.ended.get(shellId);
             const tracked = shells.get(shellId)!;
             tracked.running =
               ended === undefined && (known === undefined || known.status === "running");
+            yield* readShellOutput(shellId, !tracked.running).pipe(Effect.ignore({ log: true }));
             yield* emitShell(
               shellId,
               tracked.running
                 ? "running"
-                : (ended ??
+                : (ended?.status ??
                     (known?.status === "killed"
                       ? "interrupted"
                       : known?.exit === 0
                         ? "completed"
                         : "failed")),
-              known?.exit,
+              ended?.exit ?? known?.exit,
             );
             if (ended !== undefined) shells.delete(shellId);
             yield* syncRosterAncestors(state);
@@ -3128,10 +3139,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         });
         if (id !== undefined && shell === undefined) {
           const outcome = reportOutcome(stringField(payload.metadata, "state"));
-          heldLaunch(state, id)?.ended.set(
-            id,
-            outcome === "failed" ? "failed" : outcome === "cancelled" ? "interrupted" : "completed",
-          );
+          const exit = shellInfo.get(id)?.exit;
+          heldLaunch(state, id)?.ended.set(id, {
+            status:
+              outcome === "failed"
+                ? "failed"
+                : outcome === "cancelled"
+                  ? "interrupted"
+                  : "completed",
+            ...(exit === undefined ? {} : { exit }),
+          });
         }
         if (id !== undefined && shell?.stopping !== true) {
           if (shell?.running === true && shell.state === state) {
