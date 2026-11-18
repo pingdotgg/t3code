@@ -554,6 +554,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
                     onDelete,
                     secondaryAction,
                     threadTitle,
+                    resolve: m,
                   })
             }
             translation={translation}

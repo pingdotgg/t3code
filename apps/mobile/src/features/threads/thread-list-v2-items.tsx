@@ -930,10 +930,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             input: { threadId: thread.id },
           });
     if (result._tag === "Failure") {
-      Dialog.alert(`Could not mark thread ${readAction}`, String(Cause.squash(result.cause)));
+      Dialog.alert(
+        readAction === "read"
+          ? gt("Could not mark thread read")
+          : gt("Could not mark thread unread"),
+        String(Cause.squash(result.cause)),
+      );
     }
   }, [
     canOperateThread,
+    gt,
     markThreadUnread,
     readAction,
     thread.environmentId,
@@ -946,12 +952,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       readAction === null
         ? undefined
         : {
-            accessibilityLabel: `Mark ${thread.title} ${readAction}`,
+            accessibilityLabel:
+              readAction === "read"
+                ? gt("Mark {title} read", { title: thread.title })
+                : gt("Mark {title} unread", { title: thread.title }),
             icon: readAction === "read" ? ("eye" as const) : ("eye.slash" as const),
-            label: readAction === "read" ? "Read" : "Unread",
+            label:
+              readAction === "read"
+                ? gt("Read", { $context: "verb, mark a thread as read" })
+                : gt("Unread", { $context: "verb, mark a thread as unread" }),
             onPress: handleToggleRead,
           },
-    [handleToggleRead, readAction, thread.title],
+    [gt, handleToggleRead, readAction, thread.title],
   );
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
@@ -966,7 +978,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: gt("Dismiss Woke notification") }] : []),
       ...(canOperateThread && readAction !== null
-        ? [{ name: "toggleRead", label: `Mark ${readAction}` }]
+        ? [
+            {
+              name: "toggleRead",
+              label: readAction === "read" ? gt("Mark read") : gt("Mark unread"),
+            },
+          ]
         : []),
     ],
     [canOperateThread, gt, prBadgeLabel, readAction, showsWoke],
@@ -1414,7 +1431,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const swipeAccessibilityHint =
     canOperateThread && readAction !== null
-      ? `${leftSwipeAccessibilityHint} Swipe right to mark ${readAction}.`
+      ? `${leftSwipeAccessibilityHint} ${readAction === "read" ? gt("Swipe right to mark read.") : gt("Swipe right to mark unread.")}`
       : leftSwipeAccessibilityHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
