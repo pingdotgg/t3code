@@ -50866,6 +50866,21 @@ export const ServerRequest__CommandExecutionApprovalDecision = Schema.Union(
   { mode: "oneOf" },
 );
 
+export type ThreadSettingsUpdateParams = {
+  readonly threadId: string;
+  readonly serviceTier?: string | null;
+};
+export const ThreadSettingsUpdateParams = Schema.Struct({
+  threadId: Schema.String,
+  serviceTier: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+}).annotate({ title: "ThreadSettingsUpdateParams" });
+
+export type ThreadSettingsUpdateResponse = { readonly [x: string]: Schema.Json };
+export const ThreadSettingsUpdateResponse = Schema.Record(
+  Schema.String,
+  Schema.Json.annotate({ expected: "JSON value" }),
+).annotate({ title: "ThreadSettingsUpdateResponse" });
+
 export type ToolRequestUserInputParams = {
   readonly autoResolutionMs?: number | null;
   readonly isBlocking: boolean;

@@ -1,5 +1,6 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { GlassContainer, GlassView } from "expo-glass-effect";
+import { useGT } from "gt-react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type LayoutChangeEvent, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
@@ -72,6 +73,7 @@ export function FloatingWorkingControl(props: {
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
 }) {
+  const gt = useGT();
   const { width: windowWidth } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
@@ -81,10 +83,7 @@ export function FloatingWorkingControl(props: {
   const extensionStatus = props.extensionStatus ?? null;
   const extensionOnly = props.status?.kind === "extension";
   const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED && !extensionOnly;
-  const action =
-    props.status?.kind === "background" || props.status?.kind === "stop"
-      ? props.status.action
-      : null;
+  const action = props.status?.kind === "stop" ? props.status.action : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
@@ -164,8 +163,7 @@ export function FloatingWorkingControl(props: {
   const statusInteractive =
     props.status?.kind === "connection" ||
     props.status?.kind === "extension" ||
-    props.status?.kind === "child-input" ||
-    props.status?.kind === "background";
+    props.status?.kind === "child-input";
   const capsuleInteractive =
     statusInteractive ||
     extensionStatus !== null ||
@@ -205,7 +203,7 @@ export function FloatingWorkingControl(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={extensionStatus.label}
-          accessibilityHint="Shows the full Pi status"
+          accessibilityHint={gt("Shows the full Pi status")}
           onPress={extensionStatus.onPress}
           onLayout={(event) => setExtensionWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: availableLabelWidth * 0.5 }}
@@ -254,8 +252,8 @@ export function FloatingWorkingControl(props: {
       {agents !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open agents, ${agents.accessibilityLabel}`}
-          accessibilityHint="Opens this turn's subagents"
+          accessibilityLabel={gt("Open agents, {agents}", { agents: agents.accessibilityLabel })}
+          accessibilityHint={gt("Opens this turn's subagents")}
           onPress={props.onOpenAgents}
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
@@ -270,8 +268,10 @@ export function FloatingWorkingControl(props: {
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
-          accessibilityHint="Opens queued messages to send now, edit, or remove"
+          accessibilityLabel={gt("{count, plural, other {Open queue, {count} messages}}", {
+            count: props.queuedCount,
+          })}
+          accessibilityHint={gt("Opens queued messages to send now, edit, or remove")}
           onPress={props.onOpenQueue}
           onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
@@ -282,7 +282,7 @@ export function FloatingWorkingControl(props: {
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
-            {props.queuedCount} queued
+            {gt("{count, plural, other {{count} queued}}", { count: props.queuedCount })}
           </Text>
         </Pressable>
       ) : null}
@@ -347,7 +347,7 @@ export function FloatingWorkingControl(props: {
             style={[arrowTransformStyle, arrowContentStyle]}
           >
             <ControlPill
-              accessibilityLabel="Scroll to end"
+              accessibilityLabel={gt("Scroll to end")}
               activateOnPressIn
               className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
               disabled={!props.showScrollToEnd}
@@ -367,7 +367,7 @@ export function FloatingWorkingControl(props: {
         </UniwindGlassView>
       ) : (
         <ControlPill
-          accessibilityLabel="Scroll to end"
+          accessibilityLabel={gt("Scroll to end")}
           activateOnPressIn
           className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
           icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
@@ -431,28 +431,6 @@ function FloatingStatusLabel(props: {
           className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
           numberOfLines={1}
         >
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
-  }
-  if (props.status.kind === "background") {
-    return (
-      <StatusLabelRow
-        key="background"
-        accessibilityLabel={props.status.accessibilityLabel}
-        accessibilityRole="button"
-        onPress={props.status.onPress}
-        className="gap-2"
-        onLayout={props.onLayout}
-      >
-        <SymbolView
-          name={props.status.waiting ? "person.2" : "terminal"}
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
       </StatusLabelRow>
@@ -565,9 +543,10 @@ function StatusLabelRow(props: {
 }
 
 function ScrollToEndButton(props: { readonly disabled?: boolean; readonly onPress: () => void }) {
+  const gt = useGT();
   return (
     <ControlPill
-      accessibilityLabel="Scroll to end"
+      accessibilityLabel={gt("Scroll to end")}
       activateOnPressIn
       className="h-11 w-11 bg-transparent"
       disabled={props.disabled}

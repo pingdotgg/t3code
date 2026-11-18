@@ -7,8 +7,10 @@ import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
+import { msg } from "gt-react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
 import { isSvgAttachment } from "@t3tools/shared/image";
@@ -207,20 +209,23 @@ export function fileAttachmentCapabilityBlockReason(
   input: FileAttachmentCapabilityState & {
     readonly files: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
   },
+  resolve: MessageResolver = m,
 ): string | null {
   if (input.files.length === 0) {
     return null;
   }
   if (!input.attachmentUploadsCapabilityKnown) {
-    return "Waiting for the server before file attachments can send";
+    return resolve(msg("Waiting for the server before file attachments can send"));
   }
   const maxFileAttachmentBytes = fileAttachmentStagingLimit(input);
   if (maxFileAttachmentBytes === null) {
-    return "This server does not accept file attachments right now. Remove the files to send.";
+    return resolve(
+      msg("This server does not accept file attachments right now. Remove the files to send."),
+    );
   }
   const oversizedFile = input.files.find((file) => file.sizeBytes > maxFileAttachmentBytes);
   if (oversizedFile) {
-    return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes);
+    return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes, resolve);
   }
   return null;
 }
