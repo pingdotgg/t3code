@@ -878,12 +878,6 @@ export function projectRunOut(window: ServerProviderUsageWindow, now: number): n
   return runOut < resetsAt - now ? runOut : null;
 }
 
-/** `runs out in about 40m`, or null when the window resets before it runs dry. */
-export function formatRunsOutIn(window: ServerProviderUsageWindow, now: number): string | null {
-  const runOut = projectRunOut(window, now);
-  if (runOut === null) return null;
-  return runOut < MINUTE ? "runs out now" : `runs out in about ${formatDuration(runOut)}`;
-}
 
 export interface TightestLimit {
   readonly account: LimitAccount;

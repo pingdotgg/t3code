@@ -812,7 +812,11 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     case "layout:copy-link": {
       const link = threadLinkFor(location.tab);
       if (!link) return;
-      void writeTextToClipboard(link, "thread link").catch(() =>
+      void writeTextToClipboard(link, {
+        target: "thread link",
+        unavailableMessage: msg("Clipboard API is unavailable while copying link."),
+        failureMessage: msg("Failed to copy link to the clipboard."),
+      }).catch(() =>
         toastManager.add({ type: "error", title: m(msg("Could not copy the link")) }),
       );
       return;

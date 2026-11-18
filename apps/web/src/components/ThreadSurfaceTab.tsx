@@ -5,7 +5,7 @@ import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
@@ -22,7 +22,8 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
+import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { FolderX, Unlink2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -451,6 +452,7 @@ function useTerminalShortcutLabels() {
 }
 
 function useTerminalLabels(threadRef: ScopedThreadRef): ReadonlyMap<string, string> {
+  const messages = useMessages();
   const known = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
@@ -460,7 +462,7 @@ function useTerminalLabels(threadRef: ScopedThreadRef): ReadonlyMap<string, stri
     if (session.target.threadId !== threadRef.threadId) continue;
     labels.set(
       session.target.terminalId,
-      resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
+      resolveTerminalSessionLabel(session.target.terminalId, session.state.summary, messages),
     );
   }
   return labels;
@@ -1032,7 +1034,9 @@ function readTerminalTabTitles(
       resolveTerminalSessionLabel(
         terminalId,
         sessions?.find((session) => session.target.terminalId === terminalId)?.state.summary,
+        m,
       ),
+      m,
     ),
   );
 }

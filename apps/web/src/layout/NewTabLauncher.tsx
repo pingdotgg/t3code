@@ -281,7 +281,7 @@ function NewTabLauncherBody({
         className="flex w-full max-w-110 flex-col gap-0.5 py-6"
       >
         <DraftProjectGroupLabel>
-          <T>Start a thread in</T>
+          {gt("Start a thread in")}
         </DraftProjectGroupLabel>
         <ProjectPickerRows
           model={model}

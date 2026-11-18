@@ -12,12 +12,11 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   collectProviderUsageLimits,
-  formatRunsOutIn,
   isLowLimit,
   remainingPercent,
   tightestSessionLimit,
 } from "@t3tools/shared/usageLimits";
-import { formatResetsIn, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { formatResetsIn, formatRunsOutIn, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { GaugeIcon, InfoIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -529,7 +528,7 @@ function LowLimitTiming({ window }: { readonly window: ServerProviderUsageWindow
       <TooltipPopup>
         <div className="flex flex-col gap-1">
           <Text variant="meta">{gt("{window} window", { window: window.label })}</Text>
-          {[formatResetsIn(window, now, messages), formatRunsOutIn(window, now)]
+          {[formatResetsIn(window, now, messages), formatRunsOutIn(window, now, messages)]
             .filter((part) => part !== null)
             .map((part) => (
               <Text key={part} variant="meta">

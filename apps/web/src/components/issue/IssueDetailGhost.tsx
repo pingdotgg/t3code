@@ -11,7 +11,6 @@ import { GhostBar } from "../pullRequest/PullRequestGhosts";
 import {
   PullRequestActorLabel,
   PullRequestLabelChip,
-  PullRequestMetaLine,
 } from "../pullRequest/pullRequestPresentation";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
@@ -51,7 +50,7 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
           </PullRequestDetailTitleRow>
           {/* Leaves room for the edit button, so the title wraps the same once loaded. */}
           <h2 className="pr-7 text-base font-semibold leading-snug">{seed.title}</h2>
-          <PullRequestMetaLine className="text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-x-2.5 text-xs text-muted-foreground">
             <PullRequestActorLabel actor={seed.author} />
             <span>
               <T>
@@ -65,7 +64,7 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
                 </T>
               </span>
             ) : null}
-          </PullRequestMetaLine>
+          </span>
           {/* Both rows hold the height of the picker button the loaded panel puts in them. */}
           <div className="flex min-h-6 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span className="shrink-0">

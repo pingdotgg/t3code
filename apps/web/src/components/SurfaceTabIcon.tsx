@@ -37,6 +37,7 @@ import {
   pullRequestEnvironment,
   useSharedPullRequestSummary,
 } from "~/state/pullRequests";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -57,11 +58,13 @@ export function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  resolve: MessageResolver = m,
 ): string {
   return surfaceTabTitle(
     surface,
     surface.kind === "preview" && surface.resourceId ? sessions[surface.resourceId] : null,
     surface.kind === "terminal" ? terminalLabelsById.get(surface.activeTerminalId) : undefined,
+    resolve,
   );
 }
 

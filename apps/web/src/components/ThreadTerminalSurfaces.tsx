@@ -12,14 +12,15 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import {
   resolveTerminalActivityStatus,
   type TerminalActivityStatus,
 } from "@t3tools/client-runtime/state/terminal";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
+import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { memo, useEffect } from "react";
 import { focusActiveDrawerTerminal, focusTerminal } from "../lib/terminalFocus";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -124,6 +125,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   paneMode,
 }: PersistentThreadTerminalDrawerProps) {
   const gt = useGT();
+  const messages = useMessages();
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = () =>
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
@@ -166,7 +168,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   for (const session of drawerTerminalSessions) {
     terminalLabelsById.set(
       session.target.terminalId,
-      resolveTerminalSessionLabel(session.target.terminalId, session.state.summary),
+      resolveTerminalSessionLabel(session.target.terminalId, session.state.summary, messages),
     );
   }
   const terminalStatusById = new Map<string, TerminalActivityStatus>();
@@ -440,6 +442,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
   const gt = useGT();
+  const messages = useMessages();
   const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
@@ -474,7 +477,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     const summary =
       knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
         .summary ?? null;
-    terminalLabelsById.set(terminalId, resolveTerminalSessionLabel(terminalId, summary));
+    terminalLabelsById.set(terminalId, resolveTerminalSessionLabel(terminalId, summary, messages));
   }
   const terminalLaunchLocationsById = new Map<
     string,

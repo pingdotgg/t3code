@@ -328,6 +328,7 @@ function PlacementRow<Value extends string>({
   /** Called while the row is pointed at, focused or its menu is open. */
   onPreviewChange?: (active: boolean) => void;
 }) {
+  const gt = useGT();
   const m = useMessages();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -355,7 +356,10 @@ function PlacementRow<Value extends string>({
       description={description}
       resetAction={
         value !== defaultValue ? (
-          <SettingResetButton label={title} onClick={() => onChange(defaultValue)} />
+          <SettingResetButton
+            ariaLabel={gt("Reset {setting} to default", { setting: title })}
+            onClick={() => onChange(defaultValue)}
+          />
         ) : null
       }
       control={

@@ -1,6 +1,6 @@
 import type { IssueCandidatesTarget } from "@t3tools/client-runtime/state/issues";
 import type { IssueInvolvement, IssueListState } from "@t3tools/contracts";
-import { LayersIcon, ListFilterIcon, TagIcon, UserIcon } from "lucide-react";
+import { LayersIcon, ListFilterIcon, TagIcon, UserIcon, UsersRoundIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
@@ -26,6 +26,7 @@ import {
   type PullRequestFilterOption,
 } from "../pullRequest/PullRequestListFilters";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
+import { IssueGlyph } from "./issuePresentation";
 
 const VISIBLE_CHOICES = 30;
 const matches = (needle: string, ...fields: ReadonlyArray<string | null | undefined>) =>
@@ -57,7 +58,7 @@ export function IssueFiltersMenu(props: {
   const scopes = open ? props.scopes : [];
   return (
     <Menu onOpenChange={setOpen}>
-      <MenuTrigger render={<Button variant="outline" />}>
+      <MenuTrigger render={<Button variant="secondary" />}>
         <ListFilterIcon className="size-4" />
         <span>
           <T>Filters</T>
@@ -71,12 +72,14 @@ export function IssueFiltersMenu(props: {
       <MenuPopup align="end" side="bottom">
         <PullRequestFilterRadioSubmenu
           label={gt("State", { $context: "issue state filter" })}
+          icon={IssueGlyph.issue}
           value={props.state}
           options={props.stateOptions}
           onChange={props.onState}
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Involvement")}
+          icon={UsersRoundIcon}
           value={props.involvement}
           options={props.involvementOptions}
           onChange={props.onInvolvement}

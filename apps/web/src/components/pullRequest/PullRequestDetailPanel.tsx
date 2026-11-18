@@ -2021,7 +2021,10 @@ export function PullRequestDetailPanel({
         {detail ? (
           <nav
             className="col-span-2 flex min-w-0 items-center px-4 pt-1.5 pb-3"
-            aria-label={`${capitalizeTerm(terminology.singular)} tabs`}
+            aria-label={gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} tabs",
+              { term: changeRequestTermKind(terminology) },
+            )}
           >
             <ToggleGroup
               className="relative w-full"

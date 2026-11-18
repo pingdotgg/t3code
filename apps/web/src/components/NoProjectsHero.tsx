@@ -53,7 +53,7 @@ export function NoProjectsHero() {
             </h1>
             <div role="list" aria-label={gt("Projects")} className="flex flex-col gap-0.5">
               <DraftProjectGroupLabel>
-                <T>No projects yet</T>
+                {gt("No projects yet")}
               </DraftProjectGroupLabel>
               <DraftProjectRow
                 icon={<FolderPlusIcon className="size-4 shrink-0 text-foreground" />}

@@ -5,7 +5,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useGT } from "gt-react";
+import { msg, useGT } from "gt-react";
 import { CopyIcon, TextQuoteIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -228,7 +228,11 @@ export function AssistantSelectionToolbar({
       dismiss();
       return;
     }
-    void writeTextToClipboard(text, "selection").then(dismiss, (error: unknown) => {
+    void writeTextToClipboard(text, {
+      target: "selection",
+      unavailableMessage: msg("Clipboard API is unavailable while copying text."),
+      failureMessage: msg("Failed to copy text to the clipboard."),
+    }).then(dismiss, (error: unknown) => {
       toastManager.add({
         type: "error",
         title: gt("Could not copy selection"),

@@ -55,7 +55,6 @@ import { createPortal } from "react-dom";
 import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
-import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   type BranchHold,
