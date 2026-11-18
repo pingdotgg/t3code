@@ -272,7 +272,8 @@ const NO_ISSUE_LISTS: MergedIssueList = { answers: [], error: null, isPending: f
 /**
  * One listing read across every environment at once: React cannot subscribe to a list of atoms
  * whose length changes, so the fan-out lives in one derived atom keyed by the targets. An
- * environment that fails contributes nothing rather than blanking the list.
+ * environment that fails contributes nothing rather than blanking the list. Retry reloads only
+ * the environments that failed, so a read still in flight elsewhere is not restarted.
  */
 export function createMergedIssueListAtoms<E>(
   list: (target: IssueListTarget) => Atom.Atom<AsyncResult.AsyncResult<IssueListResult, E>>,
@@ -311,6 +312,13 @@ export function createMergedIssueListAtoms<E>(
       return atom;
     },
     refresh,
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueListTarget>) => {
+      for (const target of targets) {
+        const atom = list(target);
+        const result = registry.get(atom);
+        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
+      }
+    },
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
       for (const node of registry.getNodes().values()) {
