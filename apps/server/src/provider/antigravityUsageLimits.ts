@@ -76,12 +76,18 @@ const Models = Schema.Struct({
     }),
   ),
 });
+const CodeAssist = Schema.Struct({
+  cloudaicompanionProject: Schema.optional(
+    Schema.Union([Schema.NonEmptyString, Schema.Struct({ id: Schema.NonEmptyString })]),
+  ),
+});
 
 const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
 const decodeModels = Schema.decodeUnknownEffect(Models);
+const decodeCodeAssist = Schema.decodeUnknownEffect(CodeAssist);
 
 function iso(value: string | undefined): string | undefined {
   const parsed = value ? DateTime.make(value) : Option.none();
@@ -286,6 +292,34 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       account = cached.account;
     }
     const endpoints = ENDPOINTS[input.authMethod];
+    // Consumer sign-ins store the placeholder project "aicode-consumers", but the runtime
+    // meters quota on the project loadCodeAssist resolves. Querying the placeholder returns
+    // an untouched quota, so read the real project first.
+    let quotaProject = token.project_id;
+    if (!quotaProject || quotaProject === "aicode-consumers") {
+      for (const endpoint of endpoints) {
+        const resolved = yield* request(
+          HttpClientRequest.post(`${endpoint}/v1internal:loadCodeAssist`).pipe(
+            HttpClientRequest.setHeaders({
+              Authorization: `Bearer ${accessToken}`,
+              "User-Agent": antigravityUserAgent(platform, architecture),
+            }),
+            HttpClientRequest.bodyJsonUnsafe({ metadata: { ideType: "ANTIGRAVITY" } }),
+          ),
+        ).pipe(
+          Effect.flatMap(decodeCodeAssist),
+          Effect.orElseSucceed(() => undefined),
+        );
+        const project =
+          typeof resolved?.cloudaicompanionProject === "string"
+            ? resolved.cloudaicompanionProject
+            : resolved?.cloudaicompanionProject?.id;
+        if (project) {
+          quotaProject = project;
+          break;
+        }
+      }
+    }
     // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
       operation: string,
@@ -306,9 +340,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   Authorization: `Bearer ${accessToken}`,
                   "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
-                HttpClientRequest.bodyJsonUnsafe(
-                  token.project_id ? { project: token.project_id } : {},
-                ),
+                HttpClientRequest.bodyJsonUnsafe(quotaProject ? { project: quotaProject } : {}),
               ),
             ).pipe(
               Effect.flatMap((response) => parse(response, requestedAt)),

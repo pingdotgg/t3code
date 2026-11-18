@@ -62,6 +62,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatusByHost?: Record<string, number>;
     tokenStatus?: number;
     refreshToken?: string;
+    projectId?: string;
+    companionProject?: string;
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
@@ -73,6 +75,11 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const profileDirectory = yield* fs.makeTempDirectoryScoped();
   yield* fs.makeDirectory(path.join(profileDirectory, "antigravity-acp"));
   const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+  const configuredProjectId = options.projectId ?? "project-id";
+  const expectedProjectId =
+    configuredProjectId === "aicode-consumers"
+      ? (options.companionProject ?? configuredProjectId)
+      : configuredProjectId;
   const writeToken = (refreshToken: string) =>
     fs.writeFileString(
       tokenPath,
@@ -80,7 +87,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         client_id: "client-id",
         client_secret: "client-secret",
         refresh_token: refreshToken,
-        project_id: "project-id",
+        project_id: configuredProjectId,
       }),
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
@@ -111,7 +118,16 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      if (request.url.endsWith(":loadCodeAssist")) {
+        expect(JSON.parse(body)).toEqual({ metadata: { ideType: "ANTIGRAVITY" } });
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            options.companionProject ? { cloudaicompanionProject: options.companionProject } : {},
+          ),
+        );
+      }
+      expect(JSON.parse(body)).toEqual({ project: expectedProjectId });
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -545,6 +561,52 @@ describe("Antigravity subscription limits", () => {
       expect(byId.get("gemini-argon-wtu-weekly")?.label).toBe("Gemini 4 Argon · Weekly");
       expect(byId.get("gemini-carbon-wtu-weekly")?.label).toBe("Gemini 4 Carbon · Weekly");
       expect(byId.get("gemini-carbon-5h")?.label).toBe("Gemini Carbon · 5-hour");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // Oracle: consumer tokens store the placeholder project "aicode-consumers", whose quota
+  // reads 100% on every bucket while real usage is metered on the companion project.
+  it.effect("queries the resolved companion project for a consumer sign-in", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({
+        projectId: "aicode-consumers",
+        companionProject: "companion-project-123",
+      });
+      const limits = yield* probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(requests.filter((request) => request.url.endsWith(":loadCodeAssist"))).toHaveLength(1);
+      expect(
+        requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .map((request) => JSON.parse(request.body)),
+      ).toEqual([{ project: "companion-project-123" }, { project: "companion-project-123" }]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("keeps the placeholder project when no companion project resolves", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({ projectId: "aicode-consumers" });
+      yield* probe;
+      expect(
+        requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .map((request) => JSON.parse(request.body)),
+      ).toEqual([{ project: "aicode-consumers" }, { project: "aicode-consumers" }]);
+      expect(requests.filter((request) => request.url.endsWith(":loadCodeAssist"))).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("does not resolve a project for a stored real project id", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({ projectId: "real-gcp-project" });
+      yield* probe;
+      expect(requests.filter((request) => request.url.endsWith(":loadCodeAssist"))).toEqual([]);
+      expect(
+        requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .map((request) => JSON.parse(request.body)),
+      ).toEqual([{ project: "real-gcp-project" }, { project: "real-gcp-project" }]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
