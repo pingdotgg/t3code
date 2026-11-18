@@ -61,6 +61,11 @@ workspace project and access separately.
   Beast) runs `conn-server` 0.1.0 as `t3.service`. One Haiku turn through Orbit's
   `thread start --wait` completed, with the SDK host on the container's Node 24.22.1.
 
+- **Task group proof (2026-11-18, 0.2.0):** Project 20's task group 5919 ran end to end on
+  `conn-server` 0.2.0: a question and its answer, a Stop mid-turn, a Codex reviewer turn,
+  freezes while idle and during a turn, and the Gateway's thread index. Same shapes for every
+  field Orbit reads; no Conn Server defect. `docs/proof-orbit-task-group.md`.
+
 ## Client parity, wave 1 (2026-11-16)
 
 Codex builds each slice; an independent Gemini review checks it; findings go back to the
