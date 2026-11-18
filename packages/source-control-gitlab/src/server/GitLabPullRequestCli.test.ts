@@ -2334,13 +2334,30 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks the merge request detail for label colours", () =>
+  it.effect("asks GraphQL for merge request label colours the single REST GET cannot return", () =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(output(mergeRequestJson({ labels: [{ name: "bug", color: "#E24329" }] }))),
-        )
-        .mockReturnValueOnce(Effect.succeed(labelPermission));
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequest: {
+                        userPermissions: { adminMergeRequest: false },
+                        labels: {
+                          nodes: [
+                            { title: "bug", color: "#E24329", description: "Something is broken" },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                })
+              : mergeRequestJson({ labels: ["bug"] }),
+          ),
+        ),
+      );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const detail = yield* cli.getMergeRequestDetail({
@@ -2351,8 +2368,17 @@ layer("GitLabPullRequestCli.layer", (it) => {
         maintainerEdits: false,
       });
 
-      expect(argsOfCall(0)[1]).toContain("with_labels_details=true");
-      expect(detail.labels).toEqual([{ name: "bug", color: "#E24329", description: null }]);
+      const graphql = mockedExecute.mock.calls.find(([call]) => call.args[1] === "graphql");
+      assert.isDefined(graphql);
+      expect(JSON.parse(graphql[0].stdin ?? "").query).toContain(
+        "labels(first: 100) { nodes { title color description } }",
+      );
+      expect(
+        mockedExecute.mock.calls.some(([call]) => call.args[1]?.includes("with_labels_details")),
+      ).toBe(false);
+      expect(detail.labels).toEqual([
+        { name: "bug", color: "#E24329", description: "Something is broken" },
+      ]);
     }),
   );
 

@@ -26,14 +26,16 @@ const ISSUE = {
 /** Every endpoint the detail read touches, answered by the path `glab api` is given. */
 function answer(path: string): string {
   if (path === "user") return encode({ username: "julius" });
-  if (path === "projects/acme%2Fweb/issues/42?with_labels_details=true") {
-    return encode({
-      ...ISSUE,
-      labels: [
-        { name: "bug", color: "#E24329", description: "Something is broken" },
-        { name: " ", color: "#000000" },
-      ],
-    });
+  if (path === "projects/acme%2Fweb/issues?iids[]=42&with_labels_details=true&per_page=1") {
+    return encode([
+      {
+        ...ISSUE,
+        labels: [
+          { name: "bug", color: "#E24329", description: "Something is broken" },
+          { name: " ", color: "#000000" },
+        ],
+      },
+    ]);
   }
   if (path.startsWith("projects/acme%2Fweb/issues/42/notes")) {
     return encode([

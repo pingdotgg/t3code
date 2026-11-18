@@ -1973,10 +1973,12 @@ export function decodeMergeRequestStatsJson(
 }
 
 /** GitLab lets whoever may change a merge request's metadata set its labels. */
+/** GitLab's GET /merge_requests/:iid ignores `with_labels_details`; this query is the supported detail colour read. */
 export const LABEL_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
       userPermissions { adminMergeRequest }
+      labels(first: 100) { nodes { title color description } }
     }
   }
 }`;
@@ -1989,6 +1991,25 @@ const decodeLabelPermission = decodeJsonResult(
           mergeRequest: Schema.NullOr(
             Schema.Struct({
               userPermissions: Schema.Struct({ adminMergeRequest: Schema.Boolean }),
+              labels: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    nodes: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Array(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              title: Schema.String,
+                              color: Schema.optional(Schema.NullOr(Schema.String)),
+                              description: Schema.optional(Schema.NullOr(Schema.String)),
+                            }),
+                          ),
+                        ),
+                      ),
+                    ),
+                  }),
+                ),
+              ),
             }),
           ),
         }),
@@ -1997,13 +2018,32 @@ const decodeLabelPermission = decodeJsonResult(
   }),
 );
 
-export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
+export interface GitLabLabelPermission {
+  readonly viewerCanEditLabels: boolean;
+  readonly labels: ReadonlyArray<PullRequestLabel> | null;
+}
+
+export function decodeLabelPermissionJson(
+  raw: string,
+): Result.Result<GitLabLabelPermission, DecodeFailure> {
   const decoded = decodeLabelPermission(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(
-        decoded.success.data.project?.mergeRequest?.userPermissions.adminMergeRequest === true,
-      )
-    : Result.fail(decoded.failure);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  return Result.succeed({
+    viewerCanEditLabels: mergeRequest?.userPermissions.adminMergeRequest === true,
+    labels:
+      mergeRequest?.labels == null
+        ? null
+        : toLabels(
+            (mergeRequest.labels.nodes ?? []).flatMap((label) =>
+              label
+                ? [{ name: label.title, color: label.color, description: label.description }]
+                : [],
+            ),
+          ),
+  });
 }
 
 /**

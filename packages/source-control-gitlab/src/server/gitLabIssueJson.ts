@@ -190,13 +190,30 @@ interface GitLabIssueDetail extends TrackerIssueSummary {
   readonly body: string;
 }
 
-export function decodeIssueDetailJson(
-  raw: string,
-): Result.Result<GitLabIssueDetail, DecodeFailure> {
-  return Result.map(decodeIssue(raw), (issue) => ({
+function toDetail(issue: typeof RawIssueSchema.Type): GitLabIssueDetail {
+  return {
     ...toSummary(issue),
     body: issue.description ?? "",
-  }));
+  };
+}
+
+function decodeIssueDetailJson(raw: string): Result.Result<GitLabIssueDetail, DecodeFailure> {
+  return Result.map(decodeIssue(raw), toDetail);
+}
+
+/** GitLab's GET /issues/:iid ignores `with_labels_details`; the list serializer is the one that forwards it. */
+export function decodeIssueDetailListJson(
+  raw: string,
+): Result.Result<GitLabIssueDetail | null, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const first = decoded.success[0];
+  if (first === undefined) {
+    return Result.succeed(null);
+  }
+  return decodeIssueDetailJson(JSON.stringify(first));
 }
 
 /** The ids of the users a `/users?username=` lookup answered with: one, or none. */

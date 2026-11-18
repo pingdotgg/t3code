@@ -1591,7 +1591,6 @@ export const make = Effect.gen(function* () {
       host: input.host,
       path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}?${query([
         ["include_diverged_commits_count", "true"],
-        ["with_labels_details", "true"],
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -2018,14 +2017,17 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
   }) =>
-    graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getLabelPermission",
-      query: LABEL_PERMISSION_GRAPHQL_QUERY,
-      variables: { fullPath: input.repository, iid: String(input.number) },
-      decode: decodeLabelPermissionJson,
-    }).pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(false)));
+    orWhenUnanswered(
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getLabelPermission",
+        query: LABEL_PERMISSION_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeLabelPermissionJson,
+      }),
+      { viewerCanEditLabels: false, labels: null },
+    );
 
   const sourceBranch = (input: {
     readonly cwd: string;
@@ -2329,18 +2331,20 @@ export const make = Effect.gen(function* () {
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
-        const [read, viewerCanEditLabels] = yield* Effect.all(
+        const [read, extras] = yield* Effect.all(
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
+        const labeled = extras.labels === null ? read : { ...read, labels: extras.labels };
+        const viewerCanEditLabels = extras.viewerCanEditLabels;
         // Only a closed or merged merge request offers its branch for deletion, and only an open
         // fork's has maintainer edits to change, so each extra read is skipped elsewhere.
         const detail =
-          read.state === "open"
-            ? input.maintainerEdits === false || read.maintainerCanModify === undefined
-              ? { ...read, viewerCanEditLabels }
+          labeled.state === "open"
+            ? input.maintainerEdits === false || labeled.maintainerCanModify === undefined
+              ? { ...labeled, viewerCanEditLabels }
               : {
-                  ...read,
+                  ...labeled,
                   viewerCanEditLabels,
                   viewerCanEditMaintainerEdits: yield* orWhenUnanswered(
                     graphqlRead({
@@ -2355,7 +2359,7 @@ export const make = Effect.gen(function* () {
                   ),
                 }
             : {
-                ...read,
+                ...labeled,
                 viewerCanEditLabels,
                 viewerCanDeleteBranch: yield* orWhenUnanswered(
                   sourceBranch(input).pipe(Effect.map((source) => source?.canDelete === true)),
