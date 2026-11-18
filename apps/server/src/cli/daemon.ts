@@ -212,7 +212,31 @@ const daemonRemoveCommand = Command.make("remove", {
   ),
 );
 
+const daemonRestartCommand = Command.make("restart", {
+  ...projectLocationFlags,
+  id: Argument.String("id").pipe(Argument.withDescription("Daemon id, from `t3 daemon list`.")),
+}).pipe(
+  Command.withDescription("Restart a daemon's process now."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const id = yield* parseDaemonId(flags.id);
+      yield* withDaemonClient(
+        { ...flags, json: false },
+        Effect.fn("cli.daemon.restart")(function* (client) {
+          yield* client["daemons.restart"]({ id });
+          yield* Console.log(`Restarted daemon ${id}.`);
+        }),
+      );
+    }).pipe(reportDaemonErrors),
+  ),
+);
+
 export const daemonCommand = Command.make("daemon").pipe(
-  Command.withDescription("List, add, and remove the running server's daemons."),
-  Command.withSubcommands([daemonListCommand, daemonAddCommand, daemonRemoveCommand]),
+  Command.withDescription("List, add, restart, and remove the running server's daemons."),
+  Command.withSubcommands([
+    daemonListCommand,
+    daemonAddCommand,
+    daemonRestartCommand,
+    daemonRemoveCommand,
+  ]),
 );
