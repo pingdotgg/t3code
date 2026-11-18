@@ -23,6 +23,9 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 /** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
 export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
+/** Held by a launcher while it has, or is about to start, a server: an SSH launch waits for that
+    server instead of starting its own. Released while the launcher idles. */
+export const SERVICE_SERVING_LOCK_FILE = "service-serving.lock";
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -39,6 +42,16 @@ const unquoteWindowsArgument = (raw: string) =>
 /** Whether Task Scheduler's copy of a task is disabled as a whole, not one of its triggers. */
 export const serviceTaskIsDisabled = (taskXml: string): boolean =>
   /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
+
+/** schtasks reads undeclared XML in the ANSI code page, but UTF-16LE with a BOM as written. */
+export const encodeServiceTask = (taskXml: string): Uint8Array =>
+  Buffer.from(`\uFEFF${taskXml}`, "utf16le");
+
+/** A unit file's text: UTF-16LE task files have a BOM, other units (and older tasks) are UTF-8. */
+export const decodeServiceUnit = (bytes: Uint8Array): string =>
+  bytes[0] === 0xff && bytes[1] === 0xfe
+    ? Buffer.from(bytes.buffer, bytes.byteOffset + 2, bytes.byteLength - 2).toString("utf16le")
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
 
 /** A task as Task Scheduler should hold it while its service must stay stopped. */
 export const disabledServiceTask = (taskXml: string): string =>

@@ -1,8 +1,10 @@
+import { useGT, useLocale, useMessages } from "gt-react-native";
+
 import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "react-native-screens";
-import { NavigationContext } from "@react-navigation/native";
-import { use, useId, useLayoutEffect, useRef } from "react";
+import { NavigationContext, NavigationRouteContext } from "@react-navigation/native";
+import { use, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
@@ -43,6 +45,9 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 }
 
 export function AppBar(props: AppBarProps) {
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const headerId = useId();
@@ -63,6 +68,17 @@ export function AppBar(props: AppBarProps) {
       ? { ...props.backInSplitView, onPress: splitBackPress }
       : null;
   const navigation = use(NavigationContext);
+  const route = use(NavigationRouteContext);
+  // A thread opened from another thread sits on it, not beside the list, so it keeps Back.
+  const threadBelow = useSyncExternalStore(
+    (onChange) => navigation?.addListener("state", onChange) ?? (() => {}),
+    () => {
+      const routes = navigation?.getState()?.routes;
+      const index = routes?.findIndex((candidate) => candidate.key === route?.key) ?? -1;
+      return route?.name === "Thread" && index > 0 && routes?.[index - 1]?.name === "Thread";
+    },
+  );
+  const listBeside = layout.usesSplitView && props.onBackToList !== undefined && !threadBelow;
   const rootBack =
     !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
       ? props.onBackToList
@@ -107,13 +123,13 @@ export function AppBar(props: AppBarProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
+        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined, locale]}
         options={{
           headerShown: true,
           headerBackVisible:
             props.onClose === undefined &&
             splitBack === null &&
-            !(layout.usesSplitView && props.onBackToList) &&
+            !listBeside &&
             !(props.guardBack && props.onBack),
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
@@ -125,19 +141,22 @@ export function AppBar(props: AppBarProps) {
             ? {
                 unstable_headerToolbarItems: compactSearch
                   ? () => [
-                      createNativeMailSearchToolbarItem({
-                        showsSearchDismissButton: true,
-                        placeholder: search.compactPlaceholder ?? search.placeholder,
-                        onSearchTextChange: search.onChangeText,
-                        searchTextChangeId: `${headerId}-search-text`,
-                        ...(menu
-                          ? {
-                              filterButtonId: `${headerId}-filter`,
-                              filterSystemImageName: iosIcon(menu.icon),
-                              filterMenu: { title: menu.title, items: mailMenuItems(menu.items) },
-                            }
-                          : undefined),
-                      }),
+                      createNativeMailSearchToolbarItem(
+                        {
+                          showsSearchDismissButton: true,
+                          placeholder: search.compactPlaceholder ?? search.placeholder,
+                          onSearchTextChange: search.onChangeText,
+                          searchTextChangeId: `${headerId}-search-text`,
+                          ...(menu
+                            ? {
+                                filterButtonId: `${headerId}-filter`,
+                                filterSystemImageName: iosIcon(menu.icon),
+                                filterMenu: { title: menu.title, items: mailMenuItems(menu.items) },
+                              }
+                            : undefined),
+                        },
+                        m,
+                      ),
                     ]
                   : () => [],
                 headerSearchBarOptions: compactSearch
@@ -167,7 +186,7 @@ export function AppBar(props: AppBarProps) {
         <Toolbar placement="left">
           <Toolbar.Button
             icon="xmark"
-            accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+            accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
             onPress={props.onClose}
           />
         </Toolbar>
@@ -175,7 +194,7 @@ export function AppBar(props: AppBarProps) {
         <Toolbar placement="left">
           {rootBack ? (
             <ScreenHeaderButton
-              accessibilityLabel="Back"
+              accessibilityLabel={gt("Back")}
               icon="chevron.left"
               onPress={rootBack}
               separateBackground
@@ -193,8 +212,8 @@ export function AppBar(props: AppBarProps) {
           ) : null}
           {compose ? (
             <ScreenHeaderButton
-              accessibilityLabel="New task"
-              label="New task"
+              accessibilityLabel={gt("New task")}
+              label={gt("New task")}
               icon="square.and.pencil"
               onPress={compose}
               separateBackground
@@ -253,7 +272,7 @@ export function AppBar(props: AppBarProps) {
           ) : null}
           {closeInspector ? (
             <ScreenHeaderButton
-              accessibilityLabel="Close inspector"
+              accessibilityLabel={gt("Close inspector")}
               icon="xmark"
               onPress={closeInspector}
               separateBackground

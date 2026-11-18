@@ -11,7 +11,7 @@ import { snapshotCookieDatabase } from "./CookieDatabase.ts";
 
 const runNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
-) => effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+) => effect.pipe(Effect.provide(NodeServices.layer));
 
 describe("snapshotCookieDatabase", () => {
   it.effect("includes committed WAL data in one consistent database", () =>

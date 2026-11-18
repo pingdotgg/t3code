@@ -38,21 +38,27 @@ function processHandle(stdout: string, code: number, answered: Effect.Effect<voi
   });
 }
 
+// `fx models --json` from fx 0.0.13, ids trimmed.
+const FX_MODELS_JSON = JSON.stringify({
+  kind: "models",
+  count: 2,
+  shown_count: 2,
+  more_count: 0,
+  private_models_hidden: false,
+  ids: ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"],
+});
+
 /** Answers `fx` invocations by their arguments and records which ran. */
-const check = (statusJson: string, versionDelay: Duration.Input = 0) =>
+const check = (
+  statusJson: string,
+  versionDelay: Duration.Input = 0,
+  modelsJson: string = FX_MODELS_JSON,
+) =>
   Effect.gen(function* () {
     const outputs: Record<string, string> = {
       "--version": "fx 0.0.13\n",
       "status --json": statusJson,
-      // `fx models --json` from fx 0.0.13, ids trimmed.
-      "models --json": JSON.stringify({
-        kind: "models",
-        count: 2,
-        shown_count: 2,
-        more_count: 0,
-        private_models_hidden: false,
-        ids: ["anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"],
-      }),
+      "models --json": modelsJson,
     };
     const invoked: Array<string> = [];
     const spawner = ChildProcessSpawner.make((command) => {
@@ -148,6 +154,22 @@ describe("checkFxProviderStatus", () => {
       const unknown = yield* check("not json");
       assert.equal(unknown.draft.status, "warning");
       assert.equal(unknown.draft.auth.status, "unknown");
+    }),
+  );
+
+  // A ready snapshot drops models it does not list, so only a real listing may report ready.
+  it.effect("treats `fx models` output without ids as a failed listing", () =>
+    Effect.gen(function* () {
+      const signedIn = JSON.stringify({ kind: "status", auth: "fx login" });
+      const reshaped = yield* check(signedIn, 0, JSON.stringify({ kind: "models", models: [] }));
+      assert.equal(reshaped.draft.status, "warning");
+      assert.deepEqual(
+        reshaped.draft.models.map((model) => model.slug),
+        ["default"],
+      );
+
+      const empty = yield* check(signedIn, 0, JSON.stringify({ kind: "models", ids: [] }));
+      assert.equal(empty.draft.status, "ready");
     }),
   );
 });

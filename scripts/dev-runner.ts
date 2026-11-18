@@ -213,11 +213,6 @@ const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
-const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.Port(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(
     Config.option,
@@ -379,12 +374,15 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.T3CODE_SINGLE_ORIGIN_DEV;
     delete output.T3CODE_MODE;
     delete output.T3CODE_NO_BROWSER;
-    delete output.T3CODE_HOST;
     delete output.T3CODE_DEV_AUTH_TOKEN;
   }
 
+  // Agent shells inherit the parent T3 server's bind settings; only --host widens the dev server.
+  delete output.T3CODE_LAN;
   if (!isDesktopMode && host !== undefined) {
     output.T3CODE_HOST = host;
+  } else {
+    delete output.T3CODE_HOST;
   }
 
   if (!isDesktopMode) {
@@ -616,9 +614,9 @@ const runRepoScript = Effect.fn("dev-runner.runRepoScript")(function* (
 });
 
 /**
- * The first start in a worktree seeds its empty database from a small live database
- * and warms the web dependency cache. Each step checks for its own output, so
- * later starts skip it.
+ * The first start in a worktree seeds its empty database from a small live database,
+ * builds the native resource monitor, and warms the web dependency cache. Each step
+ * checks for its own output, so later starts skip it.
  */
 const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (input: {
   readonly mode: DevMode;
@@ -670,6 +668,41 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
   }
 
   const repoRoot = path.dirname(import.meta.dirname);
+  // Dev backends load the monitor from its Cargo output, which a fresh
+  // checkout or worktree does not have yet.
+  if (input.mode !== "dev:web") {
+    const crate = path.join(repoRoot, "native/resource-monitor");
+    const binary =
+      (yield* HostProcess.Platform) === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+    if (
+      !(yield* exists(path.join(crate, "target/release", binary))) &&
+      !(yield* exists(path.join(crate, "target/debug", binary)))
+    ) {
+      yield* Effect.logInfo("[dev-runner] building the resource monitor (first start only).");
+      const exitCode = yield* ChildProcess.make(
+        "cargo",
+        ["build", "--locked", "--release", "--manifest-path", path.join(crate, "Cargo.toml")],
+        {
+          cwd: repoRoot,
+          stdin: "ignore",
+          stdout: "inherit",
+          stderr: "inherit",
+          env: input.env,
+          extendEnv: false,
+        },
+      ).pipe(
+        Effect.flatMap((child) => child.exitCode),
+        Effect.scoped,
+        Effect.orElseSucceed(() => -1),
+      );
+      if (exitCode !== 0) {
+        yield* Effect.logWarning(
+          "[dev-runner] could not build the resource monitor; starting without process telemetry. Install Rust and run `vp run build:resource-monitor`.",
+        );
+      }
+    }
+  }
+
   if (
     input.mode !== "dev:server" &&
     !(yield* exists(path.join(repoRoot, "apps/web/node_modules/.vite/deps/_metadata.json")))
@@ -954,13 +987,19 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to T3CODE_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOST")),
+    Flag.withDescription(
+      "Server host/interface override (forwards to T3CODE_HOST). Ambient T3CODE_HOST is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
+    Flag.withDescription(
+      "Server port override (forwards to T3CODE_PORT). Ambient T3CODE_PORT is ignored: agent shells inherit it from the T3 server that spawned them.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
