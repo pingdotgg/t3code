@@ -724,6 +724,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
         const supportsMode = (yield* HostProcess.Platform) !== "win32";
+        // The server opens the resolved path; macOS temp dirs sit behind /var -> /private/var.
+        const openedPath = path.join(yield* fileSystem.realPath(cwd), "src/main.ts");
         if (supportsMode) {
           yield* Effect.promise(() => NodeFSP.chmod(path.join(cwd, "src/main.ts"), 0o755));
           const native = yield* Effect.promise(() =>
@@ -731,7 +733,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           );
           const open = vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
             const handle = await native.open(file, flags, mode);
-            if (file === path.join(cwd, "src/main.ts") && mode !== undefined) {
+            if (file === openedPath && mode !== undefined) {
               const write = handle.writeFile.bind(handle);
               handle.writeFile = async (...args) => {
                 expect((await handle.stat()).mode & 0o077).toBe(0);
@@ -780,7 +782,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           );
           const open = vi.mocked(NodeFSP.open).mockImplementation(async (file, flags, mode) => {
             const handle = await native.open(file, flags, mode);
-            if (file === path.join(cwd, "src/main.ts")) handle.chmod = async () => {};
+            if (file === openedPath) handle.chmod = async () => {};
             return handle;
           });
           yield* Effect.addFinalizer(() => Effect.sync(() => open.mockImplementation(native.open)));
