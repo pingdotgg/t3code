@@ -280,7 +280,7 @@ export function linkRequestTarget(
 
 /**
  * Whether the card answers with the link its machine already has: only one with at least the
- * access asked for. Linking again over a weaker one renews it with the access picked.
+ * access asked for, else the default. Linking again over a weaker one renews it.
  */
 export const linkRequestKeepsLink = (
   item: Pick<LinkRequestItem, "requestedAccess">,
@@ -288,8 +288,7 @@ export const linkRequestKeepsLink = (
 ): boolean =>
   target.kind === "machine" &&
   target.linkedAccess !== null &&
-  (item.requestedAccess === undefined ||
-    mcpClientAccessCovers(target.linkedAccess, item.requestedAccess));
+  mcpClientAccessCovers(target.linkedAccess, linkRequestDefaultAccess(item));
 
 /** What a link request card shows: the actions while pending, otherwise a one-line outcome. */
 export type LinkRequestDisplay =

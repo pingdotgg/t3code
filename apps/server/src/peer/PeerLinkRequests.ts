@@ -218,10 +218,10 @@ const make = Effect.gen(function* () {
               new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
           ),
         );
+        // An agent that names no access asks for the card's default.
         if (
           Option.isSome(linked) &&
-          (input.requestedAccess === undefined ||
-            mcpClientAccessCovers(linked.value.access, input.requestedAccess))
+          mcpClientAccessCovers(linked.value.access, input.requestedAccess ?? "approval-required")
         ) {
           if (input.clientRequestId !== undefined) {
             yield* closeAsLinked(

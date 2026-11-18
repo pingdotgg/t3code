@@ -489,6 +489,14 @@ describe("linkRequestTarget", () => {
     expect(linkRequestKeepsLink({ requestedAccess: "approval-required" }, target)).toBe(true);
     // A weaker link is linked again, with the access the user picks.
     expect(linkRequestKeepsLink({ requestedAccess: "full-access" }, target)).toBe(false);
+    // Asking for no access asks for the default, which read-only does not allow.
+    const readOnly = { ...box, linkedAccess: "read-only" } as const;
+    expect(
+      linkRequestKeepsLink(
+        {},
+        linkRequestTarget({ environmentId: box.environmentId }, [readOnly], null),
+      ),
+    ).toBe(false);
     expect(
       linkRequestKeepsLink(
         {},

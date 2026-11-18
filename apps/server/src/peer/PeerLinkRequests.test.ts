@@ -1099,13 +1099,15 @@ it.live("a machine linked with less access than asked goes through the card, whi
     Effect.gen(function* () {
       yield* seedThread(a);
       yield* linkTo(a.links, b, "read-only");
-      const asked = yield* a.call({
+      const card = yield* ask(a, {
         environmentId: box.environmentId,
         requestedAccess: "full-access",
       });
-      expect(asked.structuredContent).toMatchObject({ status: "pending" });
-      const card = yield* pendingCard(a);
-      expect(card.requestedAccess).toBe("full-access");
+      expect(card).toMatchObject({ linkStatus: "pending", requestedAccess: "full-access" });
+      // Naming no access asks for the card's default, which read-only does not allow.
+      expect(yield* ask(a, { environmentId: box.environmentId })).toMatchObject({
+        linkStatus: "pending",
+      });
 
       // Linking again over the old link replaces it; nothing is unlinked first.
       const pairing = yield* b.auth.issuePairingCredential();
@@ -1121,7 +1123,10 @@ it.live("a machine linked with less access than asked goes through the card, whi
           pairingCode: pairing.credential,
         },
       });
-      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "linked", linkedAccess: "full-access" });
+      expect((yield* linkCards(a)).find((item) => item.id === card.id)).toMatchObject({
+        linkStatus: "linked",
+        linkedAccess: "full-access",
+      });
       expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))).toMatchObject({
         access: "full-access",
       });
