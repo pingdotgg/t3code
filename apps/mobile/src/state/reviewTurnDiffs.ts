@@ -64,5 +64,8 @@ export const recordReviewTurnDiffAnswer = (
     const atom = lastReviewTurnDiffsAtom(target.environmentId, value.threadId);
     const current = registry.get(atom);
     if (current[value.toTurnCount] === value.diff) return;
+    // A diff larger than the whole budget never fits, so it is left out and the turns
+    // already kept stay, the way the parsed diff cache leaves out one it cannot hold.
+    if (value.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) return;
     registry.set(atom, pruneTurnDiffs({ ...current, [value.toTurnCount]: value.diff }));
   });
