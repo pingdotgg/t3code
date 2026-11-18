@@ -1,4 +1,3 @@
-import CryptoKit
 import ExpoModulesCore
 import Network
 import WebKit
@@ -31,18 +30,9 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 
   private func attachWebView() {
     guard webView == nil, let proxyPort, let environmentId else { return }
-    // One lasting store per environment, so its cookies survive closing or maximizing the page
-    // and never reach another environment's pages.
-    let store = WKWebsiteDataStore(forIdentifier: Self.storeIdentifier(environmentId))
-    var proxy = ProxyConfiguration(
-      socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
-    )
-    // Only loopback belongs to the environment; everything else loads directly.
-    proxy.matchDomains = ["localhost", "127.0.0.1", "::1"]
-    proxy.allowFailover = false
-    store.proxyConfigurations = [proxy]
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = store
+    configuration.websiteDataStore = T3EnvironmentProxy.forEnvironment(environmentId)
+      .store(proxyPort: proxyPort)
     let webView = WKWebView(frame: bounds, configuration: configuration)
     webView.navigationDelegate = self
     webView.allowsBackForwardNavigationGestures = true
@@ -60,13 +50,6 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       },
     ]
     if let pendingUrl { load(pendingUrl) }
-  }
-
-  private static func storeIdentifier(_ environmentId: String) -> UUID {
-    var bytes = Array(SHA256.hash(data: Data("t3-preview-tunnel:\(environmentId)".utf8)).prefix(16))
-    bytes[6] = (bytes[6] & 0x0f) | 0x50
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    return NSUUID(uuidBytes: bytes) as UUID
   }
 
   override func layoutSubviews() {
@@ -151,9 +134,10 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   }
 }
 
-/// An identified data store keeps the first proxy port WebKit saw for the app's life, so each
-/// environment keeps one listener on one port, restarted there if iOS tore it down, and asks its
-/// newest live view for tunnel access. Main thread only.
+/// Each environment keeps one listener on one port for the app's life, restarted there if iOS tore
+/// it down, and one in-memory data store pointed at it, so cookies survive closing or maximizing a
+/// page and never reach another environment's pages. A store saved on disk kept an old launch's
+/// proxy port on devices. Access requests go to the newest live view. Main thread only.
 private final class T3EnvironmentProxy {
   nonisolated(unsafe) private static var proxies: [String: T3EnvironmentProxy] = [:]
 
@@ -168,6 +152,21 @@ private final class T3EnvironmentProxy {
   private var listener: T3SocksListener?
   private var port: UInt16?
   private var waiting: [(UInt16) -> Void] = []
+  private var dataStore: WKWebsiteDataStore?
+
+  func store(proxyPort: UInt16) -> WKWebsiteDataStore {
+    if let dataStore { return dataStore }
+    let store = WKWebsiteDataStore.nonPersistent()
+    var proxy = ProxyConfiguration(
+      socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
+    )
+    // Only loopback belongs to the environment; everything else loads directly.
+    proxy.matchDomains = ["localhost", "127.0.0.1", "::1"]
+    proxy.allowFailover = false
+    store.proxyConfigurations = [proxy]
+    dataStore = store
+    return store
+  }
 
   func attach(_ view: T3TunnelWebView, onReady: @escaping (UInt16) -> Void) {
     views = views.filter { $0.view != nil } + [WeakView(view: view)]
