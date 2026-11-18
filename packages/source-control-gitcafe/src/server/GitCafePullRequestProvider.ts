@@ -108,6 +108,7 @@ const Status = Schema.Struct({
     pending: NonNegativeInt,
     failing: NonNegativeInt,
     total: NonNegativeInt,
+    contexts: Schema.optional(Schema.Array(Schema.Struct({ state: Schema.String }))),
   }),
 });
 /** A merge GitCafe accepted runs on afterwards: on GitHub for a synced pull request, or natively. */
@@ -916,10 +917,52 @@ export const make = Effect.gen(function* () {
     getChangeRequestSummary: Effect.fn("GitCafePullRequestProvider.getChangeRequestSummary")(
       function* (input) {
         const pull = yield* readPull("getChangeRequestSummary", input);
-        const changes =
-          pull.headOid === null
-            ? null
-            : yield* readLineStats(input, pull).pipe(Effect.orElseSucceed(() => null));
+        const path = yield* pullPath("getChangeRequestSummary", input);
+        const [changes, status, reviews] = yield* Effect.all(
+          [
+            pull.headOid === null
+              ? Effect.succeed(null)
+              : readLineStats(input, pull).pipe(Effect.orElseSucceed(() => null)),
+            pull.state === "open"
+              ? read("getChangeRequestSummary", input, { path: `${path}/status` }, Status)
+              : Effect.succeed(null),
+            pull.state === "open"
+              ? readPages(
+                  "getChangeRequestSummary",
+                  input,
+                  `${path}/reviews`,
+                  Json.GitCafeReviews,
+                ).pipe(
+                  // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - catchIf widens the paginated result in tsc-rs.
+                  Effect.catch((error) =>
+                    isForbidden(error) ? Effect.undefined : Effect.fail(error),
+                  ),
+                )
+              : Effect.undefined,
+          ],
+          { concurrency: 3 },
+        );
+        const checks = status?.checks;
+        const states = checks?.contexts?.map((check) => check.state);
+        const checksState =
+          checks === undefined
+            ? undefined
+            : states
+              ? states.includes("failure") || states.includes("error")
+                ? ("failing" as const)
+                : states.includes("pending")
+                  ? ("pending" as const)
+                  : states.includes("success")
+                    ? ("passing" as const)
+                    : null
+              : checks.total === 0
+                ? null
+                : checks.failing > 0
+                  ? ("failing" as const)
+                  : checks.pending > 0
+                    ? ("pending" as const)
+                    : ("passing" as const);
+        const reviewDecision = reviews === undefined ? undefined : Json.reviewDecisionOf(reviews);
         // A count that could not be read is absent rather than zero.
         const {
           additions: _additions,
@@ -932,6 +975,14 @@ export const make = Effect.gen(function* () {
           closedAt: pull.closedAt,
           mergedAt: pull.mergedAt,
           ...settledMerge(pull),
+          ...(checksState === undefined ? {} : { checksState }),
+          ...(reviewDecision === undefined ? {} : { reviewDecision }),
+          mergeability:
+            status?.merge.conflicts === "conflicting"
+              ? ("conflicting" as const)
+              : status?.merge.conflicts === "none"
+                ? ("mergeable" as const)
+                : ("unknown" as const),
         };
       },
     ),

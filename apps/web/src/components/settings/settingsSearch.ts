@@ -470,6 +470,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "snooze-pull-request-options",
+    title: msg("Pull request snoozes"),
+    to: "/settings/threads",
+    searchTerms: [msg("snooze until pr pull request updates review checks ci merge conflict")],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "snooze-limited-threads",
     title: msg("Snooze until limits reset"),
     to: "/settings/threads",

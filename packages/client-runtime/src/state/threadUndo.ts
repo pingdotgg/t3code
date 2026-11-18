@@ -1,3 +1,5 @@
+import type { PullRequestSnoozeTrigger } from "@t3tools/contracts";
+
 // Shared across hook instances so sidebar, header and menu actions invalidate each other.
 const currentActions = new Map<string, symbol>();
 const listeners = new Set<() => void>();
@@ -40,7 +42,11 @@ export type ThreadUndoStep =
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
   | { readonly action: "reorderActive"; readonly orderKey: string }
-  | { readonly action: "snooze"; readonly snoozedUntil: string };
+  | {
+      readonly action: "snooze";
+      readonly snoozedUntil: string;
+      readonly untilPullRequest?: PullRequestSnoozeTrigger;
+    };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
 
@@ -52,6 +58,7 @@ export function planThreadUndo(
     readonly activeOrderKey?: string | null;
     readonly unsettledAt?: string | null;
     readonly snoozedUntil?: string | null;
+    readonly snoozeUntilPullRequest?: PullRequestSnoozeTrigger | null;
   } | null,
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
@@ -60,9 +67,17 @@ export function planThreadUndo(
     ...(thread?.pinOrderKey != null ? { orderKey: thread.pinOrderKey } : {}),
   };
   // Pinning clears snooze on the server; restore it after restoring pin placement.
-  const snooze =
+  const snooze: ThreadUndoStep[] =
     thread?.snoozedUntil != null
-      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
+      ? [
+          {
+            action: "snooze",
+            snoozedUntil: thread.snoozedUntil,
+            ...(thread.snoozeUntilPullRequest
+              ? { untilPullRequest: thread.snoozeUntilPullRequest }
+              : {}),
+          },
+        ]
       : [];
   if (action === "unpin") return [pin, ...snooze];
   // Settling clears a manual active position; pinned threads are placed by their pin instead.

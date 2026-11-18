@@ -11,6 +11,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
   "snoozePresets",
+  "snoozePullRequestPresets",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",

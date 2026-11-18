@@ -527,6 +527,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             ...thread,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
             snoozedAt: now,
+            snoozeUntilPullRequest: input.untilPullRequest ?? null,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({

@@ -21,8 +21,8 @@ import {
   effectiveSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
-  snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { threadSnoozeStatusLabel } from "./threadListV2";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -749,19 +749,12 @@ function ThreadDetailBody(
       : settled
         ? gt("Un-settle", { $context: "verb, thread action" })
         : gt("Dismiss");
-    const wake =
-      lifecycleSnoozed &&
-      snoozedUntil !== null &&
-      Date.parse(snoozedUntil) > Date.parse(lifecycleNow)
-        ? snoozeWakeLabel(snoozedUntil, { now: lifecycleNow }, messages)
-        : null;
     return {
       key: "lifecycle",
       icon: settled && !lifecycleSnoozed ? "checkmark.circle" : "alarm",
       label: lifecycleSnoozed
-        ? wake === null
-          ? gt("Snoozed", { $context: "thread state" })
-          : gt("Snoozed, {time} left", { time: wake })
+        ? (threadSnoozeStatusLabel(props.selectedThread, { now: lifecycleNow }, messages) ??
+          gt("Snoozed", { $context: "thread state" }))
         : settled
           ? gt("Settled", { $context: "thread state" })
           : gt("Woke from snooze"),

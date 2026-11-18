@@ -65,6 +65,27 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it.each([
+    [baseState.snoozePresets, [false, true, false, true]],
+    [[], [false, false, true]],
+  ])("separates pull request snoozes from time presets", (timePresets, separators) => {
+    const pullRequestPreset = {
+      label: "Until PR updates",
+      whenLabel: "#12",
+      snoozedUntil: "2026-09-06T14:00:00Z",
+    };
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      snoozePresets: [
+        ...timePresets,
+        { ...pullRequestPreset, id: "pr:update", untilPullRequest: "update" },
+        { ...pullRequestPreset, id: "pr:review", untilPullRequest: "review" },
+      ],
+    });
+    const children = items.find((item) => item.id === "snooze")?.children ?? [];
+    expect(children.map((child) => child.separatorBefore ?? false)).toEqual(separators);
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

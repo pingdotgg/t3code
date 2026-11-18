@@ -1,3 +1,4 @@
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -16,6 +17,8 @@ import {
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
+import { snoozablePullRequests } from "@t3tools/shared/threadPullRequests";
+import { wakePullRequestSnooze } from "./pullRequestSnooze.ts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -4644,7 +4647,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
+      if (
+        command.untilPullRequest !== undefined &&
+        snoozablePullRequests(threadPullRequestsOf(thread)).length === 0
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no open pull request to snooze until.`,
+        });
+      }
+      snoozedUntil =
+        command.untilPullRequest === undefined
+          ? parsedSnoozedUntil.value
+          : DateTime.makeUnsafe(
+              Math.min(
+                DateTime.toEpochMillis(parsedSnoozedUntil.value),
+                DateTime.toEpochMillis(now) + MAX_SNOOZE_PRESET_MINUTES * 60_000,
+              ),
+            );
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
@@ -4722,6 +4743,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
+            snoozeUntilPullRequest: command.untilPullRequest ?? null,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
             updatedAt: now,
@@ -4839,6 +4861,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
+                  snoozeUntilPullRequest: null,
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
                 }
@@ -4971,23 +4994,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : link,
             );
           }
-          return {
-            ...thread,
+          return wakePullRequestSnooze(
+            links,
+            {
+              ...thread,
+              pullRequests,
+              linkedPullRequest:
+                thread.linkedPullRequest &&
+                pullRequests.some(
+                  (link) =>
+                    link.source !== "stack-dismissed" &&
+                    threadPullRequestKeysEqual(
+                      link,
+                      legacyThreadPullRequestKey(thread.linkedPullRequest!),
+                    ),
+                )
+                  ? thread.linkedPullRequest
+                  : null,
+              updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
+            },
             pullRequests,
-            linkedPullRequest:
-              thread.linkedPullRequest &&
-              pullRequests.some(
-                (link) =>
-                  link.source !== "stack-dismissed" &&
-                  threadPullRequestKeysEqual(
-                    link,
-                    legacyThreadPullRequestKey(thread.linkedPullRequest!),
-                  ),
-              )
-                ? thread.linkedPullRequest
-                : null,
-            updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
-          };
+            now,
+          );
         }
         case "thread.issue.link":
         case "thread.issue.unlink": {
@@ -5122,8 +5150,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request.watch" ? now : thread.updatedAt,
           };
         }
-        case "thread.pull-request.sync":
-          return {
+        case "thread.pull-request.sync": {
+          const synced: OrchestrationV2AppThread = {
             ...thread,
             branchPullRequest: command.branchPullRequest,
             ...(command.linkedPullRequest === undefined
@@ -5155,6 +5183,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 }),
             updatedAt: thread.updatedAt,
           };
+          return wakePullRequestSnooze(
+            threadPullRequestsOf(thread),
+            synced,
+            threadPullRequestsOf(synced),
+            now,
+          );
+        }
         case "thread.title.regeneration.complete":
           return thread.titleRegeneration?.requestId === command.requestId
             ? {
@@ -5204,8 +5239,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     if (
-      command.type === "thread.pull-request-link.sync" ||
-      command.type === "thread.pull-request-watch.sync"
+      (command.type === "thread.pull-request-link.sync" ||
+        command.type === "thread.pull-request-watch.sync") &&
+      // A woken snooze changes the thread, not only the link.
+      updatedThread.snoozedUntil === thread.snoozedUntil
     ) {
       if (updatedThread === thread) return;
       const link = threadPullRequestsOf(updatedThread).find((candidate) =>
@@ -5259,6 +5296,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request.unlink":
         case "thread.pull-request.watch":
         case "thread.pull-request.sync":
+        case "thread.pull-request-link.sync":
+        case "thread.pull-request-watch.sync":
           return "thread.pull-request-synced" as const;
         case "thread.issue.link":
         case "thread.issue.unlink":

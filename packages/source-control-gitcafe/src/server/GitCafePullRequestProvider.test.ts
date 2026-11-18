@@ -451,7 +451,14 @@ describe("GitCafePullRequestProvider source contents", () => {
 describe("GitCafePullRequestProvider", () => {
   it.effect("keeps a staging repository's requests and links on staging", () => {
     const server = fakeGitCafe(
-      { "GET /repos/owner/repo/pulls/7": pull },
+      {
+        "GET /repos/owner/repo/pulls/7": pull,
+        "GET /repos/owner/repo/pulls/7/reviews": { items: [], next: null },
+        "GET /repos/owner/repo/pulls/7/status": {
+          merge: { conflicts: "none", fastForward: null, strategies: [] },
+          checks: { pending: 0, failing: 0, total: 0 },
+        },
+      },
       { env: { CAFE_TOKEN: "env-token", CAFE_HOST: "staging.git.cafe" } },
     );
     return Effect.gen(function* () {
@@ -479,6 +486,8 @@ describe("GitCafePullRequestProvider", () => {
           "GET /repos/owner/repo/pulls/7",
           "GET /repos/owner/repo/pulls/7",
           "GET /repos/owner/repo/pulls/7/changes",
+          "GET /repos/owner/repo/pulls/7/status",
+          "GET /repos/owner/repo/pulls/7/reviews",
         ],
       );
     }).pipe(Effect.provide(server.layer));
@@ -995,15 +1004,21 @@ describe("GitCafePullRequestProvider", () => {
       detailsUrl: null,
     });
     const items = [run("120859457782", "success"), run("120857059247", "failure")];
-    const detailWith = (checks: (request: SentRequest) => unknown) => {
+    const detailWith = (
+      checks: (request: SentRequest) => unknown,
+      state = "success",
+      conflicts = "none",
+      reviews: unknown = { items: [], next: null },
+    ) => {
       const server = fakeGitCafe({
         "GET /repos/owner/repo/pulls/7": pull,
+        "GET /repos/owner/repo/pulls/7/reviews": reviews,
         "GET /repos/owner/repo/pulls/7/reviewers": { items: [], next: null },
         "GET /repos/owner/repo/pulls/7/labels": { items: [], next: null },
         "GET /repos/owner/repo/pulls/7/status": {
-          merge: { conflicts: "none", fastForward: null, strategies: [] },
+          merge: { conflicts, fastForward: null, strategies: [] },
           // GitCafe counts the cancelled run's failure beside the re-run that passed.
-          checks: { pending: 0, failing: 1, total: 2 },
+          checks: { pending: 0, failing: 1, total: 2, contexts: [{ state }] },
         },
         [`GET /repos/owner/repo/commits/${headOid}/checks`]: checks,
         "GET /repos/owner/repo/pulls/7/changes": {
@@ -1016,7 +1031,9 @@ describe("GitCafePullRequestProvider", () => {
       });
       return Effect.gen(function* () {
         const provider = yield* GitCafePullRequestProvider.make;
-        return yield* provider.getChangeRequest(target);
+        const detail = yield* provider.getChangeRequest(target);
+        const summary = yield* provider.getChangeRequestSummary!(target);
+        return { ...detail, summary };
       }).pipe(Effect.provide(server.layer));
     };
     return Effect.gen(function* () {
@@ -1026,6 +1043,38 @@ describe("GitCafePullRequestProvider", () => {
         [["Check", "success"]],
       );
       assert.strictEqual(detail.checksState, "passing");
+      assert.strictEqual(detail.summary.checksState, "passing");
+      assert.strictEqual(detail.summary.mergeability, "mergeable");
+      assert.strictEqual(detail.summary.reviewDecision, null);
+      for (const [state, expected] of [
+        ["pending", "pending"],
+        ["failure", "failing"],
+      ]) {
+        const changed = yield* detailWith(() => ({ items, next: null }), state, "conflicting");
+        assert.strictEqual(changed.summary.checksState, expected);
+        assert.strictEqual(changed.summary.mergeability, "conflicting");
+      }
+
+      for (const [verdict, expected] of [
+        ["approve", "approved"],
+        ["request_changes", "changes-requested"],
+        ["comment", null],
+      ]) {
+        const reviewed = yield* detailWith(() => ({ items, next: null }), "success", "none", {
+          items: [
+            {
+              id: "review_one",
+              author: actor,
+              body: null,
+              verdict,
+              dismissedAt: null,
+              createdAt: timestamp,
+            },
+          ],
+          next: null,
+        });
+        assert.strictEqual(reviewed.summary.reviewDecision, expected);
+      }
 
       // A listing cut off at the page limit may hide a failure, so GitCafe's counts decide.
       const truncated = yield* detailWith((request) => ({
@@ -1245,6 +1294,11 @@ describe("GitCafePullRequestProvider", () => {
       })),
     });
     const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7/reviews": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/status": {
+        merge: { conflicts: "none", fastForward: null, strategies: [] },
+        checks: { pending: 0, failing: 0, total: 0 },
+      },
       // A comment moves the version without moving the compared commits.
       "GET /repos/owner/repo/pulls/7": () => ({ ...pull, ...tips, version: 4 + pullReads++ }),
       "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({

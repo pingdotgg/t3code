@@ -65,6 +65,7 @@ const threadShell = vi.hoisted(() => ({
   activeOrderKey: null as string | null,
   unsettledAt: null as string | null,
   snoozedUntil: null as string | null,
+  snoozeUntilPullRequest: null as "review" | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -127,6 +128,7 @@ beforeEach(() => {
   threadShell.activeOrderKey = null;
   threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
+  threadShell.snoozeUntilPullRequest = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -147,7 +149,7 @@ describe("concurrent thread action Undo", () => {
       const actions = useThreadActions();
       const run = () =>
         handler === "snoozeThread"
-          ? actions.snoozeThread(target, "2099-01-01T09:00:00.000Z")
+          ? actions.snoozeThread(target, { snoozedUntil: "2099-01-01T09:00:00.000Z" })
           : actions[handler](target);
       await Promise.all([run(), run()]);
       expect(commands[action]).toHaveBeenCalledTimes(2);
@@ -304,6 +306,7 @@ describe("settle and snooze Undo", () => {
     const snoozedUntil = "2030-01-01T09:00:00.000Z";
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
     threadShell.snoozedUntil = snoozedUntil;
+    threadShell.snoozeUntilPullRequest = "review";
     const actions = useThreadActions();
     await actions.settleThread(target);
     await currentUndo()();
@@ -314,7 +317,7 @@ describe("settle and snooze Undo", () => {
     });
     expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: { threadId: target.threadId, snoozedUntil, untilPullRequest: "review" },
     });
   });
 
@@ -372,7 +375,7 @@ describe("settle and snooze Undo", () => {
   it("wakes the thread from the snooze notice", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     const actions = useThreadActions();
-    await actions.snoozeThread(target, "2100-01-01T00:00:00.000Z");
+    await actions.snoozeThread(target, { snoozedUntil: "2100-01-01T00:00:00.000Z" });
     expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Snoozed", count: 1 });
     expect(add).not.toHaveBeenCalled();
     await currentUndo()();
@@ -403,7 +406,7 @@ describe("archive and delete Undo expiry", () => {
         const header = useThreadActions();
         for (const ref of [otherThread, otherEnvironment, target]) {
           await (handler === "snoozeThread"
-            ? sidebar.snoozeThread(ref, "2099-01-01T09:00:00.000Z")
+            ? sidebar.snoozeThread(ref, { snoozedUntil: "2099-01-01T09:00:00.000Z" })
             : sidebar[handler](ref));
         }
         const staleUndo = currentUndo();

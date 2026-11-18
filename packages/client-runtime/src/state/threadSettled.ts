@@ -1,6 +1,12 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
-import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type { PullRequestSnoozeTrigger, ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  DEFAULT_SNOOZE_PRESETS,
+  MAX_SNOOZE_PRESET_MINUTES,
+  type SnoozePresetSetting,
+} from "@t3tools/contracts/settings";
+import { snoozablePullRequests } from "@t3tools/shared/threadPullRequests";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { mFallback, msg } from "gt-i18n";
@@ -214,6 +220,7 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  readonly untilPullRequest?: PullRequestSnoozeTrigger;
 }
 
 export interface SnoozePresetOptions {
@@ -387,6 +394,49 @@ export function pickSnoozePreset(input: {
   return (
     (setting && resolveSnoozePreset(setting, input.now, input.formatTime, input.resolve)) ?? ahead
   );
+}
+
+export const PULL_REQUEST_SNOOZE_LABELS = {
+  update: msg("Until PR updates"),
+  review: msg("Until PR review"),
+  checks: msg("Until checks finish"),
+  conflict: msg("Until merge conflict"),
+} satisfies Record<PullRequestSnoozeTrigger, string>;
+
+/** A thread snoozed on its pull requests, in a sentence. */
+export const PULL_REQUEST_SNOOZE_STATUS = {
+  update: msg("Snoozed until the PR updates"),
+  review: msg("Snoozed until PR review"),
+  checks: msg("Snoozed until checks finish"),
+  conflict: msg("Snoozed until a merge conflict"),
+} satisfies Record<PullRequestSnoozeTrigger, string>;
+
+/**
+ * The menu's pull request snoozes, none without an open pull request or from a server without
+ * the setting, which predates them. Each is capped at the longest snooze a preset allows.
+ */
+export function resolvePullRequestSnoozePresets(
+  triggers: ReadonlyArray<PullRequestSnoozeTrigger> | undefined,
+  pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
+  now: Date,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<SnoozePreset> {
+  const open = snoozablePullRequests(pullRequests ?? []);
+  if (triggers === undefined || open.length === 0) return [];
+  const whenLabel =
+    open.length === 1
+      ? `#${open[0]!.number}`
+      : resolve(
+          msg("{count, plural, one {{count} PR} other {{count} PRs}}", { count: open.length }),
+        );
+  const snoozedUntil = new Date(now.getTime() + MAX_SNOOZE_PRESET_MINUTES * 60_000).toISOString();
+  return [...new Set(triggers)].map((trigger) => ({
+    id: `pr:${trigger}`,
+    label: resolve(PULL_REQUEST_SNOOZE_LABELS[trigger]),
+    whenLabel,
+    snoozedUntil,
+    untilPullRequest: trigger,
+  }));
 }
 
 export function snoozeWakeLabel(
