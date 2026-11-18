@@ -12,6 +12,7 @@ import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { decodeMsg, msg, useMessages } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { FORK_SETTING_TITLES } from "../../fork/forkCopy";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import type { MessageResolver } from "../../i18n/messages";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -281,7 +282,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-reflink",
-    title: "Reflink worktrees",
+    title: FORK_SETTING_TITLES.worktreeReflink,
     to: "/settings/worktrees",
     scope: "environment",
     reflinkWorktreesOnly: true,
@@ -328,7 +329,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "new-thread-display-mode",
-    title: "Display mode",
+    title: FORK_SETTING_TITLES.newThreadDisplayMode,
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["new thread default display mode chat replies messages only dashboard normal"],
@@ -1191,7 +1192,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "preview-browser-mode",
-    title: "Preview browser",
+    title: FORK_SETTING_TITLES.previewBrowserMode,
     to: "/settings/browser",
     searchTerms: ["preview browser chrome native headless fast slow"],
     scope: "environment-defaults",

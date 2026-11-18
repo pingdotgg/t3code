@@ -303,13 +303,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       kind={documentChipKindForFileName(path) ?? "mention"}
       dir="ltr"
       render={<button type="button" />}
-<<<<<<< origin/main
       onClick={() => actions.openMention(mentionPath)}
-      aria-label={`Preview ${path}`}
-=======
-      onClick={() => actions.openMention(path)}
       aria-label={gt("Preview {path}", { path })}
->>>>>>> upstream/main
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"

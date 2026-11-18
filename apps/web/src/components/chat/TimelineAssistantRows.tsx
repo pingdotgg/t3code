@@ -269,14 +269,8 @@ function AssistantMessageMeta({
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-<<<<<<< origin/main
-            {formatDayAwareTimestamp(message.editedAt ?? message.updatedAt, ctx.timestampFormat)}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {formatChatTimestampTooltip(message.editedAt ?? message.updatedAt, ctx.timestampFormat)}
-=======
             {formatDayAwareTimestamp(
-              message.updatedAt,
+              message.editedAt ?? message.updatedAt,
               ctx.timestampFormat,
               undefined,
               undefined,
@@ -284,8 +278,11 @@ function AssistantMessageMeta({
             )}
           </TooltipTrigger>
           <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat, m)}
->>>>>>> upstream/main
+            {formatChatTimestampTooltip(
+              message.editedAt ?? message.updatedAt,
+              ctx.timestampFormat,
+              m,
+            )}
           </TooltipPopup>
         </Tooltip>
       )}

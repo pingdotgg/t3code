@@ -99,8 +99,10 @@ describe("subscription widget snapshots", () => {
       deepLink,
     );
     const session = snapshot.providers[0]?.windows.find((w) => w.kind === "session");
+    // The fork orders a pool by weekly reset first, so relay's weekly window leads.
     expect(session?.accounts).toStrictEqual([
-      { name: "RE", remaining: 60, refill: 0 },
+      { name: "RE" },
+      { name: "RE2", remaining: 60, refill: 0 },
       {
         name: "smol",
         color: "#4c6ef5",
@@ -110,7 +112,6 @@ describe("subscription widget snapshots", () => {
         reset: expect.any(String),
         durationMs: 300 * 60_000,
       },
-      { name: "RE2" },
     ]);
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
   });

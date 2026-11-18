@@ -18,31 +18,21 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { msg } from "gt-i18n";
 
+import { WHILE_IDLE_COMPACTING_LABEL, WHILE_IDLE_COMPACTION_TITLE } from "./fork/forkCopy.ts";
+
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
-<<<<<<< origin/main
-  beforeCacheExpires: "Compacting before the cache expires…",
-  whileIdle: "Compacting while idle…",
-  onReturn: "Compacting…",
-} satisfies Record<IdleCompactionLevel, string>;
-
-/** Leads the finished compaction's token counts, in place of "Context compacted". */
-export const IDLE_COMPACTION_TITLES = {
-  beforeCacheExpires: "Auto-compacted before cache expiry",
-  whileIdle: "Context automatically compacted while idle",
-  onReturn: "Context compacted before sending",
-} satisfies Record<IdleCompactionLevel, string>;
-=======
   beforeCacheExpires: msg("Compacting before the cache expires…"),
+  whileIdle: WHILE_IDLE_COMPACTING_LABEL,
   onReturn: msg("Compacting…"),
-} satisfies Record<OrchestrationV2IdleCompaction, string>;
+} satisfies Record<IdleCompactionLevel, string>;
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
   beforeCacheExpires: msg("Auto-compacted before cache expiry"),
+  whileIdle: WHILE_IDLE_COMPACTION_TITLE,
   onReturn: msg("Context compacted before sending"),
-} satisfies Record<OrchestrationV2IdleCompaction, string>;
->>>>>>> upstream/main
+} satisfies Record<IdleCompactionLevel, string>;
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;
 const LEGACY_AUTOMATION_MESSAGE_ID = /^scheduled-task-message:(.+):\d+:(?:scheduled|manual)$/;

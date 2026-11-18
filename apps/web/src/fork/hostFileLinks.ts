@@ -105,7 +105,11 @@ export function runHostFileLinkMenuItem(clicked: string | null, href: string): b
   const done =
     clicked === "open-external"
       ? readLocalApi()?.shell.openExternal(href)
-      : writeTextToClipboard(href, "link");
+      : writeTextToClipboard(href, {
+          target: "link",
+          unavailableMessage: "Clipboard API is unavailable while copying link.",
+          failureMessage: "Failed to copy link to the clipboard.",
+        });
   void Promise.resolve(done).catch((cause) =>
     reportMarkdownActionFailure({ operation: clicked, target: href }, cause),
   );

@@ -5233,17 +5233,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-<<<<<<< origin/main
+    // The cache clones a full checkout, so a sparse worktree uses Git's own checkout.
     const checkoutCache =
-      options?.fastCheckout === true
+      options?.fastCheckout === true && sparsePatterns === null
         ? yield* checkoutSites.select(options.worktreesDirectory ?? "")
         : undefined;
     const fastCheckout = checkoutCache !== undefined;
-=======
-    // The cache clones a full checkout, so a sparse worktree uses Git's own checkout.
-    const fastCheckout =
-      checkoutCache !== undefined && options?.fastCheckout === true && sparsePatterns === null;
->>>>>>> upstream/main
     const cacheGeneration = fastCheckout ? yield* checkoutCache.currentGeneration : 0;
     const stockCheckout = executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",

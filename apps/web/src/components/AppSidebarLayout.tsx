@@ -321,7 +321,6 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-<<<<<<< origin/main
 function SidebarControl({
   boardHidden,
   showSidebar,
@@ -331,10 +330,7 @@ function SidebarControl({
   readonly showSidebar: boolean;
   readonly sidebarFits: boolean;
 }) {
-=======
-function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const gt = useGT();
->>>>>>> upstream/main
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

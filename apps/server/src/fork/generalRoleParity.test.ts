@@ -47,6 +47,7 @@ import { UserView } from "./userView/UserView.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { IssueService } from "../issue/IssueService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type { McpThreadInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -59,6 +60,7 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { ThreadIssueService } from "../orchestration-v2/ThreadIssueService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -668,6 +670,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
+  Layer.mock(IssueService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions.McpProviderSessions)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -693,6 +696,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ServerSecretStore)({}),
   ServerSettings.layerTest(),
   Layer.mock(SourceControlRepositoryService)({}),
+  Layer.mock(ThreadIssueService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   McpToolAccessTestkit.liveThreadsLayer,
   Layer.mock(ThreadSearch)({}),

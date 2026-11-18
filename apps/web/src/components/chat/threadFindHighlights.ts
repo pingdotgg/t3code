@@ -2,14 +2,9 @@ import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
 
-<<<<<<< origin/main
-import { useFindHighlightNames } from "../../fork/subThreads/useSubThreadReveal";
-=======
 import { observeResize } from "~/lib/observeResize";
 
-const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
-const THREAD_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-thread-find-active";
->>>>>>> upstream/main
+import { useFindHighlightNames } from "../../fork/subThreads/useSubThreadReveal";
 
 const THREAD_FIND_TEXT_SELECTOR = "[data-thread-find-text]";
 const THREAD_FIND_IGNORE_SELECTOR = "[data-thread-find-ignore]";
@@ -240,37 +235,6 @@ export function useThreadFindHighlights(input: {
   }, [activeOccurrence, activeRowId]);
 }
 
-<<<<<<< origin/main
-function makeThreadFindHighlightPainter(
-  container: HTMLElement,
-  names: ReturnType<typeof useFindHighlightNames>,
-) {
-  let previousRanges: readonly ThreadFindRange[] | null = null;
-  const rangesByRow = new Map<string, Range[]>();
-  const inactive = new Highlight();
-  const active = new Highlight();
-  let previousActive: Range | null = null;
-  CSS.highlights.set(names.all, inactive);
-  CSS.highlights.set(names.active, active);
-  return (
-    ranges: readonly ThreadFindRange[],
-    selection: Pick<
-      Parameters<typeof useThreadFindHighlights>[0],
-      "activeRowId" | "activeOccurrence" | "onActiveRange"
-    >,
-  ) => {
-    if (previousRanges !== ranges) {
-      previousRanges = ranges;
-      previousActive = null;
-      rangesByRow.clear();
-      inactive.clear();
-      for (const match of ranges) {
-        const row = rangesByRow.get(match.rowId) ?? [];
-        row[match.occurrence] = match.range;
-        rangesByRow.set(match.rowId, row);
-        if (foldsHiding(match.range, container).length === 0) inactive.add(match.range);
-      }
-=======
 type ThreadFindSelection = Pick<
   Parameters<typeof useThreadFindHighlights>[0],
   "activeRowId" | "activeOccurrence" | "onActiveRange"
@@ -388,15 +352,18 @@ function matchesInZone(
   }
 }
 
-function makeThreadFindHighlightPainter(container: HTMLElement) {
+function makeThreadFindHighlightPainter(
+  container: HTMLElement,
+  names: ReturnType<typeof useFindHighlightNames>,
+) {
   const inactive = new Highlight();
   const active = new Highlight();
   const zoned = new Set<Range>();
   const windows = new Map<Element, Set<Range>>();
   const rangesByRow = new Map<string, Range[]>();
   let selected: Range | null = null;
-  CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
-  CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME, active);
+  CSS.highlights.set(names.all, inactive);
+  CSS.highlights.set(names.active, active);
   const show = (range: Range) => {
     zoned.add(range);
     if (range !== selected && foldsHiding(range, container).length === 0) inactive.add(range);
@@ -412,7 +379,6 @@ function makeThreadFindHighlightPainter(container: HTMLElement) {
       if (rows.has(row)) continue;
       for (const range of previous) hide(range);
       windows.delete(row);
->>>>>>> upstream/main
     }
     for (const [row, matches] of rows) {
       const shown = new Set<Range>();

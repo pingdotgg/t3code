@@ -1,7 +1,7 @@
 import { DEFAULT_SERVER_SETTINGS, PreviewBrowserMode } from "@t3tools/contracts";
 
 import { SettingResetButton, SettingsRow } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import { useSearchableSetting } from "~/components/settings/settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -21,6 +21,7 @@ const LABELS: Record<PreviewBrowserMode, string> = {
 };
 
 export function PreviewBrowserModeSetting() {
+  const setting = useSearchableSetting();
   const mode = useScopedSettings((settings) => settings.previewBrowserMode);
   const mixed = useScopedSettingsMixed(["previewBrowserMode"]);
   const updateSettings = useUpdateScopedSettings();
@@ -29,12 +30,12 @@ export function PreviewBrowserModeSetting() {
     <SettingsRow
       serverScoped
       settingKeys={["previewBrowserMode"]}
-      {...searchableSetting("preview-browser-mode")}
+      {...setting("preview-browser-mode")}
       description="The server's browser for preview tabs. Chrome (slow) is full Chrome, for pages that fail in T3 native. Platforms with no Chrome for Testing build run T3 native. Switching closes server browser tabs."
       resetAction={
         mode !== DEFAULT_SERVER_SETTINGS.previewBrowserMode ? (
           <SettingResetButton
-            label="preview browser"
+            ariaLabel="Reset preview browser to default"
             onClick={() =>
               updateSettings({ previewBrowserMode: DEFAULT_SERVER_SETTINGS.previewBrowserMode })
             }

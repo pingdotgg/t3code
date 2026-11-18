@@ -66,10 +66,10 @@ const layerOrchestratorService = (
 it("readThread reports each FYI's state from its run in the thread the row comes from", async () => {
   const sourceThreadId = ThreadId.make("thread-mcp-fyi-source");
   const node = NodeId.make("node-mcp-fyi");
-  const run = (id: RunId, threadId: ThreadId, status: "running" | "completed") => ({
+  const run = (id: RunId, threadId: ThreadId, status: "running" | "completed", ordinal = 2) => ({
     id,
     threadId,
-    ordinal: 1,
+    ordinal,
     status,
     modelSelection: { instanceId, model: "gpt-5.4" },
     providerInstanceId: instanceId,
@@ -100,9 +100,16 @@ it("readThread reports each FYI's state from its run in the thread the row comes
     fyiRow("se", parentThreadId, activeRunId),
     fyiRow("inh", sourceThreadId, RunId.make("run-mcp-fyi-source")),
     fyiRow("lost", parentThreadId, RunId.make("run-mcp-fyi-missing")),
+    fyiRow("older", parentThreadId, RunId.make("run-mcp-fyi-old")),
   ];
   const runsByThread = new Map([
-    [parentThreadId, [run(activeRunId, parentThreadId, "running")]],
+    [
+      parentThreadId,
+      [
+        run(RunId.make("run-mcp-fyi-old"), parentThreadId, "completed", 1),
+        run(activeRunId, parentThreadId, "running"),
+      ],
+    ],
     [sourceThreadId, [run(RunId.make("run-mcp-fyi-source"), sourceThreadId, "completed")]],
   ]);
   const projection = {
@@ -151,7 +158,13 @@ it("readThread reports each FYI's state from its run in the thread the row comes
     const result = yield* service.readThread(scope, {
       threadId: parentThreadId,
       afterPosition: -1,
+      runLimit: 1,
     });
+    // The read loads only the latest run; the old FYI's run is looked up by its id.
+    assert.deepEqual(
+      result.recentRuns.map((recent) => recent.runId),
+      [activeRunId],
+    );
     assert.deepEqual(
       result.items.map((item) => [item.text, item.fyi]),
       [
@@ -159,6 +172,7 @@ it("readThread reports each FYI's state from its run in the thread the row comes
         ["se", "sent"],
         ["inh", "delivered"],
         ["lost", "unknown"],
+        ["older", "delivered"],
       ],
     );
   }).pipe(
@@ -178,7 +192,19 @@ it("readThread reports each FYI's state from its run in the thread the row comes
               (run) => filter?.runIds === undefined || filter.runIds.includes(run.id),
             ),
           } as unknown as OrchestrationV2ThreadProjection),
-        getProjectThreadRecords: () => Effect.succeed(projection),
+        getProjectThreadRecords: (_input, _fields, filter) =>
+          Effect.succeed({
+            ...projection,
+            runs: projection.runs
+              .toSorted((left, right) => right.ordinal - left.ordinal)
+              .filter(
+                (run, index) =>
+                  filter?.latestRunLimit === undefined ||
+                  index < filter.latestRunLimit ||
+                  filter.runStatuses?.includes(run.status) === true,
+              ),
+          } as unknown as OrchestrationV2ThreadProjection),
+        getRunCount: () => Effect.succeed(projection.runs.length),
         getThreadShell: () =>
           Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
       }),

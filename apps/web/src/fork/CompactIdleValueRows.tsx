@@ -84,7 +84,10 @@ function CompactIdleValueRow({ row }: { readonly row: ValueRow }) {
       settingKeys={[row.key]}
       resetAction={
         mixed || value !== "" ? (
-          <SettingResetButton label={row.title.toLowerCase()} onClick={() => save("")} />
+          <SettingResetButton
+            ariaLabel={`Reset ${row.title.toLowerCase()} to default`}
+            onClick={() => save("")}
+          />
         ) : null
       }
       control={

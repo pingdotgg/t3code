@@ -3,7 +3,7 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { ScopedSwitch } from "~/components/settings/ScopedSwitch";
 import { useSettingsScope } from "~/components/settings/SettingsScopeContext";
 import { SettingResetButton, SettingsRow } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import { useSearchableSetting } from "~/components/settings/settingsSearch";
 import {
   useScopedSettings,
   useUpdateScopedSettings,
@@ -11,6 +11,7 @@ import {
 
 /** Shows only when every machine in scope runs Linux, since only Linux servers honor it. */
 export function ReflinkWorktreesRow() {
+  const setting = useSearchableSetting();
   const { scope, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -26,13 +27,13 @@ export function ReflinkWorktreesRow() {
   return (
     <SettingsRow
       serverScoped
-      {...searchableSetting("worktree-reflink")}
+      {...setting("worktree-reflink")}
       settingKeys={["reflinkWorktrees"]}
       description="Clone new worktrees copy-on-write from a checkout cached on their location’s drive, so they share disk space until files change. Other drives use Git’s checkout. Turning it off deletes the cache."
       resetAction={
         settings.reflinkWorktrees !== DEFAULT_UNIFIED_SETTINGS.reflinkWorktrees ? (
           <SettingResetButton
-            label="reflink worktrees"
+            ariaLabel="Reset reflink worktrees to default"
             onClick={() =>
               updateSettings({ reflinkWorktrees: DEFAULT_UNIFIED_SETTINGS.reflinkWorktrees })
             }

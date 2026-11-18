@@ -2252,12 +2252,9 @@ function renderFeedEntry(
         : resolveUserMessageIntentBadge(
             message.inputIntent,
             message.projectedItem?.item.status === "pending",
-<<<<<<< origin/main
+            props.m,
             message.projectedItem?.item,
             props.fyiRuns,
-=======
-            props.m,
->>>>>>> upstream/main
           );
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),

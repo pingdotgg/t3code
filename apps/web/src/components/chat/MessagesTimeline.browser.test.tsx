@@ -867,9 +867,6 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
-<<<<<<< origin/main
-  it("keeps single tildes in user and assistant paths literal without changing double tildes", async () => {
-=======
   it("shows the spaces typed at the start of user lines, where find also matches them", async () => {
     const source = "Plan\n   Step one\n\tDetail";
     await using screen = await renderTimeline([
@@ -894,8 +891,7 @@ describe("MessagesTimeline messages", () => {
     ).toBe(ranges.length);
   });
 
-  it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
->>>>>>> upstream/main
+  it("keeps single tildes in user and assistant paths literal without changing double tildes", async () => {
     const source =
       "Install the skill as ~/folder-a/skills/x, then follow the guide (~/folder-a/guide.md).";
     await using screen = await renderTimeline([

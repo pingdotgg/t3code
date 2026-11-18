@@ -1594,29 +1594,6 @@ function deriveTimelineTurnFolds(
   });
 }
 
-<<<<<<< origin/main
-export function deriveMessagesTimelineRows(input: {
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
-  latestRun?: TimelineLatestRun | null;
-  runningRunId?: RunId | null;
-  expandedRunIds?: ReadonlySet<RunId>;
-  expandedAttemptIds?: ReadonlySet<RunAttemptId>;
-  expandedWorkGroupIds?: ReadonlySet<string>;
-  isWorking: boolean;
-  repliesChosen?: boolean;
-  /** Native subagent work has no app run; runless entries form the live response. */
-  runlessWorkActive?: boolean;
-  activeTurnStartedAt?: string | null;
-  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
-  supportsConversationRollback: boolean;
-  threadStartCheckpointAvailable?: boolean;
-  availableRevertTurnCounts?: ReadonlySet<number> | undefined;
-  worktreeSetup?: WorktreeSetupSnapshot | null;
-  toolCallVisibility?: ToolCallVisibility;
-  revealedMessageId?: MessageId | null;
-}): MessagesTimelineRow[] {
-=======
 export function deriveMessagesTimelineRows(
   input: {
     timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -1627,6 +1604,7 @@ export function deriveMessagesTimelineRows(
     expandedAttemptIds?: ReadonlySet<RunAttemptId>;
     expandedWorkGroupIds?: ReadonlySet<string>;
     isWorking: boolean;
+    repliesChosen?: boolean;
     /** Native subagent work has no app run; runless entries form the live response. */
     runlessWorkActive?: boolean;
     activeTurnStartedAt?: string | null;
@@ -1640,7 +1618,6 @@ export function deriveMessagesTimelineRows(
   },
   resolve: MessageResolver = m,
 ): MessagesTimelineRow[] {
->>>>>>> upstream/main
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();
   for (const entry of timelineEntries) {

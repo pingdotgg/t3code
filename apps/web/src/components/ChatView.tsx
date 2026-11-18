@@ -666,27 +666,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-<<<<<<< origin/main
   const citeAssistantTextStable = useSubThreadCite(embedded ? null : routeThreadRef, composerRef);
-=======
-  const citeAssistantText = (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => {
-    const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
-    if (!inserted) {
-      toastManager.add({
-        type: "warning",
-        title: gt("The composer is not ready"),
-        description: gt(
-          "Try citing the selection after the connection or pending input is resolved.",
-        ),
-      });
-    }
-    return inserted;
-  };
-  const citeAssistantTextStable = useStableCallback(citeAssistantText);
->>>>>>> upstream/main
   const replyToResponseStable = useStableCallback((response: ResponseContextRecord) => {
     const accepted = composerRef.current?.replyToResponse(response) ?? false;
     if (!accepted) {
@@ -3129,18 +3109,14 @@ export default function ChatView(props: ChatViewProps) {
           threadId={activeThread.id}
           optimisticMessages={optimisticUserMessages}
           editingRunId={queuedRunEdit.editingRunId}
-<<<<<<< origin/main
           editBlockedReason={
             subThreadDraft === null
-              ? queuedRunEditBlockedReason({ openQuestionCount: pendingUserInputs.length })
+              ? queuedRunEditBlockedReason(
+                  { openQuestionCount: pendingUserInputs.length },
+                  messages,
+                )
               : REPLY_BOX_QUEUE_EDIT_BLOCKED
           }
-=======
-          editBlockedReason={queuedRunEditBlockedReason(
-            { openQuestionCount: pendingUserInputs.length },
-            messages,
-          )}
->>>>>>> upstream/main
           onEditQueuedRun={queuedRunEdit.beginEdit}
           onCancelEdit={queuedRunEdit.cancelEdit}
           timestampFormat={timestampFormat}
@@ -3305,7 +3281,6 @@ export default function ChatView(props: ChatViewProps) {
     return embedded ? null : <NoActiveThreadState />;
   }
 
-<<<<<<< origin/main
   const renderRightPanelSurface = (surface: RightPanelSurface, visible: boolean) =>
     activeThreadRef ? (
       <RightPanelSurfaceContent
@@ -3349,6 +3324,7 @@ export default function ChatView(props: ChatViewProps) {
               ? addPullRequestsSurfaceStable
               : undefined,
         }}
+        issuesSupported={serverConfig?.environment.capabilities.issues === true}
         files={{
           projectId: activeProject?.id,
           projectName: activeProject?.title ?? null,
@@ -3360,61 +3336,6 @@ export default function ChatView(props: ChatViewProps) {
         }}
       />
     ) : null;
-=======
-  const rightPanelContent = activeThreadRef ? (
-    <RightPanelSurfaceContent
-      surface={renderedRightPanelSurface}
-      activeSurfaceId={activeRightPanelSurface?.id ?? null}
-      threadRef={activeThreadRef}
-      environmentId={activeThread.environmentId}
-      visible={rightPanelOpen}
-      composerDraftTarget={composerDraftTarget}
-      keybindings={keybindings}
-      configuredPreviewUrls={configuredPreviewUrls}
-      workspaceMutationId={workspaceMutationId}
-      getShortcutContext={getShortcutContextStable}
-      onSendAnnotation={sendPreviewAnnotationStable}
-      onCloseSurface={closeRightPanelSurface}
-      sideChatParentPanel={sideChatParentPanel}
-      terminal={{
-        launchContext: activeTerminalLaunchContext ?? null,
-        keybindings,
-        onAddTerminalContext: addTerminalContextToDraftStable,
-        onSplitTerminal: splitPanelTerminalStable,
-        onSplitTerminalVertical: splitPanelTerminalVerticalStable,
-        onNewTerminal: addTerminalSurfaceStable,
-        onActiveTerminalChange: activatePanelTerminalStable,
-        onCloseTerminal: closePanelTerminalStable,
-        splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
-        splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
-        newShortcutLabel: newTerminalShortcutLabel ?? undefined,
-        closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
-      }}
-      pullRequest={{
-        capabilityKnown: pullRequestsCapabilityKnown,
-        supported: supportsPullRequests,
-        projectId: activeThread.projectId,
-        pullRequests: visiblePullRequests,
-        linkedPullRequest: linkedThreadPullRequest,
-        branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-        onBack:
-          pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-            ? addPullRequestsSurfaceStable
-            : undefined,
-      }}
-      issuesSupported={serverConfig?.environment.capabilities.issues === true}
-      files={{
-        projectId: activeProject?.id,
-        projectName: activeProject?.title ?? null,
-        workspaceRoot: activeWorkspaceRoot,
-        availableEditors,
-        pendingSurfaceIds: pendingFileSurfaceIds,
-        onOpenFile: openFileSurfaceStable,
-        onPendingChange: handleFilePendingChangeStable,
-      }}
-    />
-  ) : null;
->>>>>>> upstream/main
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,

@@ -94,11 +94,6 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
-<<<<<<< origin/main
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
-  | { id: "dashboard"; kind: "dashboard" }
-  | { id: "replies"; kind: "replies" };
-=======
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
    * the reference lives in the id so several issues can stay open as peer tabs.
@@ -114,8 +109,9 @@ export type RightPanelSurface =
       key: string;
       url?: string;
     }
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
->>>>>>> upstream/main
+  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
+  | { id: "dashboard"; kind: "dashboard" }
+  | { id: "replies"; kind: "replies" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 15;
@@ -174,12 +170,8 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-<<<<<<< origin/main
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
-    automatic?: boolean,
-=======
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
->>>>>>> upstream/main
+    automatic?: boolean,
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;

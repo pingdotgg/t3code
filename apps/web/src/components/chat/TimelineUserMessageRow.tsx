@@ -1154,12 +1154,9 @@ function UserMessageIntentMarker({
   readonly unread: boolean;
   readonly item: OrchestrationV2TurnItem | undefined;
 }) {
-<<<<<<< origin/main
+  const gt = useGT();
   const fyi = useFyiMarker(item);
   if (fyi !== null) return <FyiIntentMarker marker={fyi} />;
-=======
-  const gt = useGT();
->>>>>>> upstream/main
   return (
     <Tooltip>
       <TooltipTrigger

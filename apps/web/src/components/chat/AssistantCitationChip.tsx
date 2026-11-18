@@ -306,14 +306,10 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-<<<<<<< origin/main
             ref={commentTriggerRef}
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
-=======
             aria-label={
               citation.comment ? gt("Edit citation comment") : gt("Add comment to citation")
             }
->>>>>>> upstream/main
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >

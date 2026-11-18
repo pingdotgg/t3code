@@ -1,12 +1,9 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
-<<<<<<< origin/main
-import type { DisplayModeMenuId } from "../fork/displayMode/useThreadDisplayMode";
-=======
 import { msg } from "gt-react";
 
+import type { DisplayModeMenuId } from "../fork/displayMode/useThreadDisplayMode";
 import { m, type MessageResolver } from "../i18n/messages";
->>>>>>> upstream/main
 
 export type ThreadActionMenuId =
   | "find"

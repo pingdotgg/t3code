@@ -27,12 +27,8 @@ concurrency:
 jobs:
   fingerprint:
     name: Native fingerprint diff
-<<<<<<< origin/main
-    runs-on: ubuntu-24.04
-=======
     if: github.event.action != 'edited' || github.event.changes.base
-    runs-on: blacksmith-8vcpu-ubuntu-2404
->>>>>>> upstream/main
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:

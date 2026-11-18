@@ -1464,130 +1464,6 @@ export const layerQueryRunner: Layer.Layer<
       return { refresh: refresh(true).pipe(Effect.asVoid), stop };
     };
 
-<<<<<<< origin/main
-    return ClaudeAgentSdkQueryRunner.of({
-      allocateSessionId: random.uuidV4(),
-      open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(
-        function* (input: ClaudeAgentSdkQueryOpenInput) {
-          const protocolLogger = makeClaudeAgentSdkProtocolLogger({
-            nativeEventLogger,
-            threadId: input.threadId,
-            providerSessionId: input.providerSessionId,
-          });
-          const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
-            protocolLogger === undefined ? Effect.void : protocolLogger(event);
-          // A failed open shuts down its queue before retrying, so the old CLI cannot take the prompt.
-          const promptQueue = yield* Queue.unbounded<SDKUserMessage>();
-          const prompt = Stream.fromQueue(promptQueue).pipe(
-            Stream.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause) ? Stream.empty : Stream.failCause(cause),
-            ),
-            Stream.toAsyncIterable,
-          );
-          // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
-          const { mcpServers, ...sdkOptions } = input.options;
-          // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
-          let resumeSessionAt = sdkOptions.resumeSessionAt;
-          if (input.resume && sdkOptions.resume !== undefined) {
-            const messages = yield* runClaudeWorker({
-              method: "getSessionMessages",
-              sessionId: sdkOptions.resume,
-              options: sdkOptions.cwd === undefined ? {} : { dir: sdkOptions.cwd },
-              environment: sdkOptions.env ?? hostEnvironment,
-            }).pipe(
-              Effect.flatMap(decodeClaudeHistoryMessages),
-              Effect.mapError((cause) => queryRunnerError(cause, "getSessionMessages")),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(Path.Path, path),
-            );
-            const boundary =
-              resumeSessionAt === undefined
-                ? messages.length
-                : messages.findIndex((message) => message.uuid === resumeSessionAt) + 1;
-            resumeSessionAt = claudeResumeSessionAt(messages.slice(0, boundary)) ?? resumeSessionAt;
-          }
-          const queryOptions = {
-            ...sdkOptions,
-            disallowedTools: [
-              ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.disallowedTools,
-              ...(sdkOptions.disallowedTools ?? []),
-            ],
-            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
-            env: {
-              ...(sdkOptions.env ?? hostEnvironment),
-              ...claudeTerminalToolEnvironment,
-              ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.environment,
-              ...(input.resume
-                ? {
-                    CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1",
-                    CLAUDE_CODE_RESUME_REASON: "user_resume",
-                  }
-                : {}),
-              [PortScanner.AGENT_THREAD_ENV]: input.threadId,
-            },
-          };
-          // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
-          const binaryPath = queryOptions.pathToClaudeCodeExecutable;
-          const launch =
-            binaryPath === undefined ||
-            CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
-              ? undefined
-              : yield* agentScope.wrap({
-                  command: binaryPath,
-                  args: [],
-                  name: "claude",
-                  threadId: input.threadId,
-                  env: queryOptions.env,
-                });
-          const options =
-            launch === undefined || launch.args.length === 0
-              ? queryOptions
-              : {
-                  ...queryOptions,
-                  pathToClaudeCodeExecutable: launch.command,
-                  executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
-                };
-          const unit = launch?.unit;
-          const stopScope =
-            unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
-          // Only a CLI that fails before its first message explains itself on
-          // stderr. The known root refusal becomes a curated failure; any other
-          // stderr can hold private text, so it stays out of turn failures.
-          let stderrTail = "";
-          let stderrClosed: Promise<void> = Promise.resolve();
-          let answered = false;
-          let conversationMissing = false;
-          const appendStderr = (text: string) => {
-            if (answered) return;
-            stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
-          };
-          let refreshDescendants: Effect.Effect<void> = Effect.void;
-          const spawnProcess =
-            options.spawnClaudeCodeProcess ??
-            ((spawnOptions: ClaudeSpawnOptions) => {
-              if (platform !== "win32") {
-                // Node can report "exit" before it has read the stderr the CLI wrote.
-                let stderrDone = () => {};
-                stderrClosed = new Promise((resolve) => (stderrDone = resolve));
-                const child = spawnClaudeProcessGroup(
-                  spawnOptions,
-                  stopScope,
-                  appendStderr,
-                  stderrDone,
-                  providerProcesses.register,
-                );
-                if (unit === undefined && child.pid !== undefined) {
-                  const tracker = trackDescendants(child.pid);
-                  const polling = runFork(
-                    tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
-                  );
-                  child.once("exit", () =>
-                    runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-                  );
-                  refreshDescendants = tracker.refresh;
-                }
-                return child;
-=======
     // The open span below is the tracing boundary for both attempts.
     const openQuery = Effect.fnUntraced(function* (input: ClaudeAgentSdkQueryOpenInput) {
       const protocolLogger = makeClaudeAgentSdkProtocolLogger({
@@ -1629,14 +1505,19 @@ export const layerQueryRunner: Layer.Layer<
       }
       const queryOptions = {
         ...sdkOptions,
+        disallowedTools: [
+          ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.disallowedTools,
+          ...(sdkOptions.disallowedTools ?? []),
+        ],
         ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
         env: {
           ...(sdkOptions.env ?? hostEnvironment),
+          ...claudeTerminalToolEnvironment,
+          ...DELEGATE_ONLY_PROVIDERS.claudeAgent.hide.environment,
           ...(input.resume
             ? {
                 CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1",
                 CLAUDE_CODE_RESUME_REASON: "user_resume",
->>>>>>> upstream/main
               }
             : {}),
           [PortScanner.AGENT_THREAD_ENV]: input.threadId,

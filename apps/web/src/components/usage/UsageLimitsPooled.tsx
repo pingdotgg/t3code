@@ -26,6 +26,7 @@ import {
   useState,
 } from "react";
 
+import { OLD_READING_LABEL } from "../../fork/forkCopy";
 import { useOldReadingLabel } from "../../fork/usageReadAge";
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -153,12 +154,8 @@ function SegmentPopover({
   const m = useMessages();
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
-<<<<<<< origin/main
-  const resetsIn = formatResetsIn(window, now);
-  const oldReading = useOldReadingLabel(window, now);
-=======
   const resetsIn = formatResetsIn(window, now, m, "in");
->>>>>>> upstream/main
+  const oldReading = useOldReadingLabel(window, now);
   const where =
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
@@ -210,14 +207,10 @@ function SegmentPopover({
             {resetsIn ? ` · ${resetsIn}` : ""}
           </Row>
         ) : null}
-<<<<<<< origin/main
-        {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
-        {oldReading ? <Row label="As of">{oldReading}</Row> : null}
-=======
         {timeLeft !== null ? (
           <Row label={gt("Even pace")}>{gt("{timeLeft}% left by now", { timeLeft })}</Row>
         ) : null}
->>>>>>> upstream/main
+        {oldReading ? <Row label={OLD_READING_LABEL}>{oldReading}</Row> : null}
         {reset && reset.restoresPercent > 0 ? (
           <Row label={gt("Restores", { $context: "a reset credit restores part of the pool" })}>
             {gt("+{percent}% of pool", { percent: reset.restoresPercent })}

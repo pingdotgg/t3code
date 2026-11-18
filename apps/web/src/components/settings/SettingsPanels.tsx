@@ -12,14 +12,7 @@ import {
   compactIdleChoice,
   compactIdleChoicePatch,
   type DesktopUpdateChannel,
-<<<<<<< origin/main
-  managedUpdatesDenial,
-  managedUpdatesMessage,
-=======
-  IDLE_COMPACTION_MODES,
-  type IdleCompactionMode,
-  globalIdleCompaction,
->>>>>>> upstream/main
+  type CompactIdleChoice,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -75,6 +68,7 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { CompactIdleValueRows } from "~/fork/CompactIdleValueRows";
+import { COMPACT_IDLE_THREADS_DESCRIPTION, COMPACT_WHEN_IDLE_LABEL } from "~/fork/forkCopy";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
@@ -1793,9 +1787,10 @@ export function CompactIdleThreadsRow() {
   );
 }
 
-const IDLE_COMPACTION_MODE_LABELS: Record<IdleCompactionMode, string> = {
+const IDLE_COMPACTION_MODE_LABELS: Record<CompactIdleChoice, string> = {
   onReturn: msg("When you return"),
   beforeCacheExpires: msg("Before the cache expires (beta)"),
+  whenIdle: COMPACT_WHEN_IDLE_LABEL,
   off: msg("Never", { $context: "idle thread compaction mode" }),
 };
 
@@ -1813,15 +1808,8 @@ function ScopedCompactIdleThreadsRow() {
       serverScoped
       settingKeys={["idleCompaction", "compactIdleThreads", "compactWhenIdle"]}
       mixed={idleCompaction.mixed}
-<<<<<<< origin/main
-      {...searchableSetting("compact-idle-threads")}
-      description="When to compact a large idle Claude thread: after you return, just before its prompt cache expires, when idle, or never. Each Claude provider can override this."
-=======
       {...setting("compact-idle-threads")}
-      description={gt(
-        "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
-      )}
->>>>>>> upstream/main
+      description={COMPACT_IDLE_THREADS_DESCRIPTION}
       resetAction={
         compactIdleChoice(settings) !== compactIdleChoice(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
@@ -1848,15 +1836,10 @@ function ScopedCompactIdleThreadsRow() {
             <SelectValue>
               {(value: string | null) =>
                 value === null
-<<<<<<< origin/main
-                  ? "Mixed"
-                  : COMPACT_IDLE_CHOICES.find((mode) => mode.value === value)?.label
-=======
                   ? gt("Mixed")
-                  : IDLE_COMPACTION_MODES.some((mode) => mode.value === value)
-                    ? messages(IDLE_COMPACTION_MODE_LABELS[value as IdleCompactionMode])
+                  : COMPACT_IDLE_CHOICES.some((mode) => mode.value === value)
+                    ? messages(IDLE_COMPACTION_MODE_LABELS[value as CompactIdleChoice])
                     : undefined
->>>>>>> upstream/main
               }
             </SelectValue>
           </SelectTrigger>

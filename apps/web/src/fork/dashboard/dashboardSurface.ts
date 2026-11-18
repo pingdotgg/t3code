@@ -28,6 +28,8 @@ const modeSurfaceAction = (kind: ModeSurfaceKind, onClick: () => void) => ({
 
 export type ModeSurfaceAction = ReturnType<typeof modeSurfaceAction>;
 
+export const modeSurfaceLabel = (kind: ModeSurfaceKind) => MODE_SURFACES[kind].label;
+
 export const ModeSurfaceIcon = (props: { readonly kind: ModeSurfaceKind }) =>
   createElement(MODE_SURFACES[props.kind].icon, { className: "size-3 shrink-0" });
 

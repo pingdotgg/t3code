@@ -110,6 +110,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { resolveCodexTurnServiceTier } from "../../fork/codexServiceTier.ts";
 import {
   codexCompactionNoteItems,

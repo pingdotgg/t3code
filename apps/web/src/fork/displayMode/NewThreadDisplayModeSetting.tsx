@@ -6,7 +6,7 @@ import {
 
 import { useSettingsScope } from "~/components/settings/SettingsScopeContext";
 import { SettingResetButton, SettingsRow } from "~/components/settings/settingsLayout";
-import { searchableSetting } from "~/components/settings/settingsSearch";
+import { useSearchableSetting } from "~/components/settings/settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -21,6 +21,7 @@ import {
 } from "~/components/ui/select";
 
 export function NewThreadDisplayModeSetting() {
+  const setting = useSearchableSetting();
   const { connectedEnvironments } = useSettingsScope();
   const mode = resolveDisplayMode(useScopedSettings((settings) => settings.newThreadDisplayMode));
   const mixed = useScopedSettingsMixed(["newThreadDisplayMode"]);
@@ -39,12 +40,12 @@ export function NewThreadDisplayModeSetting() {
     <SettingsRow
       serverScoped
       settingKeys={["newThreadDisplayMode"]}
-      {...searchableSetting("new-thread-display-mode")}
+      {...setting("new-thread-display-mode")}
       description="Mode for threads you start from the message box in the web or desktop app. Threads that agents, schedules, side chats or the mobile app start open in Normal. Existing threads keep their mode."
       resetAction={
         mode.id !== NORMAL_DISPLAY_MODE.id ? (
           <SettingResetButton
-            label="display mode"
+            ariaLabel="Reset display mode to default"
             onClick={() => updateSettings({ newThreadDisplayMode: NORMAL_DISPLAY_MODE.id })}
           />
         ) : null

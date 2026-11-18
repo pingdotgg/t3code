@@ -4,7 +4,7 @@ const [onReturn, beforeCacheExpires, off] = IDLE_COMPACTION_MODES;
 export const COMPACT_IDLE_CHOICES = [
   onReturn,
   beforeCacheExpires,
-  { value: "whenIdle", label: "Compact when idle" },
+  { value: "whenIdle" },
   off,
 ] as const;
 export type CompactIdleChoice = (typeof COMPACT_IDLE_CHOICES)[number]["value"];

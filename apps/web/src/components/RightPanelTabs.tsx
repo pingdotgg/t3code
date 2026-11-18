@@ -26,13 +26,13 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
-<<<<<<< origin/main
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { type ModeSurfaceAction, ModeSurfaceIcon } from "~/fork/dashboard/dashboardSurface";
-import type { SplitMenuAction } from "~/fork/rightPanelSplit/splitLayout.logic";
-=======
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
->>>>>>> upstream/main
+import {
+  type ModeSurfaceAction,
+  ModeSurfaceIcon,
+  modeSurfaceLabel,
+} from "~/fork/dashboard/dashboardSurface";
+import type { SplitMenuAction } from "~/fork/rightPanelSplit/splitLayout.logic";
 import {
   SplitPaneFrame,
   useRightPanelPane,
@@ -581,13 +581,8 @@ function RightPanelEmptyState(props: {
                     className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
                   >
                     {actionIcon(action, "size-4")}
-<<<<<<< origin/main
-                    <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                    {action.shortcut ? <Kbd>{action.shortcut}</Kbd> : null}
-=======
                     <span className="min-w-0 flex-1 truncate">{messages(action.label)}</span>
-                    <Kbd>{action.shortcut}</Kbd>
->>>>>>> upstream/main
+                    {action.shortcut ? <Kbd>{action.shortcut}</Kbd> : null}
                   </div>
                 }
               />
@@ -629,15 +624,10 @@ function surfaceTitle(
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
     case "side-chat":
-<<<<<<< origin/main
-      return "Side chat";
-    case "dashboard":
-      return "Dashboard";
-    case "replies":
-      return "Replies";
-=======
       return resolve(msg("Side chat"));
->>>>>>> upstream/main
+    case "dashboard":
+    case "replies":
+      return modeSurfaceLabel(surface.kind);
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return resolve(msg("Browser"));
@@ -1082,9 +1072,6 @@ function RightPanelTab(
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
                 className="cursor-pointer flex min-w-0 items-center"
-<<<<<<< origin/main
-                aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
-=======
                 aria-label={
                   sideChatState === null
                     ? undefined
@@ -1093,8 +1080,6 @@ function RightPanelTab(
                         state: messages(SIDE_CHAT_STATE_LABELS[sideChatState]),
                       })
                 }
-                onClick={() => onActivate(surface)}
->>>>>>> upstream/main
               >
                 <span className="truncate">{title}</span>
               </button>

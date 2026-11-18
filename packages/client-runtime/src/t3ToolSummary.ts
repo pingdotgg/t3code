@@ -2,6 +2,8 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
 
+import { forkToolSummaryLabel } from "./fork/forkCopy.ts";
+
 export interface T3ToolSummaryCall {
   readonly input: unknown;
   readonly output: unknown;
@@ -850,6 +852,10 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "rewrite-to-user":
+    case "dashboard":
+      label = forkToolSummaryLabel(action, selected.length, done);
+      break;
     case "thread-list": {
       const count = selected.length;
       label = done
@@ -1583,36 +1589,6 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
-<<<<<<< origin/main
-    case "read-pr-guide":
-      label = phrase("Read", "read", quantity(selected.length, "review guide"));
-      break;
-    case "browser":
-      label = phrase("Used", "use", `browser ${times}`);
-      break;
-    case "device":
-      label = phrase("Used", "use", `device controls ${times}`);
-      break;
-    case "html-preview":
-      label = phrase("Previewed", "preview", quantity(selected.length, "HTML page"));
-      break;
-    case "html-render":
-      label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
-      break;
-    case "send-to-user":
-      label = phrase("Sent", "send", quantity(selected.length, "message"));
-      break;
-    case "rewrite-to-user":
-      label = phrase("Rewrote", "rewrite", `${quantity(selected.length, "message")} to the user`);
-      break;
-    case "dashboard":
-      label = phrase("Used", "use", `the Dashboard ${times}`);
-      break;
-    case "capabilities":
-      label = phrase("Checked", "check", `orchestration capabilities ${times}`);
-      break;
-=======
->>>>>>> upstream/main
   }
   return { label, failedCount };
 }
