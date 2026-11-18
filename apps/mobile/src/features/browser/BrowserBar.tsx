@@ -1,21 +1,27 @@
 import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import { useState, type ReactNode } from "react";
-import { LayoutAnimation, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
+import Animated, {
+  interpolate,
+  useAnimatedStyle,
+  useDerivedValue,
+  useReducedMotion,
+  withTiming,
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { withUniwind } from "uniwind";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { deriveSharedTopBand } from "../../lib/reserved-regions";
 import { isDarkThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
-import { isDuoDevice } from "../../lib/device-type";
-import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 /**
  * Safari's bar: frosted and tinted by the page (`pageColor`), with round controls and a centered
- * host. `compact`, while the page scrolls down, leaves a small host pill that expands it again.
+ * host. `compact`, while the page scrolls down, shrinks it to a small host pill that expands it.
  */
 export function BrowserBar(props: {
   readonly url: string;
@@ -28,97 +34,176 @@ export function BrowserBar(props: {
   readonly trailing?: ReactNode;
   readonly compact?: boolean;
   readonly onExpand?: () => void;
+  /** The screen hides the status bar while compact, so the pill can sit at the very top. */
+  readonly compactHidesStatusBar?: boolean;
   /** The page's theme or background color; the app's sheet color until the page reports one. */
   readonly pageColor?: string | null;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
-  const duo = isDuoDevice(useDeviceType());
+  const safeTop = useSafeAreaInsets().top;
+  const reduceMotion = useReducedMotion();
   const { themeVariables } = useAppearancePreferences();
   const surface = props.pageColor || themeVariables["--color-sheet-solid"];
   const ink: Ink = isDarkThemeColor(surface) ? "light" : "dark";
   const inkColor = ink === "light" ? "#ffffff" : "#000000";
-
-  if (props.compact && draft === null) {
-    return (
-      // Like Safari, the Duo hides its status for a compact bar and puts the pill at the very top.
-      <TopArea band={null} topInset={!duo} surface={surface} ink={ink} hairline>
-        <View className={duo ? "items-center py-1.5" : "items-center pb-1.5 pt-0.5"}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Address ${props.url}. Show the browser controls`}
-            onPress={props.onExpand}
-          >
-            <Glass ink={ink} className="h-7 justify-center rounded-full px-3.5">
-              <AppText numberOfLines={1} className="text-xs" style={{ color: inkColor }}>
-                {hostOf(props.url)}
-              </AppText>
-            </Glass>
-          </Pressable>
-        </View>
-      </TopArea>
-    );
-  }
-  return (
-    <TopArea band={band} surface={surface} ink={ink}>
-      <View
-        className={
-          band ? "flex-row items-center gap-1.5 px-2" : "flex-row items-center gap-2 px-3 pb-2 pt-1"
-        }
-      >
-        <RoundButton icon="xmark" label="Close browser" ink={ink} onPress={props.onClose} />
-        {props.canGoBack ? (
-          <RoundButton icon="chevron.left" label="Back" ink={ink} onPress={props.onBack} />
-        ) : null}
-        {/* On a tablet the address stays a readable width, centered between the buttons. */}
-        <View className="min-w-0 flex-1 items-center">
-          <Glass ink={ink} className="h-11 w-full max-w-2xl flex-row items-center rounded-full">
-            <TextInput
-              accessibilityLabel="Address"
-              editable={props.editable}
-              // Unfocused, the field shows only the host, like Safari; editing starts from the URL.
-              value={draft ?? hostOf(props.url)}
-              onFocus={() => setDraft(props.url)}
-              onChangeText={setDraft}
-              onBlur={() => setDraft(null)}
-              onSubmitEditing={() => {
-                const value = draft ?? props.url;
-                setDraft(null);
-                props.onSubmit(value);
-              }}
-              placeholder="Enter a URL"
-              placeholderTextColor={themeColorWithAlpha(inkColor, 0.45)}
-              selectionColor={themeVariables["--color-primary"]}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              returnKeyType="go"
-              selectTextOnFocus
-              lineBreakModeIOS="middle"
-              numberOfLines={1}
-              textAlign={draft === null ? "center" : "left"}
-              className="h-11 min-w-0 flex-1 pl-3 font-sans text-[15px]"
-              style={{ color: inkColor }}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Reload page"
-              disabled={!props.editable}
-              onPress={props.onReload}
-              className="h-11 w-9 items-center justify-center"
-            >
-              <SymbolView
-                name="arrow.clockwise"
-                size={16}
-                tintColor={themeColorWithAlpha(inkColor, props.editable ? 0.85 : 0.35)}
-              />
-            </Pressable>
-          </Glass>
-        </View>
-        {props.trailing}
-      </View>
-    </TopArea>
+  const compact = Boolean(props.compact) && draft === null;
+  const expandedHeight = useBrowserBarHeight();
+  const pillTop = props.compactHidesStatusBar ? 0 : safeTop;
+  const compactHeight = pillTop + PILL_ROW_HEIGHT;
+  // One bar whose height follows the scroll, so nothing under it jumps between two layouts.
+  const progress = useDerivedValue(() =>
+    withTiming(compact ? 1 : 0, { duration: reduceMotion ? 0 : 280 }),
   );
+  const barStyle = useAnimatedStyle(() => ({
+    height: interpolate(progress.value, [0, 1], [expandedHeight, compactHeight]),
+  }));
+  const controlsStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.5], [1, 0], "clamp"),
+    transform: [{ scale: interpolate(progress.value, [0, 1], [1, 0.92]) }],
+  }));
+  const pillStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0.4, 1], [0, 1], "clamp"),
+  }));
+  const hairlineStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+
+  return (
+    <Animated.View style={[{ overflow: "hidden" }, barStyle]}>
+      {Platform.OS === "ios" ? (
+        <BlurView
+          pointerEvents="none"
+          intensity={60}
+          tint={ink === "light" ? "dark" : "light"}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: themeColorWithAlpha(surface, Platform.OS === "ios" ? 0.82 : 1) },
+        ]}
+      />
+      <Animated.View
+        pointerEvents={compact ? "none" : "auto"}
+        // Below the top safe area, or beside the status where it covers only one end of the band.
+        style={[
+          {
+            position: "absolute",
+            top: band ? 0 : safeTop,
+            left: band?.left ?? 0,
+            right: band?.right ?? 0,
+            height: band ? band.height : EXPANDED_ROW_HEIGHT,
+            justifyContent: "center",
+          },
+          controlsStyle,
+        ]}
+      >
+        <View
+          className={
+            band
+              ? "flex-row items-center gap-1.5 px-2"
+              : "flex-row items-center gap-2 px-3 pb-2 pt-1"
+          }
+        >
+          <RoundButton icon="xmark" label="Close browser" ink={ink} onPress={props.onClose} />
+          {props.canGoBack ? (
+            <RoundButton icon="chevron.left" label="Back" ink={ink} onPress={props.onBack} />
+          ) : null}
+          {/* On a tablet the address stays a readable width, centered between the buttons. */}
+          <View className="min-w-0 flex-1 items-center">
+            <Glass ink={ink} className="h-11 w-full max-w-2xl flex-row items-center rounded-full">
+              <TextInput
+                accessibilityLabel="Address"
+                editable={props.editable}
+                // Unfocused, the field shows only the host, like Safari; editing starts from the URL.
+                value={draft ?? hostOf(props.url)}
+                onFocus={() => setDraft(props.url)}
+                onChangeText={setDraft}
+                onBlur={() => setDraft(null)}
+                onSubmitEditing={() => {
+                  const value = draft ?? props.url;
+                  setDraft(null);
+                  props.onSubmit(value);
+                }}
+                placeholder="Enter a URL"
+                placeholderTextColor={themeColorWithAlpha(inkColor, 0.45)}
+                selectionColor={themeVariables["--color-primary"]}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                returnKeyType="go"
+                selectTextOnFocus
+                lineBreakModeIOS="middle"
+                numberOfLines={1}
+                textAlign={draft === null ? "center" : "left"}
+                className="h-11 min-w-0 flex-1 pl-3 font-sans text-[15px]"
+                style={{ color: inkColor }}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reload page"
+                disabled={!props.editable}
+                onPress={props.onReload}
+                className="h-11 w-9 items-center justify-center"
+              >
+                <SymbolView
+                  name="arrow.clockwise"
+                  size={16}
+                  tintColor={themeColorWithAlpha(inkColor, props.editable ? 0.85 : 0.35)}
+                />
+              </Pressable>
+            </Glass>
+          </View>
+          {props.trailing}
+        </View>
+      </Animated.View>
+      <Animated.View
+        pointerEvents={compact ? "auto" : "none"}
+        style={[
+          { position: "absolute", top: pillTop, left: 0, right: 0, height: PILL_ROW_HEIGHT },
+          pillStyle,
+        ]}
+        className="items-center justify-center"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Address ${props.url}. Show the browser controls`}
+          onPress={props.onExpand}
+        >
+          <Glass ink={ink} className="h-7 justify-center rounded-full px-3.5">
+            <AppText numberOfLines={1} className="text-xs" style={{ color: inkColor }}>
+              {hostOf(props.url)}
+            </AppText>
+          </Glass>
+        </Pressable>
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: StyleSheet.hairlineWidth,
+            backgroundColor: ink === "light" ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)",
+          },
+          hairlineStyle,
+        ]}
+      />
+    </Animated.View>
+  );
+}
+
+const EXPANDED_ROW_HEIGHT = 56;
+const PILL_ROW_HEIGHT = 40;
+
+/** The whole bar's height, which a page under it insets its content by. */
+export function useBrowserBarHeight() {
+  const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
+  const safeTop = useSafeAreaInsets().top;
+  return band ? band.height : safeTop + EXPANDED_ROW_HEIGHT;
 }
 
 type Ink = "light" | "dark";
@@ -174,71 +259,11 @@ function Glass(props: {
   );
 }
 
-/**
- * Below the top safe area, or, where the system status covers only one end of it, beside the
- * status in that band. Its frosted backdrop, tinted by the page, also fills the status area.
- */
-function TopArea(props: {
-  readonly band: ReturnType<typeof deriveSharedTopBand>;
-  readonly surface: string;
-  readonly ink: Ink;
-  readonly hairline?: boolean;
-  readonly topInset?: boolean;
-  readonly children: ReactNode;
-}) {
-  const backdrop = (
-    <>
-      {Platform.OS === "ios" ? (
-        <BlurView
-          pointerEvents="none"
-          intensity={60}
-          tint={props.ink === "light" ? "dark" : "light"}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : null}
-      <View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundColor: themeColorWithAlpha(props.surface, Platform.OS === "ios" ? 0.82 : 1),
-            borderBottomWidth: props.hairline ? StyleSheet.hairlineWidth : 0,
-            borderColor: props.ink === "light" ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)",
-          },
-        ]}
-      />
-    </>
-  );
-  if (!props.band) {
-    return (
-      <SafeAreaView edges={props.topInset === false ? [] : ["top"]}>
-        {backdrop}
-        {props.children}
-      </SafeAreaView>
-    );
-  }
-  return (
-    <View
-      style={{
-        height: props.band.height,
-        paddingLeft: props.band.left,
-        paddingRight: props.band.right,
-        justifyContent: "center",
-      }}
-    >
-      {backdrop}
-      {props.children}
-    </View>
-  );
-}
-
 /** Safari's bar: compact while the page scrolls down, whole again when it scrolls back up. */
 export function useBarFollowsScroll() {
   const [compact, setCompact] = useState(false);
   const show = (next: boolean) => {
-    if (next === compact) return;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setCompact(next);
+    if (next !== compact) setCompact(next);
   };
   return {
     compact,
