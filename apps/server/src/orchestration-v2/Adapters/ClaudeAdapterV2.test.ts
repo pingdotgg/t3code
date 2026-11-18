@@ -5445,11 +5445,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             dryRun: () => Effect.die("unused"),
           });
-          const openedSettings = (enabled: boolean | undefined) =>
+          const openedSettings = (enabled: boolean | undefined, launchArgs = "") =>
             Effect.scoped(
               Effect.gen(function* () {
                 const harness = yield* makeWakeHarnessWithOptions({
-                  settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+                  settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home, launchArgs },
                   requestForwarder,
                   ...(enabled === undefined
                     ? {}
@@ -5489,6 +5489,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           // The forwarder sends on to the base URL the user's settings chose.
           assert.deepEqual(upstreams, ["https://gateway.example/anthropic"]);
+
+          // A --settings file is read into the session's settings, so the route still applies.
+          const launchFile = path.join(home, "launch.json");
+          yield* fileSystem.writeFileString(
+            launchFile,
+            '{"env":{"ANTHROPIC_BASE_URL":"https://launch.example"}}',
+          );
+          const launched = yield* openedSettings(true, `--settings ${launchFile}`);
+          assert.strictEqual(
+            typeof launched === "object" ? launched.env?.ANTHROPIC_BASE_URL : launched,
+            "http://127.0.0.1:1/s/token",
+          );
+          assert.deepEqual(upstreams.at(-1), "https://launch.example");
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -8863,8 +8876,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         addedChars: 0,
         snippets: [],
       };
-      yield* route?.onRewrite([{ ...report, warnings: [] }]) ?? Effect.void;
-      yield* route?.onRewrite([{ ...report, warnings: ["cache-breakpoint"] }]) ?? Effect.void;
+      yield* (
+        route?.onRewrite({ rules: [{ ...report, warnings: [] }], elapsedMs: 1 }) ?? Effect.void
+      );
+      yield* (
+        route?.onRewrite({
+          rules: [{ ...report, warnings: ["cache-breakpoint"] }],
+          elapsedMs: 2,
+        }) ?? Effect.void
+      );
+      // A request the rules changed nothing in still counts toward the slow-pattern warning.
+      yield* route?.onRewrite({ rules: [], elapsedMs: 1812 }) ?? Effect.void;
       yield* (
         route?.onFailure({
           status: 429,
@@ -8887,7 +8909,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         {
           summary:
             "Your rules changed what was sent this turn: Drop reminders (−2,400 / +0 characters, 2 requests)",
-          detail: `Drop reminders: 2 requests, 2,400 characters removed, 0 added.\nWarning: ${REQUEST_REWRITE_WARNING_TEXT["cache-breakpoint"]}`,
+          detail: `Drop reminders: 2 requests, 2,400 characters removed, 0 added.\nWarning: ${REQUEST_REWRITE_WARNING_TEXT["cache-breakpoint"]}\n\nWarning: Your rules took 1,812 ms on one request; a slow pattern delays every session on this server.`,
         },
       ]);
     }).pipe(

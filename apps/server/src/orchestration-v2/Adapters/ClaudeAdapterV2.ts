@@ -133,7 +133,6 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type RequestRewriteRule,
-  type RequestRewriteRuleReport,
   type RequestRewriteWarning,
   type RunId,
   type ThreadId,
@@ -5699,6 +5698,9 @@ export interface ClaudeAdapterV2Options {
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
+// A rewrite slower than this blocks the server's event loop long enough to be worth a warning.
+const SLOW_REQUEST_RULES_MS = 50;
+
 interface ClaudeTurnRuleRewrites {
   readonly rules: Map<
     string,
@@ -5711,6 +5713,7 @@ interface ClaudeTurnRuleRewrites {
     }
   >;
   failures: number;
+  slowestMs: number;
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -5851,6 +5854,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     cwd: string | null,
     launchArgSettings: ClaudeSdkSettings | undefined,
     name: string,
+    // The process environment the CLI starts with, when it is more than the adapter's own.
+    environment: NodeJS.ProcessEnv = adapterOptions.environment,
   ) {
     const launchValue = launchArgSettings?.env?.[name];
     if (typeof launchValue === "string") return launchValue;
@@ -5858,7 +5863,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       const value = yield* readSettingsEnv(settingsFile, name);
       if (value !== undefined) return value;
     }
-    return adapterOptions.environment[name];
+    return environment[name];
   });
   const resolveToolSearchOverride = (
     cwd: string | null,
@@ -6153,9 +6158,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const rules = adapterOptions.requestRewriteRules;
           if (forwarder === undefined || rules === undefined) return undefined;
           if (!(yield* rules).some((rule) => rule.enabled)) return undefined;
-          const upstream =
-            (yield* resolveClaudeEnv(cwd, launchArgSettings, "ANTHROPIC_BASE_URL")) ??
-            optimizerAttachments?.headroom?.environment.ANTHROPIC_BASE_URL;
+          // Against the same merged environment the query passes to the CLI.
+          const upstream = yield* resolveClaudeEnv(cwd, launchArgSettings, "ANTHROPIC_BASE_URL", {
+            ...adapterOptions.environment,
+            ...optimizerAttachments?.headroom?.environment,
+          });
           if (forwarderRoute !== undefined) {
             yield* forwarderRoute.setUpstream(upstream);
             return forwarderRoute.baseUrl;
@@ -6165,7 +6172,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               threadId: input.threadId,
               upstream,
               rules,
-              onRewrite: (rules) => recordRuleRewrite(rules),
+              onRewrite: (rewrite) => recordRuleRewrite(rewrite),
               onFailure: (failure) => reportRuleFailure(failure),
             })
             .pipe(Scope.provide(sessionScope));
@@ -9514,19 +9521,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
           const rewrites = turnRuleRewrites.get(context);
-          if (rewrites !== undefined && rewrites.rules.size > 0) {
+          const slow =
+            rewrites !== undefined && rewrites.slowestMs > SLOW_REQUEST_RULES_MS
+              ? `Your rules took ${rewrites.slowestMs.toLocaleString("en-US")} ms on one request; a slow pattern delays every session on this server.`
+              : undefined;
+          if (rewrites !== undefined && (rewrites.rules.size > 0 || slow !== undefined)) {
             const rules = [...rewrites.rules.values()];
             notices.push({
               nativeItemId: `request-rules:${context.providerTurnId}`,
-              summary: `Your rules changed what was sent this turn: ${rules.map((rule) => `${rule.name} (−${rule.removed.toLocaleString("en-US")} / +${rule.added.toLocaleString("en-US")} characters, ${requestCount(rule.requests)})`).join(", ")}`,
-              detail: rules
-                .map((rule) =>
+              summary:
+                rules.length === 0 && slow !== undefined
+                  ? slow
+                  : `Your rules changed what was sent this turn: ${rules.map((rule) => `${rule.name} (−${rule.removed.toLocaleString("en-US")} / +${rule.added.toLocaleString("en-US")} characters, ${requestCount(rule.requests)})`).join(", ")}`,
+              detail: [
+                ...rules.map((rule) =>
                   [
                     `${rule.name}: ${requestCount(rule.requests)}, ${rule.removed.toLocaleString("en-US")} characters removed, ${rule.added.toLocaleString("en-US")} added.`,
                     ...warningLines(rule.warnings),
                   ].join("\n"),
-                )
-                .join("\n\n"),
+                ),
+                ...(slow === undefined ? [] : [`Warning: ${slow}`]),
+              ].join("\n\n"),
             });
           }
           for (const notice of notices) yield* emitNotice(context, notice);
@@ -9580,7 +9595,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const ruleRewritesOf = (context: ActiveClaudeTurnContext) => {
           const existing = turnRuleRewrites.get(context);
           if (existing !== undefined) return existing;
-          const created: ClaudeTurnRuleRewrites = { rules: new Map(), failures: 0 };
+          const created: ClaudeTurnRuleRewrites = { rules: new Map(), failures: 0, slowestMs: 0 };
           turnRuleRewrites.set(context, created);
           return created;
         };
@@ -9592,11 +9607,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         const ruleName = (name: string) => (name.trim().length > 0 ? name : "Unnamed rule");
         // Counted when the request is sent, so the turn's row never misses a request still streaming.
-        const recordRuleRewrite = (reports: ReadonlyArray<RequestRewriteRuleReport>) =>
+        const recordRuleRewrite = (rewrite: ClaudeRequestForwarder.ClaudeRequestRewrite) =>
           Effect.map(Ref.get(activeTurn), (context) => {
             if (context === null) return;
-            const { rules } = ruleRewritesOf(context);
-            for (const report of reports) {
+            const rewrites = ruleRewritesOf(context);
+            rewrites.slowestMs = Math.max(rewrites.slowestMs, rewrite.elapsedMs);
+            const { rules } = rewrites;
+            for (const report of rewrite.rules) {
               const rule = rules.get(report.ruleId) ?? {
                 name: ruleName(report.name),
                 removed: 0,

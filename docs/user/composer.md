@@ -470,7 +470,9 @@ off. Only you can change them; agents cannot.
   no longer Claude Code's billing header or identity line, or no system prompt is left, the
   provider rejects the request with HTTP 429 and Claude Code retries for about 3 minutes before
   it fails. Removing or changing a block that carries a prompt-cache breakpoint makes less of
-  the prompt cacheable. A dry run shows these warnings beside the rule's switch.
+  the prompt cacheable. A dry run shows these warnings beside the rule's switch. Patterns run on
+  every request over the whole conversation on the T3 Code server, so a slow pattern delays every
+  session there; the turn's row warns when the rules took more than 50 ms on one request.
 - **In the thread.** A row named **Your rules changed what was sent this turn** lists each rule
   that changed something, with the characters removed and added. A request a rule changed that
   then fails gets its own row with the provider's error.

@@ -39,6 +39,7 @@
   "324bc3e457285ce3": "Essas sessões enviam pelo T3 Code nesta máquina, o que remove 5 recursos beta do Claude Code, a ferramenta advisor e o cache global de prompts.",
   "6d28c115ed5b1b34": "Alterar uma regra no meio da sessão custa uma regravação do cache de prompt. As regras também cobrem requisições de subagentes e auxiliares, mas não o texto que o provedor adiciona depois que a requisição sai.",
   "db0e9f2eb47302a2": "Novas regras começam desativadas. Nada muda até você ativar uma.",
+  "5592dacd6fab164e": "Os padrões são executados em cada requisição sobre toda a conversa, então um padrão lento atrasa todas as sessões deste servidor.",
   "ac76e0e6558ec823": "Nenhuma requisição recente para testar. Ative uma regra, abra uma sessão do Claude e envie uma mensagem; depois tente novamente.",
   "ddce05c7f6599dc6": "Não foi possível ler a requisição mais recente como uma requisição ao modelo.",
   "60daa7f937b3474d": "A regra não encontrou nada na requisição mais recente.",

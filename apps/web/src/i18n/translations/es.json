@@ -39,6 +39,7 @@
   "324bc3e457285ce3": "Esas sesiones envían a través de T3 Code en esta máquina, lo que quita 5 funciones beta de Claude Code, la herramienta advisor y la caché global de prompts.",
   "6d28c115ed5b1b34": "Cambiar una regla a mitad de sesión cuesta una reescritura de la caché de prompts. Las reglas también cubren las solicitudes de subagentes y auxiliares, pero no el texto que el proveedor añade después de enviar la solicitud.",
   "db0e9f2eb47302a2": "Las reglas nuevas empiezan desactivadas. Nada cambia hasta que actives una.",
+  "5592dacd6fab164e": "Los patrones se ejecutan en cada solicitud sobre toda la conversación, así que un patrón lento retrasa todas las sesiones de este servidor.",
   "ac76e0e6558ec823": "No hay ninguna solicitud reciente para probar esto. Activa una regla, abre una sesión de Claude y envía un mensaje; luego vuelve a intentarlo.",
   "ddce05c7f6599dc6": "La solicitud más reciente no se pudo leer como una solicitud al modelo.",
   "60daa7f937b3474d": "La regla no encontró nada en la solicitud más reciente.",

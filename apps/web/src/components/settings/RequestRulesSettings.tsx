@@ -327,6 +327,12 @@ function RuleEditor(props: {
                 onChange={(event) => onChange({ ...draft, flags: event.target.value })}
               />
             </div>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              <T>
+                Patterns run on every request over the whole conversation, so a slow pattern delays
+                every session on this server.
+              </T>
+            </p>
           </div>
         )}
         {draft.action === "remove" ? null : (

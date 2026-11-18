@@ -39,6 +39,7 @@
   "324bc3e457285ce3": "Ces sessions passent par T3 Code sur cette machine, ce qui retire 5 fonctionnalités bêta de Claude Code, l'outil advisor et le cache global des prompts.",
   "6d28c115ed5b1b34": "Modifier une règle en cours de session coûte une réécriture du cache de prompt. Les règles couvrent aussi les requêtes des sous-agents et auxiliaires, mais pas le texte que le fournisseur ajoute après l'envoi.",
   "db0e9f2eb47302a2": "Les nouvelles règles sont désactivées au départ. Rien ne change tant que vous n'en activez pas une.",
+  "5592dacd6fab164e": "Les motifs s'exécutent à chaque requête sur toute la conversation, donc un motif lent ralentit chaque session de ce serveur.",
   "ac76e0e6558ec823": "Aucune requête récente sur laquelle essayer. Activez une règle, ouvrez une session Claude et envoyez un message, puis réessayez.",
   "ddce05c7f6599dc6": "La requête la plus récente n'a pas pu être lue comme une requête au modèle.",
   "60daa7f937b3474d": "La règle n'a rien trouvé dans la requête la plus récente.",

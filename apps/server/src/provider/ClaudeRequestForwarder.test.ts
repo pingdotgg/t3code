@@ -43,10 +43,14 @@ const fakeUpstream = Effect.acquireRelease(
               body: Buffer.concat(chunks).toString("utf8"),
             });
             if (request.url?.includes("fail") === true) {
+              // An upstream that echoes the caller's credentials back in its error message.
+              const message = request.url.includes("echo")
+                ? `Bad ${request.headers.authorization} (${SECRET.slice("Bearer ".length)})`
+                : "Error";
               response.writeHead(429, { "content-encoding": "gzip" });
               response.end(
                 NodeZlib.gzipSync(
-                  '{"type":"error","error":{"type":"rate_limit_error","message":"Error"}}',
+                  JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } }),
                 ),
               );
               return;
@@ -113,7 +117,7 @@ describe("ClaudeRequestForwarder", () => {
               pattern: "[\\s\\S]*",
             },
           ]),
-          onRewrite: (rules) => Effect.sync(() => rewrites.push(rules)),
+          onRewrite: (rewrite) => Effect.sync(() => rewrites.push(rewrite.rules)),
           onFailure: (failure) => Effect.sync(() => failures.push(failure)),
         });
         assert.match(route.baseUrl, /^http:\/\/127\.0\.0\.1:\d+\/s\/[A-Za-z0-9_-]{43}$/);
@@ -176,12 +180,25 @@ describe("ClaudeRequestForwarder", () => {
           undefined,
         );
 
-        const failed = yield* Effect.promise(() => post("/v1/messages?fail=1"));
-        assert.strictEqual(failed.status, 429);
-        yield* Effect.promise(() => failed.arrayBuffer());
+        for (const path of ["/v1/messages?fail=1", "/v1/messages?fail=echo"]) {
+          const failed = yield* Effect.promise(() => post(path));
+          assert.strictEqual(failed.status, 429);
+          yield* Effect.promise(() => failed.arrayBuffer());
+        }
         assert.deepEqual(
           failures.map((failure) => [failure.status, failure.errorType, failure.errorMessage]),
-          [[429, "rate_limit_error", "Error"]],
+          [
+            [429, "rate_limit_error", "Error"],
+            [429, "rate_limit_error", "Bad [redacted] ([redacted])"],
+          ],
+        );
+
+        // An unreachable upstream answers 502 and logs only its error code and host.
+        yield* route.setUpstream("http://127.0.0.1:1");
+        const unreachable = yield* Effect.promise(() => post("/v1/messages"));
+        assert.strictEqual(unreachable.status, 502);
+        assert.isTrue(
+          logs.some((line) => line.includes("ECONNREFUSED") && line.includes("127.0.0.1:1")),
         );
 
         // Requests outside a live route never reach the upstream.
@@ -192,7 +209,7 @@ describe("ClaudeRequestForwarder", () => {
           );
           assert.strictEqual(stray.status, 404);
         }
-        assert.strictEqual(upstream.received.length, 2);
+        assert.strictEqual(upstream.received.length, 3);
         assert.isFalse(logs.some((line) => line.includes("secret-login-token")));
       }).pipe(
         Effect.scoped,
@@ -208,7 +225,31 @@ describe("ClaudeRequestForwarder", () => {
 
   it.live("answers 502 for a malformed status and fails a stream the upstream cuts off", () =>
     Effect.gen(function* () {
+      const requestLines: Array<string> = [];
       // A raw socket upstream, so it can send what an HTTP server library refuses to.
+      const rawServer = (respond: (socket: NodeNet.Socket, head: string) => void) =>
+        Effect.acquireRelease(
+          Effect.promise(
+            () =>
+              new Promise<NodeNet.Server>((resolve) => {
+                const server = NodeNet.createServer((socket) => {
+                  socket.once("data", (chunk: Buffer) => respond(socket, chunk.toString("latin1")));
+                });
+                server.listen(0, "127.0.0.1", () => resolve(server));
+              }),
+          ),
+          (server) =>
+            Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        );
+      const portOf = (server: NodeNet.Server) => {
+        const address = server.address();
+        return address !== null && typeof address === "object" ? address.port : 0;
+      };
+      const decoyHits: Array<string> = [];
+      const decoy = yield* rawServer((socket, head) => {
+        decoyHits.push(head.split("\r\n")[0] ?? "");
+        socket.end("HTTP/1.1 204 No Content\r\n\r\n");
+      });
       const upstream = yield* Effect.acquireRelease(
         Effect.promise(
           () =>
@@ -216,7 +257,10 @@ describe("ClaudeRequestForwarder", () => {
               const server = NodeNet.createServer((socket) => {
                 socket.once("data", (chunk: Buffer) => {
                   const head = chunk.toString("latin1");
-                  if (head.includes("status099")) {
+                  requestLines.push(head.split("\r\n")[0] ?? "");
+                  if (head.includes("hostcheck")) {
+                    socket.end("HTTP/1.1 204 No Content\r\n\r\n");
+                  } else if (head.includes("status099")) {
                     socket.end("HTTP/1.1 099 Odd\r\ncontent-length: 0\r\n\r\n");
                   } else {
                     socket.write(
@@ -260,6 +304,37 @@ describe("ClaudeRequestForwarder", () => {
         ),
       );
       assert.strictEqual(read, "failed");
+
+      // The request path never chooses the host, whatever it starts with.
+      const token = new URL(route.baseUrl).pathname;
+      const forwarderPort = Number(new URL(route.baseUrl).port);
+      for (const prefix of ["//", "/\\"]) {
+        const status = yield* Effect.promise(
+          () =>
+            new Promise<number | undefined>((resolve, reject) => {
+              const request = NodeHttp.request(
+                {
+                  host: "127.0.0.1",
+                  port: forwarderPort,
+                  method: "POST",
+                  path: `${token}${prefix}127.0.0.1:${portOf(decoy)}/hostcheck`,
+                },
+                (response) => {
+                  response.resume();
+                  response.on("end", () => resolve(response.statusCode));
+                },
+              );
+              request.on("error", reject);
+              request.end(requestBody);
+            }),
+        );
+        assert.strictEqual(status, 204);
+      }
+      assert.deepEqual(decoyHits, []);
+      assert.deepEqual(requestLines.slice(-2), [
+        `POST //127.0.0.1:${portOf(decoy)}/hostcheck HTTP/1.1`,
+        `POST //127.0.0.1:${portOf(decoy)}/hostcheck HTTP/1.1`,
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(ClaudeRequestForwarder.layer.pipe(Layer.provide(NodeCrypto.layer))),

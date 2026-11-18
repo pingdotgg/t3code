@@ -11,6 +11,7 @@ import type {
   RequestRulesDryRunResult,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -26,6 +27,8 @@ import { isClaudeMessagesRequest, rewriteClaudeRequest } from "./claudeRequestRu
 const DEFAULT_UPSTREAM = "https://api.anthropic.com";
 // A long session's request carries its whole conversation; past this the dry run has none.
 const MAX_KEPT_BODY_BYTES = 16 * 1024 * 1024;
+// Bodies kept for the dry run across every session, newest first.
+const MAX_KEPT_BODIES = 2;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 const MAX_ERROR_MESSAGE = 500;
 const ROUTE_PATH = /^\/s\/([A-Za-z0-9_-]{43})(\/.*)?$/;
@@ -47,6 +50,12 @@ export interface ClaudeRewriteFailure {
   readonly errorMessage: string | undefined;
 }
 
+/** What the enabled rules did to one request, and how long they took on the event loop. */
+export interface ClaudeRequestRewrite {
+  readonly rules: ReadonlyArray<RequestRewriteRuleReport>;
+  readonly elapsedMs: number;
+}
+
 export interface ClaudeForwarderRoute {
   /** What Claude Code should use as `ANTHROPIC_BASE_URL`. */
   readonly baseUrl: string;
@@ -54,13 +63,12 @@ export interface ClaudeForwarderRoute {
 }
 
 interface Route {
+  readonly token: string;
   readonly threadId: ThreadId;
   upstream: URL;
   readonly rules: Effect.Effect<ReadonlyArray<RequestRewriteRule>>;
-  readonly onRewrite: (rules: ReadonlyArray<RequestRewriteRuleReport>) => Effect.Effect<void>;
+  readonly onRewrite: (rewrite: ClaudeRequestRewrite) => Effect.Effect<void>;
   readonly onFailure: (failure: ClaudeRewriteFailure) => Effect.Effect<void>;
-  // The newest original messages request, held only in memory for the dry run.
-  latest: { readonly path: string; readonly body: string; readonly sequence: number } | undefined;
 }
 
 const ProviderErrorBody = Schema.Struct({
@@ -76,16 +84,31 @@ function upstreamUrl(value: string | undefined): URL {
     : new URL(DEFAULT_UPSTREAM);
 }
 
+/** The upstream URL with the request's path and query; the host always stays the upstream's. */
+function upstreamTarget(upstream: URL, path: string): URL {
+  const target = new URL(upstream.href);
+  const query = path.indexOf("?");
+  target.pathname =
+    upstream.pathname.replace(/\/$/, "") + (query === -1 ? path : path.slice(0, query));
+  target.search = query === -1 ? "" : path.slice(query);
+  target.hash = "";
+  return target;
+}
+
+// A small error body can expand without bound; anything past this is not an error message.
+const MAX_DECOMPRESSED_BYTES = 1 << 20;
+
 function decompress(body: Buffer, encoding: string | undefined): Buffer {
+  const options = { maxOutputLength: MAX_DECOMPRESSED_BYTES };
   switch (encoding) {
     case "gzip":
-      return NodeZlib.gunzipSync(body);
+      return NodeZlib.gunzipSync(body, options);
     case "deflate":
-      return NodeZlib.inflateSync(body);
+      return NodeZlib.inflateSync(body, options);
     case "br":
-      return NodeZlib.brotliDecompressSync(body);
+      return NodeZlib.brotliDecompressSync(body, options);
     case "zstd":
-      return NodeZlib.zstdDecompressSync(body);
+      return NodeZlib.zstdDecompressSync(body, options);
     default:
       return body;
   }
@@ -99,6 +122,21 @@ function providerError(body: Buffer, encoding: string | undefined) {
     return undefined;
   }
   return Option.getOrUndefined(decodeProviderError(text))?.error;
+}
+
+const CREDENTIAL_HEADERS = ["authorization", "x-api-key", "cookie"] as const;
+
+/** Replaces the request's credential header values, with or without their scheme, in `text`. */
+function redactCredentials(text: string, headers: NodeHttp.IncomingHttpHeaders): string {
+  const secrets = CREDENTIAL_HEADERS.flatMap((name) => {
+    const value = headers[name];
+    return value === undefined ? [] : Array.isArray(value) ? value : [value];
+  })
+    .flatMap((value) => [value, value.replace(/^\S+\s+/, "")])
+    // Short values would redact ordinary words; real credentials are long.
+    .filter((value) => value.length >= 8)
+    .toSorted((left, right) => right.length - left.length);
+  return secrets.reduce((result, secret) => result.split(secret).join("[redacted]"), text);
 }
 
 const changedRules = (rules: ReadonlyArray<RequestRewriteRuleReport>) =>
@@ -120,7 +158,8 @@ export class ClaudeRequestForwarder extends Context.Service<
       readonly threadId: ThreadId;
       readonly upstream: string | undefined;
       readonly rules: Effect.Effect<ReadonlyArray<RequestRewriteRule>>;
-      readonly onRewrite: (rules: ReadonlyArray<RequestRewriteRuleReport>) => Effect.Effect<void>;
+      /** Called for every request the enabled rules ran on, before it is sent. */
+      readonly onRewrite: (rewrite: ClaudeRequestRewrite) => Effect.Effect<void>;
       readonly onFailure: (failure: ClaudeRewriteFailure) => Effect.Effect<void>;
     }) => Effect.Effect<ClaudeForwarderRoute, ClaudeForwarderStartError, Scope.Scope>;
     /** Applies `rules` to the newest request of a live routed session, without sending it. */
@@ -135,7 +174,13 @@ const make = Effect.gen(function* () {
   const routes = new Map<string, Route>();
   const startLock = yield* Semaphore.make(1);
   let port: number | undefined;
-  let sequence = 0;
+  // The newest original messages requests, held only in memory for the dry run.
+  let keptRequests: ReadonlyArray<{
+    readonly token: string;
+    readonly threadId: ThreadId;
+    readonly path: string;
+    readonly body: Buffer;
+  }> = [];
 
   // Per request; the request owns its span through the session's turn.
   const forward = Effect.fnUntraced(function* (
@@ -151,19 +196,24 @@ const make = Effect.gen(function* () {
       request.headers["content-encoding"] === undefined ? original.toString("utf8") : undefined;
     const messages = text !== undefined && isClaudeMessagesRequest(method, path);
     if (messages && original.length <= MAX_KEPT_BODY_BYTES) {
-      sequence += 1;
-      route.latest = { path, body: text, sequence };
+      keptRequests = [
+        { token: route.token, threadId: route.threadId, path, body: original },
+        ...keptRequests,
+      ].slice(0, MAX_KEPT_BODIES);
     }
     const enabled = messages ? (yield* route.rules).filter((rule) => rule.enabled) : [];
+    // Patterns run synchronously over the whole conversation, so the time is worth showing.
+    const startedAt = yield* Clock.currentTimeMillis;
     const rewrite =
       messages && enabled.length > 0
         ? rewriteClaudeRequest({ method, path, body: text, rules: enabled })
         : undefined;
+    const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
     const changed = rewrite?.changed === true ? changedRules(rewrite.rules) : [];
     const body = rewrite?.changed === true ? Buffer.from(rewrite.body) : original;
-    if (changed.length > 0) yield* route.onRewrite(changed);
+    if (rewrite !== undefined) yield* route.onRewrite({ rules: changed, elapsedMs });
 
-    const target = new URL(route.upstream.pathname.replace(/\/$/, "") + path, route.upstream);
+    const target = upstreamTarget(route.upstream, path);
     const {
       host: _host,
       "content-length": _contentLength,
@@ -232,7 +282,16 @@ const make = Effect.gen(function* () {
           }
         },
       );
-      upstream.on("error", () => {
+      upstream.on("error", (error: NodeJS.ErrnoException) => {
+        // Only the code and host: the request's headers and body never reach a log.
+        if (!response.destroyed) {
+          runFork(
+            Effect.logWarning("claude-request-forwarder.upstream-error", {
+              code: error.code ?? "unknown",
+              host: target.host,
+            }),
+          );
+        }
         if (response.headersSent) response.destroy();
         else response.writeHead(502).end();
         settle({ status: 502 });
@@ -255,7 +314,10 @@ const make = Effect.gen(function* () {
       status: outcome.status,
       rules: changed,
       errorType: error?.type,
-      errorMessage: error?.message.slice(0, MAX_ERROR_MESSAGE),
+      errorMessage:
+        error === undefined
+          ? undefined
+          : redactCredentials(error.message, request.headers).slice(0, MAX_ERROR_MESSAGE),
     });
   });
 
@@ -336,16 +398,20 @@ const make = Effect.gen(function* () {
     const listening = yield* ensureListening;
     const token = Base64Url.encode(yield* random.randomBytes(32));
     const route: Route = {
+      token,
       threadId: input.threadId,
       upstream: upstreamUrl(input.upstream),
       rules: input.rules,
       onRewrite: input.onRewrite,
       onFailure: input.onFailure,
-      latest: undefined,
     };
     yield* Effect.acquireRelease(
       Effect.sync(() => routes.set(token, route)),
-      () => Effect.sync(() => routes.delete(token)),
+      () =>
+        Effect.sync(() => {
+          routes.delete(token);
+          keptRequests = keptRequests.filter((entry) => entry.token !== token);
+        }),
     );
     return {
       baseUrl: `http://127.0.0.1:${listening}/s/${token}`,
@@ -358,21 +424,16 @@ const make = Effect.gen(function* () {
 
   const dryRun: ClaudeRequestForwarder["Service"]["dryRun"] = (input) =>
     Effect.sync(() => {
-      const recent = [...routes.values()]
-        .flatMap((route) =>
-          route.latest === undefined ? [] : [{ threadId: route.threadId, latest: route.latest }],
-        )
-        .toSorted((left, right) => right.latest.sequence - left.latest.sequence);
-      const threadIds = [...new Set(recent.map((entry) => entry.threadId))];
+      const threadIds = [...new Set(keptRequests.map((entry) => entry.threadId))];
       const chosen =
         input.threadId === undefined
-          ? recent[0]
-          : recent.find((entry) => entry.threadId === input.threadId);
+          ? keptRequests[0]
+          : keptRequests.find((entry) => entry.threadId === input.threadId);
       if (chosen === undefined) return { threadIds, rules: [] };
       const rewrite = rewriteClaudeRequest({
         method: "POST",
-        path: chosen.latest.path,
-        body: chosen.latest.body,
+        path: chosen.path,
+        body: chosen.body.toString("utf8"),
         rules: input.rules,
       });
       return {

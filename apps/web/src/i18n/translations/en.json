@@ -39,6 +39,7 @@
   "324bc3e457285ce3": "Those sessions send through T3 Code on this machine, which drops 5 Claude Code beta features, the advisor tool and global prompt caching.",
   "6d28c115ed5b1b34": "Changing a rule mid-session costs one prompt-cache rewrite. Rules also cover subagent and helper requests, but not text the provider adds after a request leaves.",
   "db0e9f2eb47302a2": "New rules start off. Nothing changes until you turn one on.",
+  "5592dacd6fab164e": "Patterns run on every request over the whole conversation, so a slow pattern delays every session on this server.",
   "ac76e0e6558ec823": "No recent request to try this on. Turn a rule on, open a Claude session and send a message, then try again.",
   "ddce05c7f6599dc6": "The newest request could not be read as a model request.",
   "60daa7f937b3474d": "The rule matched nothing in the newest request.",

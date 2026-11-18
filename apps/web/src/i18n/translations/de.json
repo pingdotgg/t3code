@@ -39,6 +39,7 @@
   "324bc3e457285ce3": "Diese Sitzungen senden über T3 Code auf diesem Rechner. Dabei fallen 5 Beta-Funktionen von Claude Code, das Advisor-Tool und das globale Prompt-Caching weg.",
   "6d28c115ed5b1b34": "Eine Regeländerung mitten in der Sitzung kostet ein erneutes Schreiben des Prompt-Caches. Regeln gelten auch für Subagent- und Hilfsanfragen, aber nicht für Text, den der Anbieter nach dem Absenden hinzufügt.",
   "db0e9f2eb47302a2": "Neue Regeln sind zunächst aus. Nichts ändert sich, bis du eine einschaltest.",
+  "5592dacd6fab164e": "Muster laufen bei jeder Anfrage über die gesamte Unterhaltung, daher verzögert ein langsames Muster jede Sitzung auf diesem Server.",
   "ac76e0e6558ec823": "Keine aktuelle Anfrage zum Ausprobieren. Schalte eine Regel ein, öffne eine Claude-Sitzung, sende eine Nachricht und versuche es dann erneut.",
   "ddce05c7f6599dc6": "Die neueste Anfrage konnte nicht als Modellanfrage gelesen werden.",
   "60daa7f937b3474d": "Die Regel hat in der neuesten Anfrage nichts gefunden.",
