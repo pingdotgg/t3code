@@ -3833,6 +3833,204 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  describe("Claude final answer phases", () => {
+    it.effect.each([
+      "streamed",
+      "snapshot",
+      "late snapshot",
+      "repeated snapshot",
+      "result only",
+    ] as const)("preserves confirmed final-answer intent from %s delivery", (delivery) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`answer-phase-${delivery}`),
+            text: "Explain the result, then check your work.",
+            attachments: [],
+          }),
+        );
+        const snapshot = (id: string, value: string, stopReason: string | null, suffix = "") =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid: `${id}-snapshot${suffix}`,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              stop_reason: stopReason,
+              content: value ? [{ type: "text", text: value }] : [],
+            },
+          });
+        const stream = (event: unknown) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "answer-phase-stream",
+          });
+        if (delivery !== "result only") {
+          yield* harness.offerAndWait(snapshot("progress", "Checking.", "tool_use"));
+          if (delivery === "streamed") {
+            yield* harness.offerAndWait(
+              stream({ type: "message_start", message: { id: "answer" } }),
+            );
+            yield* harness.offerAndWait(
+              stream({
+                type: "content_block_start",
+                index: 0,
+                content_block: { type: "text", text: "" },
+              }),
+            );
+            yield* harness.offerAndWait(
+              stream({
+                type: "content_block_delta",
+                index: 0,
+                delta: { type: "text_delta", text: "The complete answer." },
+              }),
+            );
+            yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
+          }
+          yield* harness.offerAndWait(
+            snapshot("answer", "The complete answer.", delivery === "snapshot" ? "end_turn" : null),
+          );
+          if (delivery === "streamed") {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "stream_event",
+                event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+                parent_tool_use_id: "unrelated-subagent",
+                session_id: WAKE_NATIVE_SESSION,
+                uuid: "nested-completion",
+                api_message_id: "answer",
+              }),
+            );
+            yield* harness.until(() =>
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "assistant_message" &&
+                  event.turnItem.text === "The complete answer.",
+              ),
+            );
+            const beforeRootCompletion = harness.events
+              .flatMap((event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                  ? [event.turnItem]
+                  : [],
+              )
+              .findLast((item) => item.text === "The complete answer.");
+            assert.isDefined(beforeRootCompletion);
+            assert.equal(beforeRootCompletion?.phase, undefined);
+            yield* harness.offerAndWait(
+              stream({ type: "message_start", message: { id: "next-message" } }),
+            );
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "stream_event",
+                event: { type: "message_delta", delta: { stop_reason: "end_turn" } },
+                parent_tool_use_id: null,
+                session_id: WAKE_NATIVE_SESSION,
+                uuid: "late-completion",
+                api_message_id: "answer",
+              }),
+            );
+          } else if (delivery === "late snapshot" || delivery === "repeated snapshot") {
+            yield* harness.offerAndWait(
+              snapshot("answer", "", "end_turn", delivery === "late snapshot" ? "-metadata" : ""),
+            );
+          }
+          yield* harness.offerAndWait(
+            snapshot("later-answer", "Verification finished.", "end_turn"),
+          );
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "answer-phase-result",
+            result: delivery === "result only" ? "The complete answer." : "Verification finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const latestByText = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [[event.turnItem.text, event.turnItem] as const]
+              : [],
+          ),
+        );
+        assert.equal(latestByText.get("The complete answer.")?.phase, "final_answer");
+        if (delivery !== "result only") {
+          assert.equal(latestByText.get("Checking.")?.phase, undefined);
+          assert.equal(latestByText.get("Verification finished.")?.phase, "final_answer");
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect.each(["tool_use", "max_tokens", "stop_sequence", null] as const)(
+      "does not confirm a reply that ended with %s",
+      (stopReason) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("unconfirmed-answer-phase"),
+              text: "Explain the result.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "assistant",
+              uuid: "unconfirmed-answer",
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              message: {
+                id: "unconfirmed-message",
+                model: "claude-sonnet-4-6",
+                stop_reason: stopReason,
+                content: [{ type: "text", text: "Unconfirmed text." }],
+              },
+            }),
+          );
+          yield* harness.offerAndWait(makeResultFrame({ uuid: "unconfirmed-result", result: "" }));
+          yield* Queue.take(harness.terminalReceipts);
+          for (const event of harness.events) {
+            if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+              assert.equal(event.turnItem.phase, undefined);
+            }
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+  });
+
   describe("ClaudeAdapterV2 session title sync", () => {
     type TitleSyncHarness = Effect.Success<ReturnType<typeof makeWakeHarnessWithOptions>>;
     const startTurn = Effect.fnUntraced(function* (
