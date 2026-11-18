@@ -866,10 +866,12 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
           : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to an npm-owned install.
+  const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+  // A native-looking launcher can still delegate to an npm- or Homebrew-owned install.
   if (
     nativeUpdate?.isCommandPath &&
     commandPaths.some(nativeUpdate.isCommandPath) &&
+    !homebrew &&
     !npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName)
   ) {
     return native;
@@ -998,7 +1000,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     };
   }
 
-  const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
   if (homebrew) {
     return (
       (yield* resolveHomebrewProviderMaintenance(
