@@ -2636,9 +2636,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               knownOriginDefaultBranch: defaultBranch,
               untrackedRoots,
               headOid,
-              ...(index && (yield* HostProcess.Environment).GIT_INDEX_FILE === undefined
-                ? { indexPath: index }
-                : {}),
+              ...(index ? { indexPath: index } : {}),
             }).pipe(Effect.orElseSucceed(() => undefined))
           : Effect.undefined,
       ],
