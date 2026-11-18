@@ -18,14 +18,14 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
     [atom],
   );
 
-  const onRefresh = (beforeRefresh?: (signal: AbortSignal) => Promise<unknown>) => {
+  const onRefresh = async (beforeRefresh?: (signal: AbortSignal) => Promise<unknown>) => {
     if (!atom || (request.current?.atom === atom && !request.current.controller.signal.aborted))
       return;
     request.current?.controller.abort();
     const controller = new AbortController();
     request.current = { atom, controller };
     setRefreshingAtom(atom);
-    void Promise.resolve()
+    await Promise.resolve()
       .then(() => {
         if (!controller.signal.aborted) return beforeRefresh?.(controller.signal);
       })

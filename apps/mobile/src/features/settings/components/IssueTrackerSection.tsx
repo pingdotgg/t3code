@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Linking, Platform, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
@@ -42,6 +43,7 @@ const TRACKER_MARKS: Partial<Record<string, string>> = {
  * credential, then pick which of its scopes each project lists beside its repository's issues.
  */
 export function IssueTrackerSection(props: { readonly environments: readonly SettingsTarget[] }) {
+  const gt = useGT();
   return (
     <>
       {props.environments.map((environment) =>
@@ -51,8 +53,8 @@ export function IssueTrackerSection(props: { readonly environments: readonly Set
             environment={environment}
             title={
               props.environments.length > 1
-                ? `Issue trackers · ${environment.label}`
-                : "Issue trackers"
+                ? gt("Issue trackers · {environment}", { environment: environment.label })
+                : gt("Issue trackers")
             }
           />
         ) : null,
@@ -65,6 +67,8 @@ function EnvironmentTrackers(props: {
   readonly environment: SettingsTarget;
   readonly title: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const { environmentId } = props.environment;
   const query = useEnvironmentQuery(
@@ -75,7 +79,7 @@ function EnvironmentTrackers(props: {
     return query.error ? (
       <SettingsSection title={props.title} footer={query.error}>
         <View className="p-4">
-          <Button label="Try again" tone="secondary" onPress={query.refresh} />
+          <Button label={gt("Try again")} tone="secondary" onPress={query.refresh} />
         </View>
       </SettingsSection>
     ) : null;
@@ -87,7 +91,7 @@ function EnvironmentTrackers(props: {
           key={tracker.tracker}
           icon={<IssueTrackerMark tracker={tracker.tracker} />}
           label={tracker.displayName}
-          description={issueTrackerSummary(tracker, query.data?.bindings ?? {})}
+          description={issueTrackerSummary(tracker, query.data?.bindings ?? {}, messages)}
           ready={tracker.connected && tracker.account !== null}
           separated={index > 0}
           onPress={() =>
@@ -124,6 +128,7 @@ export function IssueTrackerCredentialForm(props: {
   readonly tracker: IssueTrackerConnection;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, tracker } = props;
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
   const [draft, setDraft] = useState("");
@@ -139,7 +144,7 @@ export function IssueTrackerCredentialForm(props: {
       return;
     }
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : "The request failed.");
+    setFailure(error instanceof Error ? error.message : gt("The request failed."));
   };
   const helpUrl = tracker.credential.helpUrl;
   const locked = props.disabled || busy;
@@ -148,7 +153,9 @@ export function IssueTrackerCredentialForm(props: {
       <SecretTextInput
         accessibilityLabel={tracker.credential.label}
         placeholder={
-          tracker.connected ? "Saved. Enter a new value to replace it" : tracker.credential.label
+          tracker.connected
+            ? gt("Saved. Enter a new value to replace it")
+            : tracker.credential.label
         }
         value={draft}
         onChangeText={setDraft}
@@ -165,7 +172,7 @@ export function IssueTrackerCredentialForm(props: {
       <View className="flex-row flex-wrap justify-end gap-2">
         {helpUrl ? (
           <Button
-            label="Create one"
+            label={gt("Create one")}
             tone="text"
             size="compact"
             onPress={() => void Linking.openURL(helpUrl).catch(() => undefined)}
@@ -173,7 +180,7 @@ export function IssueTrackerCredentialForm(props: {
         ) : null}
         {tracker.connected ? (
           <Button
-            label="Disconnect"
+            label={gt("Disconnect")}
             tone="secondary"
             size="compact"
             disabled={locked}
@@ -181,7 +188,11 @@ export function IssueTrackerCredentialForm(props: {
           />
         ) : null}
         <Button
-          label={tracker.connected ? "Replace" : "Connect"}
+          label={
+            tracker.connected
+              ? gt("Replace", { $context: "verb, replaces a saved credential" })
+              : gt("Connect", { $context: "verb, connects an issue tracker" })
+          }
           tone="primary"
           size="compact"
           loading={busy}
@@ -200,6 +211,7 @@ export function IssueTrackerProjectRows(props: {
   readonly bindings: IssueTrackerConnectionList["bindings"];
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, tracker } = props;
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
@@ -226,11 +238,15 @@ export function IssueTrackerProjectRows(props: {
     return (
       <Menu
         key={project.id}
-        title={`${tracker.displayName} ${tracker.scopeNoun} for ${project.title}`}
+        title={gt("{tracker} {scope} for {project}", {
+          tracker: tracker.displayName,
+          scope: tracker.scopeNoun,
+          project: project.title,
+        })}
         actions={[
           {
             id: UNBOUND,
-            title: "Not bound",
+            title: gt("Not bound"),
             state: value === UNBOUND ? "on" : "off",
             attributes: { disabled: locked },
           },
@@ -249,7 +265,7 @@ export function IssueTrackerProjectRows(props: {
           valuePosition="trailing"
           value={
             value === UNBOUND
-              ? "Not bound"
+              ? gt("Not bound")
               : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)
           }
           disabled={locked}
