@@ -17,10 +17,10 @@ export const ComputerControlKind = Schema.Literals(COMPUTER_CONTROL_KINDS);
 export type ComputerControlKind = typeof ComputerControlKind.Type;
 
 /**
- * Nothing (`auto`), a person's tap on this exact step (`tap`), a judgment from the decision provider first
- * (`judge`), or nothing at all because it is not a step computer use offers (`refused`).
+ * Nothing (`auto`), a person's tap on this exact step (`tap`), or nothing at all because it is not a step
+ * computer use offers (`refused`).
  */
-export const ComputerVerdict = Schema.Literals(["auto", "tap", "judge", "refused"]);
+export const ComputerVerdict = Schema.Literals(["auto", "tap", "refused"]);
 export type ComputerVerdict = typeof ComputerVerdict.Type;
 
 /** A verdict and, for the approval card and the audit, why it asked or refused. */
@@ -528,7 +528,7 @@ export type ComputerHostAccess = typeof ComputerHostAccess.Type;
 export const ComputerHostConnectInput = Schema.Struct({
   /** The name a person sees, such as "JJ's MacBook". */
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
-  /** The paired device this host belongs to; one host a device. */
+  /** The device's name, for people; the server keys a host by the session that connected it. */
   device: Schema.String.check(Schema.isMaxLength(200)),
   platform: Schema.String.check(Schema.isMaxLength(40)),
   version: Schema.String.check(Schema.isMaxLength(40)),

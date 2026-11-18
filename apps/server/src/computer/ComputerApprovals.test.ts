@@ -142,7 +142,7 @@ it.effect("neither a late tap nor a late take grants anything", () =>
   }),
 );
 
-it.effect("deny and cancel end it", () =>
+it.effect("deny and cancel end it, answered or not", () =>
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
     const own = binding("x");
@@ -163,6 +163,15 @@ it.effect("deny and cancel end it", () =>
     assert.strictEqual(
       yield* approvals.decide({ approvalId: cancelled.id, approve: true, decidedBy: "web" }),
       "not_pending",
+    );
+
+    // A tap already given but not yet used is revoked too: it cannot outlive its task.
+    const answered = yield* approvals.create(own);
+    yield* approvals.decide({ approvalId: answered.id, approve: true, decidedBy: "web" });
+    yield* approvals.cancelTask(own.taskId);
+    assert.strictEqual(
+      yield* approvals.take({ approvalId: answered.id, binding: own }),
+      "cancelled",
     );
 
     assert.strictEqual(

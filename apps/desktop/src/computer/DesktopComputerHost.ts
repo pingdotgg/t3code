@@ -264,12 +264,17 @@ const make = Effect.gen(function* () {
         ...request,
       }),
       (answer) =>
-        answer.type === "grant"
+        // A grant that arrives after its task stopped here is refused, whatever the environment said.
+        answer.type === "grant" && (!answer.grant.ok || running?.taskId === owner.taskId)
           ? answer.grant
           : {
               ok: false,
               denied:
-                answer.type === "failed" ? answer.message : "The environment did not allow it.",
+                answer.type === "failed"
+                  ? answer.message
+                  : answer.type === "grant"
+                    ? "It was stopped."
+                    : "The environment did not allow it.",
             },
     );
 
@@ -292,9 +297,8 @@ const make = Effect.gen(function* () {
       ),
     event: async (event: ComputerHostEvent) => {
       if (event.type === "step" && running?.taskId !== owner.taskId) return;
-      if (event.type === "finished") {
-        // A task the server already stopped, or one whose stop came from this Mac, has no listener left.
-        if (running?.taskId !== owner.taskId) return;
+      // Always reported: for a task the environment stopped, it confirms the helper let go of the computer.
+      if (event.type === "finished" && running?.taskId === owner.taskId) {
         running = null;
         releaseStopShortcut();
       }

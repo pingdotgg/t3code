@@ -52,12 +52,19 @@ Mac has one helper.
 ## Threat model
 
 Approvals guard against mistakes and prompt injection from screen text, which
-is data and never instructions. The party that chose a click has read the
-page, so it never judges whether that click is safe: a click the policy cannot
-settle goes to the configured decision endpoint, which sees only the goal, the
-window and the control, and otherwise becomes a tap. Only the `text` a task was
-started with is ever typed, and it never reaches the decision endpoint, a log,
-an error or the audit file.
+is data and never instructions. Every model that reads the screen can be
+steered by it, so no model's verdict grants a step: a click the deterministic
+policy cannot show is safe always becomes a tap. The decision endpoint only
+chooses the next step, and the server sends it an allowlisted, capped state,
+never what the host put there beyond it. Only the `text` a task was started
+with is ever typed (the server refuses a typed step with other text), and it
+never reaches the decision endpoint, a log, an error or the audit file.
+
+A host is bound to the authenticated session that connected it. Host calls
+from any other session are refused, and only that session's reconnect
+replaces it. A stopped task keeps its host reserved until the host reports
+the task finished; a host that does not within the reply timeout is
+disconnected.
 
 Approvals do not stop a full-access agent with a shell on the same machine as
 the helper: it can run `osascript` itself. The boundary is real only when the

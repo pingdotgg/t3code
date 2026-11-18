@@ -125,7 +125,7 @@ export class ComputerApprovals extends Context.Service<
       readonly approvalId: ComputerApprovalId;
       readonly binding: ComputerApprovalBinding;
     }) => Effect.Effect<ComputerApprovalTakeResult>;
-    /** The task ended or was stopped: its pending approvals can no longer be granted. */
+    /** The task ended or was stopped: its approvals, answered or not, can no longer be granted. */
     readonly cancelTask: (taskId: ComputerTaskId) => Effect.Effect<void>;
     /** Every approval still pending, then the ones that ended in the last ten minutes, newest first. */
     readonly list: Effect.Effect<ReadonlyArray<ComputerApproval>>;
@@ -217,7 +217,8 @@ const make = Effect.fn("computer.approvals.make")(function* () {
   )(function* (taskId) {
     yield* Ref.update(approvalsRef, (current) =>
       current.map((approval) =>
-        approval.state === "pending" && approval.binding.taskId === taskId
+        (approval.state === "pending" || approval.state === "approved") &&
+        approval.binding.taskId === taskId
           ? { ...approval, state: "cancelled" }
           : approval,
       ),

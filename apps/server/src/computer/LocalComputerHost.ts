@@ -184,7 +184,10 @@ const makeSession = Effect.scoped(
     const access = yield* Deferred.make<Access>();
     // The task id a `start` named, so its `started` frame can answer that exact request. A send is synchronous.
     const starts = new Map<ComputerTaskId, string>();
-    const hostIdRef = yield* Ref.make<ComputerHostId | null>(null);
+    const hostRef = yield* Ref.make<{
+      readonly hostId: ComputerHostId;
+      readonly owner: string;
+    } | null>(null);
 
     const child = yield* Effect.acquireRelease(
       Effect.sync(() => fork()),
@@ -213,26 +216,26 @@ const makeSession = Effect.scoped(
     const accessReport = reported.value;
 
     const answer = Effect.fn("LocalComputerHost.answer")(function* (message: ChildMessage) {
-      const hostId = yield* Ref.get(hostIdRef);
-      if (hostId === null) return;
+      const host = yield* Ref.get(hostRef);
+      if (host === null) return;
       switch (message.kind) {
         case "started": {
           const requestId = starts.get(message.taskId);
           if (requestId === undefined) return;
           starts.delete(message.taskId);
-          yield* computer.hostRespond({ hostId, reply: { requestId, ok: true } });
+          yield* computer.hostRespond({ ...host, reply: { requestId, ok: true } });
           return;
         }
         case "step":
           yield* computer.hostEvent({
-            hostId,
+            ...host,
             taskId: message.taskId,
             event: { type: "step", text: message.text },
           });
           return;
         case "finished":
           yield* computer.hostEvent({
-            hostId,
+            ...host,
             taskId: message.taskId,
             event: {
               type: "finished",
@@ -245,19 +248,19 @@ const makeSession = Effect.scoped(
           return;
         case "control":
           yield* computer.hostRespond({
-            hostId,
+            ...host,
             reply: { requestId: message.id, ok: true, done: message.done },
           });
           return;
         case "look":
           yield* computer.hostRespond({
-            hostId,
+            ...host,
             reply: { requestId: message.id, ok: true, look: message.look },
           });
           return;
         case "acted":
           yield* computer.hostEvent({
-            hostId,
+            ...host,
             taskId: message.taskId,
             event: { type: "acted", kind: message.action, mode: message.mode, how: message.how },
           });
@@ -267,7 +270,7 @@ const makeSession = Effect.scoped(
           const startRequest = starts.get(message.id);
           starts.delete(message.id);
           yield* computer.hostRespond({
-            hostId,
+            ...host,
             reply: { requestId: startRequest ?? message.id, ok: false, error: message.error },
           });
           return;
@@ -275,7 +278,7 @@ const makeSession = Effect.scoped(
         case "decide": {
           const answers = yield* computer
             .hostDecide({
-              hostId,
+              ...host,
               taskId: message.taskId,
               state: message.state,
               questions: message.questions,
@@ -287,7 +290,7 @@ const makeSession = Effect.scoped(
         case "authorize": {
           const grant: ComputerGrant = yield* computer
             .hostAuthorize({
-              hostId,
+              ...host,
               taskId: message.taskId,
               step: message.request.step,
               observation: message.request.observation,
@@ -298,7 +301,7 @@ const makeSession = Effect.scoped(
           return;
         }
         case "access":
-          yield* computer.hostAccess({ hostId, access: toHostAccess(message.access) });
+          yield* computer.hostAccess({ ...host, access: toHostAccess(message.access) });
           return;
         case "current":
           return;
@@ -317,7 +320,6 @@ const makeSession = Effect.scoped(
 
     const hello: ComputerHostConnectInput = {
       name: hostname,
-      // One host a device: a restart replaces this computer instead of adding a second.
       device: `standalone-${hostname}`,
       platform: "darwin",
       version: serverBuildVersion,
@@ -338,7 +340,7 @@ const makeSession = Effect.scoped(
         if (request !== null) child.send(request);
       },
     });
-    yield* Ref.set(hostIdRef, attached.hostId);
+    yield* Ref.set(hostRef, { hostId: attached.hostId, owner: attached.owner });
     yield* Effect.addFinalizer(() => attached.detach);
     yield* Effect.logInfo("This computer is offered to agents", {
       hostId: attached.hostId,

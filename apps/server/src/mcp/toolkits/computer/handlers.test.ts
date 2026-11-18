@@ -108,6 +108,7 @@ type FakeHost = {
 
 /** A computer that answers every command the way a real one would, and records its starts. */
 const startHost = Effect.gen(function* () {
+  const owner = "session-mac";
   const service = yield* ComputerService.ComputerService;
   const hostId = yield* Deferred.make<ComputerHostId>();
   const starts = yield* Ref.make<ReadonlyArray<{ taskId: string; goal: string }>>([]);
@@ -117,7 +118,15 @@ const startHost = Effect.gen(function* () {
         yield* Deferred.succeed(hostId, frame.hostId);
         return;
       }
-      if (frame.kind === "stop") return;
+      if (frame.kind === "stop") {
+        yield* service.hostEvent({
+          hostId: yield* Deferred.await(hostId),
+          owner,
+          taskId: frame.taskId,
+          event: { type: "finished", status: "stopped", reason: "", steps: [], surface: null },
+        });
+        return;
+      }
       if (frame.kind === "start") {
         yield* Ref.update(starts, (current) => [
           ...current,
@@ -127,6 +136,7 @@ const startHost = Effect.gen(function* () {
       const id = yield* Deferred.await(hostId);
       yield* service.hostRespond({
         hostId: id,
+        owner,
         reply: {
           requestId: frame.requestId,
           ok: true,
@@ -134,7 +144,9 @@ const startHost = Effect.gen(function* () {
         },
       });
     });
-  yield* Stream.runForEach(service.hostConnect(hello), handle).pipe(Effect.forkScoped);
+  yield* Stream.runForEach(service.hostConnect({ ...hello, owner }), handle).pipe(
+    Effect.forkScoped,
+  );
   const id = yield* Deferred.await(hostId);
   return {
     hostId: id,
@@ -142,6 +154,7 @@ const startHost = Effect.gen(function* () {
     authorize: (input) =>
       service.hostAuthorize({
         hostId: id,
+        owner,
         taskId: input.taskId,
         step: input.step,
         observation: { app: "Messages", title: "Dana" },
@@ -150,6 +163,7 @@ const startHost = Effect.gen(function* () {
     decide: (input) =>
       service.hostDecide({
         hostId: id,
+        owner,
         taskId: input.taskId,
         state: {},
         questions: input.questions,
@@ -157,6 +171,7 @@ const startHost = Effect.gen(function* () {
     step: (input) =>
       service.hostEvent({
         hostId: id,
+        owner,
         taskId: input.taskId,
         event: { type: "step", text: input.text },
       }),
@@ -187,7 +202,6 @@ const layerComputerService = (overrides: Parameters<typeof ServerSettings.layerT
         ComputerDecider.ComputerDecider,
         ComputerDecider.ComputerDecider.of({
           ask: () => Effect.succeed({ _tag: "not_configured" } as const),
-          judge: () => Effect.succeed({ _tag: "not_configured" } as const),
         }),
       ),
     ),
@@ -228,7 +242,7 @@ const call = (
 const taskWhere = (predicate: (task: ComputerSnapshot["tasks"][number]) => boolean) =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;
-    const snapshots = yield* service.subscribe;
+    const snapshots = yield* service.subscribe({ revealTypedText: true });
     const found = yield* snapshots.pipe(
       Stream.filter((snapshot) => snapshot.tasks.some(predicate)),
       Stream.runHead,
@@ -274,7 +288,7 @@ describe("computer toolkit", () => {
 
       // A refused call starts nothing.
       const service = yield* ComputerService.ComputerService;
-      expect((yield* service.status).tasks).toEqual([]);
+      expect((yield* service.status(null)).tasks).toEqual([]);
       expect(yield* Ref.get((yield* startHost).starts)).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(layerTest())),
   );
@@ -529,7 +543,7 @@ describe("computer toolkit", () => {
         tasks: [{ taskId: task.taskId, status: "blocked", waitingForApproval: null }],
         approvals: [],
       });
-      expect((yield* service.status).tasks).toHaveLength(1);
+      expect((yield* service.status(null)).tasks).toHaveLength(1);
       expect(yield* Ref.get(host.starts)).toHaveLength(1);
       // The start's own result was the tap it waited on; the end is what status reports.
       expect(textOf(result)).toContain("You cannot approve it");

@@ -60,12 +60,12 @@ An approval covers that one step only. If the window changes before the step
 runs, it does not run. **Deny** ends the task, and so does letting the
 countdown run out. Agents cannot approve a step.
 
-Clicks the built-in rules cannot judge also ask, unless you set a **decision
-endpoint** in **Settings → Computer use**. **Jev (TypeSafe)** answers once you
-paste an API key from the TypeSafe console; **Custom** takes an
-OpenAI-compatible or System One endpoint of your own. That endpoint sees
-control labels and up to 1,500 characters of visible text, never the text a
-task types.
+Clicks the built-in rules cannot show are safe also ask. A **decision
+endpoint** in **Settings → Computer use** helps a task choose its next step,
+but never skips an approval. **Jev (TypeSafe)** answers once you paste an API
+key from the TypeSafe console; **Custom** takes an OpenAI-compatible or System
+One endpoint of your own. That endpoint sees control labels and up to 1,500
+characters of visible text, never the text a task types.
 
 The decision endpoint and its key are shared: set it on one device and every
 connected environment uses it. The latest save wins, and clearing it on one

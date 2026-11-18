@@ -37,17 +37,17 @@
     { "action": { "kind": "click", "role": "button", "label": "pay-now" }, "verdict": "tap" },
     {
       "action": { "kind": "click", "role": "button", "label": "Sender details" },
-      "verdict": "judge"
+      "verdict": "tap"
     },
     {
       "action": { "kind": "click", "role": "link", "label": "Postcode lookup" },
-      "verdict": "judge"
+      "verdict": "tap"
     },
     { "action": { "kind": "click", "role": "textbox", "label": "Message" }, "verdict": "auto" },
     { "action": { "kind": "click", "role": "tab", "label": "Inbox" }, "verdict": "auto" },
     { "action": { "kind": "click", "role": "row", "label": "Dana Lee" }, "verdict": "auto" },
-    { "action": { "kind": "click", "role": "button", "label": "OK" }, "verdict": "judge" },
-    { "action": { "kind": "click", "role": "text", "label": "Continue" }, "verdict": "judge" },
+    { "action": { "kind": "click", "role": "button", "label": "OK" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "text", "label": "Continue" }, "verdict": "tap" },
     {
       "action": { "kind": "click", "role": "row", "label": "Delete conversation" },
       "verdict": "tap"
@@ -148,14 +148,5 @@
     { "action": { "kind": "open_url", "url": "file:///etc/passwd" }, "verdict": "refused" },
     { "action": { "kind": "open_url", "url": "javascript:alert(1)" }, "verdict": "refused" },
     { "action": { "kind": "open_url", "url": "not a url" }, "verdict": "refused" }
-  ],
-  "after_judge": [
-    { "p": 0.1, "verdict": "auto" },
-    { "p": 0.29, "verdict": "auto" },
-    { "p": 0.3, "verdict": "tap" },
-    { "p": 0.9, "verdict": "tap" },
-    { "p": null, "verdict": "tap" },
-    { "p": -1, "verdict": "tap" },
-    { "p": 1.5, "verdict": "tap" }
   ]
 }

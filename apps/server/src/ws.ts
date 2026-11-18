@@ -37,6 +37,7 @@ import {
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  AuthComputerApproveScope,
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
@@ -1428,6 +1429,8 @@ export const layerWsRpc = (
       const userCaller: ThreadTaskService.ThreadTaskCaller = { kind: "user" };
       // Whoever answers an approval or stops a task is recorded, never an agent: no MCP tool does either.
       const computerActor = `client:${currentSession.subject}`;
+      // A host is its paired device's session: no other session can speak for it or replace it.
+      const computerHostOwner = currentSession.sessionId;
       const toTodoError = (cause: TodoService.TodoServiceError) =>
         new TodoError({
           message: cause.message,
@@ -3358,7 +3361,12 @@ export const layerWsRpc = (
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
-        [WS_METHODS.computerSubscribe]: (_input) => Stream.unwrap(computer.subscribe),
+        [WS_METHODS.computerSubscribe]: (_input) =>
+          Stream.unwrap(
+            computer.subscribe({
+              revealTypedText: currentSession.scopes.includes(AuthComputerApproveScope),
+            }),
+          ),
         [WS_METHODS.computerStop]: (input) =>
           computer.stop({
             ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
@@ -3371,12 +3379,18 @@ export const layerWsRpc = (
             decidedBy: computerActor,
           }),
         [WS_METHODS.computerAuditTail]: (input) => computer.auditTail(input.limit),
-        [WS_METHODS.computerHostConnect]: (input) => computer.hostConnect(input),
-        [WS_METHODS.computerHostRespond]: (input) => computer.hostRespond(input),
-        [WS_METHODS.computerHostDecide]: (input) => computer.hostDecide(input),
-        [WS_METHODS.computerHostAuthorize]: (input) => computer.hostAuthorize(input),
-        [WS_METHODS.computerHostEvent]: (input) => computer.hostEvent(input),
-        [WS_METHODS.computerHostAccess]: (input) => computer.hostAccess(input),
+        [WS_METHODS.computerHostConnect]: (input) =>
+          computer.hostConnect({ ...input, owner: computerHostOwner }),
+        [WS_METHODS.computerHostRespond]: (input) =>
+          computer.hostRespond({ ...input, owner: computerHostOwner }),
+        [WS_METHODS.computerHostDecide]: (input) =>
+          computer.hostDecide({ ...input, owner: computerHostOwner }),
+        [WS_METHODS.computerHostAuthorize]: (input) =>
+          computer.hostAuthorize({ ...input, owner: computerHostOwner }),
+        [WS_METHODS.computerHostEvent]: (input) =>
+          computer.hostEvent({ ...input, owner: computerHostOwner }),
+        [WS_METHODS.computerHostAccess]: (input) =>
+          computer.hostAccess({ ...input, owner: computerHostOwner }),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

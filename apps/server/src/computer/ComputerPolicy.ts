@@ -7,14 +7,12 @@ import { COMPUTER_CONTROL_KINDS } from "@t3tools/contracts";
  * What a computer action needs before the helper may do it. The server is the authority: the helper asks before
  * every action and acts only on a grant. Pure: no I/O, no clock.
  *
- * The rules only ever add taps. A label the lexicon misses still goes to the judgment, and a judgment that
- * fails asks.
+ * Only a step these rules show is safe runs without a tap. Labels come from the screen, so no model's
+ * reading of it ever clears a click.
  */
 
 const MAX_LABEL_BYTES = 400;
 const MAX_TEXT_BYTES = 4_000;
-/** At or above this a judged click asks first: a needless tap costs a second, a wrong click cannot be undone. */
-const JUDGE_THRESHOLD = 0.3;
 
 const SCROLL_DIRECTIONS: ReadonlyArray<string> = ["up", "down", "top", "bottom"];
 const BENIGN_CLICK_ROLES: ReadonlyArray<string> = ["textbox", "tab", "row"];
@@ -49,10 +47,7 @@ export function control(kind: string): ComputerDecision {
   return kind === "lock_screen" ? { verdict: "tap", why: "locking the screen" } : auto();
 }
 
-/**
- * The rule for one on-screen step. `judge` means: ask the decision provider whether it could send, buy, delete,
- * post or submit something, then `afterJudge`.
- */
+/** The rule for one on-screen step. */
 export function screen(action: ComputerAction): ComputerDecision {
   const label = action.label ?? "";
   if (
@@ -110,25 +105,16 @@ export function screen(action: ComputerAction): ComputerDecision {
       if (why) return { verdict: "tap", why };
       // Focusing a text box, picking a tab or selecting a row in a list commits nothing.
       if (BENIGN_CLICK_ROLES.includes(action.role ?? "")) return auto();
-      return { verdict: "judge", why: "" };
+      return {
+        verdict: "tap",
+        why: "whether it could send, buy or delete something cannot be told from its label",
+      };
     }
     default:
       return refused(
         "not a step computer use takes (click, type, press, scroll, surface, open_url, pointer)",
       );
   }
-}
-
-const UNCHECKED = "whether it could send, buy or delete something could not be checked";
-
-/** The provider's judgment for a `judge` step: the probability that it is consequential. Unknown is a tap. */
-export function afterJudge(probability: number | null | undefined): ComputerDecision {
-  if (probability === null || probability === undefined) return { verdict: "tap", why: UNCHECKED };
-  if (!Number.isFinite(probability) || probability < 0 || probability > 1)
-    return { verdict: "tap", why: UNCHECKED };
-  if (probability >= JUDGE_THRESHOLD)
-    return { verdict: "tap", why: "it may send, buy, delete, post or submit something" };
-  return auto();
 }
 
 const SEARCH_WORDS: ReadonlyArray<string> = [
