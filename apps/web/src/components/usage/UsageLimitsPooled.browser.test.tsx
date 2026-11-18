@@ -198,6 +198,16 @@ describe("UsageLimitsPooled", () => {
     await expect.element(screen.getByText("Gemini · Weekly")).not.toBeInTheDocument();
     await screen.getByRole("button", { name: "1 item hidden" }).click();
     await expect.element(screen.getByText("Gemini · Weekly")).toBeVisible();
+    const revealedSegment = screen.getByRole("button", { name: "gemini: 60% left" });
+    await revealedSegment.click();
+    await expect.element(revealedSegment).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .element(screen.getByRole("dialog").getByText("Left", { exact: true }))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "1 item hidden" }).click();
+    await expect.element(revealedSegment).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "1 item hidden" }).click();
     await screen.getByRole("button", { name: "Show Antigravity", exact: true }).click();
     await screen.getByRole("heading", { name: /Antigravity/ }).hover();
     await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();

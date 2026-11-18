@@ -263,24 +263,22 @@ function ActiveSegmentPopover({
   handle,
   actions,
   payload,
-  pools,
+  windows,
   now,
 }: {
   readonly handle: ReturnType<typeof PopoverCreateHandle<SegmentPayload>>;
   readonly actions: RefObject<PopoverPrimitive.Root.Actions | null>;
   readonly payload: SegmentPayload;
-  readonly pools: readonly LimitPool[];
+  readonly windows: readonly LimitPoolWindow[];
   readonly now: number;
 }) {
-  const available = pools.some((pool) =>
-    displayLimitWindows(pool).some((window) =>
-      window.members.some(
-        (member) =>
-          member.account.key === payload.account.key &&
-          member.window.id === payload.window.id &&
-          member.window.kind === payload.window.kind &&
-          Boolean(member.account.redeem) === Boolean(payload.redeem),
-      ),
+  const available = windows.some((window) =>
+    window.members.some(
+      (member) =>
+        member.account.key === payload.account.key &&
+        member.window.id === payload.window.id &&
+        member.window.kind === payload.window.kind &&
+        Boolean(member.account.redeem) === Boolean(payload.redeem),
     ),
   );
   // The trigger is gone, so the popup has nothing to anchor to: an exit transition would
@@ -659,6 +657,7 @@ function HiddenLimitsToggle({
 function PoolSection({
   pool,
   windows,
+  shownWindows,
   now,
   layout,
   revealed,
@@ -668,6 +667,7 @@ function PoolSection({
 }: {
   readonly pool: LimitPool;
   readonly windows: readonly LimitPoolWindow[];
+  readonly shownWindows: readonly LimitPoolWindow[];
   readonly now: number;
   readonly layout: UsageLimitLayout;
   readonly revealed: boolean;
@@ -693,11 +693,6 @@ function PoolSection({
   const keys = windows.map((window) => limitWindowKey(pool.driver, window));
   const hiddenCount = keys.filter((key) => layout.hiddenWindows.includes(key)).length;
   const showHiddenCount = !collapsed && hiddenCount > 0;
-  const shownWindows = revealed
-    ? windows
-    : windows.filter(
-        (window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window)),
-      );
   return (
     <section
       ref={setNodeRef}
@@ -786,7 +781,7 @@ function PoolSection({
           ) : null}
         </div>
       </div>
-      {collapsed || shownWindows.length === 0 ? null : (
+      {shownWindows.length === 0 ? null : (
         <UsageLimitSortableList
           items={shownWindows.map((window) => limitWindowKey(pool.driver, window))}
           onReorder={(active, over) =>
@@ -863,23 +858,23 @@ export function UsageLimitsPooled({
       limitWindowKey(pool.driver, window),
     ),
   }));
-  const visiblePools = arrangedPools
-    .map(({ pool, windows }) => ({
-      pool,
-      windows: windows.filter(
-        (window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window)),
-      ),
-    }))
-    .filter(
-      ({ pool, windows }) => !layout.hiddenProviders.includes(pool.driver) && windows.length > 0,
-    );
   const hiddenProviderCount = pools.filter((pool) =>
     layout.hiddenProviders.includes(pool.driver),
   ).length;
   const providersRevealed = revealed.includes(PAGE_SCOPE);
-  const shownPools = providersRevealed
-    ? arrangedPools
-    : arrangedPools.filter(({ pool }) => !layout.hiddenProviders.includes(pool.driver));
+  const shownPools = arrangedPools
+    .filter(({ pool }) => providersRevealed || !layout.hiddenProviders.includes(pool.driver))
+    .map(({ pool, windows }) => {
+      const windowsRevealed = revealed.includes(pool.driver);
+      const shownWindows = layout.collapsedProviders.includes(pool.driver)
+        ? []
+        : windowsRevealed
+          ? windows
+          : windows.filter(
+              (window) => !layout.hiddenWindows.includes(limitWindowKey(pool.driver, window)),
+            );
+      return { pool, windows, shownWindows, windowsRevealed };
+    });
   const hasLayout = Object.values(layout).some((items) => items.length > 0);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
@@ -949,14 +944,15 @@ export function UsageLimitsPooled({
           }
         >
           <div className="flex flex-col gap-8 empty:hidden">
-            {shownPools.map(({ pool, windows }) => (
+            {shownPools.map(({ pool, windows, shownWindows, windowsRevealed }) => (
               <PoolSection
                 key={pool.driver}
                 pool={pool}
                 windows={windows}
+                shownWindows={shownWindows}
                 now={now}
                 layout={layout}
-                revealed={revealed.includes(pool.driver)}
+                revealed={windowsRevealed}
                 onReveal={(next) => {
                   rememberFocus();
                   reveal(pool.driver, next);
@@ -993,9 +989,7 @@ export function UsageLimitsPooled({
               handle={segmentPopover}
               actions={segmentPopoverActions}
               payload={payload}
-              pools={visiblePools
-                .filter(({ pool }) => !layout.collapsedProviders.includes(pool.driver))
-                .map(({ pool, windows }) => ({ ...pool, windows }))}
+              windows={shownPools.flatMap(({ shownWindows }) => shownWindows)}
               now={now}
             />
           ) : null
