@@ -76,6 +76,7 @@ export function IssueLinkPreviewFallback({
 
 function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
   const state = issueStatePresentation(detail.state);
+  const createdAt = <RelativeTime timestamp={detail.createdAt} />;
   const author = detail.author;
   const authorLabel =
     author === null
@@ -103,10 +104,7 @@ function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
         <span aria-hidden>·</span>
         <span className="shrink-0">
           <T>
-            opened{" "}
-            <Var>
-              <RelativeTime timestamp={detail.createdAt} />
-            </Var>
+            opened <Var>{createdAt}</Var>
           </T>
         </span>
       </div>
