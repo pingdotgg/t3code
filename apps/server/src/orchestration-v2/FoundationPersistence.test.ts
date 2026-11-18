@@ -670,7 +670,7 @@ it.effect.each(
       const pulled = yield* Deferred.make<void>();
       let arrivals = 0;
       const inputs = yield* Effect.forEach(threads, () =>
-        Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
+        Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>(),
       );
       const consumers = yield* Effect.forEach(inputs, (input, index) =>
         sink
@@ -745,10 +745,10 @@ it.effect.each(
         });
       }
       yield* Deferred.await(pulled);
-      yield* TestClock.adjust(0);
-      yield* sink.write({ events: [] });
+      yield* Effect.forEach(inputs, Queue.end, { discard: true });
+      const exits = yield* Effect.forEach(consumers, Fiber.join);
       if (rollback) {
-        const exit = yield* Fiber.join(consumers[failedIndex]!);
+        const exit = exits[failedIndex]!;
         assert.isTrue(Exit.isFailure(exit));
         if (failure === "after-write" && Exit.isFailure(exit))
           assert.strictEqual(Cause.squash(exit.cause), jobError);
