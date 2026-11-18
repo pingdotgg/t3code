@@ -680,6 +680,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   // back to adb's own auto-start, as before.
   const prewarmAdbServer = Effect.fn("LocalDeviceHost.prewarmAdbServer")(function* () {
     if (hostPlatform !== "linux") return;
+    const environment = yield* currentHostEnvironment;
+    if (
+      environment.ADB_SERVER_SOCKET ||
+      environment.ANDROID_ADB_SERVER_PORT ||
+      environment.ANDROID_ADB_SERVER_ADDRESS
+    )
+      return;
     const sdk = yield* currentSdk;
     if (!sdk.root || !sdk.adb) return;
     const adb = path.join(sdk.root, "platform-tools", "adb");
@@ -694,10 +701,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             shell: false,
             stdout: "pipe",
             stderr: "pipe",
-            env: yield* currentHostEnvironment,
+            env: environment,
+            forceKillAfter: "1 second",
           }),
         )
-        .pipe(Effect.provideService(Scope.Scope, scope));
+        .pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.timeout(Duration.millis(ADB_SERVER_READY_TIMEOUT_MS)),
+        );
       // Drain the server's output so a full pipe cannot block it; its lines are not
       // logged.
       yield* Effect.forkIn(
