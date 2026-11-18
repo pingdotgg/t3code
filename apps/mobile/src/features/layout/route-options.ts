@@ -164,7 +164,7 @@ export function immersiveRoute(
       ? { sheetPrefersHorizontalBars: true, nativeContentInsetHorizontally: false }
       : undefined),
     ...(options.hideSystemBars
-      ? { autoHideHomeIndicator: true, navigationBarHidden: true }
+      ? { autoHideHomeIndicator: true, navigationBarHidden: true, statusBarHidden: true }
       : undefined),
   } satisfies AppScreenOptions;
 }

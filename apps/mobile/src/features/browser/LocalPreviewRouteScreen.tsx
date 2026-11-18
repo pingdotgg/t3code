@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -10,6 +10,8 @@ import { AppText } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useBarOverlap } from "../../components/ui/useBarInset";
+import { isDuoDevice } from "../../lib/device-type";
+import { useDeviceType } from "../../native/native-layout-metrics";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserBar, useBarFollowsScroll } from "./BrowserBar";
@@ -79,6 +81,16 @@ export function LocalPreviewScreen(props: {
   // Like Safari, full screen on iOS lays the bar over the page, which scrolls under it.
   const overlay = Platform.OS === "ios" && !onMaximize;
   const [barHeight, setBarHeight] = useState(0);
+  const compact = bar.compact && !failed;
+  // Safari on the Duo hides the status band with its bar; other iPhones keep the clock.
+  const duo = isDuoDevice(useDeviceType());
+  const hideStatusBar = overlay && compact && duo;
+  const navigation = useNavigation();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the status bar is a native screen option
+  useEffect(() => {
+    if (!overlay) return;
+    navigation.setOptions({ statusBarHidden: hideStatusBar, statusBarAnimation: "fade" });
+  }, [navigation, overlay, hideStatusBar]);
   const pageColor = failed || unsupported !== null ? null : page?.pageColor || null;
   const browserBar = (
     <BrowserBar
@@ -89,7 +101,7 @@ export function LocalPreviewScreen(props: {
       onBack={back}
       onReload={retry}
       onSubmit={open}
-      compact={bar.compact && !failed}
+      compact={compact}
       onExpand={bar.expand}
       pageColor={pageColor}
     />
