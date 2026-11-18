@@ -11,6 +11,8 @@ import {
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import type { OpenShellGatewayAuth } from "@t3tools/contracts";
+import * as OpenShellGatewayAuthModule from "./OpenShellGatewayAuth.ts";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
@@ -47,6 +49,7 @@ import * as OpenShellFleetDrainAdapters from "../environment/OpenShellFleetDrain
 import * as OpenShellFleetBundleImport from "../environment/OpenShellFleetBundleImport.ts";
 import * as ServerConfig from "../config.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
+import * as SecretResolverCore from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as OpenShellFleetStore from "../environment/OpenShellFleetStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -137,6 +140,7 @@ const toIndexRow = (row: OpenShellFleetStore.FleetEnvironment): FleetWorkerRow =
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const secretResolver = yield* SecretResolverCore.SecretResolver;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const registry = yield* PeerEnvironmentRegistry.PeerEnvironmentRegistry;
   const store = yield* OpenShellFleetStore.OpenShellFleetStore;
@@ -221,13 +225,26 @@ const make = Effect.gen(function* () {
     operation: OpenShellFleetOperationFailed["operation"],
     gatewayUrl: string,
     credential: string | undefined,
+    auth: OpenShellGatewayAuth = { mode: "static" },
   ) {
+    const oidcTokenProvider = yield* Effect.gen(function* () {
+      if (auth.mode !== "static") {
+        const provider = yield* OpenShellGatewayAuthModule.makeGatewayAuthTokenProvider({
+          auth,
+          secrets,
+          resolver: secretResolver,
+        }).pipe(Effect.catch((cause: unknown) => failed(operation, cause)));
+        return provider.oidcTokenProvider;
+      }
+      // Legacy provisioned bearer (spec section 4.2).
+      return credential === undefined
+        ? undefined
+        : (): Promise<string> => Promise.resolve(credential);
+    }).pipe(Effect.catch((cause) => failed(operation, cause)));
     const client: OpenShellGatewayClient = yield* Effect.tryPromise({
       try: () =>
         connectOpenShellGateway(
-          credential === undefined
-            ? { gatewayUrl }
-            : { gatewayUrl, oidcTokenProvider: () => Promise.resolve(credential) },
+          oidcTokenProvider === undefined ? { gatewayUrl } : { gatewayUrl, oidcTokenProvider },
         ),
       catch: (cause) => failed(operation, cause),
     });
@@ -333,7 +350,12 @@ const make = Effect.gen(function* () {
   ) {
     const { gatewayUrl, openshell } = yield* gatewaySettings;
     const credential = yield* gatewayCredential(operation);
-    const client = yield* openClient(operation, gatewayUrl, credential);
+    const client = yield* openClient(
+      operation,
+      gatewayUrl,
+      credential,
+      openshell.auth ?? { mode: "static" },
+    );
     const context = yield* Effect.context<never>();
     // The driver's collaborators are Promise-shaped because the OpenShell SDK
     // is; they run these Effects on the surrounding services rather than a

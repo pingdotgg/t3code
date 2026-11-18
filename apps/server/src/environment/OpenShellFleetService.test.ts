@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
@@ -111,6 +112,13 @@ const layerFleet = (
     ),
     Layer.provide(ServerConfig.layerTest("/tmp/t3-fleet-test-cwd", "/tmp/t3-fleet-test")),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+    Layer.provide(
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provide(NodeServices.layer),
     Layer.provide(FetchHttpClient.layer),
   );

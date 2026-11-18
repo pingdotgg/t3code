@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
 import { SecretReference } from "./secretReference.ts";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
 /**
  * OpenShell gateway contracts: server settings for the gateway connection,
@@ -89,6 +90,39 @@ export type OpenShellSharedCacheSettings = typeof OpenShellSharedCacheSettings.T
  * enters settings JSON: `credential` is a secret-provider reference, or null
  * to use the ServerSecretStore slot `openshell-gateway-credential`.
  */
+/**
+ * Gateway control-plane auth (spec sections 4.1-4.3); absent = legacy static
+ * slot. Modes: static, client-credentials, oidc-pkce (server renews via the
+ * desktop's refresh token), mtls (transport seam pending SDK verification).
+ */
+export const OpenShellGatewayAuth = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("static"),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("client-credentials"),
+    /** OIDC issuer base URL; the token endpoint comes from its discovery document. */
+    issuer: TrimmedNonEmptyString,
+    audience: Schema.optionalKey(TrimmedNonEmptyString),
+    clientId: TrimmedNonEmptyString,
+    clientSecret: SettingsSecretValue,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("oidc-pkce"),
+    issuer: Schema.optionalKey(TrimmedNonEmptyString),
+    audience: Schema.optionalKey(TrimmedNonEmptyString),
+    /** Provisioned by the desktop's browser login; the server only refreshes. */
+    refreshToken: SettingsSecretValue,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("mtls"),
+    caCertPem: Schema.optionalKey(Schema.String),
+    clientCertPem: Schema.String,
+    clientKey: SettingsSecretValue,
+  }),
+]);
+export type OpenShellGatewayAuth = typeof OpenShellGatewayAuth.Type;
+
 export const OpenShellGatewaySettings = Schema.Struct({
   driver: OpenShellDriverId.pipe(Schema.withDecodingDefault(Effect.succeed("openshell"))),
   /** Gateway control-plane base URL. */
@@ -102,6 +136,15 @@ export const OpenShellGatewaySettings = Schema.Struct({
    * environments can never hold this role (spec section 5.2).
    */
   managingInstance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Auth against the gateway control plane; absent decodes to the legacy
+   * static-slot mode (spec section 4.1).
+   */
+  auth: Schema.optionalKey(
+    OpenShellGatewayAuth.pipe(
+      Schema.withDecodingDefault(Effect.succeed({ mode: "static" as const })),
+    ),
+  ),
   workerDefaults: Schema.optionalKey(OpenShellWorkerDefaults),
   sharedCache: Schema.optionalKey(OpenShellSharedCacheSettings),
 });
@@ -141,6 +184,7 @@ export const OpenShellGatewaySettingsPatch = Schema.Struct({
   gatewayUrl: Schema.optionalKey(TrimmedNonEmptyString),
   credential: Schema.optionalKey(Schema.NullOr(SecretReference)),
   defaultSandboxTemplate: Schema.optionalKey(TrimmedNonEmptyString),
+  auth: Schema.optionalKey(OpenShellGatewayAuth),
   managingInstance: Schema.optionalKey(Schema.Boolean),
   workerDefaults: Schema.optionalKey(OpenShellWorkerDefaultsPatch),
   sharedCache: Schema.optionalKey(OpenShellSharedCacheSettingsPatch),
