@@ -12,6 +12,8 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  isDraft: false,
+  pendingAction: null as "ready" | "merge" | null,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
@@ -47,7 +49,7 @@ const queryData = () => ({
   number: 1,
   title: "Test PR",
   state: "open",
-  isDraft: false,
+  isDraft: state.isDraft,
   mergeability: "mergeable",
   headBranch: "feature",
   baseBranch: "main",
@@ -60,8 +62,8 @@ const queryData = () => ({
     description: null,
     url: null,
   })),
-  capabilities: { actions: ["merge"], mergeMethods: state.mergeMethods },
-  viewerPermissions: { actions: ["merge"] },
+  capabilities: { actions: ["merge", "ready"], mergeMethods: state.mergeMethods },
+  viewerPermissions: { actions: ["merge", "ready"] },
   mergeCapabilities: {
     merge: state.mergeMethods.includes("merge"),
     squash: state.mergeMethods.includes("squash"),
@@ -87,7 +89,11 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
-  usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
+  usePullRequestActionRunner: () => ({
+    actionPending: state.pendingAction !== null,
+    pendingAction: state.pendingAction,
+    perform: state.perform,
+  }),
   usePullRequestDefaultMergeMethodResolver: ((_environmentId: unknown, projectId: unknown) => () =>
     state.projectMergeMethods[String(projectId)]) as never,
 }));
@@ -243,6 +249,8 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
+  state.isDraft = false;
+  state.pendingAction = null;
   state.status = "success";
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
@@ -401,4 +409,33 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+});
+
+it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
+  await using screen = await setup();
+  const row = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      onOpen={vi.fn()}
+    />
+  );
+  state.isDraft = true;
+  await screen.rerender(row());
+  await clickButton(screen.container, "Ready");
+  expect(state.perform).toHaveBeenCalledWith("ready");
+  state.pendingAction = "ready";
+  await screen.rerender(row());
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+
+  state.isDraft = false;
+  await screen.rerender(row());
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+  state.pendingAction = null;
+  await screen.rerender(row());
+  await expect.element(screen.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
 });
