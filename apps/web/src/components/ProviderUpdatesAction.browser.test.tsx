@@ -12,7 +12,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   environments: [] as {
@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   requests: [] as EnvironmentId[],
   checks: [] as { environmentId: EnvironmentId; input: unknown }[],
   checkResult: null as AsyncResult.AsyncResult<unknown, unknown> | null,
+  stallChecks: false,
   sessions: new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(),
 }));
 
@@ -54,6 +55,7 @@ vi.mock(import("~/state/use-atom-command"), () => ({
         return AsyncResult.success(undefined);
       }
       state.checks.push({ environmentId, input });
+      if (state.stallChecks) return new Promise(() => {});
       return state.checkResult ?? AsyncResult.success(undefined);
     }) as never,
 }));
@@ -112,6 +114,7 @@ function setup() {
   state.requests = [];
   state.checks = [];
   state.checkResult = null;
+  state.stallChecks = false;
   const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(
     [
       [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
@@ -186,4 +189,40 @@ it("provider updates and checks exclude connections without a confirmed manageme
     await updates.updateAll({ quiet: true });
   });
   expect(state.requests).toEqual([]);
+});
+
+it("a stalled provider refresh times out so the next check runs", async () => {
+  setup();
+  let check!: ReturnType<typeof useCheckProviderUpdates>;
+  function Probe() {
+    const nextCheck = useCheckProviderUpdates();
+    useEffect(() => {
+      check = nextCheck;
+    }, [nextCheck]);
+    return null;
+  }
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <Probe />
+    </RegistryContext.Provider>,
+  );
+  using toast = vi.spyOn(toastManager, "add");
+  using _timers = fakeTimers();
+  state.stallChecks = true;
+
+  const stalled = check();
+  expect(check()).toBe(stalled);
+  await act(async () => {
+    vi.advanceTimersByTime(60_000);
+    await stalled;
+  });
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ title: "Could not check provider updates" }),
+  );
+
+  state.stallChecks = false;
+  await act(async () => {
+    await check();
+  });
+  expect(state.checks).toHaveLength(2);
 });
