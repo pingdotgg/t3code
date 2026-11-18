@@ -13,6 +13,7 @@ interface ProviderEntry {
 interface ModelEntry {
   readonly providerID: string;
   readonly baseURL?: string;
+  readonly variants?: readonly { readonly settings?: { readonly baseURL?: string } }[];
 }
 
 /** The provider list OpenCode answers with, with its resolved settings. */
@@ -23,8 +24,9 @@ const providerEntry = ({ id, integrationID, baseURL }: ProviderEntry) => ({
 });
 
 /** The model list OpenCode answers with, with its resolved settings. */
-const modelEntry = ({ providerID, baseURL }: ModelEntry) => ({
+const modelEntry = ({ providerID, baseURL, variants = [] }: ModelEntry) => ({
   providerID,
+  variants,
   ...(baseURL === undefined ? {} : { settings: { baseURL } }),
 });
 
@@ -95,23 +97,35 @@ describe("readProviderEndpoints", () => {
     }),
   );
 
-  it.effect("leaves a provider unknown when one of its models resolves elsewhere", () =>
-    Effect.gen(function* () {
-      const endpoints = yield* readProviderEndpoints(
-        connectionWith(
-          [
-            {
-              id: "minimax-coding-plan",
-              integrationID: "minimax-coding-plan",
-              baseURL: "https://api.minimax.io/anthropic/v1",
-            },
-          ],
-          [{ providerID: "minimax-coding-plan", baseURL: "https://gateway.example/v1" }],
-        ),
-        "/work",
-      );
-      assert.strictEqual(endpoints.get("minimax-coding-plan"), undefined);
-    }),
+  it.effect.each(["model", "variant"] as const)(
+    "leaves a provider unknown when a %s resolves elsewhere",
+    (override) =>
+      Effect.gen(function* () {
+        const endpoints = yield* readProviderEndpoints(
+          connectionWith(
+            [
+              {
+                id: "minimax-coding-plan",
+                integrationID: "minimax-coding-plan",
+                baseURL: "https://api.minimax.io/anthropic/v1",
+              },
+            ],
+            [
+              {
+                providerID: "minimax-coding-plan",
+                ...(override === "model"
+                  ? { baseURL: "https://gateway.example/v1" }
+                  : {
+                      baseURL: "https://api.minimax.io/anthropic/v1",
+                      variants: [{ settings: { baseURL: "https://gateway.example/v1" } }],
+                    }),
+              },
+            ],
+          ),
+          "/work",
+        );
+        assert.strictEqual(endpoints.get("minimax-coding-plan"), undefined);
+      }),
   );
 
   it.effect("keeps an endpoint when its providers and models agree", () =>

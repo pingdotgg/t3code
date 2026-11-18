@@ -50,12 +50,16 @@ export const readProviderEndpoints = Effect.fn("OpenCode2Client.providerEndpoint
       // A model can resolve to another endpoint on its own, so the provider's
       // endpoint is not the one every model goes to.
       for (const model of models.data) {
-        const baseURL =
-          typeof model.settings?.baseURL === "string" ? model.settings.baseURL : undefined;
-        if (baseURL === undefined) continue;
-        const provider = providerEndpoint.get(model.providerID);
-        if (provider !== undefined && provider !== baseURL) {
-          providerEndpoint.set(model.providerID, undefined);
+        for (const settings of [
+          model.settings,
+          ...model.variants.map((variant) => variant.settings),
+        ]) {
+          const baseURL = typeof settings?.baseURL === "string" ? settings.baseURL : undefined;
+          if (baseURL === undefined) continue;
+          const provider = providerEndpoint.get(model.providerID);
+          if (provider !== undefined && provider !== baseURL) {
+            providerEndpoint.set(model.providerID, undefined);
+          }
         }
       }
       for (const provider of providers.data) {
