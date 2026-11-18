@@ -58,6 +58,7 @@ import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.ts";
+import * as DesktopCuaDriver from "../cua/DesktopCuaDriver.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
@@ -204,6 +205,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
           Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
           Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
+          Layer.mock(DesktopCuaDriver.DesktopCuaDriver, { listen: Effect.void }),
           Layer.mock(DesktopIpc.DesktopIpc, {}),
           Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
             getBearerToken: stub

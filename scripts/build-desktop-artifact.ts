@@ -19,6 +19,7 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { CUA_DRIVER_VERSION, cuaDriverRelease } from "@t3tools/shared/cuaDriverRelease";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
@@ -176,6 +177,21 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   },
 };
 
+/** The pinned Cua Driver archive a desktop build bundles; macOS uses one universal build. */
+export function resolveCuaDriverAsset(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  const release = cuaDriverRelease(
+    platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux",
+    platform === "mac" ? "arm64" : arch,
+  );
+  if (release === null) {
+    throw new Error(`Cua Driver has no release asset for ${platform}/${arch}.`);
+  }
+  return release;
+}
+
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
   readonly target: Option.Option<string>;
@@ -315,6 +331,19 @@ export class DesktopBuildManifestRestoreError extends Schema.TaggedError<Desktop
 ) {
   override get message(): string {
     return `Failed to restore release manifests: ${this.failures.map((failure) => failure.filePath).join(", ")}`;
+  }
+}
+
+export class CuaDriverChecksumMismatchError extends Schema.TaggedError<CuaDriverChecksumMismatchError>()(
+  "CuaDriverChecksumMismatchError",
+  {
+    archiveName: Schema.String,
+    expected: Schema.String,
+    actual: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cua Driver checksum mismatch for ${this.archiveName}.`;
   }
 }
 
@@ -612,6 +641,42 @@ if (!result.ok) throw new Error(result.error);
 result.value.destroy();
 `;
 
+const WINDOWS_CUA_DRIVER_PROBE_TIMEOUT = Duration.seconds(60);
+const WINDOWS_CUA_DRIVER_NO_SESSION = "requires an interactive Windows user session";
+
+// Checks the bundled driver's version, loads the SDK and its unpacked natives from app.asar,
+// then starts the driver through it as the desktop does and lists its tools.
+const WINDOWS_CUA_DRIVER_PROBE_SOURCE = `
+const { execFileSync } = await import("node:child_process");
+const { pathToFileURL } = await import("node:url");
+const [embeddedPath, clientPath, binaryPath, expectedVersion] = process.argv.slice(1);
+const version = execFileSync(binaryPath, ["--version"], { encoding: "utf8" }).trim();
+if (version !== "cua-driver " + expectedVersion) {
+  throw new Error("The bundled Cua Driver reports " + JSON.stringify(version) + ", not " + expectedVersion + ".");
+}
+const { EmbeddedCuaDriverHost } = await import(pathToFileURL(embeddedPath).href);
+const { CuaDriver } = await import(pathToFileURL(clientPath).href);
+const signal = new AbortController().signal;
+const host = new EmbeddedCuaDriverHost(binaryPath, "com.t3tools.t3code.verify");
+try {
+  const connection = await host.start({ signal });
+  const client = CuaDriver.connect(connection.socketPath);
+  try {
+    const { tools } = JSON.parse(await client.listToolsJson({ signal }));
+    if (!tools.some((tool) => tool.name === "get_window_state")) {
+      throw new Error("The bundled Cua Driver lists no get_window_state tool.");
+    }
+    console.log("Cua Driver " + connection.driverVersion + " started and listed " + tools.length + " tools.");
+  } finally {
+    await client.shutdown().catch(() => undefined);
+    client.uniffiDestroy();
+  }
+} finally {
+  await host.stop({ signal }).catch(() => undefined);
+  host.uniffiDestroy();
+}
+`;
+
 export class ExternalizedBundleError extends Schema.TaggedError<ExternalizedBundleError>()(
   "ExternalizedBundleError",
   { sentinel: Schema.String, inlinedPackageCount: Schema.Number },
@@ -741,6 +806,19 @@ export class WindowsPrimaryNativeProbeError extends Schema.TaggedError<WindowsPr
 ) {
   override get message(): string {
     return `The packaged Windows primary could not load fff from server.asar (exit ${this.exitCode}). Output:\n${this.output}`;
+  }
+}
+
+export class WindowsCuaDriverProbeError extends Schema.TaggedError<WindowsCuaDriverProbeError>()(
+  "WindowsCuaDriverProbeError",
+  {
+    executablePath: Schema.String,
+    exitCode: Schema.Number,
+    output: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `The packaged Windows app could not start its bundled Cua Driver (exit ${this.exitCode}). Output:\n${this.output}`;
   }
 }
 
@@ -991,6 +1069,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // The installed Claude CLI is supplied explicitly; exclude optional bundled executables, retaining SDK JavaScript.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  "!apps/desktop/prod-resources/cua-driver",
+  "!apps/desktop/prod-resources/cua-driver/**/*",
   "!**/*.map",
   "!**/*.d.cts",
   "!apps/desktop/resources/browser-secret",
@@ -1037,6 +1117,12 @@ export const WINDOWS_SERVER_ASAR_UNPACK_GLOBS = [
   "**/*.so.*",
   "**/*.dylib",
 ] as const;
+// The Cua SDK dlopens its native libraries, which cannot load from inside the archive. Our
+// @ubjs/node patch loads them from the .unpacked sibling, so only the platform packages go there.
+export const CUA_SDK_ASAR_UNPACK_GLOBS = [
+  "node_modules/@trycua/cua-driver-*/**/*",
+  "node_modules/@ubjs/node-*/**/*",
+];
 // Keep sidecar exclusions aligned with the app; .bin symlinks are unused and unsupported by ASAR extraction.
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/@cursor/sdk-*",
@@ -1091,7 +1177,13 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
+export const CUA_DRIVER_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/cua-driver",
+  to: "cua-driver",
+} as const;
+
 export const DESKTOP_EXTRA_RESOURCES = [
+  CUA_DRIVER_EXTRA_RESOURCE,
   {
     from: "apps/desktop/prod-resources/cursor-sdk",
     to: "node_modules/@cursor",
@@ -2807,7 +2899,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // Disable smart unpack so native packages' JS/metadata stay archived and avoid slowing NSIS with loose files.
     ...(platform === "win"
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : { asarUnpack: ["**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}"] }),
+      : {
+          asarUnpack: [
+            "**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}",
+            ...CUA_SDK_ASAR_UNPACK_GLOBS,
+          ],
+        }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
@@ -2993,6 +3090,127 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   return buildConfig;
+});
+
+export class CuaDriverBundleMissingFileError extends Schema.TaggedError<CuaDriverBundleMissingFileError>()(
+  "CuaDriverBundleMissingFileError",
+  { filePath: Schema.String },
+) {
+  override get message(): string {
+    return `Cua Driver release bundle is missing required file: ${this.filePath}`;
+  }
+}
+
+export const stageCuaDriverBundle = Effect.fn("stageCuaDriverBundle")(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly extractDir: string;
+  readonly stageResourcesDir: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asset = resolveCuaDriverAsset(input.platform, input.arch);
+  for (const member of asset.requiredFiles) {
+    const filePath = path.join(input.extractDir, member);
+    if (!(yield* fs.exists(filePath)) || (yield* fs.stat(filePath)).type !== "File") {
+      return yield* new CuaDriverBundleMissingFileError({ filePath });
+    }
+  }
+
+  yield* fs.makeDirectory(input.stageResourcesDir, { recursive: true });
+  const destination = path.join(input.stageResourcesDir, "cua-driver");
+  if (input.platform === "mac") {
+    // osx-sign discovers this Mach-O alongside the other external resources.
+    // The SDK's own dylib comes from its npm package, so only the executable ships.
+    yield* fs.copyFile(path.join(input.extractDir, asset.executable), destination);
+    yield* fs.chmod(destination, 0o755);
+  } else {
+    yield* fs.copy(input.extractDir, destination);
+    if (input.platform === "linux") {
+      yield* fs.chmod(path.join(destination, "cua-driver"), 0o755);
+      yield* fs.chmod(path.join(destination, "cua-cursor-theme"), 0o755);
+    }
+  }
+});
+
+export const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly repoRoot: string;
+  readonly stageRoot: string;
+  readonly stageResourcesDir: string;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asset = resolveCuaDriverAsset(input.platform, input.arch);
+  const cacheDir = path.join(input.repoRoot, "node_modules/.cache/t3code/cua-driver");
+  const archivePath = path.join(cacheDir, asset.archiveName);
+  const extractDir = path.join(input.stageRoot, "cua-driver/extract");
+  yield* fs.makeDirectory(cacheDir, { recursive: true });
+  yield* fs.makeDirectory(extractDir, { recursive: true });
+
+  const checksum = (filePath: string) =>
+    fs
+      .readFile(filePath)
+      .pipe(
+        Effect.map((contents) => NodeCrypto.createHash("sha256").update(contents).digest("hex")),
+      );
+  if ((yield* fs.exists(archivePath)) && (yield* checksum(archivePath)) !== asset.sha256) {
+    yield* fs.remove(archivePath, { force: true });
+  }
+
+  if (!(yield* fs.exists(archivePath))) {
+    const temporaryArchivePath = `${archivePath}.${process.pid}.tmp`;
+    yield* Effect.gen(function* () {
+      yield* runCommand(
+        ChildProcess.make("curl", [
+          "--fail",
+          "--location",
+          "--silent",
+          "--show-error",
+          "--output",
+          temporaryArchivePath,
+          asset.url,
+        ]),
+        { label: `download ${asset.archiveName}`, verbose: input.verbose },
+      );
+      const actualChecksum = yield* checksum(temporaryArchivePath);
+      if (actualChecksum !== asset.sha256) {
+        return yield* new CuaDriverChecksumMismatchError({
+          archiveName: asset.archiveName,
+          expected: asset.sha256,
+          actual: actualChecksum,
+        });
+      }
+      yield* fs.rename(temporaryArchivePath, archivePath);
+    }).pipe(Effect.ensuring(fs.remove(temporaryArchivePath, { force: true }).pipe(Effect.ignore)));
+  }
+
+  // Windows archives are zips, and Windows targets also build on Linux runners.
+  const hostPlatform = yield* HostProcess.Platform;
+  const extractCommand = !asset.archiveName.endsWith(".zip")
+    ? ChildProcess.make("tar", ["-xzf", archivePath, "-C", extractDir])
+    : hostPlatform === "win32"
+      ? ChildProcess.make("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${extractDir.replaceAll("'", "''")}' -Force`,
+        ])
+      : ChildProcess.make("unzip", ["-q", "-o", archivePath, "-d", extractDir]);
+  yield* runCommand(extractCommand, {
+    label: `extract ${asset.archiveName}`,
+    verbose: input.verbose,
+  });
+
+  yield* stageCuaDriverBundle({
+    platform: input.platform,
+    arch: input.arch,
+    extractDir,
+    stageResourcesDir: input.stageResourcesDir,
+  });
+  yield* Effect.log(`[desktop-artifact] Staged Cua Driver ${CUA_DRIVER_VERSION}.`);
 });
 
 const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(function* (
@@ -3305,10 +3523,86 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   );
 });
 
+export const verifyWindowsCuaDriverStart = Effect.fn("desktopArtifact.verifyWindowsCuaDriverStart")(
+  function* (input: {
+    readonly packagedAppDir: string;
+    readonly appExecutableName: string;
+    readonly targetArch: typeof BuildArch.Type;
+    readonly verbose: boolean;
+  }) {
+    const hostPlatform = yield* HostProcess.Platform;
+    const hostArchitecture = yield* HostProcess.Architecture;
+    if (hostPlatform !== "win32" || hostArchitecture !== input.targetArch) return;
+    const path = yield* Path.Path;
+    const executablePath = path.join(input.packagedAppDir, input.appExecutableName);
+    const resourcesDir = path.join(input.packagedAppDir, "resources");
+    const sdkDist = path.join(
+      resourcesDir,
+      "app.asar",
+      "node_modules",
+      "@trycua",
+      "cua-driver",
+      "dist",
+    );
+    const probeEnv = { ...process.env };
+    delete probeEnv.ELECTRON_NO_ASAR;
+    delete probeEnv.NODE_OPTIONS;
+
+    yield* runCommand(
+      ChildProcess.make(
+        executablePath,
+        [
+          "--no-global-search-paths",
+          "--input-type=module",
+          "--eval",
+          WINDOWS_CUA_DRIVER_PROBE_SOURCE,
+          path.join(sdkDist, "embedded.js"),
+          path.join(sdkDist, "index.js"),
+          path.join(resourcesDir, "cua-driver", "cua-driver.exe"),
+          CUA_DRIVER_VERSION,
+        ],
+        {
+          cwd: input.packagedAppDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...probeEnv, ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "" },
+        },
+      ),
+      { label: "Windows Cua Driver probe", verbose: input.verbose },
+    ).pipe(
+      Effect.timeout(WINDOWS_CUA_DRIVER_PROBE_TIMEOUT),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(
+            new WindowsCuaDriverProbeError({
+              executablePath,
+              exitCode: -1,
+              output: `The Cua Driver probe did not finish within ${Duration.toSeconds(WINDOWS_CUA_DRIVER_PROBE_TIMEOUT)}s.`,
+            }),
+          ),
+        // The driver refuses to start outside a signed-in desktop session (Windows Session 0).
+        // The version and SDK load checks have passed by then, so such a host only warns.
+        BuildCommandFailedError: (error) =>
+          error.stderrTail?.includes(WINDOWS_CUA_DRIVER_NO_SESSION)
+            ? Effect.logWarning(
+                "[desktop-artifact] Cua Driver loaded but was not started: this host has no interactive Windows session.",
+              )
+            : Effect.fail(
+                new WindowsCuaDriverProbeError({
+                  executablePath,
+                  exitCode: error.exitCode,
+                  output: `${error.stderrTail ?? ""}${error.stdoutTail ?? ""}`.trim(),
+                }),
+              ),
+      }),
+    );
+  },
+);
+
 /**
- * The fff probe needs a host of the target's platform and architecture; the
- * bundle self-check needs a Windows host. A cross build defers both to
- * scripts/verify-windows-desktop-artifact.ts.
+ * The fff and Cua Driver probes need a host of the target's platform and
+ * architecture; the bundle self-check needs a Windows host. A cross build
+ * defers them to scripts/verify-windows-desktop-artifact.ts.
  */
 export const verifyWindowsPackagedRuntime = Effect.fn(
   "desktopArtifact.verifyWindowsPackagedRuntime",
@@ -3321,6 +3615,7 @@ export const verifyWindowsPackagedRuntime = Effect.fn(
   const path = yield* Path.Path;
   const asarPath = path.join(input.packagedAppDir, "resources", WINDOWS_SERVER_ASAR_RESOURCE);
   yield* verifyWindowsPrimaryFffNativeLoad({ ...input, asarPath });
+  yield* verifyWindowsCuaDriverStart(input);
   const hostPlatform = yield* HostProcess.Platform;
   if (hostPlatform !== "win32") {
     yield* Effect.log(
@@ -3838,6 +4133,15 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     stageResourcesDir,
     platform: options.platform,
     arch: options.arch,
+    verbose: options.verbose,
+  });
+
+  yield* stageCuaDriverExecutable({
+    platform: options.platform,
+    arch: options.arch,
+    repoRoot,
+    stageRoot,
+    stageResourcesDir,
     verbose: options.verbose,
   });
 
