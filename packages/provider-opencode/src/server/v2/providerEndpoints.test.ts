@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import type * as OpenCode2Server from "./OpenCode2Server.ts";
 import { readProviderEndpoints } from "./providerEndpoints.ts";
@@ -171,6 +173,17 @@ describe("readProviderEndpoints", () => {
         "/work",
       );
       assert.strictEqual(endpoints.size, 0);
+      const stalled = yield* readProviderEndpoints(
+        {
+          client: {
+            provider: { list: () => Effect.never },
+            model: { list: () => Effect.succeed({ data: [] }) },
+          },
+        } as unknown as OpenCode2Server.OpenCode2Connection,
+        "/work",
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      assert.strictEqual((yield* Fiber.join(stalled)).size, 0);
     }),
   );
 });

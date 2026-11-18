@@ -276,6 +276,15 @@ describe("mergeUsage", () => {
       expect(merged.duplicateSources).toEqual(["new: /home/theo/.claude"]);
     }
 
+    const attributedPartial = environment("attributed", {
+      ...partial.summary,
+      readAt: "2026-08-08T00:30:00.000Z",
+      buckets: partial.summary.buckets.map((entry) => ({ ...entry, upstreamProvider: "upstream" })),
+    });
+    expect(mergeUsage([complete, partial, attributedPartial], USAGE_CONTRACT_VERSION).costUsd).toBe(
+      13,
+    );
+
     const filtered = environment("new", {
       ...partial.summary,
       modelFilter: { exclude: [{ model: "claude-fable-5" }] },

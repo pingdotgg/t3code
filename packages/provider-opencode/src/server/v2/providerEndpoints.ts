@@ -69,6 +69,7 @@ export const readProviderEndpoints = Effect.fn("OpenCode2Client.providerEndpoint
       }
       return endpoints;
     }),
+    Effect.timeout("5 seconds"),
     Effect.catchCause(() => Effect.succeed(new Map<string, string>())),
   );
 });

@@ -103,6 +103,21 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
       assert.strictEqual(weekly?.usedPercent, 9);
       assert.isDefined(interval?.resetsAt);
       assert.isDefined(result.credentialFingerprint);
+      const failed = yield* readLimits(
+        dataHome,
+        dir,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }))),
+        ),
+        MINIMAX_ENDPOINT,
+      );
+      assert.strictEqual(
+        mergeUsageLimits(
+          { checkedAt: result.checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+          failed,
+        ).unavailable?.reason,
+        "probeFailed",
+      );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -159,6 +174,24 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
 
       assert.deepStrictEqual(result.windows, []);
       assert.isUndefined(result.credentialFingerprint);
+      const database = yield* openDatabase(
+        (yield* Path.Path).join(dataHome, "opencode", "opencode.db"),
+      );
+      yield* database.unsafe("UPDATE credential SET active = NULL");
+      yield* database.unsafe(
+        "INSERT INTO credential (id, integration_id, value, active, time_created) VALUES (?, ?, ?, NULL, 1)",
+        [
+          "new-oauth",
+          "minimax-coding-plan",
+          JSON.stringify({ type: "oauth", access: "oauth-token" }),
+        ],
+      );
+      yield* database.unsafe("UPDATE credential SET value = ? WHERE id = 'cred-1'", [
+        JSON.stringify({ type: "key", key: "sk-cp-old-account" }),
+      ]);
+      const selected = yield* readLimits(dataHome, dir, client, MINIMAX_ENDPOINT);
+      assert.deepStrictEqual(selected.windows, []);
+      assert.isUndefined(selected.credentialFingerprint);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

@@ -856,7 +856,7 @@ function ModelsSection(props: {
       <View className="flex-row flex-wrap">
         {ordered.map((model, index) => (
           <View
-            key={`${model.provider}:${model.model}`}
+            key={JSON.stringify([model.provider, model.upstreamProvider, model.model])}
             className={cn(
               "flex-row items-center gap-3 p-4",
               index >= props.columns && "border-t border-border-subtle",
@@ -871,6 +871,7 @@ function ModelsSection(props: {
             <View className="min-w-0 flex-1 gap-0.5">
               <Text className="text-base text-foreground" numberOfLines={1}>
                 {model.model}
+                {model.upstreamProvider ? ` · ${model.upstreamProvider}` : ""}
               </Text>
               <Text className="text-sm text-foreground-muted">
                 {metric === "tokens"

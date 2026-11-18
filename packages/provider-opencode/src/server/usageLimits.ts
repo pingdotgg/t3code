@@ -168,9 +168,11 @@ const readStoredCredentials = (databasePath: string) =>
           )
           .all() as Array<{ readonly integration_id: unknown; readonly value: unknown }>;
         const credentials = new Map<string, StoredCredential>();
+        const selected = new Set<string>();
         for (const row of rows) {
           const integrationId = typeof row.integration_id === "string" ? row.integration_id : "";
-          if (integrationId === "" || credentials.has(integrationId)) continue;
+          if (integrationId === "" || selected.has(integrationId)) continue;
+          selected.add(integrationId);
           const stored =
             typeof row.value === "string"
               ? Option.getOrUndefined(decodeStoredKey(row.value))
@@ -302,6 +304,7 @@ export interface OpenCodeUsageLimitsInput {
 }
 
 export interface OpenCodeIntegrationUsageLimits {
+  readonly unavailable?: ServerProviderUsageLimits["unavailable"];
   readonly checkedAt: string;
   readonly windows: readonly ServerProviderUsageWindow[];
   /** The identity of the credentials that meter the reported windows. */
@@ -316,7 +319,7 @@ export interface OpenCodeIntegrationUsageLimits {
 export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegrationUsageLimits")(
   function* (input: OpenCodeUsageLimitsInput) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const empty = {
+    const empty: OpenCodeIntegrationUsageLimits = {
       checkedAt,
       windows: [] as readonly ServerProviderUsageWindow[],
       credentialFingerprint: undefined as string | undefined,
@@ -374,6 +377,7 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
 
       const client = yield* HttpClient.HttpClient;
       const windows: ServerProviderUsageWindow[] = [];
+      let probeFailed = false;
       for (const [integrationId, credential] of candidates) {
         const quota = INTEGRATION_QUOTA_ENDPOINTS[integrationId];
         if (quota === undefined) continue;
@@ -384,18 +388,30 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
             ),
           )
           .pipe(Effect.timeout("5 seconds"), Effect.option);
-        if (Option.isNone(response)) continue;
+        if (Option.isNone(response)) {
+          probeFailed = true;
+          continue;
+        }
         const result = response.value;
-        if (result.status !== 200) continue;
+        if (result.status !== 200) {
+          probeFailed = true;
+          continue;
+        }
         // The body read needs its own bound: a server that sends headers and
         // then stalls would hold the refresh permit forever.
         const body = yield* HttpClientResponse.schemaBodyJson(MiniMaxQuotaResponse)(result).pipe(
           Effect.timeout("5 seconds"),
           Effect.option,
         );
-        if (Option.isNone(body)) continue;
+        if (Option.isNone(body)) {
+          probeFailed = true;
+          continue;
+        }
         const payload = body.value;
-        if ((payload.base_resp?.status_code ?? 0) !== 0) continue;
+        if ((payload.base_resp?.status_code ?? 0) !== 0) {
+          probeFailed = true;
+          continue;
+        }
         const entries = (payload.model_remains ?? []).flatMap((raw) => {
           const entry = Option.getOrUndefined(miniMaxQuotaEntry(raw));
           return entry ? [entry] : [];
@@ -432,7 +448,19 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
             credentialFingerprint === undefined ? weekly : { ...weekly, credentialFingerprint },
           );
       }
-      return { checkedAt, windows, credentialFingerprint };
+      return {
+        checkedAt,
+        windows,
+        credentialFingerprint,
+        ...(probeFailed
+          ? {
+              unavailable: {
+                reason: "probeFailed" as const,
+                message: "OpenCode could not read integration usage.",
+              },
+            }
+          : {}),
+      };
     }).pipe(
       Effect.orElseSucceed(() => ({
         checkedAt,
@@ -469,7 +497,10 @@ export function mergeUsageLimits(
   integration: OpenCodeIntegrationUsageLimits,
 ): ServerProviderUsageLimits {
   // Without a quota of its own the account is what the Console says it is.
-  if (integration.windows.length === 0) return console;
+  if (integration.windows.length === 0)
+    return integration.unavailable === undefined
+      ? console
+      : { ...console, unavailable: integration.unavailable };
   // The integration's quota replaces the unavailable marker, but the Console
   // metadata stays: its fingerprint is what tells one account apart from
   // another when several environments report the same one.
@@ -492,6 +523,7 @@ export function mergeUsageLimits(
     ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
     checkedAt: console.checkedAt,
     windows: [...consoleWindows, ...integration.windows],
+    ...(integration.unavailable === undefined ? {} : { unavailable: integration.unavailable }),
   };
 }
 

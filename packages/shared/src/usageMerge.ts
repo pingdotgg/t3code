@@ -263,6 +263,7 @@ function claimSources(
           (bucket.upstreamProvider === undefined && seen.any.has(unattributedCell))
         )
           continue;
+        if (bucket.upstreamProvider === undefined) seen.unattributed.add(unattributedCell);
         seen.attributed.add(cell);
         seen.any.add(unattributedCell);
         supplemental.add(bucket);
