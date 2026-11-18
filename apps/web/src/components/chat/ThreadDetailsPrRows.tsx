@@ -13,6 +13,7 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { T, useMessages, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
@@ -51,6 +52,7 @@ function ThreadDetailsPrLinkRow({
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
 }) {
+  const m = useMessages();
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
@@ -69,10 +71,9 @@ function ThreadDetailsPrLinkRow({
       number={link.number}
       url={link.url}
       reference={link}
-      status={prStatusIndicator(pr, linked?.sourceControlProvider)}
+      status={prStatusIndicator(pr, linked?.sourceControlProvider, m)}
       project={project}
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
-      openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
@@ -150,7 +151,13 @@ function ThreadDetailsPrRows({
         ) : (
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         )}
-        {expanded ? "Show less" : `Show ${rest.length} more`}
+        {expanded ? (
+          <T>Show less</T>
+        ) : (
+          <T>
+            Show <Var>{rest.length}</Var> more
+          </T>
+        )}
       </ThreadDetailsControl>
     </>
   );
@@ -209,7 +216,6 @@ export function ThreadDetailsThreadPrRows({
       status={displayed.status}
       project={rowProject}
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
-      openAriaLabel={url}
       onOpen={(event) => openPrLink(event, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
