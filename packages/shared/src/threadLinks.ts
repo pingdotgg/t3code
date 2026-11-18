@@ -1,11 +1,8 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { mFallback } from "gt-i18n";
-import type { MFunctionType } from "gt-i18n/types";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
-import { unknownThreadLinkLabel } from "./threadLinksCopy.ts";
 
 export const THREAD_LINK_PROTOCOL = "t3-thread";
 const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
@@ -195,37 +192,5 @@ export function replaceThreadLinks(
     const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     return (link && replace(link, groups.label)) ?? source;
-  });
-}
-
-/**
- * Writes each link with its thread's current title, a hosted link as a v2 link. A link `title`
- * cannot resolve becomes plain text, its written label or a neutral one, except a labeled v1
- * link, which may open elsewhere.
- */
-export function relabelThreadLinks(
-  markdown: string,
-  messageEnvironmentId: EnvironmentId,
-  title: (ref: ScopedThreadRef) => string | undefined,
-  resolve: MFunctionType = mFallback,
-): string {
-  return replaceThreadLinks(markdown, (written, label) => {
-    const environmentId = written.environmentId ?? messageEnvironmentId;
-    const decoded = percentDecodedThreadLinkId(written.threadId);
-    const threadId =
-      title({ environmentId, threadId: written.threadId }) === undefined &&
-      decoded !== null &&
-      title({ environmentId, threadId: decoded }) !== undefined
-        ? decoded
-        : written.threadId;
-    const current = title({ environmentId, threadId });
-    if (current === undefined) {
-      if (label !== undefined && written.environmentId === null) return undefined;
-      return label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId, resolve);
-    }
-    return formatThreadLink(
-      { environmentId: written.environmentId, threadId },
-      current.trim() || label || threadId,
-    );
   });
 }

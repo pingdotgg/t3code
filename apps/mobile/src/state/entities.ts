@@ -20,11 +20,11 @@ import {
   guessThreadLinkRef,
   hasThreadLinks,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
+import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, useMessages } from "gt-react-native";

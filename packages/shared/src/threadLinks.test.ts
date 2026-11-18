@@ -9,10 +9,10 @@ import {
   guessThreadLinkRef,
   hostedThreadLink,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
 } from "./threadLinks.ts";
+import { relabelThreadLinks } from "./threadLinksCopy.ts";
 
 const ref = (environmentId: string, threadId = "chat-1") => ({
   environmentId: EnvironmentId.make(environmentId),
