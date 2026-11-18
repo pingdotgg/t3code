@@ -283,7 +283,11 @@ const make = Effect.fn("makeHostStorage")(function* () {
                   platform,
                 ),
                 ...fallback,
-              ],
+              ].toSorted(
+                (left, right) =>
+                  right.roles.length - left.roles.length ||
+                  left.mountPoint.localeCompare(right.mountPoint),
+              ),
             },
             swap: { totalBytes: system.swapTotalBytes, usedBytes: system.swapUsedBytes },
             gpu: hostGpus(system),

@@ -184,7 +184,7 @@ const storageLayer = (
   );
 
 describe("HostStorage.layer", () => {
-  it.effect("reports native volumes with T3 roles and swap", () =>
+  it.effect("reports fallback T3 volumes before native volumes and preserves swap", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.realPath(
@@ -196,12 +196,7 @@ describe("HostStorage.layer", () => {
         Effect.provide(
           storageLayer(
             {
-              hostSystem: Effect.succeed(
-                hostSystem([
-                  disk({ mountPoint: "/" }),
-                  disk({ mountPoint: baseDir, name: "t3", totalBytes: 10 * GiB }),
-                ]),
-              ),
+              hostSystem: Effect.succeed(hostSystem([disk({ mountPoint: "/unrelated" })])),
             },
             baseDir,
           ),
@@ -211,7 +206,7 @@ describe("HostStorage.layer", () => {
       assert.deepStrictEqual(
         reading.storage.volumes.map((volume) => [volume.name, volume.roles]),
         [
-          ["t3", ["t3Home", "worktrees"]],
+          ["", ["t3Home", "worktrees"]],
           ["disk", []],
         ],
       );
