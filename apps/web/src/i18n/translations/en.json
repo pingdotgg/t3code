@@ -2881,7 +2881,7 @@
   "4c07514abfbe5b5e": "Drag a tab to the right edge",
   "711105bd629ed52a": "Hold {keys} to see the layout keys",
   "4119c9c5f3b5eb59": "Try the layout",
-  "18af54b991d7dcfc": "Opens a new chat, terminal, browser or files in this pane.",
+  "9d009964468660b8": "Opens a new chat in this pane.",
   "5a03a64f260239be": "Drag a tab to make a pane",
   "a0583ed4094c7451": "Drop a tab at an edge to put it beside another pane. Drop it on a tab bar to group them again.",
   "b673da5254833b5c": "More panes live off to the side",
@@ -3027,16 +3027,35 @@
   "d5f81464ea3649d3": "hjkl or arrows to move, Enter to open, Esc to close",
   "474e45c392b42db1": "Workspaces overview",
   "1d6db8abc0d689cc": "New workspace",
+  "bb9ff18547893ecd": "Turn off the Working group",
+  "1d8162d124b6d24e": "Rename",
+  "53136665ec1007e8": "Color",
+  "355bc0caea81f41f": "Ungroup",
+  "0831d58c2add41cb": "Close group",
+  "7d294de5bdaf5987": "Edit group",
+  "d973a42956bb435b": "Save",
   "d49726c0ebc32dae": "Keep open",
   "80436754eec0a2fe": "Split right",
   "6b01172e66fa93f4": "Split down",
   "cd0bb71ffac58563": "Move to a new column",
   "2a857618a12bdade": "Move to a new workspace",
   "83e4dacc7e0bccb4": "Show every pane",
+  "0d229cb2d24a2233": "Add tab to new group",
+  "8fa3b8a817e8b299": "Add tab to group",
+  "acfb1e598344405b": "Unnamed group",
+  "efb0ce9e17a40413": "Remove from group",
   "258d16c1554b734c": "Copy link",
+  "06813a47d10ff6cd": "New tab group",
+  "c10fd08d85f258fc": "Create",
   "c3d96c942dc3125d": "Could not copy the link",
+  "c2db1203be9ee89a": "Needs you",
+  "37ffec8201f153c1": "Failed",
+  "c6e8abc00ae470d2": "Done",
   "47d87441da5c12fb": "Opened from {title}",
   "fffb3e5ea979744a": "Double-click to keep open",
+  "25ec2d301626422a": "{count, plural, one {{name}, {count} tab} other {{name}, {count} tabs}}",
+  "aecba76fd1f9fc10": "Show {name}",
+  "58d875127cb2c27a": "Collapse {name}",
   "8c311e84f7bdf4e0": "Close tab ({shortcut})",
   "e1c99915f0166c75": "New tab ({shortcut})",
   "9d2fc1003e82feb1": "Usage",
@@ -3047,6 +3066,12 @@
   "0eefa479c16af535": "All projects…",
   "5cd544cdc9cb0f79": "New pane to the left",
   "8934d3f5a77d4898": "New pane to the right",
+  "be6407686b3f1e6a": "Grey",
+  "9affd8aa9764c9b0": "Blue",
+  "b70cf07d443d3c7c": "Red",
+  "ff3ad6b250d62b09": "Yellow",
+  "508c6cd498aa457a": "Green",
+  "a693ae7bd8f44ff7": "Purple",
   "90717abab40dffed": "Move here",
   "2eb649f96f4c2460": "Add as tab",
   "9ddfce5a9fcc9bea": "New workspace",
@@ -3081,6 +3106,13 @@
   "633b3dcbe38a3192": "Layout…",
   "0bc3743f8cdfd645": "Layout",
   "d9a519f0b0a3451a": "Show every shortcut",
+  "149e37e42f10faaf": "Add tab to group…",
+  "4d0c3ffeb695f2e7": "Remove tab from group",
+  "c99bab888009a8ea": "Expand tab group",
+  "6f8483a8e023ab64": "Collapse tab group",
+  "1d10811789f703ee": "Ungroup tabs",
+  "4761bf4cdc04abce": "Close tab group",
+  "76c581746c7d8ee1": "Working",
   "4fa610c76542a4c0": "Sidebar shown",
   "9dddd0641bbf697d": "Sidebar hidden",
   "5ff49c8addea4bf3": "Too large to copy.",
@@ -8820,7 +8852,6 @@
   "cfa123e9391c196d": "Process",
   "9f518d021839dbad": "Copied trace ID",
   "6eec6880354153e1": "Copy full trace ID",
-  "58d875127cb2c27a": "Collapse {name}",
   "ce473b11551ea116": "Expand {name}",
   "d88f0e58022cef77": "PID {pid}",
   "cb2ccc35b14a076e": "No live descendant processes found.",
@@ -10548,6 +10579,10 @@
   "cd5452cc9e13c818": "Project grouping",
   "cfb01b8a2a3361fb": "Reset project order to default",
   "26abcbe322049a8a": "Reset working section to default",
+  "883f1f8136bfa7d3": "Reset working tab group to default",
+  "9fd5ceeb65d0a02f": "Working tab group",
+  "0c6e798f9637f0c7": "Reset tabs follow the inbox to default",
+  "f84f6bf9ffebd618": "Tabs follow the inbox",
   "76f3c3e2f8dd0120": "Confirmations",
   "caed837d6dc42548": "Reset unpin confirmation to default",
   "859e386f8af841f0": "Confirm thread unpinning",
@@ -10653,6 +10688,8 @@
   "83ca942c7163904f": "Combine matching repositories across environments.",
   "609da998ca13521e": "Order of projects in the sidebar project picker and command palette.",
   "b4c541137a76b351": "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section.",
+  "e4dc7c7e43190c56": "Gather the chats of working threads into a Working group at the start of each pane's tabs. Click the group to open or collapse it.",
+  "a8360f18fdc2ac95": "Settled and snoozed threads leave the tabs once you switch away, and a dot marks tabs that need you. Turning this off brings every tab back.",
   "e815f49e5abedcfd": "Ask before unpinning a thread from the pinned section.",
   "886ef5401b826682": "Click archive twice before a thread is archived.",
   "84f3d2cefc8d2a74": "Ask before deleting a thread and its chat history.",
@@ -12364,9 +12401,7 @@
   "a484e4248b460c95": "Input",
   "0ab9086d50e83ca7": "Request",
   "4ad56740ee2f814b": "Limited",
-  "37ffec8201f153c1": "Failed",
   "984b361806ce8d25": "Woke",
-  "c6e8abc00ae470d2": "Done",
   "be451f475c514b37": "Dismiss Woke notification",
   "ade06f6723949b39": "Error occurred",
   "021fe65858278fe9": "Snooze thread",
@@ -12746,6 +12781,187 @@
   "5d18537f82794deb": "The local environment is disabled.",
   "d5ef094f40aedece": "Terminal input",
   "f7046b10d49caab6": "Terminal scrollback",
+  "833cb9d335e99d51": "{online} of {total} online",
+  "9918306a65b29adf": "{count} cores",
+  "aa178bd3094f0e60": "{free} free",
+  "e197c4963bacc746": "{count} running",
+  "1dc5027f9ca46697": "{free} free of {total}",
+  "6b2c1ffa65525987": "{count, plural, one {{count} agent running} other {{count} agents running}}",
+  "ffa28519f1c10bd9": "Load unavailable",
+  "f726ed805cd588c0": "Reading load…",
+  "b4ca4afee3147ff0": "CPU over the last {minutes} minutes",
+  "fcbf65f86543c6dc": "Memory in use",
+  "106a5ca1552a15e2": "next chat",
+  "67ca3a5d1b8b0128": "Default",
+  "05f669ba6fe54a17": "Pool empty now",
+  "f238315d5cc144a6": "Pool empty until next week",
+  "103ccc0a63c0d13f": "Pool empty until {time}",
+  "226f4dd3fd269c37": "{provider} empty now",
+  "e3eeda50160d4252": "{provider} empty until next week",
+  "e01bc577e70ef832": "{provider} empty until {time}",
+  "5574969fbfc14a57": "Pool runs out {time}",
+  "7f76ba1932a6d353": "{provider} runs out {time}",
+  "470bd1672234e4f0": "Lasts the week",
+  "465f9faf8c74957e": "Pool",
+  "b7bfc73cb69dd3cb": "{count, plural, one {left of {capacity} across {count} account} other {left of {capacity} across {count} accounts}}",
+  "a3459469683ff934": "Burning about {rate} a day, from the last 3 days of tokens",
+  "511c7d5ab6af2613": "Burning about {rate} a day, from the average since the window opened",
+  "e062c15ce0a4f133": "No burn measured",
+  "836dc6256913a296": "Pool dry for {length}",
+  "7a2c7277af7f029e": "Pool: {left} left of {capacity}",
+  "ebbc38c8dbdc0fd9": "Recorded",
+  "10616de9f960b94f": "Forecast",
+  "de0648ac0096c1b4": "No provider reports subscription limits yet.",
+  "1897a6a2764c8cda": "Next refill",
+  "01f3aee5c67a225e": [
+    "No limits: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "9cc2198189afb7c6": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ":",
+    " ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " left of",
+    " ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "d19e0dda0828003c": "Now",
+  "b6a766698d747361": "Before usage tracking",
+  "161d8a7300d61b8d": "{tokens} tokens, goal missed",
+  "f4fd40a9e91b0e4b": "{tokens} tokens, goal hit",
+  "f4497ca3621adfae": "{tokens} tokens so far, goal hit",
+  "d370c2ede82c5c69": "{tokens} tokens so far, {remaining} to go",
+  "75816fa294e341d7": "Streak",
+  "a2965402151e120d": "goal {goal} tokens a day",
+  "c2a94e5afc24590e": "Reading usage history…",
+  "5f9cc23a97719d5e": "No usage recorded yet.",
+  "c5f49f0c4d1ce60f": "{count, plural, =1 {day streak} other {days streak}}",
+  "7204e0bfdf3005be": "{today} of {goal} tokens today",
+  "e4176d8e438e68b9": "Best day",
+  "4c3fda8f9d061c5e": "Best run",
+  "27a20e7a42fdc77e": "Median day",
+  "fd95307e64bf327f": "Goal hit",
+  "b4294bf044fdfd66": "hit",
+  "f36db22609ea3ad1": "missed",
+  "862cddc4a278601d": "no data",
+  "e9f09b41a13dea63": "Daily tokens over the last {weeks} weeks",
+  "475c40b22a7b441f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "best "
+    },
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    {
+      "t": "span",
+      "i": 4,
+      "c": " days"
+    }
+  ],
+  "a09f613920827d4a": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    {
+      "t": "span",
+      "i": 3,
+      "c": [
+        "of ",
+        {
+          "i": 4,
+          "k": "_gt_value_4",
+          "v": "v"
+        },
+        " today"
+      ]
+    }
+  ],
+  "0208608b4464e7af": "goal hit, streak extended",
+  "1e692f82dba0085f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "to keep the streak"
+  ],
+  "a043bbd43993eb8f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "to start a streak"
+  ],
+  "7f55e5fb07a43f5e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    {
+      "t": "span",
+      "i": 2,
+      "c": [
+        " ",
+        "of ",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        },
+        " days"
+      ]
+    }
+  ],
+  "db046871e24073f1": "Today",
   "24de858bbcf05f40": "Slide {number}",
   "368d650afefe9f19": "This browser cannot draw slides.",
   "0a6565f87240008e": "Preview limited to presentations with 1 to 500 slides.",

@@ -279,9 +279,9 @@ export function buildLayoutPaletteItems(
 }
 
 /** The focused tab's group actions, as its tab menu and group chip offer them. */
-export function buildTabGroupPaletteItems(): Array<
-  CommandPaletteSubmenuItem | CommandPaletteActionItem
-> {
+export function buildTabGroupPaletteItems(
+  resolve: MessageResolver = m,
+): Array<CommandPaletteSubmenuItem | CommandPaletteActionItem> {
   const layout = useLayoutStore.getState().layout;
   const focusedId = selectFocusedTab(layout)?.id;
   const location = findLayoutTab(layout, (tab) => tab.id === focusedId);
@@ -302,7 +302,7 @@ export function buildTabGroupPaletteItems(): Array<
   });
   const store = useLayoutStore.getState();
   const items: Array<CommandPaletteSubmenuItem | CommandPaletteActionItem> = [
-    item("new", "Add tab to new group", FolderPlusIcon, () =>
+    item("new", resolve(msg("Add tab to new group")), FolderPlusIcon, () =>
       runLayoutTabMenuAction("layout:group-new", tab.id),
     ),
   ];
@@ -312,15 +312,15 @@ export function buildTabGroupPaletteItems(): Array<
       kind: "submenu",
       value: "action:tab-group:add",
       searchTerms: ["add tab to group", "tab group", "group"],
-      title: "Add tab to group…",
+      title: resolve(msg("Add tab to group…")),
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
       groups: [
         {
           value: "tab-group-add",
-          label: "Add tab to group",
+          label: resolve(msg("Add tab to group")),
           items: others.map((other) =>
-            item(`add:${other.id}`, other.title || "Unnamed group", FolderIcon, () =>
+            item(`add:${other.id}`, other.title || resolve(msg("Unnamed group")), FolderIcon, () =>
               store.addTabToGroup(tab.id, other.id),
             ),
           ),
@@ -331,18 +331,22 @@ export function buildTabGroupPaletteItems(): Array<
   const group = pane.groups.find((candidate) => candidate.id === tab.groupId);
   if (!group) return items;
   items.push(
-    item("remove", "Remove tab from group", FolderMinusIcon, () =>
+    item("remove", resolve(msg("Remove tab from group")), FolderMinusIcon, () =>
       runLayoutTabMenuAction("layout:group-remove", tab.id),
     ),
     group.collapsed
-      ? item("expand", "Expand tab group", ChevronsUpDownIcon, () =>
+      ? item("expand", resolve(msg("Expand tab group")), ChevronsUpDownIcon, () =>
           store.updateTabGroup(group.id, { collapsed: false }),
         )
-      : item("collapse", "Collapse tab group", ChevronsDownUpIcon, () =>
+      : item("collapse", resolve(msg("Collapse tab group")), ChevronsDownUpIcon, () =>
           store.updateTabGroup(group.id, { collapsed: true }),
         ),
-    item("ungroup", "Ungroup tabs", UngroupIcon, () => store.ungroupTabGroup(group.id)),
-    item("close", "Close tab group", FolderXIcon, () => closeLayoutTabGroupByUser(group.id)),
+    item("ungroup", resolve(msg("Ungroup tabs")), UngroupIcon, () =>
+      store.ungroupTabGroup(group.id),
+    ),
+    item("close", resolve(msg("Close tab group")), FolderXIcon, () =>
+      closeLayoutTabGroupByUser(group.id),
+    ),
   );
   return items;
 }

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useId, useState } from "react";
 import { create } from "zustand";
 
@@ -28,12 +29,12 @@ export const TAB_GROUP_TONE = {
 } as const satisfies Record<LayoutTabGroupColor, StatusDotTone>;
 
 export const TAB_GROUP_COLOR_LABEL = {
-  grey: "Grey",
-  blue: "Blue",
-  red: "Red",
-  yellow: "Yellow",
-  green: "Green",
-  purple: "Purple",
+  grey: msg("Grey", { $context: "tab group color" }),
+  blue: msg("Blue", { $context: "tab group color" }),
+  red: msg("Red", { $context: "tab group color" }),
+  yellow: msg("Yellow", { $context: "tab group color" }),
+  green: msg("Green", { $context: "tab group color" }),
+  purple: msg("Purple", { $context: "tab group color" }),
 } as const satisfies Record<LayoutTabGroupColor, string>;
 
 export interface TabGroupDraft {
@@ -43,7 +44,9 @@ export interface TabGroupDraft {
 
 interface Request {
   readonly id: number;
+  /** A `msg()` string, resolved as the dialog renders. */
   readonly heading: string;
+  /** A `msg()` string, resolved as the dialog renders. */
   readonly action: string;
   readonly initial: TabGroupDraft;
   readonly resolve: (draft: TabGroupDraft | null) => void;
@@ -74,6 +77,8 @@ export function TabGroupEditorHost() {
 }
 
 function TabGroupEditor({ request }: { request: Request }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const id = useId();
   const [title, setTitle] = useState(request.initial.title);
   const [color, setColor] = useState(request.initial.color);
@@ -93,22 +98,24 @@ function TabGroupEditor({ request }: { request: Request }) {
           }}
         >
           <DialogHeader>
-            <DialogTitle>{request.heading}</DialogTitle>
+            <DialogTitle>{resolve(request.heading)}</DialogTitle>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
-                <Label htmlFor={`${id}-title`}>Name</Label>
+                <Label htmlFor={`${id}-title`}>
+                  <T>Name</T>
+                </Label>
                 <Input
                   id={`${id}-title`}
                   autoFocus
-                  placeholder="Unnamed group"
+                  placeholder={gt("Unnamed group")}
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                 />
               </div>
               <ToggleGroup
-                aria-label="Color"
+                aria-label={gt("Color", { $context: "noun, a tab group color" })}
                 value={[color]}
                 onValueChange={(next) => {
                   const picked = LAYOUT_TAB_GROUP_COLORS.find((candidate) => candidate === next[0]);
@@ -119,7 +126,7 @@ function TabGroupEditor({ request }: { request: Request }) {
                   <Toggle
                     key={candidate}
                     value={candidate}
-                    aria-label={TAB_GROUP_COLOR_LABEL[candidate]}
+                    aria-label={resolve(TAB_GROUP_COLOR_LABEL[candidate])}
                   >
                     <StatusDot tone={TAB_GROUP_TONE[candidate]} size="md" />
                   </Toggle>
@@ -129,10 +136,10 @@ function TabGroupEditor({ request }: { request: Request }) {
           </DialogPanel>
           <DialogFooter>
             <Button size="standard" type="button" variant="secondary" onClick={() => finish(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button size="standard" type="submit">
-              {request.action}
+              {resolve(request.action)}
               <SubmitKbd />
             </Button>
           </DialogFooter>

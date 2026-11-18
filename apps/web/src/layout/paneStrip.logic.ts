@@ -5,6 +5,9 @@ import {
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 import type { LayoutPane, LayoutTab, LayoutTabGroup, LayoutTabGroupColor } from "./layoutModel";
 
@@ -58,14 +61,27 @@ export interface PaneTabGroupDefinition extends LayoutTabGroup {
 const WORKING_TAB_GROUP_ID = "working";
 
 /** The built-in rule group, on unless Settings turns it off. */
-export function workingTabGroup(collapsed: boolean): PaneTabGroupDefinition {
-  return { id: WORKING_TAB_GROUP_ID, title: "Working", color: "blue", collapsed, rule: "working" };
+export function workingTabGroup(
+  collapsed: boolean,
+  resolve: MessageResolver = m,
+): PaneTabGroupDefinition {
+  return {
+    id: WORKING_TAB_GROUP_ID,
+    title: resolve(msg("Working", { $context: "tab group of chats whose agent is working" })),
+    color: "blue",
+    collapsed,
+    rule: "working",
+  };
 }
 
 /** A pane's stored groups, then the Working group when Settings has it on. */
-export function paneStripGroups(pane: LayoutPane, workingGroup: boolean): PaneTabGroupDefinition[] {
+export function paneStripGroups(
+  pane: LayoutPane,
+  workingGroup: boolean,
+  resolve: MessageResolver = m,
+): PaneTabGroupDefinition[] {
   const groups: PaneTabGroupDefinition[] = pane.groups.map((group) => ({ ...group, rule: null }));
-  if (workingGroup) groups.push(workingTabGroup(pane.workingGroupExpanded !== true));
+  if (workingGroup) groups.push(workingTabGroup(pane.workingGroupExpanded !== true, resolve));
   return groups;
 }
 

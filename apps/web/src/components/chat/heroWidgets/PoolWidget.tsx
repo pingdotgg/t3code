@@ -11,9 +11,11 @@ import {
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { GaugeIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { Text } from "../../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -150,7 +152,7 @@ const WEEKDAY_HOUR = new Intl.DateTimeFormat("en-US", { weekday: "short", hour: 
  * An account named only after its provider (the driver's default instance) is the provider's
  * default sign-in, so it never repeats the provider's label under it.
  */
-function accountName(account: LimitAccount): string {
+function accountName(account: LimitAccount, resolve: MessageResolver = m): string {
   const providerNames = [PROVIDER_DISPLAY_NAMES[account.driver], poolLabel(String(account.driver))];
   const name = account.displayName;
   if (name && !providerNames.some((other) => other?.toLowerCase() === name.toLowerCase())) {
@@ -160,7 +162,7 @@ function accountName(account: LimitAccount): string {
     const [local = "", domain = ""] = account.email.split("@");
     return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase();
   }
-  return "Default";
+  return resolve(msg("Default", { $context: "name of a provider's default account" }));
 }
 
 function formatPercent(value: number): string {
@@ -274,9 +276,11 @@ export function PoolWidget({
   readonly now: number;
   readonly daily: ReadonlyArray<DailyTotals>;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
-  const unsorted = poolProviders(pools, accountName);
+  const unsorted = poolProviders(pools, (account) => accountName(account, resolve));
   const samples = recordPoolSample(unsorted, now);
 
   const tokensByDriver = new Map<string, Map<string, number>>();
@@ -326,7 +330,7 @@ export function PoolWidget({
   const nextRefill = projection.refills.find(
     (refill) => refill.at > now && refill.amount >= MIN_REFILL,
   );
-  const status = headerStatus(model, nextRefill);
+  const status = headerStatus(model, nextRefill, resolve);
   useDebugValue("pool", {
     providers,
     burns: Object.fromEntries(burns),
@@ -343,14 +347,14 @@ export function PoolWidget({
     <WidgetCard
       id="pool"
       icon={GaugeIcon}
-      title="Pool"
+      title={gt("Pool", { $context: "noun, the usage limits of every provider combined" })}
       meta={
         status?.dry ? <span style={{ color: ROSE }}>{status.text}</span> : (status?.text ?? null)
       }
     >
       {providers.length === 0 ? (
         <p className="mt-3 text-meta text-muted-foreground">
-          No provider reports subscription limits yet.
+          <T>No provider reports subscription limits yet.</T>
         </p>
       ) : (
         <PoolBody model={model} noLimits={noLimits} nextRefill={nextRefill} />
@@ -366,12 +370,23 @@ export function PoolWidget({
 function headerStatus(
   model: PoolModel,
   nextRefill: RefillEvent | undefined,
+  resolve: MessageResolver = m,
 ): { readonly text: string; readonly dry: boolean } | null {
   if (model.providers.length === 0) return null;
-  const emptyText = (label: string, until: number | null, refillsThen: boolean) =>
-    until !== null && refillsThen
-      ? `${label} empty now`
-      : `${label} empty until ${until === null ? "next week" : formatReset(until)}`;
+  // A null driver is the whole pool.
+  const emptyText = (driver: string | null, until: number | null, refillsThen: boolean) => {
+    if (driver === null) {
+      if (until !== null && refillsThen) return resolve(msg("Pool empty now"));
+      return until === null
+        ? resolve(msg("Pool empty until next week"))
+        : resolve(msg("Pool empty until {time}", { time: formatReset(until) }));
+    }
+    const provider = poolLabel(driver);
+    if (until !== null && refillsThen) return resolve(msg("{provider} empty now", { provider }));
+    return until === null
+      ? resolve(msg("{provider} empty until next week", { provider }))
+      : resolve(msg("{provider} empty until {time}", { provider, time: formatReset(until) }));
+  };
   const poolDry = model.projection.poolDry.find(
     (span) => span.from < model.end && (span.to === null || span.to > model.now),
   );
@@ -380,8 +395,8 @@ function headerStatus(
       dry: true,
       text:
         poolDry.from <= model.now
-          ? emptyText("Pool", poolDry.to, nextRefill?.at === poolDry.to)
-          : `Pool runs out ${formatForecast(poolDry.from)}`,
+          ? emptyText(null, poolDry.to, nextRefill?.at === poolDry.to)
+          : resolve(msg("Pool runs out {time}", { time: formatForecast(poolDry.from) })),
     };
   }
   const emptyNow = model.projection.dry.find((span) => span.from <= model.now);
@@ -389,7 +404,7 @@ function headerStatus(
     return {
       dry: true,
       text: emptyText(
-        poolLabel(emptyNow.driver),
+        emptyNow.driver,
         emptyNow.to,
         nextRefill?.driver === emptyNow.driver && nextRefill.at === emptyNow.to,
       ),
@@ -399,8 +414,16 @@ function headerStatus(
     (span) => span.from > model.now && span.from < model.end,
   );
   return runsOut
-    ? { dry: true, text: `${poolLabel(runsOut.driver)} runs out ${formatForecast(runsOut.from)}` }
-    : { dry: false, text: "Lasts the week" };
+    ? {
+        dry: true,
+        text: resolve(
+          msg("{provider} runs out {time}", {
+            provider: poolLabel(runsOut.driver),
+            time: formatForecast(runsOut.from),
+          }),
+        ),
+      }
+    : { dry: false, text: resolve(msg("Lasts the week")) };
 }
 
 function PoolBody({
@@ -412,6 +435,7 @@ function PoolBody({
   readonly noLimits: ReadonlyArray<string>;
   readonly nextRefill: RefillEvent | undefined;
 }) {
+  const gt = useGT();
   const ref = useRef<HTMLDivElement | null>(null);
   const { width } = useElementSize(ref);
   const narrow = width > 0 && width + CARD_PADDING < NARROW_CARD;
@@ -424,13 +448,17 @@ function PoolBody({
       <div className="flex items-baseline gap-2 leading-none whitespace-nowrap">
         <HeadlineFigure>{formatPercent(model.left)}</HeadlineFigure>
         <span className="truncate text-body text-muted-foreground">
-          left of {formatPercent(model.capacity)} across {accounts} account
-          {accounts === 1 ? "" : "s"}
+          {gt(
+            "{count, plural, one {left of {capacity} across {count} account} other {left of {capacity} across {count} accounts}}",
+            { count: accounts, capacity: formatPercent(model.capacity) },
+          )}
         </span>
         {nextRefill ? (
           <span className="ms-auto inline-flex min-w-0 items-baseline gap-1.5 ps-4 text-body tabular-nums">
             {narrow ? null : (
-              <span className="shrink-0 text-micro text-muted-foreground">Next refill</span>
+              <span className="shrink-0 text-micro text-muted-foreground">
+                <T>Next refill</T>
+              </span>
             )}
             <Chip driver={nextRefill.driver} className="ms-1" />
             <span className="shrink-0 text-label">+{formatPercent(nextRefill.amount)}</span>
@@ -514,7 +542,9 @@ function Rail({
       </div>
       {showNoLimits ? (
         <div className="truncate text-muted-foreground">
-          No limits: {noLimits.map(poolLabel).join(", ")}
+          <T>
+            No limits: <Var>{noLimits.map(poolLabel).join(", ")}</Var>
+          </T>
         </div>
       ) : null}
     </div>
@@ -563,21 +593,27 @@ function ProviderHint({
   readonly model: PoolModel;
   readonly provider: PoolProvider;
 }) {
+  const gt = useGT();
   const burn = model.burns.get(provider.driver);
   return (
     <div className="tabular-nums">
       <div>
-        {poolLabel(provider.driver)} {provider.windowLabel.toLowerCase()}:{" "}
-        {formatPercent(provider.left)} left of {formatPercent(provider.capacity)}
+        <T>
+          <Var>{poolLabel(provider.driver)}</Var> <Var>{provider.windowLabel.toLowerCase()}</Var>:{" "}
+          <Var>{formatPercent(provider.left)}</Var> left of{" "}
+          <Var>{formatPercent(provider.capacity)}</Var>
+        </T>
       </div>
       <div className="text-muted-foreground">
         {burn && burn.perHour > 0
-          ? `Burning about ${formatRate(burn.perHour * 24)} a day, ${
-              burn.source === "tokens"
-                ? "from the last 3 days of tokens"
-                : "from the average since the window opened"
-            }`
-          : "No burn measured"}
+          ? burn.source === "tokens"
+            ? gt("Burning about {rate} a day, from the last 3 days of tokens", {
+                rate: formatRate(burn.perHour * 24),
+              })
+            : gt("Burning about {rate} a day, from the average since the window opened", {
+                rate: formatRate(burn.perHour * 24),
+              })
+          : gt("No burn measured")}
       </div>
     </div>
   );
@@ -1037,6 +1073,7 @@ function laneTags(
 }
 
 function PoolChart({ model }: { readonly model: PoolModel }) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { width, height } = useElementSize(containerRef);
   const geometry = chartGeometry(width, height, model);
@@ -1047,7 +1084,13 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
     const to = Math.min(model.end, span.to ?? model.end);
     const x = geometry.xOf(from);
     if (geometry.xOf(to) - x < POOL_DRY_LABEL_MIN_PX) return [];
-    return [{ key: String(span.from), x, text: `Pool dry for ${runoutLength(model, span)}` }];
+    return [
+      {
+        key: String(span.from),
+        x,
+        text: gt("Pool dry for {length}", { length: runoutLength(model, span) }),
+      },
+    ];
   });
 
   return (
@@ -1055,7 +1098,10 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
       <div ref={containerRef} className="relative min-h-0 flex-1">
         <DitherCanvas
           className="absolute inset-0 h-full"
-          label={`Pool: ${formatPercent(model.left)} left of ${formatPercent(model.capacity)}`}
+          label={gt("Pool: {left} left of {capacity}", {
+            left: formatPercent(model.left),
+            capacity: formatPercent(model.capacity),
+          })}
           draw={(context, size, color) => drawPool(context, size, color, model)}
         />
         <span
@@ -1065,7 +1111,7 @@ function PoolChart({ model }: { readonly model: PoolModel }) {
           )}
           style={{ left: nowX >= 14 ? nowX : 0 }}
         >
-          Now
+          <T>Now</T>
         </span>
         {poolDryLabels.map((label) => (
           <span
@@ -1211,6 +1257,7 @@ function HoverReadout({
   readonly t: number;
   readonly style: CSSProperties;
 }) {
+  const gt = useGT();
   const recorded = t < model.now;
   const values = valuesAt(model, t);
   const totalAccounts = model.providers.reduce(
@@ -1245,7 +1292,9 @@ function HoverReadout({
           {recorded ? WEEKDAY_TIME.format(t) : formatForecast(t)}
         </Text>
         <span className="text-micro text-muted-foreground">
-          {recorded ? "Recorded" : "Forecast"}
+          {recorded
+            ? gt("Recorded", { $context: "a chart point from recorded history" })
+            : gt("Forecast", { $context: "a chart point from the projection" })}
         </span>
       </div>
       {rows.toReversed().map(({ provider, accounts, listed, value }) => {
@@ -1284,7 +1333,9 @@ function HoverReadout({
         );
       })}
       <div className="mt-1 flex items-baseline justify-between gap-4 border-t pt-1 tabular-nums">
-        <span className="text-muted-foreground">Pool</span>
+        <span className="text-muted-foreground">
+          {gt("Pool", { $context: "noun, the usage limits of every provider combined" })}
+        </span>
         <span>
           {formatPercent(sumValues(rows.map((row) => row.value)))}
           <span className="text-muted-foreground"> of {formatPercent(model.capacity)}</span>

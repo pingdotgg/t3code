@@ -2881,7 +2881,7 @@
   "4c07514abfbe5b5e": "Arraste uma aba para a borda direita",
   "711105bd629ed52a": "Segure {keys} para ver as teclas de layout",
   "4119c9c5f3b5eb59": "Experimentar o layout",
-  "18af54b991d7dcfc": "Abre um novo chat, terminal, navegador ou arquivos neste painel.",
+  "9d009964468660b8": "Opens a new chat in this pane.",
   "5a03a64f260239be": "Arraste uma aba para criar um painel",
   "a0583ed4094c7451": "Solte uma aba em uma borda para colocá-la ao lado de outro painel. Solte-a em uma barra de abas para agrupá-las de novo.",
   "b673da5254833b5c": "Há mais painéis ao lado",
@@ -3027,16 +3027,35 @@
   "d5f81464ea3649d3": "hjkl ou setas para mover, Enter para abrir, Esc para fechar",
   "474e45c392b42db1": "Visão geral dos workspaces",
   "1d6db8abc0d689cc": "Novo workspace",
+  "bb9ff18547893ecd": "Turn off the Working group",
+  "1d8162d124b6d24e": "Rename",
+  "53136665ec1007e8": "Color",
+  "355bc0caea81f41f": "Ungroup",
+  "0831d58c2add41cb": "Close group",
+  "7d294de5bdaf5987": "Edit group",
+  "d973a42956bb435b": "Save",
   "d49726c0ebc32dae": "Manter aberta",
   "80436754eec0a2fe": "Dividir à direita",
   "6b01172e66fa93f4": "Dividir para baixo",
   "cd0bb71ffac58563": "Mover para uma nova coluna",
   "2a857618a12bdade": "Mover para um novo workspace",
   "83e4dacc7e0bccb4": "Mostrar todos os painéis",
+  "0d229cb2d24a2233": "Add tab to new group",
+  "8fa3b8a817e8b299": "Add tab to group",
+  "acfb1e598344405b": "Unnamed group",
+  "efb0ce9e17a40413": "Remove from group",
   "258d16c1554b734c": "Copiar link",
+  "06813a47d10ff6cd": "New tab group",
+  "c10fd08d85f258fc": "Create",
   "c3d96c942dc3125d": "Não foi possível copiar o link",
+  "c2db1203be9ee89a": "Needs you",
+  "37ffec8201f153c1": "Falhou",
+  "c6e8abc00ae470d2": "Pronta",
   "47d87441da5c12fb": "Aberta a partir de {title}",
   "fffb3e5ea979744a": "Clique duas vezes para manter aberta",
+  "25ec2d301626422a": "{count, plural, one {{name}, {count} tab} other {{name}, {count} tabs}}",
+  "aecba76fd1f9fc10": "Show {name}",
+  "58d875127cb2c27a": "Recolher {name}",
   "8c311e84f7bdf4e0": "Fechar aba ({shortcut})",
   "e1c99915f0166c75": "Nova aba ({shortcut})",
   "9d2fc1003e82feb1": "Uso",
@@ -3047,6 +3066,12 @@
   "0eefa479c16af535": "Todos os projetos…",
   "5cd544cdc9cb0f79": "Novo painel à esquerda",
   "8934d3f5a77d4898": "Novo painel à direita",
+  "be6407686b3f1e6a": "Grey",
+  "9affd8aa9764c9b0": "Blue",
+  "b70cf07d443d3c7c": "Red",
+  "ff3ad6b250d62b09": "Yellow",
+  "508c6cd498aa457a": "Green",
+  "a693ae7bd8f44ff7": "Purple",
   "90717abab40dffed": "Mover para cá",
   "2eb649f96f4c2460": "Adicionar como aba",
   "9ddfce5a9fcc9bea": "Novo workspace",
@@ -3081,6 +3106,13 @@
   "633b3dcbe38a3192": "Layout…",
   "0bc3743f8cdfd645": "Layout",
   "d9a519f0b0a3451a": "Mostrar todos os atalhos",
+  "149e37e42f10faaf": "Add tab to group…",
+  "4d0c3ffeb695f2e7": "Remove tab from group",
+  "c99bab888009a8ea": "Expand tab group",
+  "6f8483a8e023ab64": "Collapse tab group",
+  "1d10811789f703ee": "Ungroup tabs",
+  "4761bf4cdc04abce": "Close tab group",
+  "76c581746c7d8ee1": "Working",
   "4fa610c76542a4c0": "Barra lateral exibida",
   "9dddd0641bbf697d": "Barra lateral oculta",
   "5ff49c8addea4bf3": "Grande demais para copiar.",
@@ -8812,7 +8844,6 @@
   "cfa123e9391c196d": "Processo",
   "9f518d021839dbad": "ID do trace copiado",
   "6eec6880354153e1": "Copiar ID completo do trace",
-  "58d875127cb2c27a": "Recolher {name}",
   "ce473b11551ea116": "Expandir {name}",
   "d88f0e58022cef77": "PID {pid}",
   "cb2ccc35b14a076e": "Nenhum processo descendente ativo encontrado.",
@@ -10537,6 +10568,10 @@
   "cd5452cc9e13c818": "Agrupamento de projetos",
   "cfb01b8a2a3361fb": "Redefinir a ordem dos projetos para o padrão",
   "26abcbe322049a8a": "Redefinir a seção Trabalhando para o padrão",
+  "883f1f8136bfa7d3": "Reset working tab group to default",
+  "9fd5ceeb65d0a02f": "Working tab group",
+  "0c6e798f9637f0c7": "Reset tabs follow the inbox to default",
+  "f84f6bf9ffebd618": "Tabs follow the inbox",
   "76f3c3e2f8dd0120": "Confirmações",
   "caed837d6dc42548": "Redefinir a confirmação ao desafixar para o padrão",
   "859e386f8af841f0": "Confirmar ao desafixar threads",
@@ -10642,6 +10677,8 @@
   "83ca942c7163904f": "Combina repositórios correspondentes entre ambientes.",
   "609da998ca13521e": "Ordem dos projetos no seletor da barra lateral e na paleta de comandos.",
   "b4c541137a76b351": "Agrupa as threads em andamento e em monitoramento em uma seção Trabalhando. Elas voltam ao topo da caixa de entrada quando precisam de você. A barra lateral sem graça do Labs não tem seção Trabalhando.",
+  "e4dc7c7e43190c56": "Gather the chats of working threads into a Working group at the start of each pane's tabs. Click the group to open or collapse it.",
+  "a8360f18fdc2ac95": "Settled and snoozed threads leave the tabs once you switch away, and a dot marks tabs that need you. Turning this off brings every tab back.",
   "e815f49e5abedcfd": "Pergunta antes de desafixar uma thread da seção de fixadas.",
   "886ef5401b826682": "Clique em arquivar duas vezes antes de uma thread ser arquivada.",
   "84f3d2cefc8d2a74": "Pergunta antes de excluir uma thread e o histórico dela.",
@@ -12353,9 +12390,7 @@
   "a484e4248b460c95": "Resposta",
   "0ab9086d50e83ca7": "Pedido",
   "4ad56740ee2f814b": "Limitada",
-  "37ffec8201f153c1": "Falhou",
   "984b361806ce8d25": "Despertou",
-  "c6e8abc00ae470d2": "Pronta",
   "be451f475c514b37": "Dispensar notificação de despertar",
   "ade06f6723949b39": "Ocorreu um erro",
   "021fe65858278fe9": "Adiar thread",
@@ -12735,6 +12770,187 @@
   "5d18537f82794deb": "O ambiente local está desativado.",
   "d5ef094f40aedece": "Entrada do terminal",
   "f7046b10d49caab6": "Histórico de rolagem do terminal",
+  "833cb9d335e99d51": "{online} of {total} online",
+  "9918306a65b29adf": "{count} cores",
+  "aa178bd3094f0e60": "{free} free",
+  "e197c4963bacc746": "{count} running",
+  "1dc5027f9ca46697": "{free} free of {total}",
+  "6b2c1ffa65525987": "{count, plural, one {{count} agent running} other {{count} agents running}}",
+  "ffa28519f1c10bd9": "Load unavailable",
+  "f726ed805cd588c0": "Reading load…",
+  "b4ca4afee3147ff0": "CPU over the last {minutes} minutes",
+  "fcbf65f86543c6dc": "Memory in use",
+  "106a5ca1552a15e2": "next chat",
+  "67ca3a5d1b8b0128": "Default",
+  "05f669ba6fe54a17": "Pool empty now",
+  "f238315d5cc144a6": "Pool empty until next week",
+  "103ccc0a63c0d13f": "Pool empty until {time}",
+  "226f4dd3fd269c37": "{provider} empty now",
+  "e3eeda50160d4252": "{provider} empty until next week",
+  "e01bc577e70ef832": "{provider} empty until {time}",
+  "5574969fbfc14a57": "Pool runs out {time}",
+  "7f76ba1932a6d353": "{provider} runs out {time}",
+  "470bd1672234e4f0": "Lasts the week",
+  "465f9faf8c74957e": "Pool",
+  "b7bfc73cb69dd3cb": "{count, plural, one {left of {capacity} across {count} account} other {left of {capacity} across {count} accounts}}",
+  "a3459469683ff934": "Burning about {rate} a day, from the last 3 days of tokens",
+  "511c7d5ab6af2613": "Burning about {rate} a day, from the average since the window opened",
+  "e062c15ce0a4f133": "No burn measured",
+  "836dc6256913a296": "Pool dry for {length}",
+  "7a2c7277af7f029e": "Pool: {left} left of {capacity}",
+  "ebbc38c8dbdc0fd9": "Recorded",
+  "10616de9f960b94f": "Forecast",
+  "de0648ac0096c1b4": "No provider reports subscription limits yet.",
+  "1897a6a2764c8cda": "Next refill",
+  "01f3aee5c67a225e": [
+    "No limits: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "9cc2198189afb7c6": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ":",
+    " ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " left of",
+    " ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "d19e0dda0828003c": "Now",
+  "b6a766698d747361": "Before usage tracking",
+  "161d8a7300d61b8d": "{tokens} tokens, goal missed",
+  "f4fd40a9e91b0e4b": "{tokens} tokens, goal hit",
+  "f4497ca3621adfae": "{tokens} tokens so far, goal hit",
+  "d370c2ede82c5c69": "{tokens} tokens so far, {remaining} to go",
+  "75816fa294e341d7": "Streak",
+  "a2965402151e120d": "goal {goal} tokens a day",
+  "c2a94e5afc24590e": "Reading usage history…",
+  "5f9cc23a97719d5e": "No usage recorded yet.",
+  "c5f49f0c4d1ce60f": "{count, plural, =1 {day streak} other {days streak}}",
+  "7204e0bfdf3005be": "{today} of {goal} tokens today",
+  "e4176d8e438e68b9": "Best day",
+  "4c3fda8f9d061c5e": "Best run",
+  "27a20e7a42fdc77e": "Median day",
+  "fd95307e64bf327f": "Goal hit",
+  "b4294bf044fdfd66": "hit",
+  "f36db22609ea3ad1": "missed",
+  "862cddc4a278601d": "no data",
+  "e9f09b41a13dea63": "Daily tokens over the last {weeks} weeks",
+  "475c40b22a7b441f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "best "
+    },
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    {
+      "t": "span",
+      "i": 4,
+      "c": " days"
+    }
+  ],
+  "a09f613920827d4a": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    {
+      "t": "span",
+      "i": 3,
+      "c": [
+        "of ",
+        {
+          "i": 4,
+          "k": "_gt_value_4",
+          "v": "v"
+        },
+        " today"
+      ]
+    }
+  ],
+  "0208608b4464e7af": "goal hit, streak extended",
+  "1e692f82dba0085f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "to keep the streak"
+  ],
+  "a043bbd43993eb8f": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "to start a streak"
+  ],
+  "7f55e5fb07a43f5e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    {
+      "t": "span",
+      "i": 2,
+      "c": [
+        " ",
+        "of ",
+        {
+          "i": 3,
+          "k": "_gt_value_3",
+          "v": "v"
+        },
+        " days"
+      ]
+    }
+  ],
+  "db046871e24073f1": "Today",
   "24de858bbcf05f40": "Slide {number}",
   "368d650afefe9f19": "Este navegador não consegue desenhar slides.",
   "0a6565f87240008e": "Pré-visualização limitada a apresentações de 1 a 500 slides.",

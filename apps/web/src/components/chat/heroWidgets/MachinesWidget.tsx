@@ -2,6 +2,7 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { chooseLoadBalancedEnvironment } from "@t3tools/client-runtime/load-balancing";
 import type { EnvironmentId, HostResourcesSnapshot } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { T, useGT } from "gt-react";
 import { ServerIcon } from "lucide-react";
 import { useContext, useEffect } from "react";
 
@@ -65,6 +66,7 @@ function recordSample(environmentId: string, resources: HostResourcesSnapshot, r
 }
 
 export function MachinesWidget({ now }: { readonly now: number }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const weights = useClientSettings((settings) => settings.loadBalancingWeights);
   const registry = useContext(RegistryContext);
@@ -116,8 +118,8 @@ export function MachinesWidget({ now }: { readonly now: number }) {
     <WidgetCard
       id="machines"
       icon={ServerIcon}
-      title="Machines"
-      meta={`${online} of ${environments.length} online`}
+      title={gt("Machines")}
+      meta={gt("{online} of {total} online", { online, total: environments.length })}
     >
       <ul className="mt-1 flex min-h-0 flex-1 flex-col divide-y divide-border/60">
         {environments.map((environment, index) => {
@@ -161,6 +163,7 @@ interface MachineRowProps {
 function MachineRow(props: MachineRowProps) {
   const { label, phase, resources, failed, history, agents, isNext, now, compact, showAxis } =
     props;
+  const gt = useGT();
   const connected = phase === "connected";
   const cpu = resources?.cpuUtilization ?? null;
   const memoryUsed =
@@ -180,7 +183,7 @@ function MachineRow(props: MachineRowProps) {
       <span className="truncate text-label">{label}</span>
       {isNext ? (
         <span className="shrink-0 rounded-full border border-primary/40 bg-primary/15 px-1.5 text-micro leading-4 text-primary">
-          next chat
+          <T>next chat</T>
         </span>
       ) : null}
     </span>
@@ -189,16 +192,21 @@ function MachineRow(props: MachineRowProps) {
   const facts = resources
     ? compact
       ? [
-          `${resources.cpuCount} cores`,
-          `${formatGigabytes(resources.availableMemoryBytes)} free`,
-          `${agents} running`,
+          gt("{count} cores", { count: resources.cpuCount }),
+          gt("{free} free", { free: formatGigabytes(resources.availableMemoryBytes) }),
+          gt("{count} running", { count: agents }),
         ]
       : [
-          `${resources.cpuCount} cores`,
-          `${formatGigabytes(resources.availableMemoryBytes)} free of ${formatGigabytes(resources.totalMemoryBytes)}`,
-          `${agents} agent${agents === 1 ? "" : "s"} running`,
+          gt("{count} cores", { count: resources.cpuCount }),
+          gt("{free} free of {total}", {
+            free: formatGigabytes(resources.availableMemoryBytes),
+            total: formatGigabytes(resources.totalMemoryBytes),
+          }),
+          gt("{count, plural, one {{count} agent running} other {{count} agents running}}", {
+            count: agents,
+          }),
         ]
-    : [connected ? (failed ? "Load unavailable" : "Reading load…") : phase];
+    : [connected ? (failed ? gt("Load unavailable") : gt("Reading load…")) : phase];
   const detail = (className: string) => (
     <span
       className={cn(
@@ -281,6 +289,7 @@ function CpuSparkline({
   readonly showAxis: boolean;
   readonly showCeiling?: boolean;
 }) {
+  const gt = useGT();
   const peak = Math.max(0, ...history.map((sample) => sample.cpu ?? 0));
   const ceiling = Math.max(0.25, Math.min(1, peak * 1.25));
   const drawNow = Math.max(now, history.at(-1)?.t ?? 0);
@@ -289,7 +298,7 @@ function CpuSparkline({
       <div className="relative min-h-0 flex-1">
         <DitherCanvas
           className="h-full"
-          label={`CPU over the last ${HOST_HISTORY_MS / 60_000} minutes`}
+          label={gt("CPU over the last {minutes} minutes", { minutes: HOST_HISTORY_MS / 60_000 })}
           draw={(context, { width, height }, color) => {
             const cell = 3;
             const rows = Math.floor(height / cell);
@@ -346,10 +355,11 @@ function MemoryBar({
   readonly used: number | null;
   readonly className: string;
 }) {
+  const gt = useGT();
   return (
     <DitherCanvas
       className={className}
-      label="Memory in use"
+      label={gt("Memory in use")}
       draw={(context, { width, height }, color) => {
         const share = used ?? 0;
         const columns = Math.floor(width / 3);

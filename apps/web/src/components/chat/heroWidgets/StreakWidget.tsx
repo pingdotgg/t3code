@@ -1,8 +1,10 @@
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { FlameIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { Text } from "../../ui/text";
@@ -46,6 +48,7 @@ export function StreakWidget({
   readonly daily: ReadonlyArray<DailyTotals>;
   readonly pending: boolean;
 }) {
+  const gt = useGT();
   const goal = DEFAULT_TOKEN_GOAL;
   const streak = buildStreak(
     new Date(now),
@@ -72,30 +75,39 @@ export function StreakWidget({
     <WidgetCard
       id="streak"
       icon={FlameIcon}
-      title="Streak"
-      meta={`goal ${formatTokens(goal)} tokens a day`}
+      title={gt("Streak", { $context: "noun, consecutive days that met the token goal" })}
+      meta={gt("goal {goal} tokens a day", { goal: formatTokens(goal) })}
       className="[container:streak/size]"
     >
       {daily.length === 0 ? (
         <p className="mt-3 text-meta text-muted-foreground">
-          {pending ? "Reading usage history…" : "No usage recorded yet."}
+          {pending ? gt("Reading usage history…") : gt("No usage recorded yet.")}
         </p>
       ) : (
         <>
           <div className="mt-2.5 flex items-baseline gap-2 leading-none [@container_streak_(height<12rem)]:mt-1.5">
             <HeadlineFigure>{streak.current}</HeadlineFigure>
             <span className="text-body text-muted-foreground">
-              day{streak.current === 1 ? "" : "s"} streak
+              {gt("{count, plural, =1 {day streak} other {days streak}}", {
+                count: streak.current,
+              })}
             </span>
             <span className="ms-auto text-body tabular-nums">
-              <span className="text-muted-foreground">best </span>
-              <span className="text-label">{streak.best}</span>
-              <span className="text-muted-foreground"> days</span>
+              <T>
+                <span className="text-muted-foreground">best </span>
+                <span className="text-label">
+                  <Var>{streak.best}</Var>
+                </span>
+                <span className="text-muted-foreground"> days</span>
+              </T>
             </span>
           </div>
           <DitherCanvas
             className="mt-3 h-2.5 [@container_streak_(height<12rem)]:mt-2"
-            label={`${formatTokens(streak.todayTokens)} of ${formatTokens(goal)} tokens today`}
+            label={gt("{today} of {goal} tokens today", {
+              today: formatTokens(streak.todayTokens),
+              goal: formatTokens(goal),
+            })}
             draw={(context, { width, height }, color) => {
               const columns = Math.floor(width / 3);
               drawDitherField(
@@ -108,18 +120,33 @@ export function StreakWidget({
             }}
           />
           <div className="mt-1.5 flex items-baseline gap-1.5 text-meta tabular-nums">
-            <Text variant="meta" tone="inherit" emphasis>
-              {formatTokens(streak.todayTokens)}
-            </Text>
-            <span className="text-muted-foreground">of {formatTokens(goal)} today</span>
+            <T>
+              <Text variant="meta" tone="inherit" emphasis>
+                <Var>{formatTokens(streak.todayTokens)}</Var>
+              </Text>
+              <span className="text-muted-foreground">
+                of <Var>{formatTokens(goal)}</Var> today
+              </span>
+            </T>
             <span className="ms-auto text-muted-foreground">
               {streak.todayMet ? (
-                <span className="text-success">goal hit, streak extended</span>
+                <span className="text-success">
+                  <T>goal hit, streak extended</T>
+                </span>
+              ) : streak.current > 0 ? (
+                <T>
+                  <span className="text-warning">
+                    <Var>{formatTokens(toGo)}</Var>
+                  </span>{" "}
+                  to keep the streak
+                </T>
               ) : (
-                <>
-                  <span className="text-warning">{formatTokens(toGo)}</span>
-                  {streak.current > 0 ? " to keep the streak" : " to start a streak"}
-                </>
+                <T>
+                  <span className="text-warning">
+                    <Var>{formatTokens(toGo)}</Var>
+                  </span>{" "}
+                  to start a streak
+                </T>
               )}
             </span>
           </div>
@@ -127,7 +154,7 @@ export function StreakWidget({
             <Heatmap days={streak.days} goal={goal} />
             <dl className="flex w-40 shrink-0 flex-col justify-center-safe gap-1.5 text-meta tabular-nums [container:streak-stats/size]">
               {streak.bestDay ? (
-                <Record label="Best day">
+                <Record label={gt("Best day")}>
                   {formatTokens(streak.bestDay.tokens)}
                   <span className="text-muted-foreground">
                     {" "}
@@ -137,7 +164,7 @@ export function StreakWidget({
               ) : null}
               {streak.bestRun ? (
                 <Record
-                  label="Best run"
+                  label={gt("Best run")}
                   className="[@container_streak-stats_(height<6.82em)]:hidden"
                 >
                   {streak.best}d
@@ -147,15 +174,22 @@ export function StreakWidget({
                   </span>
                 </Record>
               ) : null}
-              <Record label="Median day">{formatTokens(streak.medianDay)}</Record>
-              <Record label="Goal hit">
-                {streak.metDays}
-                <span className="text-muted-foreground"> of {streak.trackedDays} days</span>
+              <Record label={gt("Median day")}>{formatTokens(streak.medianDay)}</Record>
+              <Record label={gt("Goal hit")}>
+                <T>
+                  <Var>{streak.metDays}</Var>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    of <Var>{streak.trackedDays}</Var> days
+                  </span>
+                </T>
               </Record>
               <div className="mt-1 flex items-center gap-2 text-micro text-muted-foreground [@container_streak-stats_(height<8.82em)]:hidden">
-                <Swatch kind="met" /> hit
-                <Swatch kind="missed" /> missed
-                <Swatch kind="noData" /> no data
+                <Swatch kind="met" /> {gt("hit", { $context: "legend, a day that met the goal" })}
+                <Swatch kind="missed" />{" "}
+                {gt("missed", { $context: "legend, a day that missed the goal" })}
+                <Swatch kind="noData" />{" "}
+                {gt("no data", { $context: "legend, a day before tracking" })}
               </div>
             </dl>
           </div>
@@ -280,6 +314,7 @@ function Heatmap({
   readonly days: ReadonlyArray<StreakDay>;
   readonly goal: number;
 }) {
+  const gt = useGT();
   const ref = useRef<HTMLDivElement | null>(null);
   const { width, height } = useElementSize(ref);
   const geometry = heatmapGeometry(width, height);
@@ -324,7 +359,7 @@ function Heatmap({
         ))}
         <DitherCanvas
           className="absolute inset-0 h-full"
-          label={`Daily tokens over the last ${weeks} weeks`}
+          label={gt("Daily tokens over the last {weeks} weeks", { weeks })}
           draw={(context, _size, color) => {
             const colors = heatmapColors(color);
             shown.forEach((day, index) => {
@@ -360,19 +395,24 @@ function heatmapColors(color: ResolveColor) {
   };
 }
 
-function daySummary(day: StreakDay, goal: number): string {
-  const tokens = `${formatTokens(day.tokens)} tokens`;
+function daySummary(day: StreakDay, goal: number, resolve: MessageResolver = m): string {
+  const tokens = formatTokens(day.tokens);
   switch (day.state) {
     case "noData":
-      return "Before usage tracking";
+      return resolve(msg("Before usage tracking"));
     case "missed":
-      return `${tokens}, goal missed`;
+      return resolve(msg("{tokens} tokens, goal missed", { tokens }));
     case "met":
-      return `${tokens}, goal hit`;
+      return resolve(msg("{tokens} tokens, goal hit", { tokens }));
     case "today":
       return day.tokens >= goal
-        ? `${tokens} so far, goal hit`
-        : `${tokens} so far, ${formatTokens(goal - day.tokens)} to go`;
+        ? resolve(msg("{tokens} tokens so far, goal hit", { tokens }))
+        : resolve(
+            msg("{tokens} tokens so far, {remaining} to go", {
+              tokens,
+              remaining: formatTokens(goal - day.tokens),
+            }),
+          );
   }
 }
 
@@ -390,6 +430,7 @@ function HeatmapHover({
   readonly xOf: (index: number) => number;
   readonly yOf: (index: number) => number;
 }) {
+  const resolve = useMessages();
   const [hovered, setHovered] = useState<number | null>(null);
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const day = hovered === null ? undefined : shown[hovered];
@@ -431,8 +472,8 @@ function HeatmapHover({
       {day === undefined ? null : (
         <TooltipPopup anchor={anchor}>
           <div className="tabular-nums">
-            <div>{day.state === "today" ? "Today" : DAY.format(day.date)}</div>
-            <div className="text-muted-foreground">{daySummary(day, goal)}</div>
+            <div>{day.state === "today" ? <T>Today</T> : DAY.format(day.date)}</div>
+            <div className="text-muted-foreground">{daySummary(day, goal, resolve)}</div>
           </div>
         </TooltipPopup>
       )}
