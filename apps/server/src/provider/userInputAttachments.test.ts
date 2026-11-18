@@ -309,6 +309,11 @@ describe("question answer paths", () => {
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
+    [
+      "document breaks",
+      String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
+      "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
+    ],
     ["group close", String.raw`{\rtf1\ansi{\u945}Z}`, "αZ"],
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
@@ -391,6 +396,7 @@ describe("question answer paths", () => {
         mimeType: "application/x-ipynb+json",
       };
       const path = NodePath.join(config.attachmentsDir, `${file.id}.ipynb`);
+      const rawSource = String.raw`\begin{tabular}{lr} North & 120 \\ \end{tabular}`;
       const notebook = JSON.stringify({
         cells: [
           { cell_type: "markdown", source: ["# Survey\n", "Vessel: Larkspur"] },
@@ -412,6 +418,7 @@ describe("question answer paths", () => {
               },
             ],
           },
+          { cell_type: "raw", source: [rawSource] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -425,6 +432,7 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
+      expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );

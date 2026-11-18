@@ -360,6 +360,8 @@ async function archive(path: string): Promise<Map<string, string>> {
   return files;
 }
 
+const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
+
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
@@ -374,7 +376,8 @@ function* notebook(source: string): Generator<string, void> {
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
-    const kind = "cell_type" in cell && cell.cell_type === "code" ? "code" : "markdown";
+    const cellType = "cell_type" in cell ? cell.cell_type : undefined;
+    const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
     if ("outputs" in cell && Array.isArray(cell.outputs)) {
@@ -494,7 +497,11 @@ function* rtf(source: string): Generator<string, void> {
         } else if (control === "u" && !state.skip) {
           yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
-        } else if (!state.skip && ["par", "line", "row"].includes(control)) yield "\n";
+        } else if (
+          !state.skip &&
+          ["par", "line", "row", "sect", "page", "column"].includes(control)
+        )
+          yield "\n";
         else if (!state.skip && ["tab", "cell"].includes(control)) yield "\t";
         else if (!state.skip && symbols.has(control)) yield symbols.get(control)!;
       } else {
