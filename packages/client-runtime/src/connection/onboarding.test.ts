@@ -162,6 +162,7 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  provision?: ClientCapabilities.SshEnvironmentGateway["Service"]["provision"],
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
@@ -180,7 +181,7 @@ function layerPairingOnboarding(
       get: () => Effect.succeedNone,
       put: () => Effect.void,
     }),
-    Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
+    Layer.mock(ClientCapabilities.SshEnvironmentGateway)(provision ? { provision } : {}),
     Layer.succeed(
       Connectivity.Connectivity,
       Connectivity.Connectivity.of({ status: Effect.succeed("online"), changes: Stream.never }),
@@ -323,6 +324,47 @@ describe("connection onboarding", () => {
       ]);
     }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
   });
+
+  it.effect(
+    "refuses to add an SSH route to a saved environment during untargeted onboarding",
+    () => {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
+      };
+      return Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
+        const before = yield* registerSwitchedOffEnvironment;
+
+        const result = yield* onboarding.registerSsh({ target }).pipe(Effect.result);
+
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+        });
+        expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
+      }).pipe(
+        Effect.provide(
+          layerPairingOnboarding(undefined, [], () =>
+            Effect.succeed({
+              environmentId: PAIRED_ENVIRONMENT_ID,
+              label: "Remote development box",
+              bootstrap: {
+                target,
+                httpBaseUrl: "http://127.0.0.1:3201",
+                wsBaseUrl: "ws://127.0.0.1:3201",
+                pairingToken: "pairing-token",
+              },
+              bearerToken: "bearer-token",
+            }),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect("refuses a new address when the environment is saved during the exchange", () => {
     let reached!: () => void;
