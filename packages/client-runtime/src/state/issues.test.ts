@@ -1,19 +1,26 @@
+// @effect-diagnostics nodeBuiltinImport:off - The retention test forces garbage collection in Node.
+import { setImmediate } from "node:timers/promises";
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
 import {
   EnvironmentId,
   IssueTrackerKind,
   ProjectId,
   type IssueComment,
   type IssueListEntry,
+  type IssueListResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   createMergedIssueCandidatesAtoms,
+  createMergedIssueListAtoms,
   issueEntryKey,
   mergeIssueListPage,
   prependIssueComments,
+  type IssueListTarget,
 } from "./issues.ts";
 
 function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListEntry {
@@ -127,6 +134,47 @@ describe("createMergedIssueCandidatesAtoms", () => {
       expect(requests).toEqual(["acme/healthy", "acme/flaky", "acme/flaky"]);
     } finally {
       unmount();
+      registry.dispose();
+    }
+  });
+});
+
+describe("createMergedIssueListAtoms", () => {
+  it("releases historical search targets when the list closes", async () => {
+    NodeV8.setFlagsFromString("--expose-gc");
+    const gc = NodeVM.runInNewContext("gc") as () => void;
+    const answer: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
+    const listings = createMergedIssueListAtoms(
+      () => Atom.make(AsyncResult.success(answer)),
+      String,
+    );
+    const registry = AtomRegistry.make();
+    const environmentId = EnvironmentId.make("environment");
+    try {
+      const historical = ["search-one", "search-two", "search-three"].map((query) => {
+        const targets = [
+          { environmentId, input: { state: "open", query } },
+        ] satisfies IssueListTarget[];
+        const close = registry.mount(listings.atom(targets));
+        close();
+        return new WeakRef(targets);
+      });
+      // Let the registry remove all three unmounted queries and the WeakRefs leave their creation job.
+      await setImmediate();
+      gc();
+
+      listings.refreshEnvironment(registry, environmentId);
+      expect(
+        historical.filter((target) => target.deref() !== undefined).length,
+        "historical issue searches retained after closing",
+      ).toBe(0);
+    } finally {
       registry.dispose();
     }
   });
