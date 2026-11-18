@@ -1,10 +1,4 @@
-import {
-  EnvironmentId,
-  ProjectId,
-  ThreadId,
-  type PullRequestAction,
-  type PullRequestRef,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type PullRequestRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -37,21 +31,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function MergeButton({
-  reference,
-  action = "merge",
-}: {
-  reference: PullRequestRef;
-  action?: PullRequestAction;
-}) {
+function MergeButton({ reference }: { reference: PullRequestRef }) {
   const { actionPending, pendingAction, perform } = usePullRequestActionRunner({
     environmentId: EnvironmentId.make("environment"),
     reference,
     terminology: sourceControlClients.get(undefined).changeRequest,
   });
   return (
-    <button type="button" disabled={actionPending} onClick={() => void perform(action)}>
-      {pendingAction === "ready" ? "Marking..." : actionPending ? "Merging..." : "Merge"}
+    <button type="button" disabled={actionPending} onClick={() => void perform("merge")}>
+      {pendingAction === "merge" ? "Merging..." : "Merge"}
     </button>
   );
 }
@@ -62,58 +50,54 @@ function setup() {
   state.prepareThread.mockReset();
 }
 
-it.each([
-  { action: "merge", scope: "number" },
-  { action: "ready", scope: "number" },
-  { action: "merge", scope: "project" },
-  { action: "ready", scope: "project" },
-] as const)(
-  "keeps a pending $action action with its pull request when changing $scope",
-  async ({ action, scope }) => {
-    setup();
-    const pendingLabel = action === "ready" ? "Marking..." : "Merging...";
-    const first: PullRequestRef = {
-      projectId: ProjectId.make("project"),
-      repository: "owner/repo",
-      number: 1,
-    };
-    const second =
-      scope === "number"
-        ? { ...first, number: 2 }
-        : { ...first, projectId: ProjectId.make("other-project") };
-    const firstResult = deferred<{ _tag: "Success"; value: void }>();
-    const secondResult = deferred<{ _tag: "Success"; value: void }>();
-    state.runAction
-      .mockReturnValueOnce(firstResult.promise)
-      .mockReturnValueOnce(secondResult.promise);
-    await using screen = await render(<MergeButton reference={first} action={action} />);
-    const button = screen.getByRole("button");
+it("keeps pending merges with their pull request when navigating between threads", async () => {
+  setup();
+  const first: PullRequestRef = {
+    projectId: ProjectId.make("project"),
+    repository: "owner/repo",
+    number: 1,
+  };
+  const second = { ...first, number: 2 };
+  const firstResult = deferred<{ _tag: "Success"; value: void }>();
+  const secondResult = deferred<{ _tag: "Success"; value: void }>();
+  state.runAction
+    .mockReturnValueOnce(firstResult.promise)
+    .mockReturnValueOnce(secondResult.promise);
+  await using screen = await render(<MergeButton reference={first} />);
+  const button = screen.getByRole("button");
 
-    await userEvent.click(button);
-    await expect.element(button).toHaveTextContent(pendingLabel);
-    await screen.rerender(<MergeButton reference={second} />);
-    await expect.element(button).toHaveTextContent("Merge");
-    await expect.element(button).toBeEnabled();
-    await userEvent.click(button);
-    expect(state.runAction).toHaveBeenCalledTimes(2);
+  await userEvent.click(button);
+  await expect.element(button).toHaveTextContent("Merging...");
+  await screen.rerender(
+    <MergeButton reference={{ ...first, projectId: ProjectId.make("other-project") }} />,
+  );
+  await expect.element(button).toHaveTextContent("Merge");
+  await expect.element(button).toBeEnabled();
+  await screen.rerender(<MergeButton reference={first} />);
+  await expect.element(button).toHaveTextContent("Merging...");
+  await expect.element(button).toBeDisabled();
+  await screen.rerender(<MergeButton reference={second} />);
+  await expect.element(button).toHaveTextContent("Merge");
+  await expect.element(button).toBeEnabled();
+  await userEvent.click(button);
+  expect(state.runAction).toHaveBeenCalledTimes(2);
 
-    await screen.rerender(<MergeButton reference={first} />);
-    await expect.element(button).toHaveTextContent(pendingLabel);
-    await expect.element(button).toBeDisabled();
-    await act(async () => {
-      firstResult.resolve({ _tag: "Success", value: undefined });
-      await firstResult.promise;
-    });
-    await expect.element(button).toHaveTextContent("Merge");
-    await screen.rerender(<MergeButton reference={second} />);
-    await expect.element(button).toHaveTextContent("Merging...");
-    await act(async () => {
-      secondResult.resolve({ _tag: "Success", value: undefined });
-      await secondResult.promise;
-    });
-    await expect.element(button).toHaveTextContent("Merge");
-  },
-);
+  await screen.rerender(<MergeButton reference={first} />);
+  await expect.element(button).toHaveTextContent("Merging...");
+  await expect.element(button).toBeDisabled();
+  await act(async () => {
+    firstResult.resolve({ _tag: "Success", value: undefined });
+    await firstResult.promise;
+  });
+  await expect.element(button).toHaveTextContent("Merge");
+  await screen.rerender(<MergeButton reference={second} />);
+  await expect.element(button).toHaveTextContent("Merging...");
+  await act(async () => {
+    secondResult.resolve({ _tag: "Success", value: undefined });
+    await secondResult.promise;
+  });
+  await expect.element(button).toHaveTextContent("Merge");
+});
 
 function FixChecksButton() {
   const { startHandoff } = usePullRequestHandoffs({
