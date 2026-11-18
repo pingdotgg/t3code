@@ -6,7 +6,6 @@ The fork keeps upstream's native providers, subagents, schedules, and usage feat
 
 ## What this fork adds
 
-- **Its own identity.** T3 Dulli installs beside upstream T3 Code, with its own app ID, icons, update feed, `~/.t3-dulli` home, `@yjosh/t3` npm package, and separately signed Android APK.
 - **Workler workspaces.** New threads get an isolated [Workler](docs/user/source-control.md#workler-workspaces) clone instead of a plain git worktree by default, with safe cleanup and recovery.
 - **Multi-repo projects.** Several repositories as [one project](docs/user/source-control.md#multi-repository-projects) on web and mobile, including setting the group up on another connected machine. New workspaces clone every member onto the same branch.
 - **Profiles.** Reusable [prompt parts, skills, MCP servers, and per-provider settings](docs/user/profiles.md) kept in a plain folder, picked beside the composer, and synced to every connected environment. Threads an agent starts keep their parent thread's profile.
