@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { exportChatHistoryWithToast } from "../lib/chatHistoryTransfer";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -316,6 +317,12 @@ export function useThreadActionMenu(input: {
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+          return;
+        case "export":
+          void exportChatHistoryWithToast(threadRef.environmentId, {
+            type: "thread",
+            threadId: thread.id,
+          });
           return;
         case "archive": {
           if (confirmThreadArchive) {
