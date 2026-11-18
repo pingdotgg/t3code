@@ -228,7 +228,8 @@ export type AgentSessionRecentThread =
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
-  | { readonly _tag: "Skipped" };
+  | { readonly _tag: "Skipped" }
+  | { readonly _tag: "Deferred" };
 
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -2131,7 +2132,7 @@ export const make = Effect.gen(function* () {
             `${candidate.providerInstanceId}\0${transcript.filePath}`,
           );
           if (completed === undefined && (transcriptsRemaining === 0 || bytesRemaining === 0)) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           const stats = yield* statOption(transcript.filePath);
           if (Option.isNone(stats) || stats.value.type !== "File") {
@@ -2151,12 +2152,11 @@ export const make = Effect.gen(function* () {
               source: completedSource,
             });
           }
-          if (
-            transcriptsRemaining === 0 ||
-            identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
-          ) {
+          if (identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          if (transcriptsRemaining === 0 || identity.size > bytesRemaining) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Deferred" });
           }
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;

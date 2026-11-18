@@ -6,6 +6,7 @@ import {
   isNewOnboardingProject,
   partitionOnboardingProjects,
   onboardingProjectKey,
+  projectImportWarning,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
 } from "./projectImport.logic";
@@ -229,6 +230,36 @@ describe("resolveOnboardingLandingProject", () => {
         ]),
       ),
     ).toBe("current");
+  });
+});
+
+describe("projectImportWarning", () => {
+  const resume =
+    "To import them, open the Welcome page again from Settings → About and select their projects under Review all.";
+
+  it.each([
+    {
+      totals: { imported: 100, failed: 0, deferred: 153 },
+      warning: `Imported 100 threads. 153 threads were not imported yet. ${resume}`,
+    },
+    {
+      totals: { imported: 100, failed: 3, deferred: 1 },
+      warning: `Imported 100 threads. 3 threads could not be imported. 1 thread was not imported yet. ${resume}`,
+    },
+    {
+      totals: { imported: 0, failed: 2, deferred: 0 },
+      warning: "2 threads could not be imported.",
+    },
+    {
+      totals: { imported: 5, failed: 0, deferred: 0 },
+      warning: "Imported 5 threads. Some thread history could not be imported.",
+    },
+    {
+      totals: { imported: 0, failed: 0, deferred: 0 },
+      warning: "Could not import thread history.",
+    },
+  ])("separates deferred threads from failures: $warning", ({ totals, warning }) => {
+    expect(projectImportWarning(totals)).toBe(warning);
   });
 });
 

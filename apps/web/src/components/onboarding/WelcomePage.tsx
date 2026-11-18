@@ -56,6 +56,7 @@ import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
+  projectImportWarning,
   resolveOnboardingLandingProject,
   isNewOnboardingProject,
   resolveOnboardingProjectId,
@@ -1496,7 +1497,6 @@ function useProjectImport({
   ) => Promise<boolean>;
 }) {
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
-  const gt = useGT();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const importWarningRef = useRef("");
@@ -1620,6 +1620,7 @@ function useProjectImport({
         ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
         : 0;
     let skippedThreadCount = 0;
+    let deferredThreadCount = 0;
     const refreshEnvironments = new Set<EnvironmentId>();
     // Resolves false when the run stopped early: a newer run, an unmount, or lost access.
     const importEach = async () => {
@@ -1679,6 +1680,7 @@ function useProjectImport({
             (importedThreads.get(candidate.key) ?? 0) + threadImportResult.value.importedCount,
           );
           skippedThreadCount += threadImportResult.value.skippedCount;
+          deferredThreadCount += threadImportResult.value.deferredCount ?? 0;
           if (threadImportResult.value.importedCount > 0) {
             projectsWithImportedHistoryRef.current.set(
               candidate.key,
@@ -1707,27 +1709,11 @@ function useProjectImport({
     setIsImporting(false);
     const importedThreadCount = importedThreadTotal();
     if (importedProjectsCount < selection.length) {
-      if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = `${gt(
-          "{count, plural, one {Imported {count} thread.} other {Imported {count} threads.}}",
-          { count: importedThreadCount },
-        )} ${gt(
-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
-          { count: skippedThreadCount },
-        )}`;
-      } else if (skippedThreadCount > 0) {
-        importWarningRef.current = gt(
-          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
-          { count: skippedThreadCount },
-        );
-      } else if (importedThreadCount > 0) {
-        importWarningRef.current = gt(
-          "{count, plural, one {Imported {count} thread. Some thread history could not be imported.} other {Imported {count} threads. Some thread history could not be imported.}}",
-          { count: importedThreadCount },
-        );
-      } else {
-        importWarningRef.current = gt("Could not import thread history.");
-      }
+      importWarningRef.current = projectImportWarning({
+        imported: importedThreadCount,
+        failed: skippedThreadCount - deferredThreadCount,
+        deferred: deferredThreadCount,
+      });
     }
     finishAfterImport();
   };

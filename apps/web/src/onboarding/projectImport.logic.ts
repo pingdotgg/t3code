@@ -3,6 +3,9 @@ import {
   normalizeProjectPathForComparison,
 } from "@t3tools/client-runtime/state/projects";
 import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
@@ -144,6 +147,63 @@ export function resolveOnboardingLandingProject<T>(
     if (project !== undefined) return project;
   }
   return undefined;
+}
+
+/**
+ * The summary for an import that left threads behind. Deferred threads hit the per-attempt
+ * budget and import on a later attempt, so they are not reported as failures.
+ */
+export function projectImportWarning(
+  totals: { readonly imported: number; readonly failed: number; readonly deferred: number },
+  resolve: MessageResolver = m,
+): string {
+  const { imported, failed, deferred } = totals;
+  if (failed === 0 && deferred === 0) {
+    return imported > 0
+      ? resolve(
+          msg(
+            "{count, plural, one {Imported {count} thread. Some thread history could not be imported.} other {Imported {count} threads. Some thread history could not be imported.}}",
+            { count: imported },
+          ),
+        )
+      : resolve(msg("Could not import thread history."));
+  }
+  const sentences: Array<string> = [];
+  if (imported > 0) {
+    sentences.push(
+      resolve(
+        msg("{count, plural, one {Imported {count} thread.} other {Imported {count} threads.}}", {
+          count: imported,
+        }),
+      ),
+    );
+  }
+  if (failed > 0) {
+    sentences.push(
+      resolve(
+        msg(
+          "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
+          { count: failed },
+        ),
+      ),
+    );
+  }
+  if (deferred > 0) {
+    sentences.push(
+      resolve(
+        msg(
+          "{count, plural, one {{count} thread was not imported yet.} other {{count} threads were not imported yet.}}",
+          { count: deferred },
+        ),
+      ),
+      resolve(
+        msg(
+          "To import them, open the Welcome page again from Settings → About and select their projects under Review all.",
+        ),
+      ),
+    );
+  }
+  return sentences.join(" ");
 }
 
 export function splitOnboardingProjectPath(path: string): {
