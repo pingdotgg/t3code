@@ -737,6 +737,25 @@ describe("Antigravity background tasks", () => {
       },
     ]);
 
+    for (const [reportedStatus, status] of [
+      ["RUNNING", "running"],
+      ["FAILED", "failed"],
+      ["COMPLETED", "completed"],
+    ]) {
+      const output =
+        "Task: task-123\nStatus: " +
+        reportedStatus +
+        "\nOutput:\nThe command exited with code 0.\nStatus: FAILED";
+      expect(
+        extractAntigravityBackgroundTaskCompletion({
+          toolCallId: "call-status-logs",
+          title: "manage_task",
+          status: "completed",
+          data: { rawInput: { Action: "status", TaskId: "task-123" }, rawOutput: output },
+        }),
+      ).toEqual([{ taskId: "task-123", status, appendOutput: output }]);
+    }
+
     // manage_task status shows completed
     expect(
       extractAntigravityBackgroundTaskCompletion({

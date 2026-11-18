@@ -4225,6 +4225,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             const target =
               targetToolCallId !== undefined ? owner.tools.get(targetToolCallId) : undefined;
+            if (
+              backgroundCompletion.status === "running" &&
+              (yield* Ref.get(endedBackgroundTaskIds)).has(backgroundCompletion.taskId)
+            ) {
+              continue;
+            }
             if (target !== undefined && target.toolCallId !== toolCall.toolCallId) {
               const nextStatus =
                 backgroundCompletion.status === "running"

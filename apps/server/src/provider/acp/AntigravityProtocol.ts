@@ -634,26 +634,31 @@ export function extractAntigravityBackgroundTaskCompletion(
       }
     }
   } else if (action === "status" || /status/i.test(title)) {
+    const header = outputText.split(/(?:^|\n)Output:/i, 1)[0] ?? "";
     const taskId =
       taskIdFromInput ??
-      /Task:\s*([^\s\r\n]+)/i.exec(outputText)?.[1] ??
-      /Task id "([^"]+)"/i.exec(outputText)?.[1];
+      /Task:\s*([^\s\r\n]+)/i.exec(header)?.[1] ??
+      /Task id "([^"]+)"/i.exec(header)?.[1];
     if (taskId) {
       const cleanId = taskId.replace(/["',.]+$/, "").trim();
-      if (
-        /Status:\s*(?:COMPLETED|STOPPED)/i.test(outputText) ||
-        /command exited with code\s+0\b/i.test(outputText)
-      ) {
-        return [{ taskId: cleanId, status: "completed", appendOutput: outputText }];
-      }
-      if (
-        /Status:\s*FAILED/i.test(outputText) ||
-        /command exited with code\s+[1-9]\d*/i.test(outputText)
-      ) {
-        return [{ taskId: cleanId, status: "failed", appendOutput: outputText }];
-      }
-      if (/Status:\s*RUNNING/i.test(outputText)) {
-        return [{ taskId: cleanId, status: "running", appendOutput: outputText }];
+      const reportedStatus = /(?:^|\n)Status:\s*(COMPLETED|STOPPED|FAILED|RUNNING)\b/i
+        .exec(header)?.[1]
+        ?.toUpperCase();
+      const exitCode = /(?:^|\n)(?:The )?command exited with code\s+(\d+)\b/i.exec(header)?.[1];
+      const status =
+        reportedStatus === "RUNNING"
+          ? "running"
+          : reportedStatus === "FAILED"
+            ? "failed"
+            : reportedStatus !== undefined
+              ? "completed"
+              : exitCode !== undefined
+                ? exitCode === "0"
+                  ? "completed"
+                  : "failed"
+                : undefined;
+      if (status !== undefined) {
+        return [{ taskId: cleanId, status, appendOutput: outputText }];
       }
     }
   }

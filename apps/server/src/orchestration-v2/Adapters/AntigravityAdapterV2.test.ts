@@ -39,6 +39,7 @@ import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravity
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
@@ -215,6 +216,115 @@ const layerSession = Layer.mergeAll(
   TestProviderHost.layer().pipe(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
+);
+
+it.effect("keeps a failed background task terminal after a stale running status", () =>
+  Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("antigravity-background-status-test");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            prompt: () =>
+              Effect.gen(function* () {
+                if (sessionUpdate === undefined) return yield* Effect.die("missing update handler");
+                const send = sessionUpdate;
+                const update = (update: EffectAcpSchema.SessionUpdate) =>
+                  send({ sessionId: "mock-session-1", update });
+                yield* update({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "background",
+                  title: "run_command",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawOutput: "Tool is running as a background task with task id: task-1",
+                });
+                yield* update({
+                  sessionUpdate: "user_message_chunk",
+                  content: {
+                    type: "text",
+                    text: 'Task id "task-1" failed with result:\nThe command exited with code 1.',
+                  },
+                });
+                yield* update({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "status",
+                  title: "manage_task",
+                  status: "completed",
+                  rawInput: { Action: "status", TaskId: "task-1" },
+                  rawOutput: "Task: task-1\nStatus: RUNNING",
+                });
+                return { stopReason: "end_turn" as const };
+              }),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+    const threadId = ThreadId.make("thread-antigravity-background-status");
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" };
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-background-status"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+    yield* session.startTurn(
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        modelSelection,
+        now: yield* DateTime.now,
+      }),
+    );
+    const events = Array.from(
+      yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      ),
+    );
+    const statuses = events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "background"
+        ? [event.turnItem.status]
+        : [],
+    );
+    const failedIndex = statuses.indexOf("failed");
+    assert.isAtLeast(failedIndex, 0);
+    assert.isTrue(statuses.slice(failedIndex).every((status) => status === "failed"));
+  }).pipe(Effect.provide(layerSession)),
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
