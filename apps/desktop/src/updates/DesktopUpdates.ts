@@ -424,6 +424,19 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // Without a release floor, a build on another track than its saved one never offers anything.
+  const noOfferState = (state: DesktopUpdateState, checkedAt: string) =>
+    Effect.map(Ref.get(releaseFloorRef), (floor) => {
+      const buildChannel = desktopUpdateChannelOf(environment.appVersion);
+      return Option.isNone(floor) && buildChannel !== state.channel
+        ? reduceDesktopUpdateStateOnCheckFailure(
+            state,
+            trackMismatchMessage(buildChannel, state.channel),
+            checkedAt,
+          )
+        : reduceDesktopUpdateStateOnNoUpdate(state, checkedAt);
+    });
+
   const stateChanges = yield* PubSub.sliding<DesktopUpdateState>(16);
   // Serialize writes and publishes against subscription so snapshots cannot overlap the first change.
   const stateMutex = yield* Semaphore.make(1);
@@ -1076,18 +1089,7 @@ export const make = Effect.gen(function* () {
               channel: state.channel,
             });
             const checkedAt = yield* currentIsoTimestamp;
-            const buildChannel = desktopUpdateChannelOf(environment.appVersion);
-            const awaitingSwitch =
-              Option.isNone(yield* Ref.get(releaseFloorRef)) && buildChannel !== state.channel;
-            yield* setState(
-              awaitingSwitch
-                ? reduceDesktopUpdateStateOnCheckFailure(
-                    state,
-                    trackMismatchMessage(buildChannel, state.channel),
-                    checkedAt,
-                  )
-                : reduceDesktopUpdateStateOnNoUpdate(state, checkedAt),
-            );
+            yield* setState(yield* noOfferState(state, checkedAt));
             yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
             return;
           }
@@ -1134,7 +1136,7 @@ export const make = Effect.gen(function* () {
   const handleUpdateNotAvailable = Effect.gen(function* () {
     const checkedAt = yield* currentIsoTimestamp;
     const state = yield* Ref.get(updateStateRef);
-    yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+    yield* setState(yield* noOfferState(state, checkedAt));
     yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
     yield* logUpdaterInfo("no updates available");
   }).pipe(Effect.withSpan("desktop.updates.handleUpdateNotAvailable"));

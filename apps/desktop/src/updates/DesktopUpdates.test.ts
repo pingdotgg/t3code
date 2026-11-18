@@ -1205,6 +1205,25 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("reports a track mismatch when the feed offers no release at all", () => {
+    const harness = makeHarness({ savedChannel: "nightly" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("startup");
+        harness.emit("update-not-available");
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.isTrue(state.canRetry);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("never offers an older Nightly to a Nightly build's own checks", () => {
     const harness = makeHarness({ appVersion: "1.2.4-nightly.20261027.1" });
 
