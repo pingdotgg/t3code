@@ -555,7 +555,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
             archived: true,
           }),
         );
-        yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]);
+        yield* runCli(["project", "add", ` ${aliasPath} `, "--base-dir", baseDir]);
         const restored = (yield* readProjects(baseDir)).projects;
         assert.lengthOf(restored, 1);
         assert.equal(restored[0]?.id, project.id);

@@ -507,7 +507,7 @@ const projectAddCommand = Command.make("add", {
         const target = yield* findActiveProjectTarget({
           snapshot,
           identifier: path.resolve(
-            expandHomePath(flags.workspaceRoot, yield* HostProcess.HomeDirectory),
+            expandHomePath(flags.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
           ),
         }).pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.undefined }));
         const existingProject = snapshot.projects.find((project) => project.id === target?.id);
