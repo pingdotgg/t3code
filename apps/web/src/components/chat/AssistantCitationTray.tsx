@@ -2,7 +2,7 @@ import { useGT } from "gt-react";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { withAssistantCitationComment } from "@t3tools/shared/assistantCitations";
 import { PencilIcon, QuoteIcon, TextCursorInputIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { AssistantCitationQuote } from "./AssistantCitationChip";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { Button } from "../ui/button";
@@ -11,15 +11,23 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 
+export interface AssistantCitationTrayHandle {
+  settleDraft: () => boolean;
+}
+
 export function AssistantCitationTray(props: Parameters<typeof CitationTrayContents>[0]) {
   return props.citations.length ? <CitationTrayContents {...props} /> : null;
 }
 
 function CitationTrayContents({
+  ref,
+  onSubmitAndSend,
   citations,
   onChange,
   onInsertInline,
 }: {
+  ref?: Ref<AssistantCitationTrayHandle> | undefined;
+  onSubmitAndSend?: (() => boolean) | undefined;
   citations: ReadonlyArray<AssistantCitation>;
   onChange: (citations: ReadonlyArray<AssistantCitation>) => void;
   onInsertInline?: ((citation: AssistantCitation) => boolean) | undefined;
@@ -50,6 +58,7 @@ function CitationTrayContents({
     setEditing(null);
     return true;
   };
+  useImperativeHandle(ref, () => ({ settleDraft: () => settleDraft("none") }));
   const remove = (index: number, beforeRemove?: () => boolean) => {
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason: editing === index ? "escape-key" : "none",
@@ -122,6 +131,14 @@ function CitationTrayContents({
                         saveComment(index, comment);
                         return true;
                       }}
+                      onSubmitAndSend={
+                        onSubmitAndSend
+                          ? (comment) => {
+                              saveComment(index, comment);
+                              return onSubmitAndSend();
+                            }
+                          : undefined
+                      }
                       onCancel={() => settleDraft("escape-key")}
                       moveLabel={gt("Insert inline")}
                       moveAriaLabel={gt("Insert annotation {number} inline", { number: index + 1 })}

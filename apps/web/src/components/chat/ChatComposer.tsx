@@ -1,4 +1,4 @@
-import { AssistantCitationTray } from "./AssistantCitationTray";
+import { AssistantCitationTray, type AssistantCitationTrayHandle } from "./AssistantCitationTray";
 import { useCitationDestination } from "./citationDestination";
 import { serializeComposerTray } from "./composerSubmission";
 import { copySnapshot } from "./copySnapshot";
@@ -838,6 +838,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const [citationDestination] = useCitationDestination();
+  const citationTrayRef = useRef<AssistantCitationTrayHandle>(null);
   const setTrayCitations = useStableCallback((citations: ReadonlyArray<AssistantCitation>) =>
     useComposerDraftStore.getState().setTrayCitations(composerDraftTarget, citations),
   );
@@ -2455,6 +2456,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     deleteStashEntryStable,
     toggleStashMenuStable,
   } = useComposerStash({
+    settleTrayDraft: () => citationTrayRef.current?.settleDraft() ?? true,
     environmentId,
     composerDraftTarget,
     promptRef,
@@ -3714,6 +3716,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <AssistantCitationTray
+                    ref={citationTrayRef}
+                    onSubmitAndSend={
+                      activePendingProgress ? undefined : submitCitationAndSendStable
+                    }
                     key={composerDraftTargetKey}
                     citations={composerDraft.trayCitations ?? []}
                     onChange={setTrayCitations}

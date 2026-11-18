@@ -1,4 +1,7 @@
-import { AssistantCitationTray } from "./chat/AssistantCitationTray";
+import {
+  AssistantCitationTray,
+  type AssistantCitationTrayHandle,
+} from "./chat/AssistantCitationTray";
 import { type AssistantCitation, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
@@ -108,7 +111,14 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
 
-function TrayComposer({ question = false }: { question?: boolean }) {
+function TrayComposer({
+  question = false,
+  trayRef,
+}: {
+  question?: boolean;
+  trayRef?: React.RefObject<AssistantCitationTrayHandle | null>;
+}) {
+  const [sent, setSent] = useState(false);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(promptBefore);
   const [answer, setAnswer] = useState("");
@@ -142,8 +152,18 @@ function TrayComposer({ question = false }: { question?: boolean }) {
       >
         Cite to tray
       </button>
-      <output data-tray-count={tray.length} data-prompt={prompt} data-answer={answer} />
+      <output
+        data-tray-count={tray.length}
+        data-prompt={prompt}
+        data-answer={answer}
+        data-sent={sent}
+      />
       <AssistantCitationTray
+        ref={trayRef}
+        onSubmitAndSend={() => {
+          setSent(true);
+          return true;
+        }}
         citations={tray}
         onChange={setTray}
         onInsertInline={
@@ -172,10 +192,13 @@ function TrayComposer({ question = false }: { question?: boolean }) {
 }
 
 it("opens a source comment for tray citations and preserves saved and cancelled citations", async () => {
-  await using screen = await render(<TrayComposer />);
+  const trayRef = createRef<AssistantCitationTrayHandle>();
+  await using screen = await render(<TrayComposer trayRef={trayRef} />);
   await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
   await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
   await page.getByLabelText("Comment on selected text").fill("Keep this comment");
+  await userEvent.keyboard("{Tab}");
+  await expect.element(page.getByRole("button", { name: "Save", exact: true })).toHaveFocus();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   const state = () => screen.container.querySelector("output")?.dataset;
   expect(state()?.trayCount).toBe("1");
@@ -189,6 +212,17 @@ it("opens a source comment for tray citations and preserves saved and cancelled 
   await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
   await page.getByLabelText("Comment on selected text").fill("Discard the cancelled edit");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(page.getByText("User comment: Keep the dismissed edit")).toBeVisible();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Keep the settled edit");
+  await act(() => {
+    expect(trayRef.current?.settleDraft()).toBe(true);
+  });
+  await expect.element(page.getByText("User comment: Keep the settled edit")).toBeVisible();
+  await page.getByRole("button", { name: "Edit annotation 1", exact: true }).click();
+  await page.getByLabelText("Comment on selected text").fill("Keep the dismissed edit");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  expect(state()?.sent).toBe("true");
   await expect.element(page.getByText("User comment: Keep the dismissed edit")).toBeVisible();
   await page.getByRole("button", { name: "Cite to tray", exact: true }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();

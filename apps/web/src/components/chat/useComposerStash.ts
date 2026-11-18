@@ -76,6 +76,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
  * and the stash shortcut. Its state lives here so the composer body only wires it up.
  */
 export function useComposerStash(input: {
+  readonly settleTrayDraft?: () => boolean;
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly promptRef: ChatComposerProps["promptRef"];
@@ -512,6 +513,7 @@ export function useComposerStash(input: {
   const deleteStashEntryStable = useStableCallback(deleteStashEntry);
 
   const stashCurrentPrompt = async () => {
+    if (input.settleTrayDraft?.() === false) return;
     // Stashing clears the draft. A pasted attachment still downloading would then land in the
     // emptied composer instead of travelling with the entry it belongs to.
     if (pendingDraftWork.has(attachmentTargetKey)) {
