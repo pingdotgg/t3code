@@ -1110,7 +1110,7 @@ function AdaptiveWorkspaceLayoutContent(
       ) : null}
       {resizableSidebarWidth !== null ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize sidebar"
+          accessibilityLabel={gt("Resize sidebar")}
           currentWidth={resizableSidebarWidth}
           resizeDirection={1}
           onResizeStart={() => {
