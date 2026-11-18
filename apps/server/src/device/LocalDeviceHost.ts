@@ -576,19 +576,54 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         ) {
           return endpoint;
         }
-        // A previous server's in-memory device sessions cannot be recovered by this host.
-        yield* stopAgentDeviceDaemon;
-        if (yield* fs.exists(daemonFilePath()).pipe(Effect.orElseSucceed(() => true))) {
-          return yield* new DeviceHost.AgentDeviceStartError({
-            hostId,
-            stateDir,
-            exitCode: null,
-            reason: "daemon_retirement_unconfirmed",
-            cause: new Error("The previous agent-device daemon retained its registration."),
-          });
-        }
-      } else {
-        yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      }
+    }
+    yield* Ref.update(runningRef, (running) =>
+      running ? { ...running, agentDevice: null } : running,
+    );
+    if (existing._tag === "Some") {
+      // A failed health probe does not prove that the recorded owner exited.
+      const stopped = yield* stopAgentDeviceDaemon.pipe(Effect.result);
+      if (stopped._tag === "Failure") {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: null,
+          reason: "daemon_retirement_unconfirmed",
+          cause: stopped.failure,
+        });
+      }
+      const result = stopped.success;
+      if (result && (result.timedOut || result.code !== 0)) {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: result.code,
+          reason: "daemon_retirement_unconfirmed",
+          cause: result,
+        });
+      }
+      const registered = yield* fs.exists(daemonFilePath()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceHost.AgentDeviceStartError({
+              hostId,
+              stateDir,
+              exitCode: result?.code ?? null,
+              reason: "daemon_retirement_unconfirmed",
+              cause,
+            }),
+        ),
+      );
+      if (registered) {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: result?.code ?? null,
+          reason: "daemon_retirement_unconfirmed",
+          cause:
+            result ?? new Error("No installed agent-device CLI could retire the registration."),
+        });
       }
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
@@ -672,7 +707,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
-    yield* runner.run({
+    return yield* runner.run({
       command: nodePath,
       args: [
         entryPath,
@@ -685,11 +720,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       timeout: Duration.seconds(10),
       timeoutBehavior: "timedOutResult",
     });
-  }).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-    Effect.ignore,
-  );
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
@@ -780,9 +811,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             running.agentDevice,
             running.hub.nodePath,
             running.agentDevice,
+          ).pipe(
+            Effect.tap((agentDevice) => Ref.set(runningRef, { ...running, agentDevice })),
+            Effect.uninterruptible,
           );
-          yield* Ref.set(runningRef, { ...running, agentDevice });
-          return { ...toReady(running), agentDevice };
+          return { ...toReady({ ...running, agentDevice }), agentDevice };
         }
         const installed = yield* isAgentDeviceInstalled(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
@@ -809,14 +842,17 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
         yield* onPhase("starting");
-        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
+        // A daemon can publish its registration before its startup command returns.
+        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath).pipe(
+          Effect.tap((agentDevice) => Ref.set(runningRef, { ...running, agentDevice })),
+          Effect.uninterruptible,
+        );
         yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
           Effect.ignore,
         );
         const next = { ...running, agentDevice };
-        yield* Ref.set(runningRef, next);
         return { ...toReady(next), agentDevice };
       }),
     );
@@ -891,7 +927,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
-      yield* stopAgentDeviceDaemon;
+      yield* stopAgentDeviceDaemon.pipe(Effect.ignore);
       yield* Ref.update(runningRef, (running) =>
         running ? { ...running, agentDevice: null } : running,
       );
@@ -907,7 +943,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           stopHub(running?.hub).pipe(
             Effect.andThen(fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore)),
           ),
-          stopAgentDeviceDaemon,
+          stopAgentDeviceDaemon.pipe(Effect.ignore),
         ],
         { concurrency: "unbounded", discard: true },
       );
