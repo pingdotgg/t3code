@@ -65,6 +65,8 @@ private func socksReply(_ code: UInt8) -> Data { Data([5, code, 0, 1, 0, 0, 0, 0
 private func isLoopbackName(_ name: String) -> Bool {
   let name = name.lowercased()
   if name == "localhost" || name.hasSuffix(".localhost") { return true }
+  // TEMPORARY probe: a name WebKit does not treat as loopback, to see whether devices proxy it.
+  if name == "t3-loopback.test" { return true }
   if let address = IPv4Address(name) { return address.rawValue.first == 127 }
   if let address = IPv6Address(name) { return address.isLoopback }
   return false
