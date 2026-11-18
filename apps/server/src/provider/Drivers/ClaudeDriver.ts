@@ -1,6 +1,7 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import type * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -72,6 +73,40 @@ const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilities
   const result = { ...capabilities };
   delete result.usage;
   return result;
+};
+
+/**
+ * While `/api/oauth/usage` is rate-limited, Claude Code answers `get_usage` from its saved reading
+ * without saying so. Usage matching that reading is dated by its fetch, never later than the probe.
+ */
+const withSavedUsageAge = (
+  capabilities: ClaudeCapabilitiesProbe,
+  saved: Effect.Success<ReturnType<typeof ClaudeResetCredits.readClaudeSavedUsage>>,
+): ClaudeCapabilitiesProbe => {
+  const windows = Object.entries(capabilities.usage?.rate_limits ?? {}).flatMap(([id, window]) =>
+    window && "utilization" in window ? [{ id, utilization: window.utilization }] : [],
+  );
+  const probedAt = capabilities.usageCheckedAt;
+  const matchesSaved =
+    saved !== undefined &&
+    probedAt !== undefined &&
+    saved.fetchedAtMs < DateTime.toEpochMillis(DateTime.makeUnsafe(probedAt)) &&
+    windows.length > 0 &&
+    windows.every(({ id, utilization }) => {
+      const savedWindow = saved.utilization[id];
+      return (
+        typeof savedWindow === "object" &&
+        savedWindow !== null &&
+        "utilization" in savedWindow &&
+        savedWindow.utilization === utilization
+      );
+    });
+  return matchesSaved
+    ? {
+        ...capabilities,
+        usageCheckedAt: DateTime.formatIso(DateTime.makeUnsafe(saved.fetchedAtMs)),
+      }
+    : capabilities;
 };
 
 export type ClaudeDriverEnv =
@@ -214,13 +249,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
-          Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-              Effect.map((workspaceId) => ({
-                _tag: "fresh" as const,
-                capabilities:
-                  workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
-              })),
+          Effect.flatMap((probed) =>
+            Effect.all([
+              ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+              ClaudeResetCredits.readClaudeSavedUsage(accountConfigPath),
+            ]).pipe(
+              Effect.map(([workspaceId, savedUsage]) => {
+                const capabilities = withSavedUsageAge(probed, savedUsage);
+                return {
+                  _tag: "fresh" as const,
+                  capabilities:
+                    workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
+                };
+              }),
             ),
           ),
           Effect.tap(({ capabilities }) =>
