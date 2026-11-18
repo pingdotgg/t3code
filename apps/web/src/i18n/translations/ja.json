@@ -9392,6 +9392,8 @@
   "8cbd6854fc18ea5d": "利用できない環境",
   "cc22f44063aa5066": "例: Sentry の Issue を確認",
   "f89e7d09933131ce": "プロジェクトを選択",
+  "1ee08d9aba6d497a": "Stop running in the fleet worker sandbox?\nFuture runs will no longer use the fleet worker this task is paired with.",
+  "1bc9d91ac0ac0803": "Stop running in the fleet worker sandbox? Future runs will no longer use it.",
   "fb4a7f9335463af5": "ベースブランチ",
   "8b724804e55e48e6": "チェックアウトのパス",
   "074bdabe78bea12d": "プロンプト",

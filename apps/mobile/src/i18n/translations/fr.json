@@ -3489,6 +3489,7 @@
   "3c5185df378edef9": "S’exécute uniquement si tous les filtres correspondent. Les autres requêtes sont journalisées comme filtrées. Séparez les valeurs « fait partie de » par des virgules ; une valeur ne peut pas contenir de virgule.",
   "d1a74724f70edb0b": "Cette tâche n’existe plus.",
   "c191069dded46bcc": "Cet environnement est déconnecté. Reconnectez-le avant d’enregistrer.",
+  "46cea643e5ae4196": "Future runs will no longer use the fleet worker sandbox this task is paired with.",
   "0d15db4c81851479": "Les requêtes avec la même clé ne s’exécutent qu’une fois en 7 jours.",
   "a5bbe09b0c89d86c": "Le regroupement exécute la dernière charge utile quand la fenêtre ouverte par la première livraison se ferme. Les clés vides s’exécutent normalement.",
   "0e2233fb297f7c07": "Les intervalles doivent être d’au moins 1 minute. Modifiez cet intervalle avant d’enregistrer.",

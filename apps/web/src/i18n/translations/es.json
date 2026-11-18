@@ -9435,6 +9435,8 @@
   "8cbd6854fc18ea5d": "Entorno no disponible",
   "cc22f44063aa5066": "p. ej., Revisar incidencias de Sentry",
   "f89e7d09933131ce": "Selecciona un proyecto",
+  "1ee08d9aba6d497a": "Stop running in the fleet worker sandbox?\nFuture runs will no longer use the fleet worker this task is paired with.",
+  "1bc9d91ac0ac0803": "Stop running in the fleet worker sandbox? Future runs will no longer use it.",
   "fb4a7f9335463af5": "Rama base",
   "8b724804e55e48e6": "Ruta del checkout",
   "074bdabe78bea12d": "Prompt",

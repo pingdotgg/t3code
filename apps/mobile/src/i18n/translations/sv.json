@@ -3495,6 +3495,7 @@
   "3c5185df378edef9": "Körs bara när alla filter matchar. Andra begäranden loggas som filtrerade. Separera värden för ”är en av” med kommatecken; ett värde får inte innehålla kommatecken.",
   "d1a74724f70edb0b": "Uppgiften finns inte längre.",
   "c191069dded46bcc": "Miljön är frånkopplad. Återanslut innan du sparar.",
+  "46cea643e5ae4196": "Future runs will no longer use the fleet worker sandbox this task is paired with.",
   "0d15db4c81851479": "Begäranden med samma nyckel körs bara en gång inom 7 dagar.",
   "a5bbe09b0c89d86c": "Sammanslagning kör den senaste nyttolasten när fönstret från den första leveransen stängs. Tomma nycklar körs som vanligt.",
   "0e2233fb297f7c07": "Intervall måste vara minst 1 minut. Uppdatera intervallet innan du sparar.",

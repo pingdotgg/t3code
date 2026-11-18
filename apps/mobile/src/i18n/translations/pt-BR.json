@@ -3489,6 +3489,7 @@
   "3c5185df378edef9": "Executa só quando todos os filtros correspondem. As outras requisições são registradas como filtradas. Separe os valores de “é um de” com vírgulas; um valor não pode conter vírgula.",
   "d1a74724f70edb0b": "Esta tarefa não existe mais.",
   "c191069dded46bcc": "Este ambiente está desconectado. Reconecte antes de salvar.",
+  "46cea643e5ae4196": "Future runs will no longer use the fleet worker sandbox this task is paired with.",
   "0d15db4c81851479": "Requisições com a mesma chave executam só uma vez em 7 dias.",
   "a5bbe09b0c89d86c": "O agrupamento executa o payload mais recente quando a janela iniciada pela primeira entrega fecha. Chaves vazias executam normalmente.",
   "0e2233fb297f7c07": "Os intervalos devem ser de pelo menos 1 minuto. Atualize este intervalo antes de salvar.",

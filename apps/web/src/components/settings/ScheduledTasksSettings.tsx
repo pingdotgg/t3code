@@ -1872,11 +1872,15 @@ function ScheduledTaskEditorForm({
                   void (async () => {
                     const confirmed =
                       (await requestConfirmDialog(
-                        "Stop running in the fleet worker sandbox?\nFuture runs will no longer use the fleet worker this task is paired with.",
+                        gt(
+                          "Stop running in the fleet worker sandbox?\nFuture runs will no longer use the fleet worker this task is paired with.",
+                        ),
                         { variant: "destructive" },
                       )) ??
                       window.confirm(
-                        "Stop running in the fleet worker sandbox? Future runs will no longer use it.",
+                        gt(
+                          "Stop running in the fleet worker sandbox? Future runs will no longer use it.",
+                        ),
                       );
                     if (!confirmed) return;
                     setDraft((current) => ({ ...current, workspaceMode: next }));

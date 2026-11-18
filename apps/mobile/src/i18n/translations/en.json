@@ -3495,6 +3495,7 @@
   "3c5185df378edef9": "Runs only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma.",
   "d1a74724f70edb0b": "This task no longer exists.",
   "c191069dded46bcc": "This environment is disconnected. Reconnect before saving.",
+  "46cea643e5ae4196": "Future runs will no longer use the fleet worker sandbox this task is paired with.",
   "0d15db4c81851479": "Requests with the same key run only once within 7 days.",
   "a5bbe09b0c89d86c": "Coalescing runs the latest payload when the window from the first delivery closes. Empty keys run normally.",
   "0e2233fb297f7c07": "Intervals must be at least 1 minute. Update this interval before saving.",

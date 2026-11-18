@@ -1077,7 +1077,7 @@ function TaskForm({
                 ? [
                     {
                       id: "sandbox",
-                      title: "Fleet worker sandbox",
+                      title: gt("Fleet worker sandbox"),
                       state: draft.workspace === "sandbox" ? ("on" as const) : undefined,
                     },
                   ]
@@ -1110,7 +1110,9 @@ function TaskForm({
           />
           {leavesSandboxWorkspace(draft) ? (
             <Text className="px-4 pb-3 text-sm text-warning-foreground">
-              Future runs will no longer use the fleet worker sandbox this task is paired with.
+              <T>
+                Future runs will no longer use the fleet worker sandbox this task is paired with.
+              </T>
             </Text>
           ) : null}
           {draft.workspace === "worktree" ? (
