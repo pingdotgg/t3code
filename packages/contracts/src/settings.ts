@@ -1044,22 +1044,24 @@ export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 export const TextGeneratorKind = Schema.Literals(["openaiCompatible", "anthropic"]);
 export type TextGeneratorKind = typeof TextGeneratorKind.Type;
 
+const isHttpUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+};
+
 const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(2048),
-  Schema.makeFilter((value) => {
-    try {
-      const url = new URL(value);
-      return (
-        (url.protocol === "http:" || url.protocol === "https:") &&
-        !url.username &&
-        !url.password &&
-        !url.search &&
-        !url.hash
-      );
-    } catch {
-      return false;
-    }
-  }),
+  Schema.makeFilter(isHttpUrl),
 );
 
 /** A model API that only generates text. Its key shares the id namespace with provider instances. */
@@ -1072,9 +1074,19 @@ export const TextGeneratorConfig = Schema.Struct({
 });
 export type TextGeneratorConfig = typeof TextGeneratorConfig.Type;
 
-/** Who answers a computer-use step's questions. Null means the agent answers them in `computer_use`. */
-export const ComputerGrounderKind = Schema.Literals(["openai-compatible", "systemone"]);
+/** Who answers a computer-use step's questions. `jev` is the TypeSafe preset; null means the agent answers them in `computer_use`. */
+export const ComputerGrounderKind = Schema.Literals(["jev", "openai-compatible", "systemone"]);
 export type ComputerGrounderKind = typeof ComputerGrounderKind.Type;
+
+/** Jev, TypeSafe's System One model. Its endpoint adds `/v1/systemone`, so the base has no `/v1`. */
+const JEV_GROUNDER_BASE_URL = "https://api.typesafe.ai";
+const JEV_GROUNDER_MODEL = "jev-latest";
+
+/** Empty for the Jev preset, whose endpoint is fixed. */
+const ComputerGrounderBaseUrl = TrimmedString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => value === "" || isHttpUrl(value)),
+).pipe(Schema.withDecodingDefault(Effect.succeed("")));
 
 /**
  * A decision endpoint for computer use. It sees control labels and up to 1,500 characters of visible
@@ -1082,11 +1094,38 @@ export type ComputerGrounderKind = typeof ComputerGrounderKind.Type;
  */
 export const ComputerGrounderConfig = Schema.Struct({
   kind: ComputerGrounderKind,
-  baseUrl: TextGeneratorBaseUrl,
-  model: TrimmedNonEmptyString,
+  baseUrl: ComputerGrounderBaseUrl,
+  /** Empty for the Jev preset. */
+  model: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   apiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
 });
 export type ComputerGrounderConfig = typeof ComputerGrounderConfig.Type;
+
+/** The endpoint a stored grounder resolves to. */
+export interface ComputerGrounderEndpoint {
+  readonly kind: "openai-compatible" | "systemone";
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly apiKey: SettingsSecretValue;
+}
+
+/** Fills the Jev preset's URL and model, and needs its key: without one the agent plans the step. */
+export function resolveComputerGrounder(
+  config: ComputerGrounderConfig | null,
+): ComputerGrounderEndpoint | null {
+  if (config === null) return null;
+  if (config.kind === "jev") {
+    if (typeof config.apiKey === "string" && config.apiKey.length === 0) return null;
+    return {
+      kind: "systemone",
+      baseUrl: JEV_GROUNDER_BASE_URL,
+      model: JEV_GROUNDER_MODEL,
+      apiKey: config.apiKey,
+    };
+  }
+  if (config.baseUrl.length === 0 || config.model.length === 0) return null;
+  return { kind: config.kind, baseUrl: config.baseUrl, model: config.model, apiKey: config.apiKey };
+}
 
 export const TextGeneratorModel = Schema.Struct({
   id: TrimmedNonEmptyString,
