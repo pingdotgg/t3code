@@ -1,12 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { OrbitGatewayRequest, OrbitGatewayTransport } from "./client.ts";
+import type { OrbitRealtimeSocket } from "./realtimeSubscription.ts";
 import type { OrbitTasksInvalidation } from "./tasks.ts";
-import {
-  followOrbitTasks,
-  orbitTaskNotice,
-  ORBIT_TASKS_REFRESH_MS,
-  type TasksSocket,
-} from "./tasksRealtime.ts";
+import { followOrbitTasks, orbitTaskNotice, ORBIT_TASKS_REFRESH_MS } from "./tasksRealtime.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -23,7 +19,7 @@ function clock() {
     },
   };
 }
-class Socket implements TasksSocket {
+class Socket implements OrbitRealtimeSocket {
   readonly sent: Array<Record<string, unknown>> = [];
   readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
   readonly subscribed = deferred<void>();
@@ -112,9 +108,15 @@ describe("Orbit task summary refresh", () => {
       event: "pusher:subscribe",
       data: { channel: "private-orbit", auth: "signed" },
     });
+    socket.emit("task_group.updated", { id: 55 });
+    socket.emit("pusher_internal:subscription_succeeded", {}, "private-other");
+    await vi.advanceTimersByTimeAsync(250);
+    expect(invalidations).toEqual([]);
+    expect(statuses).toEqual(["connecting"]);
     socket.emit("pusher_internal:subscription_succeeded", {});
     await vi.advanceTimersByTimeAsync(250);
     expect(invalidations).toEqual([{ kind: "list" }]);
+    socket.emit("task_group.updated", { id: 55 }, "private-other");
     for (let i = 0; i < 100; i++) socket.emit("task_group.updated", { id: 482 });
     await vi.advanceTimersByTimeAsync(250);
     expect(invalidations).toEqual([{ kind: "list" }, { kind: "task", taskId: 482 }]);
