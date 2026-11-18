@@ -13,6 +13,19 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+## Orbit Instance facts at startup
+
+Conn Server reads Orbit’s existing `/etc/orbit/instance` at startup and publishes the optional
+`orbitInstance` in the environment descriptor, alongside its persisted environment ID.
+The descriptor requires both positive, JavaScript-safe IDs. It keeps the optional Project,
+Instance and Node labels, plus a valid HTTP(S) URL. A host without the file or an older file
+without both IDs still starts. The reader caps the file at 64 KiB.
+
+The Rust tests consume the TypeScript server’s fixture and cover absent and older files,
+invalid IDs and URLs, comments and values containing spaces or equals signs. This step adds
+no bootstrap command. Orbit still supplies live lifecycle state and still configures the
+workspace project and access separately.
+
 ## Released and running in Orbit (2026-11-16)
 
 - **Release `conn-server-v0.1.0`** (Conn `a7755b30bd`): the release workflow's first run built

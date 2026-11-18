@@ -55,6 +55,8 @@ rusqlite.workspace = true
 rustix = { workspace = true, features = ["process", "event", "fs"] }
 # Already in the tree through axum: the Stream trait an asset response body implements.
 futures-core = "0.3"
+# Parses the Orbit Instance URL the same way the TypeScript server does. Already in the graph.
+url = "2"
 
 [dev-dependencies]
 conn-support = { workspace = true, features = ["test-util"] }

@@ -157,8 +157,15 @@ pub async fn serve_with_instances(
         })
         .collect();
     let restart = crate::restart::Restart::detect(desktop.is_some()).await;
+    let load_environment = {
+        let state_dir = state_dir.clone();
+        tokio::task::spawn_blocking(move || Environment::load(&state_dir, label, cwd, restart))
+    };
     let environment = or_exit(
-        Environment::load(&state_dir, label, cwd, restart),
+        or_exit(
+            load_environment.await,
+            "cannot start the environment loader",
+        ),
         "cannot load the state directory",
     );
     let environment = Arc::new(environment);
