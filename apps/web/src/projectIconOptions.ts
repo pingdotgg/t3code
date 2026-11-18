@@ -1,4 +1,6 @@
 import { searchItems } from "@t3tools/shared/searchRanking";
+import { msg } from "gt-react";
+
 import { lucideIconNames } from "./lib/lucideIconByName";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
@@ -30,36 +32,36 @@ const POPULAR_PROJECT_ICONS: ReadonlyArray<string> = [
 ];
 
 export const PROJECT_EMOJIS: ReadonlyArray<{ readonly emoji: string; readonly label: string }> = [
-  { emoji: "💻", label: "Computer" },
-  { emoji: "🛠️", label: "Tools" },
-  { emoji: "🚀", label: "Rocket" },
-  { emoji: "🤖", label: "Robot" },
-  { emoji: "✨", label: "Sparkles" },
-  { emoji: "⚡", label: "Lightning" },
-  { emoji: "🌐", label: "Web" },
-  { emoji: "📱", label: "Mobile" },
-  { emoji: "🖥️", label: "Desktop" },
-  { emoji: "⌨️", label: "Keyboard" },
-  { emoji: "⚙️", label: "Gear" },
-  { emoji: "🗄️", label: "Database" },
-  { emoji: "☁️", label: "Cloud" },
-  { emoji: "📦", label: "Package" },
-  { emoji: "📚", label: "Books" },
-  { emoji: "🧪", label: "Test tube" },
-  { emoji: "🔒", label: "Lock" },
-  { emoji: "🎮", label: "Game" },
-  { emoji: "🎵", label: "Music" },
-  { emoji: "🎬", label: "Movie" },
-  { emoji: "🖼️", label: "Picture" },
-  { emoji: "🛍️", label: "Shopping" },
-  { emoji: "🔥", label: "Fire" },
-  { emoji: "💡", label: "Idea" },
-  { emoji: "🧩", label: "Puzzle" },
-  { emoji: "📊", label: "Chart" },
-  { emoji: "🧠", label: "Brain" },
-  { emoji: "🦄", label: "Unicorn" },
-  { emoji: "🐙", label: "Octopus" },
-  { emoji: "🌱", label: "Seedling" },
+  { emoji: "💻", label: msg("Computer", { $context: "emoji name, project icon" }) },
+  { emoji: "🛠️", label: msg("Tools", { $context: "emoji name, project icon" }) },
+  { emoji: "🚀", label: msg("Rocket", { $context: "emoji name, project icon" }) },
+  { emoji: "🤖", label: msg("Robot", { $context: "emoji name, project icon" }) },
+  { emoji: "✨", label: msg("Sparkles", { $context: "emoji name, project icon" }) },
+  { emoji: "⚡", label: msg("Lightning", { $context: "emoji name, project icon" }) },
+  { emoji: "🌐", label: msg("Web", { $context: "emoji name, project icon" }) },
+  { emoji: "📱", label: msg("Mobile", { $context: "emoji name, project icon" }) },
+  { emoji: "🖥️", label: msg("Desktop", { $context: "emoji name, project icon" }) },
+  { emoji: "⌨️", label: msg("Keyboard", { $context: "emoji name, project icon" }) },
+  { emoji: "⚙️", label: msg("Gear", { $context: "emoji name, project icon" }) },
+  { emoji: "🗄️", label: msg("Database", { $context: "emoji name, project icon" }) },
+  { emoji: "☁️", label: msg("Cloud", { $context: "emoji name, project icon" }) },
+  { emoji: "📦", label: msg("Package", { $context: "emoji name, project icon" }) },
+  { emoji: "📚", label: msg("Books", { $context: "emoji name, project icon" }) },
+  { emoji: "🧪", label: msg("Test tube", { $context: "emoji name, project icon" }) },
+  { emoji: "🔒", label: msg("Lock", { $context: "emoji name, project icon" }) },
+  { emoji: "🎮", label: msg("Game", { $context: "emoji name, project icon" }) },
+  { emoji: "🎵", label: msg("Music", { $context: "emoji name, project icon" }) },
+  { emoji: "🎬", label: msg("Movie", { $context: "emoji name, project icon" }) },
+  { emoji: "🖼️", label: msg("Picture", { $context: "emoji name, project icon" }) },
+  { emoji: "🛍️", label: msg("Shopping", { $context: "emoji name, project icon" }) },
+  { emoji: "🔥", label: msg("Fire", { $context: "emoji name, project icon" }) },
+  { emoji: "💡", label: msg("Idea", { $context: "emoji name, project icon" }) },
+  { emoji: "🧩", label: msg("Puzzle", { $context: "emoji name, project icon" }) },
+  { emoji: "📊", label: msg("Chart", { $context: "emoji name, project icon" }) },
+  { emoji: "🧠", label: msg("Brain", { $context: "emoji name, project icon" }) },
+  { emoji: "🦄", label: msg("Unicorn", { $context: "emoji name, project icon" }) },
+  { emoji: "🐙", label: msg("Octopus", { $context: "emoji name, project icon" }) },
+  { emoji: "🌱", label: msg("Seedling", { $context: "emoji name, project icon" }) },
 ];
 
 export function filterProjectIconNames(query: string): ReadonlyArray<string> {

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import type { EnvironmentId, ServerSettingsPatch } from "@t3tools/contracts";
 import { worktreeSettingsPatchApplied } from "@t3tools/shared/serverSettings";
 import {
@@ -11,6 +12,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ScopedMobileSettingsTarget } from "./settings-scoped-server";
 
 export function useSettingsWriter() {
+  const gt = useGT();
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "environment settings update",
     reportFailure: true,
@@ -35,16 +37,21 @@ export function useSettingsWriter() {
         if (result._tag === "Success") {
           return worktreeSettingsPatchApplied(entry.patch, result.value)
             ? null
-            : `${label}: Update T3 Code on this environment to save worktree settings.`;
+            : gt("{label}: Update T3 Code on this environment to save worktree settings.", {
+                label,
+              });
         }
         if (isAtomCommandInterrupted(result)) return null;
         const error = squashAtomCommandFailure(result);
-        return `${label}: ${error instanceof Error ? error.message : String(error)}`;
+        return gt("{environment}: {error}", {
+          environment: label,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }),
     );
     const failures = outcomes.filter((outcome) => outcome !== null);
     if (failures.length > 0) {
-      Dialog.alert("Could not save settings", failures.join("\n\n"));
+      Dialog.alert(gt("Could not save settings"), failures.join("\n\n"));
     }
   };
 }

@@ -3,6 +3,9 @@ import { searchItems } from "@t3tools/shared/searchRanking";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
@@ -18,7 +21,7 @@ class DesktopSshDiscoveryUnavailableError extends Schema.TaggedError<DesktopSshD
   {},
 ) {
   override get message(): string {
-    return "Desktop SSH host discovery is unavailable.";
+    return m(msg("Desktop SSH host discovery is unavailable."));
   }
 }
 
@@ -27,7 +30,7 @@ class DesktopSshDiscoveryError extends Schema.TaggedError<DesktopSshDiscoveryErr
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Failed to discover SSH hosts.";
+    return m(msg("Failed to discover SSH hosts."));
   }
 }
 

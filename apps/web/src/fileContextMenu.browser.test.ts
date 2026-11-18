@@ -1,3 +1,4 @@
+import { m } from "./i18n/messages";
 import { EnvironmentId } from "@t3tools/contracts";
 import { createElement, useEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -94,6 +95,7 @@ describe("resolveFileContextMenuAbsolutePath", () => {
 describe("buildFileContextMenuItems", () => {
   it("offers open, reveal, and an open-with submenu when all are available", () => {
     const items = buildFileContextMenuItems({
+      resolve: m,
       target: BASE_TARGET,
       capabilities: {
         revealLabel: "Reveal in Finder",
@@ -118,6 +120,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("keeps copy actions available alongside reveal without editors", () => {
     const items = buildFileContextMenuItems({
+      resolve: m,
       target: BASE_TARGET,
       capabilities: {
         revealLabel: "Reveal in File Explorer",
@@ -136,7 +139,11 @@ describe("buildFileContextMenuItems", () => {
 
   it("offers both copy actions without host file capabilities", () => {
     expect(
-      buildFileContextMenuItems({ target: BASE_TARGET, capabilities: EMPTY_CAPABILITIES }),
+      buildFileContextMenuItems({
+        resolve: m,
+        target: BASE_TARGET,
+        capabilities: EMPTY_CAPABILITIES,
+      }),
     ).toEqual([
       {
         id: "copy-relative-path",
@@ -151,6 +158,7 @@ describe("buildFileContextMenuItems", () => {
   it("still offers relative-path copying when the absolute path cannot be resolved", () => {
     expect(
       buildFileContextMenuItems({
+        resolve: m,
         target: { ...BASE_TARGET, workspaceRoot: undefined },
         capabilities: {
           revealLabel: "Reveal in Finder",
@@ -170,6 +178,7 @@ describe("buildFileContextMenuItems", () => {
 
   it("offers path copying for a sibling project without enabling host file actions", () => {
     const items = buildFileContextMenuItems({
+      resolve: m,
       target: {
         ...BASE_TARGET,
         workspaceRoot: "/repo/frontend",

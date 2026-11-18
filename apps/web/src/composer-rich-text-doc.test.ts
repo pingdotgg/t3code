@@ -392,7 +392,7 @@ describe("composer rich text document model", () => {
     "- [ ] parent\n  - [ ] child\n  - [ ] sibling\n- [ ] uncle",
     "- [ ] empty task follows\n- [ ]",
     "- [ ] **bold** task with @README.md",
-    "para\n- [ ] task\npara",
+    "para\n- [ ] task\n\npara",
     "- [ ]No space stays literal",
     "-[ ] also literal",
     "@README.md explain this",
@@ -576,7 +576,7 @@ describe("composer rich text document model", () => {
     "- **bold** item with @README.md",
     "- [ ] task\n- bullet after",
     "- bullet\n- [x] task after",
-    "para\n- item\npara",
+    "para\n- item\n\npara",
     "\t- tab indented\n\t- again",
     "  - leading indent only",
     "- item\n\n- after a blank",
@@ -683,6 +683,35 @@ describe("composer rich text document model", () => {
       expect(flatToMarkdown(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
       expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
     });
+  });
+
+  describe("a paragraph after a list", () => {
+    const skillLabelFor = (name: string) => ({ label: name, description: null });
+    it.each([
+      ["a numbered list", "1. a\n2. b\n3. c", 0],
+      ["a bullet list", "- a\n- b", 0],
+      ["a task list", "- [ ] a", 0],
+      ["a bullet list and an empty line", "- a", 1],
+    ])(
+      "is written after a blank line after %s, or Markdown folds it into the last item",
+      (_kind, list, emptyLines) => {
+        const listJson = buildDocJson(list, skillLabelFor);
+        const doc = ProseMirrorNode.fromJSON(schema, {
+          type: "doc",
+          content: [
+            ...listJson.content,
+            ...Array.from({ length: emptyLines }, () => ({ type: "paragraph" })),
+            { type: "paragraph", content: [{ type: "text", text: "d" }] },
+          ],
+        });
+        doc.check();
+        expect(doc.childCount).toBe(2 + emptyLines);
+        const { value } = serializeEditorDoc(doc);
+        expect(value).toBe(`${list}\n\n${"\n".repeat(emptyLines)}d`);
+        const reopened = ProseMirrorNode.fromJSON(schema, buildDocJson(value, skillLabelFor));
+        expect(reopened.toJSON()).toEqual(doc.toJSON());
+      },
+    );
   });
 
   describe("a dash rule after a paragraph", () => {

@@ -10,6 +10,8 @@ import {
   resolveVcsUnsupportedReason,
   type VcsTerminology,
 } from "@t3tools/shared/vcs";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -56,16 +58,24 @@ export function changeRequestTerminologyFor(
 }
 
 /** jj has no detached HEAD, so the "you are not on a ref" hint is phrased per system. */
-function noRefHint(gitStatus: VcsStatusResult, vcs: VcsTerminology, tail: string): string {
+function noRefHint(
+  gitStatus: VcsStatusResult,
+  vcs: VcsTerminology,
+  tail: string,
+  resolve: MFunctionType,
+): string {
   return gitStatus.vcs?.kind === "jj"
-    ? `No ${vcs.refNoun} here: create one before ${tail}.`
-    : `Detached HEAD: check out a ${vcs.refNoun} before ${tail}.`;
+    ? resolve(msg("No {refNoun} here: create one before {tail}.", { refNoun: vcs.refNoun, tail }))
+    : resolve(
+        msg("Detached HEAD: check out a {refNoun} before {tail}.", { refNoun: vcs.refNoun, tail }),
+      );
 }
 
 export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasPrimaryRemote = true,
+  resolve: MFunctionType = mFallback,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
   const terminology = changeRequestTerminologyFor(gitStatus);
@@ -95,7 +105,7 @@ export function buildMenuItems(
 
   const commitItem: GitActionMenuItem = {
     id: "commit",
-    label: "Commit",
+    label: resolve(msg("Commit", { $context: "verb, git action" })),
     disabled: !canCommit,
     icon: "commit",
     kind: "open_dialog",
@@ -108,7 +118,7 @@ export function buildMenuItems(
 
   const pushItem: GitActionMenuItem = {
     id: "push",
-    label: "Push",
+    label: resolve(msg("Push", { $context: "verb, git action" })),
     disabled: !canPush,
     icon: "push",
     kind: "open_dialog",
@@ -126,7 +136,7 @@ export function buildMenuItems(
     pushItem,
     {
       id: "pr",
-      label: `Create ${terminology.shortLabel}`,
+      label: resolve(msg("Create {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: !canCreatePr,
       icon: "pr",
       kind: "open_dialog",
@@ -141,30 +151,42 @@ export function resolveQuickAction(
   isDefaultRef = false,
   hasPrimaryRemote = true,
   canPublish = false,
+  resolve: MFunctionType = mFallback,
 ): GitQuickAction {
   const vcs = resolveVcsTerminology(gitStatus);
 
   if (isBusy) {
     return {
-      label: "Commit",
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
-      hint: `${vcs.systemName} action in progress.`,
+      hint:
+        vcs.systemName === "Git"
+          ? resolve(msg("Git action in progress."))
+          : resolve(msg("{systemName} action in progress.", { systemName: vcs.systemName })),
     };
   }
 
   if (!gitStatus) {
     return {
-      label: "Commit",
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
-      hint: `${vcs.systemName} status is unavailable.`,
+      hint:
+        vcs.systemName === "Jujutsu"
+          ? resolve(msg("{systemName} status is unavailable.", { systemName: vcs.systemName }))
+          : resolve(msg("Git status is unavailable.")),
     };
   }
 
   const unsupportedReason = resolveVcsUnsupportedReason(gitStatus);
   if (unsupportedReason !== null) {
-    return { label: "Commit", disabled: true, kind: "show_hint", hint: unsupportedReason };
+    return {
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
+      disabled: true,
+      kind: "show_hint",
+      hint: unsupportedReason,
+    };
   }
 
   const hasBranch = gitStatus.refName !== null;
@@ -178,25 +200,45 @@ export function resolveQuickAction(
 
   if (!hasBranch) {
     return {
-      label: "Commit",
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
       hint:
         gitStatus.vcs?.kind === "jj"
-          ? `No ${vcs.refNoun} here: create one before pushing or opening a ${terminology.singular}.`
-          : `Create and check out a ${vcs.refNoun} before pushing or opening a ${terminology.singular}.`,
+          ? resolve(
+              msg("No {refNoun} here: create one before pushing or opening a {singular}.", {
+                refNoun: vcs.refNoun,
+                singular: terminology.singular,
+              }),
+            )
+          : resolve(
+              msg("Create and check out a {refNoun} before pushing or opening a {singular}.", {
+                refNoun: vcs.refNoun,
+                singular: terminology.singular,
+              }),
+            ),
     };
   }
 
   if (hasChanges) {
     if (isBehind || (!gitStatus.hasUpstream && !hasPrimaryRemote)) {
-      return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+      return {
+        label: resolve(msg("Commit", { $context: "verb, git action" })),
+        disabled: false,
+        kind: "run_action",
+        action: "commit",
+      };
     }
     if (hasOpenPr || isDefaultRef) {
-      return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
+      return {
+        label: resolve(msg("Commit & push")),
+        disabled: false,
+        kind: "run_action",
+        action: "commit_push",
+      };
     }
     return {
-      label: `Commit, push & ${terminology.shortLabel}`,
+      label: resolve(msg("Commit, push & {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -207,44 +249,56 @@ export function resolveQuickAction(
     if (!hasPrimaryRemote) {
       if (canPublish) {
         return {
-          label: "Publish repository",
+          label: resolve(msg("Publish repository")),
           disabled: false,
           kind: "open_publish",
         };
       }
       return {
-        label: "Push",
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: true,
         kind: "show_hint",
-        hint: `Add an "origin" remote before pushing or creating ${terminology.shortLabelWithArticle}.`,
+        hint: resolve(
+          msg(
+            '{kind, select, pr {Add an "origin" remote before pushing or creating a PR.} mr {Add an "origin" remote before pushing or creating an MR.} generic {Add an "origin" remote before pushing or creating a change request.} other {Add an "origin" remote before pushing or creating {changeRequest}.}}',
+            {
+              kind: changeRequestKind(terminology),
+              changeRequest: terminology.shortLabelWithArticle,
+            },
+          ),
+        ),
       };
     }
     if (!isAhead) {
       if (hasOpenPr) {
         return {
-          label: "Commit",
+          label: resolve(msg("Commit", { $context: "verb, git action" })),
           disabled: true,
           kind: "show_hint",
-          hint: `${vcs.refNounTitle} is up to date. No action needed.`,
+          hint: resolve(
+            msg("{refNounTitle} is up to date. No action needed.", {
+              refNounTitle: vcs.refNounTitle,
+            }),
+          ),
         };
       }
       return {
-        label: "Push",
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: true,
         kind: "show_hint",
-        hint: "No local commits to push.",
+        hint: resolve(msg("No local commits to push.")),
       };
     }
     if (hasOpenPr || isDefaultRef) {
       return {
-        label: "Push",
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
         action: isDefaultRef ? "commit_push" : "push",
       };
     }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: resolve(msg("Push & create {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -253,16 +307,26 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: `Sync ${vcs.refNoun}`,
+      label:
+        vcs.systemName === "Jujutsu"
+          ? resolve(msg("Sync {refNoun}", { refNoun: vcs.refNoun }))
+          : resolve(msg("Sync branch")),
       disabled: true,
       kind: "show_hint",
-      hint: `${vcs.refNounTitle} has diverged from upstream. Rebase/merge first.`,
+      hint:
+        vcs.systemName === "Jujutsu"
+          ? resolve(
+              msg("{refNounTitle} has diverged from upstream. Rebase/merge first.", {
+                refNounTitle: vcs.refNounTitle,
+              }),
+            )
+          : resolve(msg("Branch has diverged from upstream. Rebase/merge first.")),
     };
   }
 
   if (isBehind) {
     return {
-      label: "Pull",
+      label: resolve(msg("Pull", { $context: "verb, git action" })),
       disabled: false,
       kind: "run_pull",
     };
@@ -271,14 +335,14 @@ export function resolveQuickAction(
   if (isAhead) {
     if (hasOpenPr || isDefaultRef) {
       return {
-        label: "Push",
+        label: resolve(msg("Push", { $context: "verb, git action" })),
         disabled: false,
         kind: "run_action",
         action: isDefaultRef ? "commit_push" : "push",
       };
     }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: resolve(msg("Push & create {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -289,16 +353,18 @@ export function resolveQuickAction(
   // details panel, so the action button rests in its disabled up-to-date state.
   if (hasOpenPr && gitStatus.hasUpstream) {
     return {
-      label: "Commit",
+      label: resolve(msg("Commit", { $context: "verb, git action" })),
       disabled: true,
       kind: "show_hint",
-      hint: `${vcs.refNounTitle} is up to date. No action needed.`,
+      hint: resolve(
+        msg("{refNounTitle} is up to date. No action needed.", { refNounTitle: vcs.refNounTitle }),
+      ),
     };
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
     return {
-      label: `Create ${terminology.shortLabel}`,
+      label: resolve(msg("Create {shortLabel}", { shortLabel: terminology.shortLabel })),
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -306,19 +372,29 @@ export function resolveQuickAction(
   }
 
   return {
-    label: "Commit",
+    label: resolve(msg("Commit", { $context: "verb, git action" })),
     disabled: true,
     kind: "show_hint",
-    hint: `${vcs.refNounTitle} is up to date. No action needed.`,
+    hint:
+      vcs.systemName === "Jujutsu"
+        ? resolve(
+            msg("{refNounTitle} is up to date. No action needed.", {
+              refNounTitle: vcs.refNounTitle,
+            }),
+          )
+        : resolve(msg("Branch is up to date. No action needed.")),
   };
 }
 
-export function getGitActionDisabledReason(input: {
-  item: GitActionMenuItem;
-  gitStatus: VcsStatusResult | null;
-  isBusy: boolean;
-  hasPrimaryRemote: boolean;
-}): string | null {
+export function getGitActionDisabledReason(
+  input: {
+    item: GitActionMenuItem;
+    gitStatus: VcsStatusResult | null;
+    isBusy: boolean;
+    hasPrimaryRemote: boolean;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
   const { item, gitStatus, isBusy, hasPrimaryRemote } = input;
   const vcs = resolveVcsTerminology(gitStatus);
   if (!item.disabled) return null;
@@ -337,43 +413,88 @@ export function getGitActionDisabledReason(input: {
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return `The ${vcs.workingTreeNoun} is clean. Make changes before committing.`;
+      return vcs.systemName === "Jujutsu"
+        ? resolve(
+            msg("The {workingTreeNoun} is clean. Make changes before committing.", {
+              workingTreeNoun: vcs.workingTreeNoun,
+            }),
+          )
+        : resolve(msg("Worktree is clean. Make changes before committing."));
     }
-    return "Commit is currently unavailable.";
+    return resolve(msg("Commit is currently unavailable."));
   }
 
   if (item.id === "push") {
     if (!hasBranch) {
-      return noRefHint(gitStatus, vcs, "pushing");
+      return noRefHint(gitStatus, vcs, "pushing", resolve);
     }
     if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
+      return resolve(msg("Commit or stash local changes before pushing."));
     }
     if (isBehind) {
-      return `${vcs.refNounTitle} is behind upstream. Pull/rebase before pushing.`;
+      return vcs.systemName === "Jujutsu"
+        ? resolve(
+            msg("{refNounTitle} is behind upstream. Pull/rebase before pushing.", {
+              refNounTitle: vcs.refNounTitle,
+            }),
+          )
+        : resolve(msg("Branch is behind upstream. Pull/rebase before pushing."));
     }
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-      return 'Add an "origin" remote before pushing.';
+      return resolve(msg('Add an "origin" remote before pushing.'));
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return resolve(msg("No local commits to push."));
     }
-    return "Push is currently unavailable.";
+    return resolve(msg("Push is currently unavailable."));
   }
 
   if (!hasBranch) {
-    return noRefHint(gitStatus, vcs, `creating a ${terminology.singular}`);
+    return noRefHint(gitStatus, vcs, `creating a ${terminology.singular}`, resolve);
   }
   if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-    return `Add an "origin" remote before creating a ${terminology.singular}.`;
+    return resolve(
+      msg(
+        '{kind, select, pr {Add an "origin" remote before creating a PR.} mr {Add an "origin" remote before creating an MR.} generic {Add an "origin" remote before creating a change request.} other {Add an "origin" remote before creating {changeRequest}.}}',
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
+    );
   }
   if (!hasDefaultBranchDelta) {
-    return `No local commits to include in ${terminology.shortLabelWithArticle}.`;
+    return resolve(
+      msg(
+        "{kind, select, pr {No local commits to include in a PR.} mr {No local commits to include in an MR.} generic {No local commits to include in a change request.} other {No local commits to include in {changeRequest}.}}",
+        { kind: changeRequestKind(terminology), changeRequest: terminology.shortLabelWithArticle },
+      ),
+    );
   }
   if (isBehind) {
-    return `${vcs.refNounTitle} is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
+    return resolve(
+      msg("{refNounTitle} is behind upstream. Pull/rebase before creating a {singular}.", {
+        refNounTitle: vcs.refNounTitle,
+        singular: terminology.singular,
+      }),
+    );
   }
-  return `Create ${terminology.shortLabel} is currently unavailable.`;
+  return resolve(
+    msg("Create {shortLabel} is currently unavailable.", { shortLabel: terminology.shortLabel }),
+  );
+}
+
+/** Picks the whole sentence for the provider's term; English keeps `shortLabelWithArticle`. */
+function changeRequestKind(
+  terminology: ChangeRequestTerminology,
+): "pr" | "mr" | "generic" | "other" {
+  switch (terminology.shortLabelWithArticle) {
+    case "a PR":
+      return "pr";
+    case "an MR":
+      return "mr";
+    case "a change request":
+      return "generic";
+    default:
+      return "other";
+  }
 }
 
 export function requiresDefaultBranchConfirmation(
@@ -389,43 +510,134 @@ export function requiresDefaultBranchConfirmation(
   );
 }
 
-export function resolveDefaultBranchActionDialogCopy(input: {
-  action: DefaultBranchConfirmableAction;
-  branchName: string;
-  includesCommit: boolean;
-  terminology?: ChangeRequestTerminology;
-  vcsTerminology?: VcsTerminology;
-}): DefaultBranchActionDialogCopy {
+export function resolveDefaultBranchActionDialogCopy(
+  input: {
+    action: DefaultBranchConfirmableAction;
+    branchName: string;
+    includesCommit: boolean;
+    terminology?: ChangeRequestTerminology;
+    vcsTerminology?: VcsTerminology;
+  },
+  resolve: MFunctionType = mFallback,
+): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
   const vcs = input.vcsTerminology ?? DEFAULT_VCS_TERMINOLOGY;
-  const suffix = ` on "${branchLabel}". You can continue on this ${vcs.refNoun} or create a feature ${vcs.refNoun} and run the same action there.`;
   const terminology = input.terminology ?? sourceControlClients.get(undefined).changeRequest;
+  const { shortLabel, shortLabelWithArticle } = terminology;
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
-      return {
-        title: `Commit & push to default ${vcs.refNoun}?`,
-        description: `This action will commit and push changes${suffix}`,
-        continueLabel: `Commit & push to ${branchLabel}`,
-      };
+      return vcs.systemName === "Jujutsu"
+        ? {
+            title: resolve(msg("Commit & push to default {refNoun}?", { refNoun: vcs.refNoun })),
+            description: resolve(
+              msg(
+                'This action will commit and push changes on "{branchLabel}". You can continue on this bookmark or create a feature bookmark and run the same action there.',
+                { branchLabel },
+              ),
+            ),
+            continueLabel: resolve(msg("Commit & push to {branch}", { branch: branchLabel })),
+          }
+        : {
+            title: resolve(msg("Commit & push to default branch?")),
+            description: resolve(
+              msg(
+                'This action will commit and push changes on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
+                { branch: branchLabel },
+              ),
+            ),
+            continueLabel: resolve(msg("Commit & push to {branch}", { branch: branchLabel })),
+          };
     }
-    return {
-      title: `Push to default ${vcs.refNoun}?`,
-      description: `This action will push local commits${suffix}`,
-      continueLabel: `Push to ${branchLabel}`,
-    };
+    return vcs.systemName === "Jujutsu"
+      ? {
+          title: resolve(msg("Push to default {refNoun}?", { refNoun: vcs.refNoun })),
+          description: resolve(
+            msg(
+              'This action will push local commits on "{branchLabel}". You can continue on this bookmark or create a feature bookmark and run the same action there.',
+              { branchLabel },
+            ),
+          ),
+          continueLabel: resolve(msg("Push to {branch}", { branch: branchLabel })),
+        }
+      : {
+          title: resolve(msg("Push to default branch?")),
+          description: resolve(
+            msg(
+              'This action will push local commits on "{branch}". You can continue on this branch or create a feature branch and run the same action there.',
+              { branch: branchLabel },
+            ),
+          ),
+          continueLabel: resolve(msg("Push to {branch}", { branch: branchLabel })),
+        };
   }
 
   if (input.includesCommit) {
-    return {
-      title: `Commit, push & create ${terminology.shortLabel} from default ${vcs.refNoun}?`,
-      description: `This action will commit, push, and create ${terminology.shortLabelWithArticle}${suffix}`,
-      continueLabel: `Commit, push & create ${terminology.shortLabel}`,
-    };
+    return vcs.systemName === "Jujutsu"
+      ? {
+          title: resolve(
+            msg("Commit, push & create {shortLabel} from default {refNoun}?", {
+              shortLabel: terminology.shortLabel,
+              refNoun: vcs.refNoun,
+            }),
+          ),
+          description: resolve(
+            msg(
+              'This action will commit, push, and create {shortLabelWithArticle} on "{branchLabel}". You can continue on this bookmark or create a feature bookmark and run the same action there.',
+              { shortLabelWithArticle: terminology.shortLabelWithArticle, branchLabel },
+            ),
+          ),
+          continueLabel: resolve(
+            msg("Commit, push & create {shortLabel}", { shortLabel: terminology.shortLabel }),
+          ),
+        }
+      : {
+          title: resolve(
+            msg("Commit, push & create {shortLabel} from default branch?", { shortLabel }),
+          ),
+          description: resolve(
+            msg(
+              '{kind, select, pr {This action will commit, push, and create a pull request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will commit, push, and create a merge request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will commit, push, and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will commit, push, and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
+              {
+                kind: changeRequestKind(terminology),
+                changeRequest: shortLabelWithArticle,
+                branch: branchLabel,
+              },
+            ),
+          ),
+          continueLabel: resolve(msg("Commit, push & create {shortLabel}", { shortLabel })),
+        };
   }
-  return {
-    title: `Push & create ${terminology.shortLabel} from default ${vcs.refNoun}?`,
-    description: `This action will push local commits and create ${terminology.shortLabelWithArticle}${suffix}`,
-    continueLabel: `Push & create ${terminology.shortLabel}`,
-  };
+  return vcs.systemName === "Jujutsu"
+    ? {
+        title: resolve(
+          msg("Push & create {shortLabel} from default {refNoun}?", {
+            shortLabel: terminology.shortLabel,
+            refNoun: vcs.refNoun,
+          }),
+        ),
+        description: resolve(
+          msg(
+            'This action will push local commits and create {shortLabelWithArticle} on "{branchLabel}". You can continue on this bookmark or create a feature bookmark and run the same action there.',
+            { shortLabelWithArticle: terminology.shortLabelWithArticle, branchLabel },
+          ),
+        ),
+        continueLabel: resolve(
+          msg("Push & create {shortLabel}", { shortLabel: terminology.shortLabel }),
+        ),
+      }
+    : {
+        title: resolve(msg("Push & create {shortLabel} from default branch?", { shortLabel })),
+        description: resolve(
+          msg(
+            '{kind, select, pr {This action will push local commits and create a pull request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will push local commits and create a merge request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will push local commits and create a change request on "{branch}". You can continue on this branch or create a feature branch and run the same action there.} other {This action will push local commits and create {changeRequest} on "{branch}". You can continue on this branch or create a feature branch and run the same action there.}}',
+            {
+              kind: changeRequestKind(terminology),
+              changeRequest: shortLabelWithArticle,
+              branch: branchLabel,
+            },
+          ),
+        ),
+        continueLabel: resolve(msg("Push & create {shortLabel}", { shortLabel })),
+      };
 }
