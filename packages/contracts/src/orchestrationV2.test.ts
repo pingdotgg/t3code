@@ -576,6 +576,15 @@ describe("background work kinds from older or newer servers", () => {
     expect(item).toMatchObject({ type: "notification", source: { kind: "background_task" } });
   });
 
+  it("round-trips a group_worker notification source", () => {
+    const source = { kind: "group_worker", workerThreadIds: ["thread-a", "thread-b"] } as const;
+    const item = decodeOrchestrationV2TurnItemJson(storedNotification(source));
+    expect(item).toMatchObject({ type: "notification", source });
+    const encoded = encodeOrchestrationV2TurnItemJson(item);
+    expect(encoded).toMatchObject({ source });
+    expect(decodeOrchestrationV2TurnItemJson(encoded)).toEqual(item);
+  });
+
   it("decodes rosters stored before kinds existed, and kinds from a newer server, as generic tasks", () => {
     const providerThread = decodeOrchestrationV2ProviderThreadJson({
       id: "provider-thread-1",

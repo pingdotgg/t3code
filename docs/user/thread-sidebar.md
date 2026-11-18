@@ -185,6 +185,11 @@ are still working alone. A settled lead with live members stays in place, dimmed
 **Un-settle**; the group moves to Settled once every member is settled. Settling or snoozing
 a member only affects that member.
 
+Messages agents send to others in their group wait until the receiver's turn ends. When a
+worker finishes or fails, its lead gets a report with the worker's last reply, even when the
+lead is snoozed. Reports from several workers that arrive while the lead is busy reach it as one
+message.
+
 Archiving the lead shows its threads separately until you unarchive it. Deleting the lead
 leaves them as regular threads.
 

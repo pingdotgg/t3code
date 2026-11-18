@@ -361,6 +361,49 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
+      if (input.action === "attach") {
+        const threadId = yield* required(input.threadId, "threadId");
+        yield* McpInvocationContext.requireThreadScope(
+          yield* McpInvocationContext.McpInvocationContext,
+          "Attaching a thread to your group",
+        );
+        const { threads, projection, caller } = yield* readThread(threadId);
+        if (caller === undefined || projection.thread.id === caller.id)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "`attach` needs another thread's `threadId`.",
+          });
+        const result = yield* threads
+          .dispatch({
+            type: "thread.group.attach",
+            commandId: yield* newCommandId(),
+            threadId: projection.thread.id,
+            parentThreadId: caller.id,
+          })
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }
+      if (input.action === "detach") {
+        const { threads, projection, caller } = yield* readThread(input.threadId);
+        const target = projection.thread;
+        if (
+          target.groupParentThreadId != null &&
+          target.id !== caller?.id &&
+          target.groupParentThreadId !== caller?.id
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Only the thread itself or its group lead can detach it.",
+          });
+        const result = yield* threads
+          .dispatch({
+            type: "thread.group.detach",
+            commandId: yield* newCommandId(),
+            threadId: target.id,
+          })
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {

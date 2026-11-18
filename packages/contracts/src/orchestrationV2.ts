@@ -1403,6 +1403,10 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
+    Schema.Struct({
+      kind: Schema.Literal("group_worker"),
+      workerThreadIds: Schema.Array(ThreadId),
+    }),
   ],
   (kind) => Schema.Struct({ kind }),
   () => ({ kind: "background_task" }),

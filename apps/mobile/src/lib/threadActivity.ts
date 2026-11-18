@@ -521,6 +521,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     switch (source.kind) {
       case "subagent":
       case "delegated_task":
+      case "group_worker":
         return "hammer";
       case "command":
         return "command";

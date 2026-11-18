@@ -34,6 +34,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -59,6 +60,9 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
+const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
 );
 
 /** A task delegated here always has a local child thread. */
@@ -257,7 +261,7 @@ describe("orchestrator MCP toolkit", () => {
           model: codexModel,
         }),
       ]);
-      const layerTest = layerOrchestratorToolkit.pipe(
+      const layerTest = Layer.merge(layerOrchestratorToolkit, layerThreadToolkit).pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(layerOrchestration),
         Layer.provide(
@@ -800,6 +804,42 @@ describe("orchestrator MCP toolkit", () => {
             .filter(({ fields }) => fields.includes("runs") || fields.includes("contextTransfers"))
             .map(({ threadId }) => threadId),
         ).toEqual([delegated.childThreadId]);
+
+        const attachedThreadId = ThreadId.make("thread:mcp-orchestrator-attached");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:mcp-replay-attached:create"),
+          threadId: attachedThreadId,
+          projectId,
+          title: "Attached thread",
+          modelSelection: codexSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const attach = yield* invoke("t3_thread_organize", {
+          action: "attach",
+          threadId: attachedThreadId,
+        });
+        expect(attach.isError).not.toBe(true);
+        expect((yield* orchestrator.getThreadShell(attachedThreadId))?.groupParentThreadId).toBe(
+          parentThreadId,
+        );
+        const groupRead = yield* decodeThreadRead(
+          (yield* invoke("t3_thread_read", { threadId: parentThreadId, limit: 1 }))
+            .structuredContent,
+        );
+        expect(groupRead.group).toMatchObject({
+          role: "lead",
+          leadThreadId: parentThreadId,
+          members: [
+            { threadId: parentThreadId, role: "lead" },
+            { threadId: attachedThreadId, role: "worker" },
+          ],
+        });
       }).pipe(Effect.provide(layerTest));
     }),
   );

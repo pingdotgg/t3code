@@ -1080,3 +1080,124 @@ it.effect(
       }).pipe(Effect.provide(layerTest));
     }),
 );
+
+const groupSendProjectId = ProjectId.make("project:thread-management:group-send");
+const groupThread = (name: string) => ThreadId.make(`thread:thread-management:group-send:${name}`);
+
+// Sends `mode` from `sender` to a running `target`; `parents` maps thread to its lead.
+const sendInGroup = (input: {
+  readonly sender: ThreadId;
+  readonly target: ThreadId;
+  readonly mode: "auto" | "steer" | "restart" | "queue";
+  readonly parents: Record<string, ThreadId | undefined>;
+}) => {
+  const dispatchModes: Array<string> = [];
+  const shell = (id: ThreadId) => ({
+    id,
+    projectId: groupSendProjectId,
+    deletedAt: null,
+    groupParentThreadId: input.parents[id] ?? null,
+  });
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadShell: (id) => Effect.succeed(shell(id) as never),
+        getThreadRecords: (request) =>
+          Effect.succeed({
+            thread: {
+              ...shell(request),
+              archivedAt: null,
+              worktreePath: null,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            },
+            runs: [
+              {
+                id: RunId.make("run:thread-management:group-send"),
+                status: "running",
+                activeAttemptId: "attempt:thread-management:group-send",
+              },
+            ],
+            providerTurns: [
+              { runAttemptId: "attempt:thread-management:group-send", status: "running" },
+            ],
+            messages: [],
+            turnItems: [],
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            if (command.type === "message.dispatch") dispatchModes.push(command.dispatchMode.type);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.mock(ThreadWorktreeRestore)({ restore: () => Effect.void })),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    // The mock records no message, so a dispatched send ends in the projection read.
+    yield* Effect.flip(
+      threads.sendToThread({
+        projectId: groupSendProjectId,
+        threadId: input.target,
+        senderThreadId: input.sender,
+        commandId: CommandId.make("command:thread-management:group-send"),
+        messageId: MessageId.make("message:thread-management:group-send"),
+        text: "Status?",
+        attachments: [],
+        mode: input.mode,
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    );
+    return dispatchModes;
+  }).pipe(Effect.provide(layerTest));
+};
+
+it.effect("queues a worker's steer to its own lead", () => {
+  const lead = groupThread("lead");
+  const worker = groupThread("worker");
+  return sendInGroup({
+    sender: worker,
+    target: lead,
+    mode: "steer",
+    parents: { [worker]: lead },
+  }).pipe(Effect.map((modes) => expect(modes).toEqual(["queue_after_active"])));
+});
+
+it.effect("queues a worker's auto message to a sibling", () => {
+  const lead = groupThread("lead");
+  const first = groupThread("worker-1");
+  const second = groupThread("worker-2");
+  return sendInGroup({
+    sender: first,
+    target: second,
+    mode: "auto",
+    parents: { [first]: lead, [second]: lead },
+  }).pipe(Effect.map((modes) => expect(modes).toEqual(["queue_after_active"])));
+});
+
+it.effect("lets the lead steer its worker", () => {
+  const lead = groupThread("lead");
+  const worker = groupThread("worker");
+  return sendInGroup({
+    sender: lead,
+    target: worker,
+    mode: "steer",
+    parents: { [worker]: lead },
+  }).pipe(Effect.map((modes) => expect(modes).toEqual(["steer_active"])));
+});
+
+it.effect("leaves a worker's message to a thread outside its group unchanged", () => {
+  const lead = groupThread("lead");
+  const worker = groupThread("worker");
+  const outsider = groupThread("outsider");
+  return sendInGroup({
+    sender: worker,
+    target: outsider,
+    mode: "auto",
+    parents: { [worker]: lead },
+  }).pipe(Effect.map((modes) => expect(modes).toEqual(["steer_active"])));
+});

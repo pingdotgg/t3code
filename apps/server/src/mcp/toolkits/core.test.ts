@@ -41,6 +41,12 @@ import {
   OrchestratorProjectionError,
   OrchestratorProviderSelectionBusyError,
 } from "../../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
+import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -1341,6 +1347,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
             getTimelinePage: () =>
               Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
+            listGroupMemberThreadIds: () => Effect.succeed([]),
             stopWorkflow: (input) =>
               Effect.sync(() => {
                 stopped.push(input);
@@ -1582,4 +1589,130 @@ it.effect("t3_thread_launch without a caller thread sets no group parent", () =>
     expect(launched).toHaveLength(1);
     expect(launched[0]?.groupParentThreadId).toBeUndefined();
   }),
+);
+
+const groupInstanceId = ProviderInstanceId.make("codex");
+const layerGroupOrchestrator = ProviderReplayHarness.layerWithRegistry(
+  { name: "mcp-thread-groups" },
+  ProviderAdapterRegistry.layerFromAdapters([
+    {
+      instanceId: groupInstanceId,
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("No provider process needed for group membership"),
+    } as ProviderAdapter.ProviderAdapterV2["Service"],
+  ]),
+  { runEffectWorker: false },
+);
+const layerGroupThreads = Layer.effect(
+  ThreadManagement.ThreadManagementService,
+  Effect.gen(function* () {
+    const service = yield* ThreadManagement.ThreadManagementService;
+    return ThreadManagement.ThreadManagementService.of({
+      ...service,
+      // Agent writes need a live caller run; these threads never start a provider.
+      getThreadShell: (id) =>
+        service
+          .getThreadShell(id)
+          .pipe(
+            Effect.map((shell) => shell && { ...shell, activeRunId: RunId.make("run:group-live") }),
+          ),
+    });
+  }),
+).pipe(
+  Layer.provide(
+    ThreadManagement.layer.pipe(
+      Layer.provide(layerGroupOrchestrator),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
+  ),
+);
+const layerGroupToolkit = layerThreadToolkit.pipe(
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+  Layer.provideMerge(layerGroupThreads),
+  Layer.provideMerge(layerGroupOrchestrator),
+  Layer.provide(NodeCrypto.layer),
+);
+
+const groupHarness = Effect.gen(function* () {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const server = yield* McpServer.McpServer;
+  const id = (name: string) => ThreadId.make(`thread:mcp-group-${name}`);
+  const create = (name: string, lead?: string) =>
+    orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create-${name}`),
+      threadId: id(name),
+      projectId: ProjectId.make("project:mcp-groups"),
+      title: name,
+      modelSelection: { instanceId: groupInstanceId, model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      ...(lead === undefined ? {} : { groupParentThreadId: id(lead) }),
+    });
+  const organize = (caller: string, args: Record<string, unknown>) =>
+    server.callTool({ name: "t3_thread_organize", arguments: args }).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...scope,
+        thread: {
+          threadId: id(caller),
+          providerSessionId: `session-${caller}`,
+          providerInstanceId: groupInstanceId,
+        },
+      }),
+      Effect.provideService(McpSchema.McpServerClient, client),
+    );
+  const leadOf = (name: string) =>
+    orchestrator
+      .getThreadShell(id(name))
+      .pipe(Effect.map((shell) => shell?.groupParentThreadId ?? null));
+  yield* create("lead");
+  yield* create("w1", "lead");
+  yield* create("x");
+  return { id, organize, leadOf };
+});
+
+it.effect("attaches a thread to a worker caller's lead", () =>
+  Effect.gen(function* () {
+    const { id, organize, leadOf } = yield* groupHarness;
+    const result = yield* organize("w1", { action: "attach", threadId: id("x") });
+    expect(result.isError).toBe(false);
+    expect(yield* leadOf("x")).toBe(id("lead"));
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("refuses to detach another lead's worker", () =>
+  Effect.gen(function* () {
+    const { id, organize, leadOf } = yield* groupHarness;
+    const result = yield* organize("x", { action: "detach", threadId: id("w1") });
+    expect(declaredFailure(result)).toMatchObject({
+      code: "capability_denied",
+      message: "Only the thread itself or its group lead can detach it.",
+    });
+    expect(yield* leadOf("w1")).toBe(id("lead"));
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("lets a lead detach its worker", () =>
+  Effect.gen(function* () {
+    const { id, organize, leadOf } = yield* groupHarness;
+    const result = yield* organize("lead", { action: "detach", threadId: id("w1") });
+    expect(result.isError).toBe(false);
+    expect(yield* leadOf("w1")).toBeNull();
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("lets a worker detach itself", () =>
+  Effect.gen(function* () {
+    const { organize, leadOf } = yield* groupHarness;
+    const result = yield* organize("w1", { action: "detach" });
+    expect(result.isError).toBe(false);
+    expect(yield* leadOf("w1")).toBeNull();
+  }).pipe(Effect.provide(layerGroupToolkit)),
 );

@@ -4581,6 +4581,60 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("reads a worker's group with its lead first", () =>
+    Effect.gen(function* () {
+      const lead = liveThreadShell(ThreadId.make("thread:group-lead"));
+      const worker = (id: string, orderKey: string, archived = false) => ({
+        ...liveThreadShell(ThreadId.make(id)),
+        groupParentThreadId: lead.id,
+        groupOrderKey: orderKey,
+        groupLaunchedByThreadId: lead.id,
+        archivedAt: archived ? DateTime.makeUnsafe("2026-10-05T00:00:00Z") : null,
+      });
+      const first = worker("thread:group-w1", "a1");
+      const second = worker("thread:group-w2", "a2");
+      const archived = worker("thread:group-archived", "a0", true);
+      const shells = [lead, first, second, archived];
+      const memberQueries: Array<ThreadId> = [];
+      const sent = yield* Ref.make(0);
+      const read = yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* mcp.readThread(client, { threadId: second.id });
+      }).pipe(
+        Effect.provide(
+          service(shells, sent, {
+            getProjectThreadRecords: (input) =>
+              Effect.succeed(
+                idleThreadProjection(shells.find((shell) => shell.id === input.threadId) ?? lead),
+              ),
+            getTimelinePage: () =>
+              Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
+            listGroupMemberThreadIds: (parentThreadId) =>
+              Effect.sync(() => {
+                memberQueries.push(parentThreadId);
+                return [second.id, archived.id, first.id];
+              }),
+          }),
+        ),
+      );
+      assert.deepEqual(memberQueries, [lead.id]);
+      assert.equal(read.group?.role, "worker");
+      assert.equal(read.group?.leadThreadId, lead.id);
+      assert.deepEqual(
+        read.group?.members.map(({ threadId, role, launchedByThreadId }) => ({
+          threadId,
+          role,
+          launchedByThreadId,
+        })),
+        [
+          { threadId: lead.id, role: "lead", launchedByThreadId: undefined },
+          { threadId: first.id, role: "worker", launchedByThreadId: lead.id },
+          { threadId: second.id, role: "worker", launchedByThreadId: lead.id },
+        ],
+      );
+    }),
+  );
+
   it.effect("tells an agent steering a finished thread to start a new turn instead", () =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);

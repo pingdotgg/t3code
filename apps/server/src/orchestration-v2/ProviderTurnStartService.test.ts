@@ -21,6 +21,7 @@ import {
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -438,6 +439,8 @@ function makeLocalCommandHarness(input: {
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
   };
+  /** The thread leads a group, works in one beside an archived worker, or is in none. */
+  readonly group?: "lead" | "worker" | "none";
 }) {
   const settledRuns: Array<string> = [];
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -615,6 +618,45 @@ function makeLocalCommandHarness(input: {
     checkpoints: [],
     updatedAt: now,
   };
+  const groupShells = new Map<ThreadId, OrchestrationV2ThreadShell>();
+  const groupShell = (id: ThreadId, title: string, patch: Partial<OrchestrationV2ThreadShell>) =>
+    groupShells.set(id, {
+      id,
+      title,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      settledOverride: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      latestRunCompletedAt: null,
+      pendingGuestMessageCount: 0,
+      archivedAt: null,
+      deletedAt: null,
+      groupParentThreadId: null,
+      groupOrderKey: null,
+      ...patch,
+    } as OrchestrationV2ThreadShell);
+  const groupLeadId = input.group === "worker" ? ThreadId.make("group-lead") : threadId;
+  if (input.group !== undefined) {
+    groupShell(threadId, "Me", {
+      status: "running",
+      ...(input.group === "worker" ? { groupParentThreadId: groupLeadId, groupOrderKey: "b" } : {}),
+    });
+  }
+  if (input.group === "worker") {
+    groupShell(groupLeadId, "Lead", {});
+    groupShell(ThreadId.make("group-archived"), "Archived", {
+      groupParentThreadId: groupLeadId,
+      archivedAt: now,
+    });
+  }
+  if (input.group === "lead" || input.group === "worker") {
+    groupShell(ThreadId.make("group-worker"), "Other", {
+      status: "running",
+      groupParentThreadId: groupLeadId,
+      groupOrderKey: "a",
+    });
+  }
   const parentThreadId = ThreadId.make("side-chat-parent");
   const parentRunId = RunId.make("side-chat-parent-run");
   const parentProviderThread = {
@@ -1083,8 +1125,9 @@ function makeLocalCommandHarness(input: {
       : (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
           startTurn(ProviderAdapter.resumeTurnInput(input)),
   };
+  const startsTurns = input.sideChat !== undefined || input.group !== undefined;
   const open = vi.fn(() =>
-    input.sideChat !== undefined
+    startsTurns
       ? Effect.succeed(sideChatSession as never)
       : input.interruptOpen === true
         ? Effect.interrupt
@@ -1120,7 +1163,7 @@ function makeLocalCommandHarness(input: {
       input: RunExecutionService.RunExecutionServiceV2StartRootRunInput,
     ) => Effect.Effect<void, RunExecutionService.RunExecutionServiceV2Error>
   >((runInput) =>
-    input.sideChat !== undefined
+    startsTurns
       ? (runInput.resume
           ? runInput.session.resumeTurn!({
               ...runInput,
@@ -1278,8 +1321,15 @@ function makeLocalCommandHarness(input: {
           getTurnStartContext,
           getRuntimeRecoveryProjection,
           getRun,
+          getThreadShell: (id) => Effect.succeed(groupShells.get(id) ?? null),
+          listGroupMemberThreadIds: (parentId) =>
+            Effect.succeed(
+              [...groupShells.values()]
+                .filter((shell) => shell.groupParentThreadId === parentId)
+                .map((shell) => shell.id),
+            ),
           getTurnStartHistory: () =>
-            input.sideChat !== undefined
+            startsTurns
               ? Effect.succeed([])
               : Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
@@ -1328,6 +1378,8 @@ function makeLocalCommandHarness(input: {
     setProjection: (next: OrchestrationV2ThreadProjection) => {
       projection = next;
     },
+    updateGroupShell: (id: ThreadId, patch: Partial<OrchestrationV2ThreadShell>) =>
+      groupShell(id, groupShells.get(id)!.title, { ...groupShells.get(id), ...patch }),
     resolveRuntimePolicy,
     createWorktree,
     open,
@@ -2210,6 +2262,79 @@ effectIt.effect.each([
         },
       ]);
     }),
+);
+
+const workerGroupSummary = (other: string) =>
+  [
+    'T3 group "Lead" (you are a worker):',
+    "- Lead (lead): idle",
+    `- Other: ${other}`,
+    "- Me (you): working",
+    "Messages between group members are queued until the receiver's turn ends; read details with t3_thread_read.",
+  ].join("\n");
+
+/** Starts the harness run again on one service, so the service keeps what it delivered. */
+const restartingRun = (
+  harness: ReturnType<typeof makeLocalCommandHarness>,
+  service: ProviderTurnStart.ProviderTurnStartServiceV2Shape,
+) => {
+  const beforeStart = harness.projection();
+  return (projection: OrchestrationV2ThreadProjection = beforeStart) =>
+    Effect.suspend(() => {
+      harness.setProjection(projection);
+      return service.start({ threadId: projection.thread.id, runId: projection.runs.at(-1)!.id });
+    });
+};
+
+effectIt.effect("prepends the group summary once and again only after the group changes", () => {
+  const harness = makeLocalCommandHarness({ text: "Next step", group: "worker" });
+  return Effect.gen(function* () {
+    const start = restartingRun(harness, yield* ProviderTurnStart.ProviderTurnStartServiceV2);
+
+    yield* start();
+    yield* start();
+    harness.updateGroupShell(ThreadId.make("group-worker"), { status: "failed" });
+    yield* start();
+
+    expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+      withInlineContext(workerGroupSummary("working"), "Next step"),
+      "Next step",
+      withInlineContext(workerGroupSummary("failed"), "Next step"),
+    ]);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+effectIt.effect("does not prepend the group summary on a resume", () => {
+  const harness = makeLocalCommandHarness({ text: "", manualContinuation: true, group: "worker" });
+  return Effect.gen(function* () {
+    const start = restartingRun(harness, yield* ProviderTurnStart.ProviderTurnStartServiceV2);
+    const resumed = harness.projection();
+
+    yield* start();
+    yield* start({
+      ...resumed,
+      runs: resumed.runs.map(({ manualContinuationOfRunId: _resumed, ...run }) => run),
+      messages: resumed.messages.map((message) => ({ ...message, text: "Next step" })),
+    });
+
+    expect(
+      harness.startTurn.mock.calls.map(([turn]) => [turn.resume === true, turn.message.text]),
+    ).toEqual([
+      [true, ""],
+      [false, withInlineContext(workerGroupSummary("working"), "Next step")],
+    ]);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+effectIt.effect("leaves a thread outside any group unchanged", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Next step", group: "none" });
+
+    yield* harness.start;
+
+    expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual(["Next step"]);
+    expect(harness.startRootRun.mock.calls[0]?.[0].session.startTurn).toBe(harness.startTurn);
+  }),
 );
 
 effectIt.effect.each([

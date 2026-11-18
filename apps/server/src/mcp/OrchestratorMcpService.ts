@@ -971,6 +971,24 @@ function listItemFromShell(
   };
 }
 
+function groupMember(
+  scope: McpInvocationScope,
+  shell: OrchestrationV2ThreadShell,
+  role: "lead" | "worker",
+) {
+  return {
+    threadId: shell.id,
+    title: shell.title,
+    link: threadLinkFor(scope, shell.id, shell.title),
+    role,
+    status: listedThreadStatus(shell),
+    settled: threadSettlement(shell).settled,
+    ...(shell.groupLaunchedByThreadId == null
+      ? {}
+      : { launchedByThreadId: shell.groupLaunchedByThreadId }),
+  };
+}
+
 function threadDetail(
   scope: McpInvocationScope,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
@@ -1494,6 +1512,45 @@ const make = Effect.gen(function* () {
           ]);
     const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
+  });
+
+  const loadThreadGroup = Effect.fn("OrchestratorMcpService.loadThreadGroup")(function* (
+    scope: McpInvocationScope,
+    shell: OrchestrationV2ThreadShell,
+  ) {
+    const role = shell.groupParentThreadId == null ? "lead" : "worker";
+    const lead =
+      shell.groupParentThreadId == null
+        ? shell
+        : yield* threadManagement
+            .getThreadShell(shell.groupParentThreadId)
+            .pipe(Effect.mapError(threadManagementFailure));
+    if (lead === null || lead.deletedAt !== null) return undefined;
+    const workerIds = yield* threadManagement
+      .listGroupMemberThreadIds(lead.id)
+      .pipe(Effect.mapError(threadManagementFailure));
+    const workerShells = yield* Effect.forEach(workerIds, (workerId) =>
+      threadManagement.getThreadShell(workerId).pipe(Effect.mapError(threadManagementFailure)),
+    );
+    const workers = workerShells
+      .filter(
+        (member): member is OrchestrationV2ThreadShell =>
+          member !== null && member.archivedAt === null && member.deletedAt === null,
+      )
+      .toSorted((left, right) => {
+        const leftKey = left.groupOrderKey ?? "";
+        const rightKey = right.groupOrderKey ?? "";
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    if (role === "lead" && workers.length === 0) return undefined;
+    return {
+      role,
+      leadThreadId: lead.id,
+      members: [
+        groupMember(scope, lead, "lead"),
+        ...workers.map((worker) => groupMember(scope, worker, "worker")),
+      ],
+    } as const;
   });
 
   const loadProviders = providerRegistry.getProviders;
@@ -3334,8 +3391,16 @@ const make = Effect.gen(function* () {
         .toSorted((left, right) => right.ordinal - left.ordinal)
         .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
         .map((run) => threadRun(target, run));
+      const group = yield* loadThreadGroup(scope, shell);
       const { items, start } = timelineItemsWithinBudget(
-        { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },
+        {
+          thread,
+          recentRuns,
+          nextPosition: null,
+          hasMore: false,
+          earlierPosition: null,
+          ...(group === undefined ? {} : { group }),
+        },
         timeline.items.map((row) => ({
           row,
           maxChars,
@@ -3402,6 +3467,7 @@ const make = Effect.gen(function* () {
         nextPosition: items.at(-1)?.position ?? null,
         hasMore: timeline.hasMore || (!newestFirst && items.length < timeline.items.length),
         earlierPosition: timeline.hasEarlier || start > 0 ? (items[0]?.position ?? null) : null,
+        ...(group === undefined ? {} : { group }),
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {

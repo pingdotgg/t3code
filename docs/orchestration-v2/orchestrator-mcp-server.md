@@ -412,6 +412,12 @@ still waits on after its run completed. A subagent or `background_task` holds
 the thread. A command or monitor holds it only with `awaited: true`, since agents
 often leave a dev server running.
 
+A read of a grouped thread carries `group`: the read thread's `role`, the
+`leadThreadId`, and `members`, the lead first and then its unarchived workers in
+group order, each with the same `status` and `settled` a list item reports and
+the `launchedByThreadId` that launched it. A lead without workers, or a worker
+whose lead is gone, has no `group`.
+
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
@@ -425,6 +431,15 @@ resultant title, title-regeneration marker, and linked pull request. Reusing a
 `clientRequestId` for the same action and thread replays the same command
 receipt. Thread list and read results expose the linked pull request, and thread
 detail also exposes an in-flight title regeneration.
+
+### `t3_thread_organize`
+
+`attach` adds another thread, by `threadId`, to the calling thread's group;
+a worker caller attaches it to its lead, since groups are one level deep, and an
+outside client cannot attach. `detach` removes `threadId`, or the caller when
+omitted, from its group, and only the thread itself or its lead may do it;
+anyone else gets `capability_denied`. Both pass the same mode and link checks as
+other thread changes.
 
 ### `t3_thread_send`
 

@@ -460,6 +460,10 @@ export interface OrchestratorV2Shape {
   readonly listAppOwnedChildThreadIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
+  /** Worker ids of this lead, unordered, archived included. */
+  readonly listGroupMemberThreadIds: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -1218,6 +1222,87 @@ function currentPullRequestWatchWake(
 
 function withoutSection({ section: _, ...stamp }: MonitorPullRequestStamp) {
   return stamp;
+}
+
+/** Opens one worker's section of a group report; merging finds sections by this line. */
+export function groupWorkerReportHeader(input: {
+  readonly title: string;
+  readonly failed: boolean;
+  readonly threadId: ThreadId;
+}): string {
+  return `${input.title} [${input.failed ? "failed" : "finished"}] (threadId ${input.threadId}):`;
+}
+
+function groupWorkerReportSections(text: string, threadIds: ReadonlyArray<ThreadId>) {
+  const found: Array<{ readonly threadId: ThreadId; readonly start: number; failed: boolean }> = [];
+  let from = 0;
+  for (const threadId of threadIds) {
+    const marker = `] (threadId ${threadId}):\n`;
+    const at = text.indexOf(marker, from);
+    if (at === -1) return undefined;
+    const start = text.lastIndexOf("\n", at) + 1;
+    found.push({ threadId, start, failed: text.slice(start, at).endsWith(" [failed") });
+    from = at + marker.length;
+  }
+  return found.map(({ threadId, start, failed }, index) => ({
+    threadId,
+    failed,
+    section: text.slice(start, found[index + 1]?.start).trimEnd(),
+  }));
+}
+
+/**
+ * A still-queued group report rewritten to also carry a new one, one section per worker with the
+ * latest section winning, or undefined when no queued report can take it.
+ */
+function mergedGroupWorkerReport(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  report: { readonly text: string; readonly notification: OrchestrationV2Notification },
+) {
+  if (report.notification.source.kind !== "group_worker") return undefined;
+  const queued = projection.runs.findLast(
+    (run) =>
+      run.status === "queued" &&
+      projection.messages.some(
+        (message) =>
+          message.id === run.userMessageId && message.notification?.source.kind === "group_worker",
+      ),
+  );
+  const message = projection.messages.find((candidate) => candidate.id === queued?.userMessageId);
+  if (queued === undefined || message?.notification?.source.kind !== "group_worker") {
+    return undefined;
+  }
+  const existing = groupWorkerReportSections(
+    message.text,
+    message.notification.source.workerThreadIds,
+  );
+  const incoming = groupWorkerReportSections(
+    report.text,
+    report.notification.source.workerThreadIds,
+  );
+  if (existing === undefined || incoming === undefined) return undefined;
+  const incomingIds = new Set(incoming.map((section) => section.threadId));
+  const sections = [
+    ...existing.filter((section) => !incomingIds.has(section.threadId)),
+    ...incoming,
+  ];
+  const text = sections.map((section) => section.section).join("\n\n");
+  const failed = sections.filter((section) => section.failed).length;
+  const notification: OrchestrationV2Notification =
+    sections.length === 1
+      ? { ...report.notification, detail: text }
+      : {
+          source: {
+            kind: "group_worker",
+            workerThreadIds: sections.map((section) => section.threadId),
+          },
+          outcome: failed === 0 ? "completed" : "failed",
+          summary: `${sections.length} workers ${
+            failed === 0 ? "finished" : failed === sections.length ? "failed" : "reported"
+          }`,
+          detail: text,
+        };
+  return { run: queued, message: { ...message, text, notification } };
 }
 
 function queuedRunCancellationEvents(
@@ -7274,9 +7359,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     // Background wakes and delegated completions continue work the user already snoozed, so
-    // only a message someone actually sent ends the snooze.
+    // only a message someone actually sent, or a worker reporting to its lead, ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      (command.notification !== undefined && command.notification.source.kind !== "group_worker") ||
+      command.delegatedCompletion !== undefined;
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
@@ -7463,6 +7549,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: "Notifications must be server- or provider-created queued messages.",
       });
+    }
+    const mergedReport =
+      command.notification === undefined
+        ? undefined
+        : mergedGroupWorkerReport(projection, {
+            text: command.text,
+            notification: command.notification,
+          });
+    if (mergedReport !== undefined) {
+      const { run, message } = mergedReport;
+      const now = yield* DateTime.now;
+      const scope = {
+        threadId: command.threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "message.updated",
+        ...scope,
+        payload: { ...message, updatedAt: now },
+      });
+      const turnItem = projection.turnItems.find(
+        (item) => item.type === "user_message" && item.messageId === message.id,
+      );
+      if (turnItem !== undefined && turnItem.type === "user_message") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "turn-item.updated",
+          ...scope,
+          payload: { ...turnItem, text: message.text, updatedAt: now },
+        });
+      }
+      return;
     }
     let delegatedCompletion: OrchestrationV2ConversationMessage["delegatedCompletion"] | undefined;
     if (command.delegatedCompletion !== undefined) {
@@ -16617,6 +16743,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return projectionStore
           .listAppOwnedChildThreadIds(threadId)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
+    listGroupMemberThreadIds: Effect.fn("OrchestratorV2.listGroupMemberThreadIds")(
+      function (parentThreadId) {
+        return projectionStore
+          .listGroupMemberThreadIds(parentThreadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: parentThreadId, cause }),
+            ),
+          );
       },
     ),
     getThreadProjection: Effect.fn("OrchestratorV2.getThreadProjection")(function (threadId) {

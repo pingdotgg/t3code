@@ -190,6 +190,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getTimelinePage: () =>
             Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) =>
@@ -346,6 +347,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getTimelinePage: (_threadId, options) => {
             const remaining = rows.filter(
               (candidate) =>
@@ -460,6 +462,7 @@ it("readThread returns the newest items that fit the response budget", async () 
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getTimelinePage: (_threadId, options) => {
             pageOptions.push(options);
             return Effect.succeed({
@@ -560,6 +563,7 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getTimelinePage: (_threadId, options) => {
             const after =
               options.itemId === undefined
@@ -734,6 +738,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getTimelinePage: () =>
             Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) => {
@@ -838,6 +843,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listGroupMemberThreadIds: () => Effect.succeed([]),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === foreignThreadId) return Effect.succeed(foreignProjection(threadId));

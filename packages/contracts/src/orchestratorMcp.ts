@@ -552,6 +552,24 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
   hasMore: Schema.Boolean,
   /** null when nothing is older than the page. Missing from peers that only read forward. */
   earlierPosition: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** Lead first, then workers in group order. Absent outside a group. */
+  group: Schema.optional(
+    Schema.Struct({
+      role: Schema.Literals(["lead", "worker"]),
+      leadThreadId: ThreadId,
+      members: Schema.Array(
+        Schema.Struct({
+          threadId: ThreadId,
+          title: Schema.String,
+          link: Schema.optional(Schema.String),
+          role: Schema.Literals(["lead", "worker"]),
+          status: OrchestratorMcpThreadStatus,
+          settled: Schema.Boolean,
+          launchedByThreadId: Schema.optional(ThreadId),
+        }),
+      ),
+    }),
+  ),
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 

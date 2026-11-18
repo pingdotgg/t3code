@@ -153,6 +153,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
     switch (source.kind) {
       case "subagent":
       case "delegated_task":
+      case "group_worker":
         return "bot";
       case "command":
         return "terminal";

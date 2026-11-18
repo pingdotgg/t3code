@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
@@ -26,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -54,6 +56,7 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import { groupSummaryMember, groupTurnSummary } from "./GroupTurnSummary.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -199,6 +202,46 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const deliveredGroupFingerprints = yield* Ref.make(new Map<string, string>());
+
+    const loadGroupTurnSummary = Effect.fn("ProviderTurnStartService.loadGroupTurnSummary")(
+      function* (threadId: ThreadId) {
+        const self = yield* projectionStore.getThreadShell(threadId);
+        if (self === null) return undefined;
+        const leadId = self.groupParentThreadId ?? self.id;
+        const lead = leadId === self.id ? self : yield* projectionStore.getThreadShell(leadId);
+        const live = (
+          shell: OrchestrationV2ThreadShell | null,
+        ): shell is OrchestrationV2ThreadShell =>
+          shell !== null && shell.archivedAt === null && shell.deletedAt === null;
+        if (!live(lead)) return undefined;
+        const workerIds = yield* projectionStore.listGroupMemberThreadIds(leadId);
+        const workers = (yield* Effect.forEach(workerIds, (id) =>
+          id === self.id ? Effect.succeed(self) : projectionStore.getThreadShell(id),
+        ))
+          .filter(live)
+          .sort((a, b) => {
+            const aKey = a.groupOrderKey ?? "";
+            const bKey = b.groupOrderKey ?? "";
+            if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+            return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+          });
+        if (workers.length === 0) return undefined;
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const summary = groupTurnSummary({
+          self: threadId,
+          lead: groupSummaryMember(lead, nowMs),
+          workers: workers.map((worker) => groupSummaryMember(worker, nowMs)),
+        });
+        const delivered = (yield* Ref.get(deliveredGroupFingerprints)).get(threadId);
+        return delivered === summary.fingerprint ? undefined : summary;
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to load the group summary for a turn", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -1719,6 +1762,7 @@ export const layer: Layer.Layer<
           ],
         });
       });
+      const groupSummary = goalCommand ? undefined : yield* loadGroupTurnSummary(input.threadId);
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
@@ -1745,7 +1789,12 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          // A resume must stay a resume; the summary waits for the next prompted turn.
+          const groupContext =
+            groupSummary === undefined || compact || goalCommand || turnInput.resume === true
+              ? ""
+              : groupSummary.text;
+          const context = [groupContext, delivery.context, sideChatContext, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1785,6 +1834,13 @@ export const layer: Layer.Layer<
           yield* Effect.forEach(
             [
               delivery.delivered,
+              ...(groupContext === "" || groupSummary === undefined
+                ? []
+                : [
+                    Ref.update(deliveredGroupFingerprints, (delivered) =>
+                      new Map(delivered).set(projection.thread.id, groupSummary.fingerprint),
+                    ),
+                  ]),
               ...(sideChatContext === "" || sideChatHandoff === undefined || nativeThreadId == null
                 ? []
                 : [
@@ -1820,6 +1876,7 @@ export const layer: Layer.Layer<
         ),
       );
       const deliverySession =
+        groupSummary === undefined &&
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&

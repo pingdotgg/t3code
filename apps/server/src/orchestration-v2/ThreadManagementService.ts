@@ -451,6 +451,7 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
+  readonly listGroupMemberThreadIds: Orchestrator.OrchestratorV2["Service"]["listGroupMemberThreadIds"];
   readonly listAppOwnedChildThreadIds: Orchestrator.OrchestratorV2["Service"]["listAppOwnedChildThreadIds"];
   readonly getThreadLinkMetadata: Orchestrator.OrchestratorV2["Service"]["getThreadLinkMetadata"];
   readonly getThreadTitles: Orchestrator.OrchestratorV2["Service"]["getThreadTitles"];
@@ -865,6 +866,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const sendsWithinGroup = Effect.fn("ThreadManagementService.sendsWithinGroup")(function* (
+    senderThreadId: ThreadId,
+    targetThreadId: ThreadId,
+  ) {
+    if (senderThreadId === targetThreadId) return false;
+    const sender = yield* orchestrator.getThreadShell(senderThreadId);
+    const leadId = sender?.groupParentThreadId;
+    if (leadId === null || leadId === undefined) return false;
+    const [lead, target] = yield* Effect.all([
+      orchestrator.getThreadShell(leadId),
+      orchestrator.getThreadShell(targetThreadId),
+    ]);
+    if (lead === null || lead.deletedAt !== null || target === null) return false;
+    return target.id === leadId || target.groupParentThreadId === leadId;
+  });
+
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
@@ -876,10 +893,16 @@ const make = Effect.gen(function* () {
     }
     const steerableRun = latestSteerableRun(target);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
-    const mode =
+    const freshMode =
       input.freshContext && (input.mode === "steer" || input.mode === "restart")
         ? "queue"
         : input.mode;
+    // A worker never interrupts its lead or a sibling; its messages wait for their turn.
+    const toOwnGroup =
+      freshMode !== "queue" && input.senderThreadId !== undefined
+        ? yield* sendsWithinGroup(input.senderThreadId, input.threadId)
+        : false;
+    const mode = toOwnGroup ? "queue" : freshMode;
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
@@ -1755,6 +1778,7 @@ const make = Effect.gen(function* () {
     listOlderSettledThreads: orchestrator.listOlderSettledThreads,
     readShellSnapshot: orchestrator.readShellSnapshot,
     getThreadShell: orchestrator.getThreadShell,
+    listGroupMemberThreadIds: orchestrator.listGroupMemberThreadIds,
     listAppOwnedChildThreadIds: Effect.fn("ThreadManagementService.listAppOwnedChildThreadIds")(
       function (threadId) {
         return ensureProjectionTranscript(threadId).pipe(
