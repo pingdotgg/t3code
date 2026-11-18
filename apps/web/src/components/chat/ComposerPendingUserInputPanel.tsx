@@ -86,6 +86,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
+  const dismissDisabled = disabled || isResponding;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const advance = useStableCallback(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -240,18 +241,19 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               render={<span role="button" tabIndex={0} />}
               aria-label="Dismiss question without answering"
               title="Dismiss question without answering"
-              disabled={isResponding}
+              // A span ignores `disabled`, so the handlers check it themselves.
+              aria-disabled={dismissDisabled || undefined}
               data-pending-user-input-dismiss
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                onDismiss(prompt.requestId);
+                if (!dismissDisabled) onDismiss(prompt.requestId);
               }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 event.stopPropagation();
-                onDismiss(prompt.requestId);
+                if (!dismissDisabled) onDismiss(prompt.requestId);
               }}
             />
           ) : null}
