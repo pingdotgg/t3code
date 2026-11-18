@@ -59,9 +59,15 @@ export function prependIssueComments(
   return [...older.filter((comment) => !seen.has(comment.id)), ...current];
 }
 
+export function canonicalIssueLabels(labels: ReadonlyArray<string>): ReadonlyArray<string> {
+  return [...labels].sort();
+}
+
 /** Every label must match, but a tracker cursor can depend on the literal search string. */
 function canonicalIssueListInput(input: IssueListInput): IssueListInput {
-  return input.labels === undefined ? input : { ...input, labels: [...input.labels].sort() };
+  return input.labels === undefined
+    ? input
+    : { ...input, labels: canonicalIssueLabels(input.labels) };
 }
 
 /**
