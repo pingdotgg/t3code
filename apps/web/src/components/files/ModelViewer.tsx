@@ -5,8 +5,10 @@ import {
   triangleCount,
   type Mesh as Geometry,
 } from "@t3tools/shared/meshFiles";
+import { msg, useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { observeResize } from "~/lib/observeResize";
 
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -118,10 +120,10 @@ export default function ModelViewer(props: {
   const loadMesh = useEffectEvent(async (signal: AbortSignal): Promise<Mesh> => {
     const bytes = await props.loadBytes(signal);
     const geometry = await decodeGeometry(props.format, bytes, signal);
-    if (!geometry) throw new Error("This file has no geometry the 3D view can draw.");
+    if (!geometry) throw new Error(m(msg("This file has no geometry the 3D view can draw.")));
     const bounds = meshBounds(geometry.points);
     if (!bounds.min.every(Number.isFinite) || !bounds.max.every(Number.isFinite)) {
-      throw new Error("This file has coordinates the 3D view cannot draw.");
+      throw new Error(m(msg("This file has coordinates the 3D view cannot draw.")));
     }
     return { geometry: { current: geometry }, bounds, triangles: triangleCount(geometry) };
   });
@@ -138,7 +140,9 @@ export default function ModelViewer(props: {
       (cause: unknown) => {
         if (controller.signal.aborted) return;
         setState({ status: "failed" });
-        reportUnavailable(cause instanceof Error ? cause.message : "The 3D view is unavailable.");
+        reportUnavailable(
+          cause instanceof Error ? cause.message : m(msg("The 3D view is unavailable.")),
+        );
       },
     );
     return () => controller.abort();
@@ -166,16 +170,16 @@ function mountModelCanvas(
     premultipliedAlpha: true,
   });
   if (!gl) {
-    handlers.onUnavailable("This browser cannot show 3D views.");
+    handlers.onUnavailable(m(msg("This browser cannot show 3D views.")));
     return null;
   }
   if (gl.isContextLost()) {
-    handlers.onUnavailable("The 3D view stopped because the graphics device was reset.");
+    handlers.onUnavailable(m(msg("The 3D view stopped because the graphics device was reset.")));
     return null;
   }
   const geometry = mesh.geometry.current;
   if (!geometry) {
-    handlers.onUnavailable("Reopen the file to show it in 3D again.");
+    handlers.onUnavailable(m(msg("Reopen the file to show it in 3D again.")));
     return null;
   }
   const { bounds } = mesh;
@@ -186,7 +190,7 @@ function mountModelCanvas(
     program = compileProgram(gl);
   } catch (cause) {
     console.error("3D view shaders failed", cause);
-    handlers.onUnavailable("This device cannot show 3D views.");
+    handlers.onUnavailable(m(msg("This device cannot show 3D views.")));
     return null;
   }
   const buffer = gl.createBuffer();
@@ -336,7 +340,7 @@ function mountModelCanvas(
   canvas.addEventListener("keydown", onKeyDown);
   const onContextLost = (event: Event) => {
     event.preventDefault();
-    handlers.onUnavailable("The 3D view stopped because the graphics device was reset.");
+    handlers.onUnavailable(m(msg("The 3D view stopped because the graphics device was reset.")));
   };
   canvas.addEventListener("webglcontextlost", onContextLost);
 
@@ -365,6 +369,7 @@ function ModelCanvas(props: {
   readonly mesh: Mesh;
   readonly onUnavailable: (reason: string) => void;
 }) {
+  const gt = useGT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Callers pass a stable callback, so reporting does not recreate the WebGL context.
   const { mesh, onUnavailable } = props;
@@ -395,7 +400,7 @@ function ModelCanvas(props: {
       <canvas
         ref={canvasRef}
         role="img"
-        aria-label={`3D view of ${props.name}`}
+        aria-label={gt("3D view of {name}", { name: props.name })}
         tabIndex={0}
         className="size-full touch-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60"
         onContextMenu={(event) => event.preventDefault()}

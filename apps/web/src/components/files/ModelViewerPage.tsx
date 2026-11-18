@@ -1,6 +1,8 @@
 import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
+import { msg, useMessages } from "gt-react";
 import { useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { readModelViewerPageParams } from "../../modelViewerPage";
 import ModelViewer from "./ModelViewer";
 import { MODEL_VIEWER_MAX_BYTES, readModelBytes } from "./modelViewerData";
@@ -29,17 +31,18 @@ function initialParams() {
   document.body.style.overflow = "hidden";
   reportReadyToApp();
   const params = readModelViewerPageParams(window.location);
-  if (!params) reportToApp(INVALID_LINK);
+  if (!params) reportToApp(m(INVALID_LINK));
   else if (params.appearance) {
     document.documentElement.classList.toggle("dark", params.appearance === "dark");
   }
   return params;
 }
 
-const INVALID_LINK = "This link does not name a 3D file.";
+const INVALID_LINK = msg("This link does not name a 3D file.");
 
 /** Full-screen 3D view of one file for the mobile app's WebView. */
 export default function ModelViewerPage() {
+  const messages = useMessages();
   const [params] = useState(initialParams);
   const [problem, setProblem] = useState<string | null>(null);
   // Stable, so reporting does not recreate the viewer's WebGL context.
@@ -51,11 +54,11 @@ export default function ModelViewerPage() {
   if (!params || problem !== null) {
     return (
       <main className="fixed inset-0 flex items-center justify-center bg-background p-6 text-center text-sm text-muted-foreground">
-        {problem ?? INVALID_LINK}
+        {problem ?? messages(INVALID_LINK)}
       </main>
     );
   }
-  const copy = modelPreviewCopy(params.format);
+  const copy = modelPreviewCopy(params.format, messages);
   return (
     <main className="fixed inset-0 flex flex-col overflow-hidden bg-background">
       <ModelViewer
