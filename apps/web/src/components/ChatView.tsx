@@ -341,6 +341,7 @@ import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEn
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
+import { ProviderAutoSwitchDialog } from "./chat/ProviderAutoSwitchDialog";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
@@ -3370,6 +3371,16 @@ export default function ChatView(props: ChatViewProps) {
           threadKey={activeThreadKey}
           threadRef={activeThreadRef}
           state={deviceState}
+        />
+      )}
+      {embedded || serverThread === null ? null : (
+        <ProviderAutoSwitchDialog
+          key={serverThread.id}
+          environmentId={environmentId}
+          thread={serverThread}
+          lastErrorClass={serverRuntime?.lastErrorClass}
+          providers={providerStatuses}
+          settings={settings}
         />
       )}
       {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}

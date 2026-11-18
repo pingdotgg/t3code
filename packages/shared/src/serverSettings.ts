@@ -603,6 +603,10 @@ export function applyServerSettingsPatch(
     ...(patch.defaultModelSelection !== undefined
       ? { defaultModelSelection: patch.defaultModelSelection }
       : {}),
+    // A shorter route must drop entries; deepMerge would merge arrays by index.
+    ...(patch.providerAutoSwitch !== undefined
+      ? { providerAutoSwitch: patch.providerAutoSwitch }
+      : {}),
     ...(patch.fallbackModelSelection !== undefined
       ? { fallbackModelSelection: patch.fallbackModelSelection }
       : {}),

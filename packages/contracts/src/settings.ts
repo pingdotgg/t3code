@@ -771,6 +771,25 @@ export const IDLE_COMPACTION_MODES = [
 export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
 export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 
+export const ProviderAutoSwitchMode = Schema.Literals(["off", "ask", "route"]);
+export type ProviderAutoSwitchMode = typeof ProviderAutoSwitchMode.Type;
+
+/** `exhausted` waits for a usage-limit failure; the others also switch once a window passes the threshold. */
+export const ProviderAutoSwitchTrigger = Schema.Literals(["exhausted", "session", "weekly"]);
+export type ProviderAutoSwitchTrigger = typeof ProviderAutoSwitchTrigger.Type;
+
+export const ProviderAutoSwitchSettings = Schema.Struct({
+  mode: ProviderAutoSwitchMode.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
+  trigger: ProviderAutoSwitchTrigger.pipe(
+    Schema.withDecodingDefault(Effect.succeed("exhausted" as const)),
+  ),
+  thresholdPercent: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(90)),
+  ),
+  route: Schema.Array(ModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type ProviderAutoSwitchSettings = typeof ProviderAutoSwitchSettings.Type;
+
 // Shipped clients reject the whole server config unless `compactIdleThreads` is boolean.
 // Keep the mode in `idleCompaction`, but accept strings from older servers.
 const LegacyCompactIdleThreads = Schema.Union([Schema.Boolean, IdleCompactionMode]);
@@ -1460,6 +1479,9 @@ export const ServerSettings = Schema.Struct({
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  providerAutoSwitch: ProviderAutoSwitchSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
@@ -1911,6 +1933,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  providerAutoSwitch: Schema.optionalKey(ProviderAutoSwitchSettings),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),

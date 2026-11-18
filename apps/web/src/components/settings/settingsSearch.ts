@@ -1049,6 +1049,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "provider-auto-switch",
+    title: msg("Auto-switch provider"),
+    to: "/settings/providers",
+    searchTerms: [
+      msg(
+        "usage limit quota out of tokens switch account fallback route session weekly percent next provider",
+      ),
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "text-generators",
     title: msg("Text generators"),
     to: "/settings/providers",
