@@ -280,10 +280,42 @@ function urlOf(el) {
   try { return ObjC.unwrap(value.absoluteString) || ''; } catch (error) { return ''; }
 }
 var WALK_MS = 4000;
+// Web pages nest deep: Apple's sign-in frame puts its fields 33 levels under Chrome's window. The node and time budgets bound the walk.
+var MAX_DEPTH = 64;
+var LOADER = /(^|[-_\\s])(load|loader|loading|spinner|progress)([-_\\s]|$)/i;
+// A page still loading shows it: a progress or busy indicator, a busy element, or a visible loader (Apple's sign-in
+// keeps a full-page "maison-loader-spinner" up until its form's frame arrives, while the page reports itself loaded).
+// A popup the app opened over its window (autofill suggestions, a menu) is a window of its own; its lines, the
+// highlighted one marked.
+function popupText(app) {
+  var wins = attr(app, 'AXWindows'), lines = [];
+  for (var i = 0; wins && i < wins.count; i++) {
+    var w = wins.objectAtIndex(i), sub = plain(w, 'AXSubrole'), s = pair(w, 'AXSize');
+    if (sub === 'AXStandardWindow' || sub === 'AXDialog' || !s || s[0] < 100 || s[1] < 30) continue;
+    var queue = [w], seen = 0;
+    while (queue.length && seen < 200) {
+      var kids = children(queue.shift());
+      for (var j = 0; j < kids.length; j++, seen++) {
+        var el = kids[j], role = plain(el, 'AXRole');
+        var words = role === 'AXStaticText' ? plain(el, 'AXValue') : role === 'AXList' || role === 'AXMenu' ? plain(el, 'AXTitle') : role === 'AXMenuItem' ? plain(el, 'AXTitle') : '';
+        words = clip(words, 120);
+        if (words && plain(el, 'AXSelected') === true) words = '\u25b8 ' + words;
+        if (words && lines.indexOf(words) < 0 && lines.indexOf('\u25b8 ' + words) < 0) lines.push(words);
+        queue.push(el);
+      }
+    }
+  }
+  return clip(lines.join(' | '), 400);
+}
+function showsLoading(el, role) {
+  if (role === 'AXProgressIndicator' || role === 'AXBusyIndicator') return true;
+  if (role !== 'AXGroup' && role !== 'AXWebArea') return false;
+  return plain(el, 'AXElementBusy') === true || LOADER.test(plain(el, 'AXDOMIdentifier') || '');
+}
 function run(argv) {
   var target = front(argv && argv[0]);
   if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
-  var win = target.win, started = Date.now(), truncated = false;
+  var win = target.win, started = Date.now(), truncated = false, loading = false;
   var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
   var left = wp[0], top = wp[1], right = wp[0] + ws[0], bottom = wp[1] + ws[1];
   var queue = [{ el: win, path: [], depth: 0 }], visited = 0, controls = [], text = '', url = '';
@@ -298,6 +330,7 @@ function run(argv) {
       if (sized && (p[0] >= right || p[1] >= bottom || p[0] + s[0] <= left || p[1] + s[1] <= top)) continue;
       var path = node.path.concat([i]);
       if (role === 'AXWebArea' && !url) url = urlOf(el);
+      if (!loading && sized && showsLoading(el, role)) loading = true;
       if (role === 'AXStaticText') {
         var words = plain(el, 'AXValue');
         if (text.length < 1500 && words) text += (text ? ' ' : '') + clip(words, 1500);
@@ -317,7 +350,7 @@ function run(argv) {
           controls.push(control);
         }
       }
-      if (!LEAVES[role] && node.depth + 1 < 20) queue.push({ el: el, path: path, depth: node.depth + 1 });
+      if (!LEAVES[role] && node.depth + 1 < MAX_DEPTH) queue.push({ el: el, path: path, depth: node.depth + 1 });
     }
   }
   if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
@@ -325,6 +358,9 @@ function run(argv) {
   var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, 1500), window: { x: left, y: top, w: ws[0], h: ws[1] } };
   if (url) out.url = url;
   if (truncated) out.truncated = true;
+  if (loading) out.loading = true;
+  var popup = popupText(target.app);
+  if (popup) out.popup = popup;
   return JSON.stringify(out);
 }`;
 
@@ -789,6 +825,9 @@ function observationShape(value: unknown): Omit<Observation, "backend"> {
   if (url) seen.url = url;
   if (window) seen.window = window;
   if (optional(raw.truncated, "observation truncated", boolean)) seen.truncated = true;
+  if (optional(raw.loading, "observation loading", boolean)) seen.loading = true;
+  const popup = optional(raw.popup, "observation popup", string);
+  if (popup) seen.popup = popup;
   return seen;
 }
 

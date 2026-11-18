@@ -1,6 +1,6 @@
 // Ada's computer-use helper child. Its loop, backends and stop are ported from LocalRouter @fe24726; this entry is new.
 import * as NodeProcess from "node:process";
-import { ComputerUse, ComputerUseRuns } from "./controller.ts";
+import { ComputerUse, ComputerUseRuns, settled as settledRead } from "./controller.ts";
 import type {
   Authorize,
   AuthorizeRequest,
@@ -41,6 +41,11 @@ export type Mac = {
 };
 
 /** A window as a look reads it: the observation, and a PNG of it when asked or when it lists no controls. */
+const REAL_CLOCK = {
+  now: () => Date.now(),
+  sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+
 export type Look = Omit<Observation, "backend" | "window" | "text"> & {
   text: string;
   screenshot?: {
@@ -324,7 +329,7 @@ export function createChild(options: ChildOptions): Child {
       backend: _backend,
       window: _window,
       ...observed
-    } = await desktop.observe(frame.app ? { app: frame.app } : {});
+    } = await settledRead(desktop, frame.app ? { app: frame.app } : {}, REAL_CLOCK);
     const seen: Look = { ...observed, text: observed.text ?? "" };
     const wanted = frame.screenshot === true;
     if (!desktop.screenshot || (!wanted && seen.controls.length > 0)) return seen;

@@ -669,7 +669,7 @@ return run;`;
     }
   });
 
-  it("reads the displays, and the page a browser shows, the window and whether the walk was cut short", async () => {
+  it("reads the displays, and the page a browser shows, the window, an open popup, and whether the walk was cut short or still loading", async () => {
     const displays = [
       { x: 0, y: 0, w: 1512, h: 982 },
       { x: -1920, y: -98, w: 1920, h: 1080 },
@@ -682,6 +682,8 @@ return run;`;
       url: "https://mail.example.com/",
       window: { x: 0, y: 25, w: 1200, h: 800 },
       truncated: true,
+      loading: true,
+      popup: "Autofill: Manage passwords… | ▸ Password for dana@acme.test, idmsa.",
     };
     expect(
       await new DesktopBackend(fakeRunner(() => JSON.stringify(seen)).runner).observe(),

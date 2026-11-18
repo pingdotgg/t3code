@@ -71,6 +71,10 @@ export type Observation = {
   window?: Rect;
   /** The walk stopped early (its node, control or time budget ran out): more may be on screen than is listed. */
   truncated?: boolean;
+  /** The window shows it is still loading (a spinner, a busy page): what is listed may not be all it will show. */
+  loading?: boolean;
+  /** A popup open over the window (autofill suggestions, a menu), its highlighted line marked ▸. */
+  popup?: string;
 };
 
 /** The keys a step may press: the ones that move, reveal or submit, and three browser shortcuts. */

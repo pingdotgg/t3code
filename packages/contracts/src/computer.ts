@@ -323,6 +323,10 @@ export const ComputerLook = Schema.Struct({
   ),
   /** The walk ran out of budget: more is on screen than is listed. */
   truncated: Schema.optionalKey(Schema.Boolean),
+  /** The page was still loading when the wait for it ran out: look again. */
+  loading: Schema.optionalKey(Schema.Boolean),
+  /** A popup open over the window (saved sign-ins, a menu), its highlighted line marked ▸: pick with `down` then `return`. */
+  popup: Schema.optionalKey(Schema.String),
   /** Read from a screenshot, because the app would not show its window through accessibility. */
   visual: Schema.optionalKey(Schema.Boolean),
   /** A PNG of `region`; a screen point is `region` origin + pixel / `scale`. */

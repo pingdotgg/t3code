@@ -10,6 +10,7 @@ import type {
   Key,
   BrowserTabs,
   Observation,
+  ObserveOptions,
   PointerWatch,
   ScreenAction,
   ScreenBackend,
@@ -216,6 +217,7 @@ export class ComputerUse {
   private readonly settleMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly clock: { now(): number; sleep(ms: number): Promise<void> };
 
   constructor(deps: Deps) {
     this.deps = deps;
@@ -223,6 +225,7 @@ export class ComputerUse {
     this.settleMs = deps.settleMs ?? 600;
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.clock = { now: this.now, sleep: this.sleep };
   }
 
   get available() {
@@ -283,7 +286,7 @@ export class ComputerUse {
       let opened = false;
       for (let step = 0; step < run.maxSteps; step += 1) {
         this.checkpoint(run);
-        const screen = await backend.observe({ signal: run.signal });
+        const screen = await settled(backend, { signal: run.signal }, this.clock);
         const key = screenKey(screen);
         const avoid = avoidBy.get(key) ?? new Map<string, string>();
         avoidBy.set(key, avoid);
@@ -397,6 +400,16 @@ export class ComputerUse {
         await this.beforeTouching(run);
         const browser = await this.deps.urls.open(url);
         this.record(run, `opened ${url} in ${browser}`);
+        // Ends once the page has loaded, so the agent's next look reads the page rather than its spinner.
+        if (this.deps.desktop) {
+          await settled(
+            this.deps.desktop,
+            { app: browser, signal: run.signal },
+            this.clock,
+            (seen) => navigationReached(`open ${url}`, seen),
+            NAVIGATION_SETTLE_MS,
+          );
+        }
         return end("done", "", browser);
       }
       const backend = this.deps.desktop;
@@ -847,6 +860,7 @@ export class ComputerUse {
         title: screen.title,
         ...(screen.url ? { url: screen.url } : {}),
         visibleText: clip(screen.text ?? "", 1_500),
+        ...(screen.popup ? { popup: screen.popup } : {}),
         ...(screen.visual ? { readFrom: VISUAL_NOTE } : {}),
       },
       stepsSoFar: run.steps.slice(-8),
@@ -1134,6 +1148,43 @@ const hostOf = (address: string) =>
  * Whether a navigation goal's page is not on screen yet: the goal names an address, the screen says which page it
  * shows, and that page is on another host. When the backend cannot read the page (no `url`), the decider's word stands.
  */
+/** How long a read waits for a loading page, and how often it reads again meanwhile. */
+const SETTLE_MAX_MS = 8_000;
+const SETTLE_POLL_MS = 400;
+const NAVIGATION_SETTLE_MS = 1_000;
+
+/**
+ * A read of the screen once it stops loading: read again while the window shows it is loading, then until its
+ * controls stop changing. Past the cap it is returned with `loading`, never as a page with nothing on it.
+ */
+export async function settled(
+  backend: ScreenBackend,
+  options: ObserveOptions,
+  clock: { now(): number; sleep(ms: number): Promise<void> },
+  ready: (seen: Observation) => boolean = () => true,
+  /** After a navigation a page can show neither its content nor its spinner for a moment: steadiness counts only after this. */
+  minMs = 0,
+): Promise<Observation> {
+  const started = clock.now();
+  let seen = await backend.observe(options);
+  if (minMs === 0 && !seen.loading && ready(seen)) return seen;
+  while (clock.now() - started < SETTLE_MAX_MS) {
+    if (options.signal?.aborted) return seen;
+    await clock.sleep(SETTLE_POLL_MS);
+    const next = await backend.observe(options);
+    const steady =
+      !next.loading &&
+      !seen.loading &&
+      ready(seen) &&
+      ready(next) &&
+      clock.now() - started >= minMs &&
+      screenKey(next) === screenKey(seen);
+    seen = next;
+    if (steady) return seen;
+  }
+  return { ...seen, loading: true };
+}
+
 export function navigationReached(goal: string, screen: Observation): boolean {
   const target = navigationText(goal);
   if (!target || !screen.url) return false;
@@ -1195,6 +1246,7 @@ export function screenKey(screen: Observation): string {
     screen.title,
     screen.url ?? "",
     screen.text ?? "",
+    screen.popup ?? "",
     ...screen.controls.map((c) => `${c.role}:${c.label}:${c.value ?? ""}:${c.focused ? 1 : 0}`),
   ].join("\u0001");
 }

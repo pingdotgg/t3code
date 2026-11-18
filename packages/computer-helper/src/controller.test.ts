@@ -10,6 +10,7 @@ import {
   pureNavigation,
   quotedTargets,
   resolveTab,
+  settled,
   siteNamed,
   soundKey,
   unquotedTabName,
@@ -1593,6 +1594,77 @@ describe('a Chrome that refuses other apps (2026-09-26 10:17: "could not find �
       status: "unavailable",
       reason: "It could not find a “Billing” tab with Google Chrome’s tab search.",
     });
+  });
+});
+
+describe("settled", () => {
+  // Apple's sign-in page: a spinner, then the frame with the form arrives a few walks later.
+  const signIn = (spinnerWalks: number) => {
+    let walks = 0;
+    const page: ScreenBackend = {
+      kind: "desktop",
+      observe: async () => {
+        walks += 1;
+        const loading = walks <= spinnerWalks;
+        return {
+          backend: "desktop",
+          app: "Google Chrome",
+          title: "App Store Connect",
+          controls: loading
+            ? []
+            : [
+                control("0.4.2", "textbox", "Email or Phone Number"),
+                control("0.4.3", "button", "Continue"),
+              ],
+          ...(loading ? { loading: true } : {}),
+        };
+      },
+      act: async () => undefined,
+    };
+    let now = 0;
+    const clock = {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+    return { page, clock, walks: () => walks };
+  };
+
+  it("reads again while the page shows it is loading, until its controls stop changing", async () => {
+    const { page, clock, walks } = signIn(3);
+    const seen = await settled(page, {}, clock);
+    expect(seen.controls.map((c) => c.label)).toEqual(["Email or Phone Number", "Continue"]);
+    expect(seen.loading).toBeUndefined();
+    expect(walks()).toBe(5);
+  });
+
+  it("reads once when nothing is loading, and says loading when the wait runs out", async () => {
+    const quiet = signIn(0);
+    await settled(quiet.page, {}, quiet.clock);
+    expect(quiet.walks()).toBe(1);
+    // Right after an open the old page is still up, loaded: it waits for the page asked for.
+    const opened = signIn(0);
+    let at = "https://example.com/old";
+    const old = opened.page.observe.bind(opened.page);
+    opened.page.observe = async (options) => {
+      const seen = await old(options);
+      if (opened.walks() === 3) at = "https://appstoreconnect.apple.com/login";
+      return { ...seen, url: at };
+    };
+    expect(
+      await settled(
+        opened.page,
+        {},
+        opened.clock,
+        (seen) => (seen.url ?? "").includes("appstoreconnect"),
+        1_000,
+      ),
+    ).toMatchObject({ url: "https://appstoreconnect.apple.com/login" });
+    expect(opened.walks()).toBe(4);
+    const slow = signIn(1_000);
+
+    expect(await settled(slow.page, {}, slow.clock)).toMatchObject({ loading: true, controls: [] });
   });
 });
 
