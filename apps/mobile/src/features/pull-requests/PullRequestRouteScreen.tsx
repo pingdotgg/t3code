@@ -1163,7 +1163,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   // destination before its first viewport, so the first one counts as made.
   const filterChoice = {
     hideTestFiles: filter.hideTestFiles,
-    hideViewedFiles: filter.hideViewedFiles,
+    // Viewed marks can arrive after the first draw, so track what is hidden, not the setting.
+    hiddenViewedCount: filter.hiddenViewedCount,
   };
   const jumpedUnder = useRef<typeof filterChoice | null>(targetFile ? filterChoice : null);
   const hasTestFiles =
@@ -1172,7 +1173,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const jumpStarted = () =>
     jumpedUnder.current !== null &&
     (!hasTestFiles || jumpedUnder.current.hideTestFiles === filter.hideTestFiles) &&
-    (!filter.viewedCount || jumpedUnder.current.hideViewedFiles === filter.hideViewedFiles);
+    jumpedUnder.current.hiddenViewedCount === filter.hiddenViewedCount;
   const scrollToFile = (fileId: string) => {
     if (!nativeView.current) return;
     jumpedUnder.current = filterChoice;
