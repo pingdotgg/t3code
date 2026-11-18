@@ -227,8 +227,8 @@ export function createMergedIssueListAtoms<E>(
     refresh,
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
-      for (const atom of registry.getNodes().keys()) {
-        const targets = targetsOf.get(atom);
+      for (const node of registry.getNodes().values()) {
+        const targets = targetsOf.get(node.atom);
         if (targets === undefined) continue;
         refresh(
           registry,
