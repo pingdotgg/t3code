@@ -413,13 +413,12 @@ can break the preview, so save a copy if you need to keep it.
 On web and desktop, right-click an image and choose **Edit image**, or open its
 preview and choose **Edit image**, to draw, add text or
 location comments, select areas to remove, or crop. The editor opens beside chat
-when there is room and no other side panel is open. Annotations remain editable,
+when there is room, including when the right file preview is open. Annotations remain editable,
 with undo, redo, and the original available for comparison. Clicking with **Comment pin**
 or **Text** opens a focused text box beside that spot. Press Enter or choose **Done**
 to finish, Shift+Enter for another line, or Escape to close the box and keep your text.
-**Apply annotations**
-updates an unsent attachment or adds a PNG to your message. You can reopen the
-staged image to adjust its layers. After a reload, it may reopen with a resized
+Choose **Save PNG** to download the annotated image. After adding an edit request,
+you can reopen its staged guidance image to adjust its layers. After a reload, it may reopen with a resized
 source or as a flattened image; save the original separately if you need it at
 full resolution.
 
