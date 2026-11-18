@@ -3,7 +3,7 @@ import { pierreDark, pierreLight } from "@pierre/highlights/themes";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveHighlightLanguage } from "./highlightLanguage";
-import { highlightCode, tokenizeCode } from "./highlights";
+import { highlightCode, highlightCommand, tokenizeCode, type HighlightedLines } from "./highlights";
 
 vi.mock("react-native-nitro-modules", async () => {
   const { createWasmHighlightsModule } = await import("./highlights.testing");
@@ -35,6 +35,19 @@ describe("highlightCode", () => {
       );
       expect(highlightCode(code, "tsx", scheme)).toEqual(expected);
     }
+  });
+
+  it("colors a command's embedded script with that script's grammar", () => {
+    const body = "import json\r\nprint(json.dumps({'ok': True}))";
+    const code = `python3 - <<'PY'\r\n${body}\r\nPY`;
+    const colors = (lines: HighlightedLines) =>
+      lines.map((line) => line.map(({ content, color }) => [content, color]));
+    const lines = highlightCommand(code, "shellscript", "dark");
+
+    expect(lines.map((line) => line.map((token) => token.content).join(""))).toEqual(
+      code.split("\r\n"),
+    );
+    expect(colors(lines.slice(1, 3))).toEqual(colors(highlightCode(body, "python", "dark")));
   });
 
   it("keeps an over-long line as one plain token", () => {

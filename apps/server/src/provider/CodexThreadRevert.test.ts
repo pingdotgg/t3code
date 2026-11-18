@@ -68,7 +68,6 @@ it.effect("finds the revert boundary across pages of newest-first turns", () =>
         ],
       }),
     ),
-    Effect.scoped,
   ),
 );
 
@@ -87,6 +86,5 @@ it.effect("rejects repeated cursors instead of looping or reverting incomplete h
         entries: [...page(1, null, 3, ["newest"], "again"), ...page(2, "again", 2, [], "again")],
       }),
     ),
-    Effect.scoped,
   ),
 );
