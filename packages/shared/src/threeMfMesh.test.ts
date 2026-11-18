@@ -85,5 +85,15 @@ describe("parseThreeMf", () => {
       },
     });
     expect(await parseThreeMf(bomb, { maxTriangles: 1e9 }, signal)).toBeNull();
+    const unusedVertices = await buildZip({
+      "3D/3dmodel.model": {
+        deflate: true,
+        text: model(
+          `<object id="1">${TRIANGLE}</object><object id="2"><mesh><vertices>${'<vertex x="0" y="0" z="0"/>'.repeat(4)}</vertices></mesh></object>`,
+          '<item objectid="1"/>',
+        ),
+      },
+    });
+    expect(await parseThreeMf(unusedVertices, { maxTriangles: 2 }, signal)).toBeNull();
   });
 });

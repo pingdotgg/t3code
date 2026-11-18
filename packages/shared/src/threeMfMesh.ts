@@ -141,7 +141,7 @@ async function parsePart(
   entry: ZipEntry,
   budget: ReturnType<typeof workBudget>,
   inflateLimit: number,
-  triangleBudget: { remaining: number },
+  triangleBudget: { remaining: number; verticesRemaining: number },
 ): Promise<{ part: ModelPart; inflated: number } | null> {
   const part: ModelPart = { objects: new Map(), build: [] };
   const numbers = new ByteReader(bytes);
@@ -177,6 +177,7 @@ async function parsePart(
     const selfClosing = buffer[end - 1] === SLASH;
     if (spells(buffer, nameStart, nameEnd, "vertex")) {
       if (!current) return;
+      if ((triangleBudget.verticesRemaining -= 1) < 0) throw new TooLarge();
       vertex[0] = vertex[1] = vertex[2] = Number.NaN;
       forEachAttribute(buffer, nameEnd, end, (keyStart, keyEnd, valueStart, valueEnd) => {
         const axis = keyEnd - keyStart === 1 ? buffer[keyStart]! - 0x78 : -1;
@@ -288,7 +289,10 @@ export async function parseThreeMf(
   const budget = workBudget(signal, TAGS_PER_SLICE);
   const parts = new Map<string, ModelPart | null>();
   let inflateRemaining = MAX_INFLATED_BYTES;
-  const triangleBudget = { remaining: limits.maxTriangles };
+  const triangleBudget = {
+    remaining: limits.maxTriangles,
+    verticesRemaining: limits.maxTriangles * 3,
+  };
 
   const loadPart = async (path: string) => {
     if (parts.has(path)) return parts.get(path)!;

@@ -52,7 +52,6 @@ export async function parseObj(
 
   const points = new Float32Array(vertexCount * 3);
   const indices = new Uint32Array(triangleCount * 3);
-  const corners = new Uint32Array(64);
   let vertices = 0;
   let written = 0;
   reader.position = 0;
@@ -73,6 +72,9 @@ export async function parseObj(
       // Corners are `v`, `v/vt`, `v//vn` or `v/vt/vn`; negative indices count back from here.
       let count = 0;
       let valid = true;
+      const faceStart = written;
+      let first = 0;
+      let previous = 0;
       for (;;) {
         reader.skipSpaces();
         if (reader.atLineEnd()) break;
@@ -88,18 +90,17 @@ export async function parseObj(
         reader.skipToken();
         const resolved = negative ? vertices - index : index - 1;
         if (digits === 0 || resolved < 0 || resolved >= vertices) valid = false;
-        if (count < corners.length) corners[count] = resolved;
+        if (count === 0) first = resolved;
+        else if (count >= 2 && valid) {
+          indices[written] = first;
+          indices[written + 1] = previous;
+          indices[written + 2] = resolved;
+          written += 3;
+        }
+        previous = resolved;
         count += 1;
       }
-      // Fans of more than 64 corners are vanishingly rare; their extra corners are dropped.
-      const used = Math.min(count, corners.length);
-      for (let corner = 2; corner < used; corner += 1) {
-        if (!valid) break;
-        indices[written] = corners[0]!;
-        indices[written + 1] = corners[corner - 1]!;
-        indices[written + 2] = corners[corner]!;
-        written += 3;
-      }
+      if (!valid) written = faceStart;
     }
     reader.nextLine();
     if (budget.spend()) await budget.pause();

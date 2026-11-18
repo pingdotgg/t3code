@@ -40,6 +40,10 @@ f -3/1/1 -2/1/1 -1/1/1
       signal,
     );
     expect(positions?.length).toBe(2 * 9);
+    const polygon = encode(
+      `${Array.from({ length: 128 }, (_, index) => `v ${index} ${index % 2} 0`).join("\n")}\nf ${Array.from({ length: 128 }, (_, index) => index + 1).join(" ")}\n`,
+    );
+    expect((await parseObj(polygon, LIMITS, signal))?.length).toBe(126 * 9);
   });
 
   it("rejects files without faces or over the limit", async () => {

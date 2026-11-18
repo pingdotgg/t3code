@@ -2,7 +2,7 @@ import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts"
 import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
 import { isMeshFormat, type ModelPreviewFormat } from "@t3tools/shared/filePreview";
 import { msg, useGT, useMessages } from "gt-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -170,7 +170,12 @@ export function WorkspaceModelPreview(props: {
       : { _tag: "draft-workspace-file", cwd, path: relativePath, disposition };
   }, [cwd, disposition, relativePath, threadId]);
   const canShow3d = environmentId !== null && download !== null;
-  const downloadUrl = useAssetUrlState(environmentId, canShow3d ? download : null);
+  const downloadRevision = useId();
+  const downloadUrl = useAssetUrlState(
+    environmentId,
+    canShow3d ? download : null,
+    downloadRevision,
+  );
   const [mode, setMode] = useState<"3d" | "picture">("3d");
   const [reported, setReported] = useState<string | null>(null);
   const problem = reported ?? (downloadUrl._tag === "Failure" ? copy.viewerMissing : null);
