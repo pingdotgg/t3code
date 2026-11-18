@@ -5,7 +5,9 @@ import {
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
 
+import { m } from "../../i18n/messages";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -37,14 +39,14 @@ export function shellCommandSendBlock(input: {
   if (parseShellCommand(input.text) === null) return null;
   if (input.connected && !appAtomRegistry.get(shellCommandPermissionAtom(input.environmentId))) {
     return {
-      title: "Shell command not sent",
-      detail: "This connection needs terminal access to run commands here.",
+      title: m(msg("Shell command not sent")),
+      detail: m(msg("This connection needs terminal access to run commands here.")),
     };
   }
   if (input.hasAttachmentsOrContext) {
     return {
-      title: "Shell commands take text only",
-      detail: "Remove the attachments and context, then send it again.",
+      title: m(msg("Shell commands take text only")),
+      detail: m(msg("Remove the attachments and context, then send it again.")),
     };
   }
   return null;

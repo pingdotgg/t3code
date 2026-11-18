@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -9,6 +10,7 @@ export function ComposerShellModeBanner(props: {
   readonly canRun: boolean;
   readonly onExit: () => void;
 }) {
+  const gt = useGT();
   return (
     <View className="flex-row items-center gap-2 px-4 pb-2">
       <SymbolView
@@ -26,13 +28,13 @@ export function ComposerShellModeBanner(props: {
         numberOfLines={2}
       >
         {props.canRun
-          ? "Shell command. Runs in the thread's working directory."
-          : "Shell commands need terminal access on this connection."}
+          ? gt("Shell command. Runs in the thread's working directory.")
+          : gt("Shell commands need terminal access on this connection.")}
       </Text>
       <Button
-        label="Exit"
+        label={gt("Exit", { $context: "button that leaves shell mode" })}
         tone="text"
-        accessibilityLabel="Exit shell mode"
+        accessibilityLabel={gt("Exit shell mode")}
         onPress={props.onExit}
       />
     </View>

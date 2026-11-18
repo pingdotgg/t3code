@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/user-shell-commands";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Image } from "expo-image";
+import { useGT } from "gt-react-native";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -17,11 +18,17 @@ import { useUserShellCommandActions } from "./userShellCommands";
 
 const TERMINAL_CHIP = contextChipPresentation("terminal");
 
-function shellResultSummary(item: UserShellItem): string {
-  if (item.status === "running") return "Still running. Its output so far";
-  if (item.userShell.stoppedByUser) return "Stopped. Its output";
-  if (item.exitCode !== undefined) return `Exited with code ${item.exitCode}. Its output`;
-  return "Its output";
+function shellResultSummary(item: UserShellItem, gt: ReturnType<typeof useGT>): string {
+  if (item.status === "running") {
+    return gt("Still running. Its output so far goes with your next message.");
+  }
+  if (item.userShell.stoppedByUser) return gt("Stopped. Its output goes with your next message.");
+  if (item.exitCode !== undefined) {
+    return gt("Exited with code {code}. Its output goes with your next message.", {
+      code: item.exitCode,
+    });
+  }
+  return gt("Its output goes with your next message.");
 }
 
 /** Shell results the server sends with the next message; removing one dismisses it. */
@@ -29,6 +36,7 @@ export function ComposerPendingShellCommands(props: {
   readonly threadRef: ScopedThreadRef;
   readonly canDismiss: boolean;
 }) {
+  const gt = useGT();
   const structure = useQuietThreadStructure(props.threadRef);
   const actions = useUserShellCommandActions();
   const { themeVariables: theme } = useAppearancePreferences();
@@ -42,7 +50,7 @@ export function ComposerPendingShellCommands(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps="always"
-      accessibilityLabel="Shell results for your next message"
+      accessibilityLabel={gt("Shell results for your next message")}
       className="grow-0"
       contentContainerClassName="flex-row items-center gap-3 px-4 pb-2"
     >
@@ -54,7 +62,7 @@ export function ComposerPendingShellCommands(props: {
             style={{ width: 14, height: 14 }}
           />
           <Text
-            accessibilityLabel={`${item.input}. ${shellResultSummary(item)} goes with your next message.`}
+            accessibilityLabel={`${item.input}. ${shellResultSummary(item, gt)}`}
             className="min-w-0 shrink font-t3-medium text-sm"
             style={{ color: accent }}
             numberOfLines={1}
@@ -65,7 +73,7 @@ export function ComposerPendingShellCommands(props: {
           {props.canDismiss ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Leave out ${item.input}`}
+              accessibilityLabel={gt("Leave out {command}", { command: item.input })}
               hitSlop={8}
               onPress={() =>
                 void actions.setDelivery(
