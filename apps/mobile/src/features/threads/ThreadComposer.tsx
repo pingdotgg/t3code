@@ -99,6 +99,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
+  FOLLOW_UP_ACTION_LABEL,
   resolveComposerSendPresentation,
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
@@ -195,12 +196,6 @@ const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
     ? FadeIn.duration(160)
     : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
-
-const FOLLOW_UP_ACTION_LABEL = {
-  queue: msg("Queue", { $context: "verb, send after the current turn" }),
-  steer: msg("Steer now"),
-  restart: msg("Restart turn"),
-} as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
   queue: msg("Run after the current turn"),
@@ -954,11 +949,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     )
                   }
                   submitTitle={sendPresentation.label}
-                  alternateSubmitTitle={
-                    sendPresentation.alternate === null
-                      ? sendPresentation.label
-                      : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
-                  }
+                  alternateSubmitTitle={sendPresentation.alternateLabel}
                   {...compactEditor.editorProps}
                   textStyle={{
                     ...bodyText,

@@ -10,6 +10,8 @@ import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 
 export interface ComposerSendPresentation {
   readonly label: string;
+  /** Title of the alternate send, such as Command-Return on a hardware keyboard. */
+  readonly alternateLabel: string;
   readonly icon:
     | "arrow.up"
     | "tray.and.arrow.up"
@@ -27,6 +29,13 @@ const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
   restart: msg("Restart", { $context: "verb, restarts the turn with the message" }),
 };
 
+/** Names a follow-up action wherever the user picks between them. */
+export const FOLLOW_UP_ACTION_LABEL = {
+  queue: msg("Queue", { $context: "verb, send after the current turn" }),
+  steer: msg("Steer now"),
+  restart: msg("Restart turn"),
+} as const;
+
 export function resolveComposerSendPresentation(
   input: {
     readonly editingQueuedMessage: boolean;
@@ -38,8 +47,10 @@ export function resolveComposerSendPresentation(
   resolve: MessageResolver = m,
 ): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
+    const label = resolve(msg("Update queued message"));
     return {
-      label: resolve(msg("Update queued message")),
+      label,
+      alternateLabel: label,
       icon: "checkmark",
       action: null,
       alternate: null,
@@ -47,10 +58,12 @@ export function resolveComposerSendPresentation(
     };
   }
   if (!input.running) {
+    const label = input.deliveryDeferred
+      ? resolve(ACTION_LABEL.queue)
+      : resolve(msg("Send", { $context: "verb, sends the message" }));
     return {
-      label: input.deliveryDeferred
-        ? resolve(ACTION_LABEL.queue)
-        : resolve(msg("Send", { $context: "verb, sends the message" })),
+      label,
+      alternateLabel: label,
       icon: input.deliveryDeferred ? "tray.and.arrow.up" : "arrow.up",
       action: null,
       alternate: null,
@@ -59,8 +72,10 @@ export function resolveComposerSendPresentation(
   }
   const action: ActiveTurnComposerAction = input.canSteer ? input.followUpBehavior : "queue";
   const alternate = alternateComposerDispatchAction(action);
+  const label = resolve(ACTION_LABEL[action]);
   return {
-    label: resolve(ACTION_LABEL[action]),
+    label,
+    alternateLabel: input.canSteer ? resolve(FOLLOW_UP_ACTION_LABEL[alternate]) : label,
     icon: action === "steer" ? "arrow.turn.left.up" : "list.number",
     action,
     alternate: input.canSteer ? alternate : null,
