@@ -386,7 +386,13 @@ const make = Effect.fn("FeedbackService.make")(function* (
                 FROM orchestration_v2_projection_runs run
                 LEFT JOIN orchestration_v2_projection_turn_items card
                   ON card.turn_item_id = ${context.card.turnItemId}
-                WHERE run.run_id = ${context.card.runId}`;
+                WHERE run.run_id = ${context.card.runId}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_turn_items interruption
+                    WHERE interruption.thread_id = run.thread_id
+                      AND interruption.run_id = run.run_id
+                      AND interruption.type = 'run_interrupt_request'
+                  )`;
                 if (
                   live === undefined ||
                   live.cardStatus !== "waiting" ||

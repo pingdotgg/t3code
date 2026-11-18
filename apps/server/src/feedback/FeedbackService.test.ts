@@ -698,28 +698,43 @@ it.effect("sends nothing approved after the turn stopped or feedback was turned 
   }),
 );
 
-it.effect("sends nothing when the turn stops after Send was accepted but before storing", () =>
-  Effect.gen(function* () {
-    const { events, cards, layer } = yield* harness;
-    yield* Effect.gen(function* () {
-      const feedback = yield* Feedback.FeedbackService;
-      const approvals = yield* Approvals.FeedbackApprovals;
-      const sql = yield* SqlClient.SqlClient;
-      const call = yield* feedback
-        .submit({ ...input, userRequested: true }, fromThread)
-        .pipe(Effect.forkChild);
-      const shown = yield* Queue.take(cards);
-      // The stop commits to the projection after the answer's own check saw a live turn, which
-      // reads the thread service; the storing step reads the committed row.
-      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
-        WHERE run_id = ${shown.runId}`;
-      yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" });
-      expect(yield* Fiber.join(call)).toMatchObject({ approved: false, status: "cancelled" });
-      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
-      expect(yield* listFeedbackReports).toEqual([]);
-      expect(yield* Ref.get(events)).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  }),
+it.effect.each(["terminal", "requested"] as const)(
+  "sends nothing when the turn stop is %s before storing",
+  (stop) =>
+    Effect.gen(function* () {
+      const { events, cards, layer } = yield* harness;
+      yield* Effect.gen(function* () {
+        const feedback = yield* Feedback.FeedbackService;
+        const approvals = yield* Approvals.FeedbackApprovals;
+        const sql = yield* SqlClient.SqlClient;
+        const call = yield* feedback
+          .submit({ ...input, userRequested: true }, fromThread)
+          .pipe(Effect.forkChild);
+        const shown = yield* Queue.take(cards);
+        // The stop commits to the projection after the answer's own check saw a live turn, which
+        // reads the thread service; the storing step reads the committed row.
+        if (stop === "terminal") {
+          yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'interrupted'
+          WHERE run_id = ${shown.runId}`;
+        } else {
+          yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert({
+            turn_item_id: "interrupt-request",
+            thread_id: threadId,
+            run_id: shown.runId,
+            ordinal: 1,
+            type: "run_interrupt_request",
+            status: "completed",
+            updated_at: "2026-01-01T00:00:00.000Z",
+            payload_json: "{}",
+          })}`;
+        }
+        yield* approvals.answer({ threadId, turnItemId: shown.turnItemId, answer: "send" });
+        expect(yield* Fiber.join(call)).toMatchObject({ approved: false, status: "cancelled" });
+        expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
+        expect(yield* listFeedbackReports).toEqual([]);
+        expect(yield* Ref.get(events)).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }),
 );
 
 it.effect("a mode switch under way when a report is stored wins", () =>
