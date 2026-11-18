@@ -89,7 +89,7 @@ export function ThreadDetailsTasks({
         </Button>
       }
     >
-      <ul className="flex max-h-48 flex-col overflow-y-auto text-xs">
+      <ul data-thread-details-task-list className="flex max-h-48 flex-col overflow-y-auto text-xs">
         {!expanded && !current ? (
           <li className="px-2.5 py-1 text-muted-foreground/60">{gt("All done")}</li>
         ) : null}
