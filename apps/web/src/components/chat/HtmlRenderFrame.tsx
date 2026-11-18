@@ -2,7 +2,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
-  htmlRenderFrameHeight,
+  htmlRenderFitHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { T, useGT, Var } from "gt-react";
@@ -17,22 +17,10 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
+import { htmlRenderHeightMemory, rememberedHtmlRenderHeight } from "./htmlRenderHeightMemory";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
-const MAX_MEASURED_CONTENT_HEIGHTS = 200;
-
-// The height each render's page last reported, so a remounted frame opens at it before its page loads.
-const measuredContentHeights = new Map<string, number>();
-
-function rememberContentHeight(attachmentId: string, height: number) {
-  measuredContentHeights.delete(attachmentId);
-  measuredContentHeights.set(attachmentId, height);
-  if (measuredContentHeights.size > MAX_MEASURED_CONTENT_HEIGHTS) {
-    const oldest = measuredContentHeights.keys().next().value;
-    if (oldest !== undefined) measuredContentHeights.delete(oldest);
-  }
-}
 
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -50,10 +38,13 @@ export function HtmlRenderFrame(props: {
     });
   };
   // Client fonts can exceed the server-measured height and cause nested scrolling.
-  const [contentHeight, setContentHeight] = useState(() =>
-    measuredContentHeights.get(attachmentId),
+  const [contentHeight, setContentHeight] = useState<number>();
+  const [remembered] = useState(() => htmlRenderHeightMemory.get(attachmentId));
+  const height = htmlRenderFitHeight(
+    props.htmlRender,
+    width,
+    contentHeight ?? rememberedHtmlRenderHeight(remembered, width),
   );
-  const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -93,7 +84,7 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={(height) => {
-              rememberContentHeight(attachmentId, height);
+              htmlRenderHeightMemory.remember(attachmentId, width, height);
               setContentHeight(height);
             }}
             onFullscreenChange={onFullscreenChange}

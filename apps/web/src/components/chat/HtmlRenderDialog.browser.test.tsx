@@ -14,10 +14,19 @@ vi.mock(import("~/hooks/useHtmlRenderTheme"), async (original) => ({
 
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 
+// The server measured the page at 3000px, taller than the height the agent gave.
 const dialog = (
   <HtmlRenderDialog
     src="https://environment.test/page.html"
-    htmlRender={{ attachmentId: "html", title: "Diagram", height: 400 }}
+    htmlRender={{
+      attachmentId: "html",
+      title: "Diagram",
+      height: 400,
+      heights: [
+        [320, 3000],
+        [1144, 3000],
+      ],
+    }}
     onClose={() => {}}
   />
 );
@@ -44,6 +53,7 @@ it("fits the frame to the page's height and scrolls only the card", async () => 
   await page.viewport(1280, 800);
   await using _screen = await render(dialog);
   const { frame, card } = frameAndCard();
+  expect(frame.getBoundingClientRect().height).toBe(3000);
   await reportHeight(frame, 300);
   expect(frame.getBoundingClientRect().height).toBe(300);
   expect(card.scrollHeight).toBe(card.clientHeight);

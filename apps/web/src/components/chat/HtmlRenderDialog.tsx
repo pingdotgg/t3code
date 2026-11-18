@@ -1,7 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
-  htmlRenderFrameHeight,
+  htmlRenderFitHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { useGT } from "gt-react";
@@ -36,7 +36,7 @@ export function HtmlRenderDialog(props: {
   const [contentHeight, setContentHeight] = useState<number>();
   // Zoom divides the page's layout width, so the page reflows to fill the card
   // at every level, and the frame is as tall as the page so only the card scrolls.
-  const height = htmlRenderFrameHeight(props.htmlRender, width / zoom, contentHeight);
+  const height = htmlRenderFitHeight(props.htmlRender, width / zoom, contentHeight);
   return (
     <Dialog open onOpenChange={(open) => !open && props.onClose()}>
       <DialogPopup
