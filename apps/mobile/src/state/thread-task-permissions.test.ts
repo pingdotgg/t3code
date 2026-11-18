@@ -522,11 +522,11 @@ describe("mobile task permissions", () => {
       await restoring.onSendMessage();
       restoreOrder.push(`merge ${content.text}`);
     });
-    state.appendAttachments.mockImplementationOnce((_key, attachments) =>
-      restoreOrder.push(`append ${attachments.length}`),
+    state.appendAttachments.mockImplementationOnce((_key, attachments, options) =>
+      restoreOrder.push(`append ${attachments.length} restore=${options.restore}`),
     );
     expect(await restoring.onSendMessage()).toBeNull();
-    expect(restoreOrder).toEqual(["merge /side what is this?", "append 1"]);
+    expect(restoreOrder).toEqual(["merge /side what is this?", "append 1 restore=true"]);
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(heldDuringStart).toEqual(["file:///shot.png"]);
     expect(state.fileHolds).toEqual([]);
