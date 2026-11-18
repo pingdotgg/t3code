@@ -141,7 +141,7 @@ export function AssistantCitationCommentEditor({
                 />
               }
             >
-              {moveLabel === "Insert inline" ? <TextCursorInputIcon /> : <ArchiveIcon />}
+              {moveLabel === gt("Insert inline") ? <TextCursorInputIcon /> : <ArchiveIcon />}
             </TooltipTrigger>
             <TooltipPopup>{moveLabel}</TooltipPopup>
           </Tooltip>

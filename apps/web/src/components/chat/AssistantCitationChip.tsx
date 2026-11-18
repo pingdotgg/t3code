@@ -341,7 +341,7 @@ export function AssistantCitationChip({
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
                 onMove={commentEditor.onMoveToTray}
-                moveLabel="Move to tray"
+                moveLabel={gt("Move to tray")}
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {

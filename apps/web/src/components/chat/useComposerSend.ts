@@ -719,8 +719,8 @@ export function useComposerSend(input: ComposerSendInput) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "This command takes text only",
-          description: "Remove the tray citations, then send the command again.",
+          title: m(msg("This command takes text only")),
+          description: m(msg("Remove the tray citations, then send the command again.")),
         }),
       );
       return;
@@ -1101,7 +1101,7 @@ export function useComposerSend(input: ComposerSendInput) {
     };
     if (currentRouteThreadKeyRef.current === routeThreadKey && draftChangedSinceSend()) {
       sendInFlightRef.current = false;
-      setThreadError(threadIdForSend, "Your message changed, so it wasn't sent.");
+      setThreadError(threadIdForSend, m(msg("Your message changed, so it wasn't sent.")));
       return;
     }
 

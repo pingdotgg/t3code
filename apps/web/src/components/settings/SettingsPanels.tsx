@@ -1230,8 +1230,8 @@ export function ChatSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="composer" title={gt("Composer")}>
         <SettingsRow
-          title="New citations go"
-          description="Choose where newly cited assistant text is added on this client."
+          title={gt("New citations go")}
+          description={gt("Choose where newly cited assistant text is added on this client.")}
           control={<CitationDestinationSetting />}
         />
         <SettingsRow

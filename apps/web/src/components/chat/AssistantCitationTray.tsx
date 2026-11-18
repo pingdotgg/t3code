@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { withAssistantCitationComment } from "@t3tools/shared/assistantCitations";
 import { PencilIcon, QuoteIcon, TextCursorInputIcon, Trash2Icon, XIcon } from "lucide-react";
@@ -23,6 +24,7 @@ function CitationTrayContents({
   onChange: (citations: ReadonlyArray<AssistantCitation>) => void;
   onInsertInline?: ((citation: AssistantCitation) => boolean) | undefined;
 }) {
+  const gt = useGT();
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
@@ -89,22 +91,26 @@ function CitationTrayContents({
           closeDelay={150}
         >
           <QuoteIcon />
-          {citations.length} {citations.length === 1 ? "annotation" : "annotations"}
+          {gt("{count, plural, one {{count} annotation} other {{count} annotations}}", {
+            count: citations.length,
+          })}
         </PopoverTrigger>
         <PopoverPopup
           keepMounted
           {...composerFloatingLayerProps}
           width="md"
-          aria-label="Citation tray"
+          aria-label={gt("Citation tray")}
         >
           {open ? (
             <div className="max-h-96 space-y-4 overflow-y-auto">
               {citations.map((citation, index) => (
                 // oxlint-disable-next-line react/no-array-index-key -- identical quotes may appear more than once and the tray preserves their order
                 <div key={index} className="space-y-2">
-                  <p>{index + 1}. Selected text:</p>
+                  <p>{gt("{number}. Selected text:", { number: index + 1 })}</p>
                   <AssistantCitationQuote citation={{ ...citation, comment: undefined }} />
-                  <p>User comment: {citation.comment || "None"}</p>
+                  <p>
+                    {gt("User comment: {comment}", { comment: citation.comment || gt("None") })}
+                  </p>
                   {editing === index ? (
                     <AssistantCitationCommentEditor
                       citation={citation}
@@ -117,8 +123,8 @@ function CitationTrayContents({
                         return true;
                       }}
                       onCancel={() => settleDraft("escape-key")}
-                      moveLabel="Insert inline"
-                      moveAriaLabel={`Insert annotation ${index + 1} inline`}
+                      moveLabel={gt("Insert inline")}
+                      moveAriaLabel={gt("Insert annotation {number} inline", { number: index + 1 })}
                       onMove={
                         onInsertInline
                           ? (comment) => {
@@ -135,7 +141,7 @@ function CitationTrayContents({
                         <TooltipTrigger
                           render={
                             <Button
-                              aria-label={`Edit annotation ${index + 1}`}
+                              aria-label={gt("Edit annotation {number}", { number: index + 1 })}
                               variant="ghost"
                               size="icon-xs"
                               onClick={() => {
@@ -146,7 +152,7 @@ function CitationTrayContents({
                         >
                           <PencilIcon />
                         </TooltipTrigger>
-                        <TooltipPopup>Edit comment</TooltipPopup>
+                        <TooltipPopup>{gt("Edit comment")}</TooltipPopup>
                       </Tooltip>
                       {onInsertInline ? (
                         <Tooltip>
@@ -155,7 +161,9 @@ function CitationTrayContents({
                               <Button
                                 variant="ghost"
                                 size="icon-xs"
-                                aria-label={`Insert annotation ${index + 1} inline`}
+                                aria-label={gt("Insert annotation {number} inline", {
+                                  number: index + 1,
+                                })}
                                 onClick={() => {
                                   remove(index, () => onInsertInline(citation));
                                 }}
@@ -164,14 +172,14 @@ function CitationTrayContents({
                           >
                             <TextCursorInputIcon />
                           </TooltipTrigger>
-                          <TooltipPopup>Insert inline</TooltipPopup>
+                          <TooltipPopup>{gt("Insert inline")}</TooltipPopup>
                         </Tooltip>
                       ) : null}
                       <Tooltip>
                         <TooltipTrigger
                           render={
                             <Button
-                              aria-label={`Delete annotation ${index + 1}`}
+                              aria-label={gt("Delete annotation {number}", { number: index + 1 })}
                               variant="ghost"
                               size="icon-xs"
                               onClick={() => remove(index)}
@@ -180,7 +188,7 @@ function CitationTrayContents({
                         >
                           <Trash2Icon />
                         </TooltipTrigger>
-                        <TooltipPopup>Delete annotation</TooltipPopup>
+                        <TooltipPopup>{gt("Delete annotation")}</TooltipPopup>
                       </Tooltip>
                     </div>
                   )}
@@ -193,7 +201,7 @@ function CitationTrayContents({
       <Button
         variant="ghost"
         size="icon-xs"
-        aria-label="Clear all annotations"
+        aria-label={gt("Clear all annotations")}
         onClick={() => {
           onChange([]);
           setEditing(null);

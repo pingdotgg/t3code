@@ -55,7 +55,20 @@ it("detects draft edits during upload preparation without treating upload metada
   expect(
     composerDraftContentChanged(draft, {
       ...draft,
-      trayCitations: [{ quote: "quote", comment: "edited" }],
+      trayCitations: [
+        {
+          version: 1,
+          environmentId: local,
+          threadId: ThreadId.make("thread"),
+          messageId: MessageId.make("message"),
+          text: "quote",
+          start: 0,
+          end: 5,
+          prefix: "",
+          suffix: "",
+          comment: "edited",
+        },
+      ],
     }),
   ).toBe(true);
   expect(composerDraftContentChanged(draft, { ...draft, prompt: "after" })).toBe(true);
