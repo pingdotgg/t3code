@@ -54,7 +54,6 @@ export function observeCopyOnSelect(
     timer = null;
   };
   const copyCurrentSelection = () => {
-    timer = null;
     const text = readCopyableSelection(view.getSelection(), container);
     if (text !== null) copy(text);
   };
@@ -76,7 +75,12 @@ export function observeCopyOnSelect(
     // A click that left the selection as it was must not overwrite the clipboard.
     if (sameSnapshot(sequenceStart, snapshotSelection(view.getSelection()))) return;
     if (event.detail >= 2) {
-      timer = view.setTimeout(copyCurrentSelection, SELECTION_MULTI_CLICK_INTERVAL_MS);
+      // A selection changed before the sequence settles (say, extended from the keyboard) is no longer this gesture's.
+      const settled = snapshotSelection(view.getSelection());
+      timer = view.setTimeout(() => {
+        timer = null;
+        if (sameSnapshot(settled, snapshotSelection(view.getSelection()))) copyCurrentSelection();
+      }, SELECTION_MULTI_CLICK_INTERVAL_MS);
     } else {
       copyCurrentSelection();
     }
@@ -97,16 +101,16 @@ export function observeCopyOnSelect(
  * Failures stay silent and leave the text retryable; a write already in flight is not repeated.
  */
 export function createSelectionCopier(onCopied: () => void) {
-  let pendingText: string | null = null;
+  const pendingTexts = new Set<string>();
   return async (text: string): Promise<boolean> => {
-    if (text === pendingText) return false;
-    pendingText = text;
+    if (pendingTexts.has(text)) return false;
+    pendingTexts.add(text);
     try {
       await navigator.clipboard.writeText(text);
     } catch {
       return false;
     } finally {
-      if (pendingText === text) pendingText = null;
+      pendingTexts.delete(text);
     }
     onCopied();
     return true;

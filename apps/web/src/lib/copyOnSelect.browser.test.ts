@@ -133,6 +133,19 @@ describe("observeCopyOnSelect", () => {
     vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS);
     expect(view.copy).toHaveBeenCalledExactlyOnceWith("alpha bravo");
   });
+
+  it("drops a multi-click copy whose selection changes before the sequence settles", () => {
+    using _timers = fakeTimers();
+    using view = setup();
+    mouse("mousedown", view.paragraph);
+    mouse("mouseup", view.paragraph);
+    mouse("mousedown", view.paragraph, { detail: 2 });
+    select(view.text, 0, view.text, 5);
+    mouse("mouseup", view.paragraph, { detail: 2 });
+    select(view.text, 0, view.text, 11);
+    vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS);
+    expect(view.copy).not.toHaveBeenCalled();
+  });
 });
 
 describe("createSelectionCopier", () => {
@@ -174,5 +187,22 @@ describe("createSelectionCopier", () => {
     await expect(first).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledOnce();
     expect(onCopied).toHaveBeenCalledOnce();
+  });
+
+  it("tracks each pending text until its own write settles", async () => {
+    const settle: Array<() => void> = [];
+    using writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(() => new Promise<void>((done) => settle.push(done)));
+    const onCopied = vi.fn();
+    const copy = createSelectionCopier(onCopied);
+
+    const first = copy("alpha");
+    const second = copy("bravo");
+    const repeat = copy("alpha");
+    for (const done of settle) done();
+    await expect(Promise.all([first, second, repeat])).resolves.toEqual([true, true, false]);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(onCopied).toHaveBeenCalledTimes(2);
   });
 });
