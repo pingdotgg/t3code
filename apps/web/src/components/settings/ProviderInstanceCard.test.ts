@@ -37,6 +37,29 @@ describe("deriveProviderModelsForDisplay", () => {
       }).map((model) => model.slug),
     ).toEqual(["server-model", "kept-custom"]);
   });
+
+  it("shows the routed live catalog with metadata from an older server", () => {
+    const hostedModel: ServerProviderModel = {
+      slug: "gpt-hosted",
+      name: "Hosted Model",
+      isCustom: true,
+      isDefault: true,
+      aliases: ["hosted alias"],
+      capabilities: {
+        optionDescriptors: [{ id: "fast", label: "Fast", type: "boolean", currentValue: true }],
+      },
+    };
+    expect(
+      deriveProviderModelsForDisplay({
+        liveModels: [
+          hostedModel,
+          { slug: "native-custom", name: "Native Custom", isCustom: true, capabilities: null },
+        ],
+        customModels: [{ slug: "configured", name: "Configured", capabilities: null }],
+        hostedModelConfig: { inferenceModels: [hostedModel.slug] },
+      }),
+    ).toEqual([{ ...hostedModel, isCustom: false }]);
+  });
 });
 
 describe("provider environment helpers", () => {

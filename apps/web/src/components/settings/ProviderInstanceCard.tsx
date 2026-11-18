@@ -40,7 +40,11 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { normalizeProviderAccentColor, usesHostedModelCatalog } from "../../providerInstances";
+import {
+  normalizeHostedModelCatalog,
+  normalizeProviderAccentColor,
+  usesHostedModelCatalog,
+} from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
@@ -181,7 +185,10 @@ function nextConfigBlobWithValue(
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
+  readonly hostedModelConfig?: unknown;
 }): ReadonlyArray<ServerProviderModel> {
+  if (input.hostedModelConfig !== undefined)
+    return normalizeHostedModelCatalog(input.liveModels ?? [], input.hostedModelConfig);
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
       model.isCustom ? Result.succeed([model.slug, model] as const) : Result.failVoid,
@@ -877,10 +884,10 @@ export function ProviderInstanceCard({
   );
   const hostedModelCatalog =
     driverKind !== null && usesHostedModelCatalog(instanceId, driverKind, instance.config);
-  const visibleCustomModels = hostedModelCatalog ? NO_CUSTOM_MODELS : customModels;
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
-    customModels: visibleCustomModels,
+    customModels,
+    ...(hostedModelCatalog ? { hostedModelConfig: instance.config } : {}),
   });
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
@@ -1458,7 +1465,7 @@ export function ProviderInstanceCard({
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}
-              customModels={visibleCustomModels}
+              customModels={hostedModelCatalog ? NO_CUSTOM_MODELS : customModels}
               hiddenModels={hiddenModels}
               favoriteModels={favoriteModels}
               modelOrder={modelOrder}

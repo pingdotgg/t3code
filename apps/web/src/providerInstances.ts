@@ -36,6 +36,23 @@ export function usesHostedModelCatalog(
   );
 }
 
+export function normalizeHostedModelCatalog(
+  models: ReadonlyArray<ServerProviderModel>,
+  config: unknown,
+): ReadonlyArray<ServerProviderModel> {
+  const hostedSlugs =
+    typeof config === "object" &&
+    config !== null &&
+    "inferenceModels" in config &&
+    Array.isArray(config.inferenceModels)
+      ? new Set<unknown>(config.inferenceModels)
+      : null;
+  // Older hosts mark models discovered through CLI proxy as custom.
+  return models
+    .filter((model) => (hostedSlugs === null ? !model.isCustom : hostedSlugs.has(model.slug)))
+    .map((model) => (model.isCustom ? { ...model, isCustom: false } : model));
+}
+
 type ProviderInstanceSettings = Pick<
   ServerSettings,
   "providerInstances" | "projectSettingsOverrides"
@@ -251,13 +268,18 @@ function getProviderInstanceEntry(
 export function getDefaultProviderInstanceModel(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
+  settings?: Pick<ServerSettings, "providerInstances">,
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
+  const config = settings?.providerInstances[instanceId]?.config;
+  const models = usesHostedModelCatalog(instanceId, entry.driverKind, config)
+    ? normalizeHostedModelCatalog(entry.models, config)
+    : entry.models;
   return (
-    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry.models.find((model) => !model.isCustom)?.slug ??
-    entry.models[0]?.slug ??
+    models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    models.find((model) => !model.isCustom)?.slug ??
+    models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
   );
 }
@@ -306,7 +328,7 @@ export function resolveDefaultProviderModelSelection(
   );
   if (instanceId === undefined) return null;
   if (selection?.instanceId === instanceId) return selection;
-  const model = getDefaultProviderInstanceModel(providers, instanceId);
+  const model = getDefaultProviderInstanceModel(providers, instanceId, settings);
   return model ? { instanceId, model } : null;
 }
 
@@ -322,6 +344,8 @@ export function resolveProjectDefaultProviderModelSelection(
       entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
       undefined,
     ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
-  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  const model = entry
+    ? getDefaultProviderInstanceModel(providers, entry.instanceId, settings)
+    : undefined;
   return entry && model ? { instanceId: entry.instanceId, model } : null;
 }

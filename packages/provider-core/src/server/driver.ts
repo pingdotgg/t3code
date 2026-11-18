@@ -47,6 +47,10 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
+  /** Model IDs in this instance's managed inference catalog. */
+  readonly inferenceCatalog?: readonly string[];
+  /** Retires a replaced catalog's runtime and waits for its borrowers to finish. */
+  readonly retireInferenceCatalog?: Effect.Effect<void>;
   /** Resolved profile skill root eligible for the environment skills library. */
   readonly sharedSkillsDirectory?: string;
   readonly snapshot: ManagedServerProvider;

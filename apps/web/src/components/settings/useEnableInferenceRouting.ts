@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { InferenceRoutingOptions } from "@t3tools/client-runtime/state/inference-proxy";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, InferenceConsumer, InferenceDriver } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -19,7 +20,7 @@ export function useEnableInferenceRouting(environmentId: EnvironmentId, environm
 
   async function run(
     driver: InferenceDriver,
-    preferredHostId?: EnvironmentId,
+    options?: InferenceRoutingOptions,
   ): Promise<InferenceConsumer | null> {
     if (!canConnect || inFlight.current) return null;
     inFlight.current = true;
@@ -29,7 +30,7 @@ export function useEnableInferenceRouting(environmentId: EnvironmentId, environm
       consumer: { environmentId, label: environmentLabel },
       driver,
       environments,
-      ...(preferredHostId === undefined ? {} : { preferredHostId }),
+      ...options,
     });
     inFlight.current = false;
     setPending(false);

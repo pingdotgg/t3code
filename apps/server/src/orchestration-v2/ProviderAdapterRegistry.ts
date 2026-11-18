@@ -43,6 +43,7 @@ export interface ProviderAdapterRegistryV2Shape {
     ProviderAdapter.ProviderAdapterV2["Service"] & {
       readonly continuationKey?: string;
       readonly requiresBoundContinuationIdentity?: boolean;
+      readonly inferenceCatalog?: ReadonlyArray<string>;
     },
     ProviderAdapterRegistryV2Error
   >;
@@ -83,6 +84,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
               continuationKey: instance.continuationIdentity.continuationKey,
               requiresBoundContinuationIdentity:
                 instance.requiresBoundContinuationIdentity === true,
+              ...(instance.inferenceCatalog === undefined
+                ? {}
+                : { inferenceCatalog: instance.inferenceCatalog }),
             };
             const auth = instance.auth;
             if (!auth) return Effect.succeed(adapter);

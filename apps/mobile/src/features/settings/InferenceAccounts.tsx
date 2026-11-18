@@ -15,14 +15,16 @@ import {
   inferenceHarness,
   isCustomInferenceBackend,
   isInferenceProviderConfig,
+  isInferenceRoutingEnabled,
   isManagedSettingPath,
+  ProviderDriverKind,
   type InferenceProxyStatus,
   type ServerProvider,
   type InferenceDriver,
   type InferenceProxyAction,
   type InferenceUpstream,
 } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Linking, TextInput, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -105,11 +107,11 @@ function ProviderRoutingSwitch({
   const { instanceId } = provider;
   const config = environment.serverConfig.settings.providerInstances[instanceId]?.config;
   const route = isInferenceProviderConfig(config) ? config : null;
-  const enabled = route?.inferenceEnabled === true;
+  const enabled = isInferenceRoutingEnabled(config);
   const error = failure && failure.target !== enabled ? failure.message : "";
   const locked = isManagedSettingPath(
     environment.serverConfig.managedPolicy,
-    `providerInstances.${instanceId}`,
+    `providerInstances.${instanceId}.config.inferenceEnabled`,
   );
   async function change(value: boolean) {
     if (inFlight.current) return;
@@ -121,7 +123,9 @@ function ProviderRoutingSwitch({
           consumer: { environmentId, label: environment.label },
           environments,
           driver,
-          ...(route ? { preferredHostId: route.inferenceHostId } : {}),
+          ...(route
+            ? { preferredHostId: route.inferenceHostId, preserveProviderEnabled: true }
+            : {}),
         })
       : await manage({ environmentId, input: { operation: "removeRoute", instanceId } });
     inFlight.current = false;
@@ -143,7 +147,9 @@ function ProviderRoutingSwitch({
         subtitle={
           error ||
           (enabled
-            ? `Using accounts on ${route.inferenceHostLabel || environment.label}.`
+            ? route
+              ? `Using accounts on ${route.inferenceHostLabel || environment.label}.`
+              : "This inference route is incomplete. Turn it off to use the native provider."
             : "Use accounts on this environment or a paired inference host.")
         }
         value={enabled}
@@ -225,10 +231,12 @@ function InferenceControls({
   environment,
   setupDriver,
   onConnected,
+  onOpenHostingSettings,
 }: {
   environment: SettingsTarget;
   setupDriver: InferenceDriver | null;
   onConnected: () => void;
+  onOpenHostingSettings: () => void;
 }) {
   const { environmentId } = environment;
   const { environments } = useEnvironments();
@@ -242,10 +250,21 @@ function InferenceControls({
   const [login, setLogin] = useState<{ url: string; state: string } | null>(null);
   const [callback, setCallback] = useState("");
   const [notice, setNotice] = useState("");
+  const accountSetup = useRef({ active: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prevents an account operation from routing after its setup panel closes
+  useEffect(() => {
+    const setup = { active: true };
+    accountSetup.current = setup;
+    return () => {
+      setup.active = false;
+    };
+  }, []);
   async function run(input: InferenceProxyAction) {
+    const setup = accountSetup.current;
     setPending(true);
     setNotice("");
     const result = await command({ environmentId, input });
+    if (!setup.active) return;
     if (result._tag === "Failure") {
       setPending(false);
       setNotice(String(squashAtomCommandFailure(result)));
@@ -273,12 +292,19 @@ function InferenceControls({
       (result.value.status === "ok" ||
         (input.operation === "configure" && input.enabled && input.expectedEnabled === false))
     ) {
+      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(setupDriver));
       const connected = await enableRouting({
         consumer: { environmentId, label: environment.label },
         environments,
         driver: setupDriver,
-        preferredHostId: environmentId,
+        onlyHostId: environmentId,
+        ...(isInferenceProviderConfig(
+          environment.serverConfig.settings.providerInstances[instanceId]?.config,
+        )
+          ? { preserveProviderEnabled: true }
+          : {}),
       });
+      if (!setup.active) return;
       if (connected._tag === "Success") onConnected();
       else {
         const failure = squashAtomCommandFailure(connected);
@@ -296,29 +322,42 @@ function InferenceControls({
   );
   const available = updateQuery.data?.update?.available;
   const disabled = pending || !permitted;
+  const requiresHostingSettings =
+    setupDriver !== null &&
+    host?.enabled === false &&
+    environment.serverConfig.environment.capabilities.inferenceConfigureGuard !== true;
   return (
     <View className="gap-1">
       {host ? (
         <>
-          <SettingsSwitchRow
-            label="Host accounts here"
-            subtitle={
-              host.problem ??
-              (host.running
-                ? `CLIProxyAPI ${host.version} is running.`
-                : `Enable to install and start CLIProxyAPI ${host.version}.`)
-            }
-            disabled={disabled}
-            value={host.enabled}
-            onValueChange={(enabled) =>
-              void run({
-                operation: "configure",
-                enabled,
-                sharing: false,
-                expectedEnabled: host.enabled,
-              })
-            }
-          />
+          {requiresHostingSettings ? (
+            <ListActionRow
+              label="Manage inference hosting"
+              description="Start hosting in Inference accounts, then turn on routing."
+              disabled={disabled}
+              onPress={onOpenHostingSettings}
+            />
+          ) : (
+            <SettingsSwitchRow
+              label="Host accounts here"
+              subtitle={
+                host.problem ??
+                (host.running
+                  ? `CLIProxyAPI ${host.version} is running.`
+                  : `Enable to install and start CLIProxyAPI ${host.version}.`)
+              }
+              disabled={disabled}
+              value={host.enabled}
+              onValueChange={(enabled) =>
+                void run({
+                  operation: "configure",
+                  enabled,
+                  sharing: false,
+                  expectedEnabled: host.enabled,
+                })
+              }
+            />
+          )}
           {host.enabled && (
             <>
               <ListActionRow
@@ -498,7 +537,8 @@ export function InferenceAccounts({
           key={panel}
           environment={environment}
           setupDriver={panel === "all" ? null : panel}
-          onConnected={() => setPanel(null)}
+          onConnected={() => setPanel((current) => (current === panel ? null : current))}
+          onOpenHostingSettings={() => setPanel("all")}
         />
       )}
     </>

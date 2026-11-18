@@ -159,6 +159,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   inferenceProxy: Schema.optionalKey(Schema.Boolean),
+  /** Honors expectedEnabled when changing inference hosting. */
+  inferenceConfigureGuard: Schema.optionalKey(Schema.Boolean),
+  inferenceRoutePreservesEnablement: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),

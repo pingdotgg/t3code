@@ -14,6 +14,7 @@ import {
   type InferenceProviderConfig,
   InferenceHostConnection,
   isInferenceProviderConfig,
+  isInferenceRoutingEnabled,
   InferenceRouting,
   defaultInferenceRouting,
   InferenceProxyError,
@@ -987,14 +988,15 @@ const make = Effect.gen(function* () {
     .withPermit(
       Effect.gen(function* () {
         const state = yield* read;
-        const { providerInstances } = yield* settings.getSettings;
+        const current = yield* settings.getSettings;
         let routeProblem: string | null = null;
         const summary = {
-          routes: Object.entries(providerInstances).flatMap(([id, instance]) => {
+          routes: Object.entries(current.providerInstances).flatMap(([id, instance]) => {
+            const instanceId = ProviderInstanceId.make(id);
             if (
               !isInferenceProviderConfig(instance.config) ||
               !instance.config.inferenceEnabled ||
-              instance.enabled === false
+              !isProviderInstanceEnabledInAnyScope(current, instanceId)
             )
               return [];
             const problem =
@@ -1010,7 +1012,7 @@ const make = Effect.gen(function* () {
             }
             return [
               {
-                instanceId: ProviderInstanceId.make(id),
+                instanceId,
                 label: `${inferenceHarness(instance.driver)?.label ?? instance.driver}${instance.config.inferenceHostLabel ? ` via ${instance.config.inferenceHostLabel}` : ""}`,
               },
             ];
@@ -1228,11 +1230,7 @@ const make = Effect.gen(function* () {
     }
     if (input.operation === "removeRoute") {
       const revised = yield* settings.reviseProviderInstance(input.instanceId, (current) => {
-        if (
-          !current ||
-          !isInferenceProviderConfig(current.config) ||
-          !current.config.inferenceEnabled
-        )
+        if (!current || !isInferenceRoutingEnabled(current.config))
           return failure("This provider is not using inference routing.");
         return Effect.succeed({
           instance: { ...current, config: { ...current.config, inferenceEnabled: false } },
@@ -1842,7 +1840,10 @@ const make = Effect.gen(function* () {
   );
 
   const connect = Effect.fn("InferenceProxy.connect")(
-    function* ({ grant, driver, hostLabel, connection }: InferenceRouteInput, fallback = false) {
+    function* (
+      { grant, driver, hostLabel, connection, preserveProviderEnabled }: InferenceRouteInput,
+      fallback = false,
+    ) {
       const id = yield* environment.getEnvironmentId;
       if (id !== grant.consumerId)
         return yield* failure("Invalid inference route for this environment.");
@@ -2025,7 +2026,7 @@ const make = Effect.gen(function* () {
               return {
                 instance: {
                   ...native,
-                  enabled: true,
+                  ...(preserveProviderEnabled && current ? {} : { enabled: true }),
                   config: {
                     ...nativeConfig,
                     inferenceEnabled: true,
