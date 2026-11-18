@@ -1,7 +1,20 @@
-import type { IssueComment, IssueListEntry, IssueTrackerKind, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  IssueTrackerKind,
+  ProjectId,
+  type IssueComment,
+  type IssueListEntry,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { issueEntryKey, mergeIssueListPage, prependIssueComments } from "./issues.ts";
+import {
+  createMergedIssueCandidatesAtoms,
+  issueEntryKey,
+  mergeIssueListPage,
+  prependIssueComments,
+} from "./issues.ts";
 
 function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListEntry {
   return {
@@ -68,4 +81,40 @@ describe("prependIssueComments", () => {
     const older = [comment("c1"), comment("c2"), comment("c3")];
     expect(prependIssueComments(current, older).map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
   });
+});
+
+it("keeps the current candidate request running when retry is pressed again", () => {
+  const registry = AtomRegistry.make();
+  const targets = [
+    {
+      environmentId: EnvironmentId.make("issues"),
+      input: {
+        projectId: ProjectId.make("app"),
+        tracker: IssueTrackerKind.make("github"),
+        host: "github.com",
+        scope: "acme/app",
+      },
+    },
+  ];
+  let requests = 0;
+  const candidates = Atom.make(
+    Effect.suspend(() => (++requests === 1 ? Effect.fail("Repository unavailable") : Effect.never)),
+  );
+  const merged = createMergedIssueCandidatesAtoms(
+    () => candidates,
+    () => "Repository unavailable",
+  );
+  const view = merged.atom(targets);
+  const unmount = registry.mount(view);
+  try {
+    expect(registry.get(view)).toMatchObject({ error: "Repository unavailable", isPending: false });
+    merged.retry(registry, targets);
+    expect(registry.get(view).isPending).toBe(true);
+
+    merged.retry(registry, targets);
+    expect(requests).toBe(2);
+  } finally {
+    unmount();
+    registry.dispose();
+  }
 });
