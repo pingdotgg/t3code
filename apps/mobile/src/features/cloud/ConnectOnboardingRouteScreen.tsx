@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -5,7 +6,8 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAuth } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { RefreshControl, View } from "react-native";
+import { View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -24,6 +26,7 @@ export function ConnectOnboardingRouteScreen() {
 }
 
 function ConfiguredConnectOnboardingRouteScreen() {
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -59,10 +62,10 @@ function ConfiguredConnectOnboardingRouteScreen() {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <AppBar
-        title="Set up T3 Connect"
+        title={gt("Set up {product}", { product: "T3 Connect" })}
         onClose={handleClose}
         refresh={{
-          accessibilityLabel: "Refresh environments",
+          accessibilityLabel: gt("Refresh environments"),
           disabled: isRefreshing,
           onPress: handleRefresh,
         }}
@@ -73,11 +76,11 @@ function ConfiguredConnectOnboardingRouteScreen() {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 16,
           paddingHorizontal: 20,
           paddingTop: 16,
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
@@ -91,13 +94,13 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              {gt("Sign in to your T3 account to set up {product}.", { product: "T3 Connect" })}
             </Text>
           </View>
         )}
 
         {userId ? (
-          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
+          <Button label={gt("Don't show this again")} tone="text" onPress={handleDontShowAgain} />
         ) : null}
       </ScrollView>
     </View>

@@ -86,12 +86,14 @@ type ServerNotificationHandler = (
   payload: unknown,
 ) => Effect.Effect<void, CodexError.CodexAppServerError>;
 
-const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
+/** The generated `turn/start` schema omits these fields; this is what the wire accepts. */
+export const V2TurnStartParams = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
   }),
 );
 
@@ -131,7 +133,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     | Schema.Codec<CodexRpc.ClientRequestParamsByMethod[M], CodexRpc.ClientRequestParamsByMethod[M]>
     | undefined =>
     method === "turn/start"
-      ? (V2TurnStartParamsWithCollaborationMode as never)
+      ? (V2TurnStartParams as never)
       : (CodexRpc.CLIENT_REQUEST_PARAMS[method] as never);
 
   const getClientRequestResponseSchema = <M extends CodexRpc.ClientRequestMethod>(
