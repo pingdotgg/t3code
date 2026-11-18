@@ -176,21 +176,27 @@ export function resolveDraftProjectSelection(
 
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
-/** The live copy of the thread list's filtered project a new thread starts in: the remembered one if it is a copy. */
+const isProjectRef = (project: EnvironmentProject, ref: ProjectRef | undefined) =>
+  project.environmentId === ref?.environmentId && project.id === ref.projectId;
+
+/**
+ * The copy of the thread list's filtered project a new thread starts in: the current thread's
+ * if it is a copy, else the remembered live one, else a live one on a connected machine.
+ */
 export function newTaskFilteredProject(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
   connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  currentProject: ProjectRef | undefined,
   lastProject: ProjectRef | undefined,
 ): ProjectRef | undefined {
+  if (scope.projects.some((project) => isProjectRef(project, currentProject))) {
+    return currentProject;
+  }
   const live = scope.projects.filter((project) => project.archivedAt == null);
   if (live.length === 0) return undefined;
   const project =
-    live.find(
-      (candidate) =>
-        candidate.environmentId === lastProject?.environmentId &&
-        candidate.id === lastProject.projectId,
-    ) ??
+    live.find((candidate) => isProjectRef(candidate, lastProject)) ??
     getProjectScopeSelectionTarget(
       { ...scope, projects: live },
       preferredEnvironmentId,
@@ -212,13 +218,14 @@ export function newTaskDestination(options: {
     options.projects.find(
       (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
     );
+  // The list filter is the user's explicit choice, so a current thread outside it doesn't win.
   // A remembered project that was archived since opens the picker; the current one still wins.
   const last = find(options.lastProject);
   const project =
     options.useLastProject === false
       ? undefined
-      : (find(options.currentProject) ??
-        find(options.filteredProject) ??
+      : (find(options.filteredProject) ??
+        find(options.currentProject) ??
         (last?.archivedAt == null ? last : undefined));
   return project
     ? {

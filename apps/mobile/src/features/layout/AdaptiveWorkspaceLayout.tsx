@@ -629,17 +629,19 @@ function AdaptiveWorkspaceLayoutContent(
         .filter((environment) => environment.connectionState === "connected")
         .map((environment) => environment.environmentId),
     );
+    const currentProject = environmentId && projectId ? { environmentId, projectId } : undefined;
     handleSelectThreadRoute(
       newTaskDestination({
         projects,
         requestId: uuidv4(),
         useLastProject: saved?.useLastProjectForNewThreads,
-        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+        currentProject,
         filteredProject: filteredScope
           ? newTaskFilteredProject(
               filteredScope,
               listEnvironmentId,
               connectedEnvironmentIds,
+              currentProject,
               saved?.lastThreadProject,
             )
           : undefined,

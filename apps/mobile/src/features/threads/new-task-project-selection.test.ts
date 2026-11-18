@@ -88,6 +88,7 @@ describe("newTaskFilteredProject", () => {
         makeScope([mac, server]),
         null,
         new Set([mac.environmentId, server.environmentId]),
+        undefined,
         { environmentId: "mac", projectId: "t3code" },
       ),
     ).toEqual({ environmentId: "server", projectId: "t3code" });
@@ -98,7 +99,7 @@ describe("newTaskFilteredProject", () => {
     const server = makeProject("t3code", "server");
     const connected = new Set([mac.environmentId, server.environmentId]);
     const filtered = (last?: { readonly environmentId: string; readonly projectId: string }) =>
-      newTaskFilteredProject(makeScope([mac, server]), null, connected, last);
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, undefined, last);
     expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
       environmentId: "server",
       projectId: "t3code",
@@ -107,6 +108,20 @@ describe("newTaskFilteredProject", () => {
       environmentId: "mac",
       projectId: "t3code",
     });
+  });
+
+  it("starts in the current thread's copy of the filtered project", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const connected = new Set([mac.environmentId, server.environmentId]);
+    const remembered = { environmentId: "mac", projectId: "t3code" };
+    const filtered = (current: { readonly environmentId: string; readonly projectId: string }) =>
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, current, remembered);
+    expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
+      environmentId: "server",
+      projectId: "t3code",
+    });
+    expect(filtered({ environmentId: "server", projectId: "other" })).toEqual(remembered);
   });
 });
 
@@ -252,15 +267,26 @@ describe("newTaskDestination", () => {
     });
   }
 
-  it("starts in the current thread's project ahead of the filtered and remembered ones", () => {
-    const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
+  it("starts in the thread list's filtered project ahead of a current thread outside it", () => {
+    const projects = [makeProject("filtered"), makeProject("current", "other-environment")];
+    const last = { environmentId: "environment", projectId: "remembered" };
     expect(
       destination({
         useLastProject: true,
-        projects,
+        projects: [...projects, makeProject("remembered")],
         current: projects[1],
         filtered: projects[0],
-        last: { environmentId: "environment", projectId: "remembered" },
+        last,
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "filtered" },
+    });
+    expect(
+      destination({
+        useLastProject: true,
+        projects: [...projects, makeProject("remembered")],
+        current: projects[1],
+        last,
       }),
     ).toEqual({
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
