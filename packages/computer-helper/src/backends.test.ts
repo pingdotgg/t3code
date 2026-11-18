@@ -437,6 +437,8 @@ function resolve() { return __el; }
 function center() { return [40, 50]; }
 function plain(e, name) { return name === 'AXRole' ? e.role : undefined; }
 function clickAt() { __log.push('pointer click'); }
+function pidOf() { return 7; }
+function keyToPid(pid, code) { __log.push('key ' + code + ' to ' + pid); }
 return run;`;
       const run = new Function(
         "$",
@@ -480,6 +482,15 @@ return run;`;
       out: { mode: "background", at: { x: 40, y: 50 } },
       log: ["perform AXPress"],
     });
+    // A button with no AXPress (Apple's sign-in frame): focused, then the key that activates it, to its own process.
+    expect(act({ role: "AXButton", actions: [], focusSettable: true })).toEqual({
+      out: { mode: "background", at: { x: 40, y: 50 }, how: "focused, then pressed Space" },
+      log: ["set AXFocused=true", "key 49 to 7"],
+    });
+    expect(act({ role: "AXLink", focusSettable: true }).log).toEqual([
+      "set AXFocused=true",
+      "key 36 to 7",
+    ]);
     // Nothing to press and nothing to focus (or the app refused the focus): only then the mouse is asked for.
     expect(act({ role: "AXImage" }).error).toMatch(/ADA_NEEDS_POINTER/);
     expect(act({ role: "AXTextField", setRefused: true }).error).toMatch(/ADA_NEEDS_POINTER/);

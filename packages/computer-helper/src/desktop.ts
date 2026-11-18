@@ -577,7 +577,15 @@ function run(argv) {
   if (op === 'click') {
     var at = point ? { x: point[0], y: point[1] } : null;
     if (el && pressable(el)) { if (dryrun || $.AXUIElementPerformAction(el, $('AXPress')) === 0) return JSON.stringify({ mode: 'background', at: at }); }
-    if (el && (dryrun ? focusable(el) : focusInPlace(el))) return JSON.stringify({ mode: 'background', at: at, how: 'focused through accessibility' });
+    if (el && (dryrun ? focusable(el) : focusInPlace(el))) {
+      // A button or link that offers no AXPress (a cross-site frame's) is activated the keyboard's way once focused.
+      var elRole = plain(el, 'AXRole');
+      if (!PRESS_ROLES[elRole] || dryrun) return JSON.stringify({ mode: 'background', at: at, how: 'focused through accessibility' });
+      var link = elRole === 'AXLink';
+      delay(0.05);
+      keyToPid(pidOf(here ? here.name : ''), link ? 36 : 49);
+      return JSON.stringify({ mode: 'background', at: at, how: 'focused, then pressed ' + (link ? 'Return' : 'Space') });
+    }
     if (payload.allow !== true) throw new Error('ADA_NEEDS_POINTER:that control has no accessible action:');
     if (!point) throw new Error('ADA_GONE');
     clickAt(point, dryrun);
