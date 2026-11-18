@@ -2,7 +2,7 @@ import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contr
 import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import { getDisplayModelName } from "./providerIconUtils";
+import { getDisplayModelName, joinModelTitle } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -41,6 +41,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   };
+  const displayName = getDisplayModelName(model);
+  // The slug names the exact model, and no row text shows it.
+  const rowTitle = joinModelTitle(
+    displayName,
+    props.subProvider,
+    props.providerDisplayName,
+    props.slug,
+  );
 
   const row = (
     <ComboboxItem
@@ -68,16 +76,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
         indicatorBackground="var(--popover)"
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
-      <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <div
-          className="min-w-0 truncate text-sm font-normal leading-snug"
-          // Names the row in full on hover only when it is cut off.
-          onPointerEnter={(event) => {
-            const name = event.currentTarget;
-            name.title = name.scrollWidth > name.clientWidth ? getDisplayModelName(model) : "";
-          }}
-        >
-          {getDisplayModelName(model)}
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        // A disabled row carries this line in its reason tooltip instead.
+        onPointerEnter={(event) => {
+          event.currentTarget.title = props.disabledReason ? "" : rowTitle;
+        }}
+      >
+        <div className="min-w-0 truncate text-sm font-normal leading-snug">
+          {displayName}
           {/* The logo is decorative, so name the provider for screen readers. */}
           <span className="sr-only">, {props.providerDisplayName}</span>
         </div>
@@ -147,7 +154,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        {props.disabledReason}
+        <span className="block">{props.disabledReason}</span>
+        <span className="block text-muted-foreground">{rowTitle}</span>
       </TooltipPopup>
     </Tooltip>
   );

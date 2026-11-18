@@ -35,6 +35,12 @@ export function getDisplayModelName(
   return stripLeadingQualifier(name, model.subProvider);
 }
 
+/** Joins the parts that name a model on hover, dropping blanks and repeats. */
+export function joinModelTitle(...parts: ReadonlyArray<string | undefined | null>): string {
+  const trimmed = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
+  return [...new Set(trimmed)].join(" · ");
+}
+
 export function getTriggerDisplayModelName(
   model: ModelEsque,
   driverKind: ProviderDriverKind | null | undefined,

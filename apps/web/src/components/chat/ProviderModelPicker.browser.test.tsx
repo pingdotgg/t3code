@@ -14,6 +14,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { ComposerEffortColumn } from "./ComposerModelEffort";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
@@ -175,6 +176,168 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
+});
+
+it("names each row's model, provider, instance and slug on hover", async () => {
+  const instanceId = ProviderInstanceId.make("opencode-zen");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      displayName: "OpenCode Zen",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const longName = "DeepSeek V4.1 Flash Free";
+  const longSubProvider = "Alibaba Cloud International Model Studio";
+  // The row shows the name with its sub-provider prefix stripped.
+  const shortName = "GLM-5.3";
+  const shortSubProvider = "Pi";
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "deepseek-v4.1-flash", name: longName, subProvider: longSubProvider },
+        {
+          slug: "glm-5.3",
+          name: `${shortSubProvider} ${shortName}`,
+          subProvider: shortSubProvider,
+        },
+        { slug: "retired-model", name: "Retired model", subProvider: "Legacy" },
+      ],
+    ],
+  ]);
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="deepseek-v4.1-flash"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      triggerAriaLabel="Choose model"
+      getModelDisabledReason={(_, slug) => (slug === "retired-model" ? "Needs setup" : null)}
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+
+  const rowTitle = async (modelName: string, subProvider: string) => {
+    const option = page.getByRole("option", { name: new RegExp(modelName) });
+    await expect.element(option).toBeVisible();
+    const provider = option.getByText(subProvider);
+    await userEvent.hover(provider);
+    return vi.waitFor(() => {
+      const title = provider.element().closest("[title]")?.getAttribute("title");
+      expect(title, "row hover title").toBeTruthy();
+      return title!;
+    });
+  };
+
+  // Clipped or not, every row names what it shows, so the hover reads the same everywhere.
+  expect(await rowTitle(longName, longSubProvider)).toBe(
+    `${longName} · ${longSubProvider} · OpenCode Zen · deepseek-v4.1-flash`,
+  );
+  expect(await rowTitle(shortName, shortSubProvider)).toBe(
+    `${shortName} · ${shortSubProvider} · OpenCode Zen · glm-5.3`,
+  );
+
+  // A disabled row carries the same line in its reason tooltip instead of a native title.
+  const disabled = page.getByRole("option", { name: /Retired model/ });
+  const reason = disabled.getByText("Legacy");
+  await userEvent.hover(reason);
+  await expect.element(page.getByText("Needs setup")).toBeInTheDocument();
+  await expect
+    .element(page.getByText("Retired model · Legacy · OpenCode Zen · retired-model"))
+    .toBeInTheDocument();
+  expect(reason.element().closest("[title]")?.getAttribute("title") ?? "").toBe("");
+});
+
+it("titles the docked effort column's header with the selected model and its slug", async () => {
+  const instanceId = ProviderInstanceId.make("claude");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const options = new Map([
+    [
+      instanceId,
+      [
+        {
+          slug: "opus-4.5",
+          name: "Claude Opus 5.5 Fast",
+          shortName: "Opus 5.5",
+          isUnavailable: true,
+        },
+        { slug: "sonnet-4.5", name: "Claude Sonnet 5.5 Fast", shortName: "Sonnet 5.5" },
+      ],
+    ],
+  ]);
+
+  function Picker() {
+    const [model, setModel] = useState("opus-4.5");
+    return (
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={instanceId}
+        model={model}
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={options}
+        triggerAriaLabel="Choose model"
+        effortColumn={<ComposerEffortColumn traits={null} />}
+        onInstanceModelChange={(_, selected) => setModel(selected)}
+      />
+    );
+  }
+
+  await using screen = await render(<Picker />);
+  await screen.getByRole("button", { name: "Choose model" }).click();
+
+  // The docked column sits in the popover's portal, outside the render container.
+  const effortHeader = (label: string) => {
+    const span = [...document.querySelectorAll("[data-model-picker-effort] span")].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(span, "effort column header").toBeDefined();
+    return span!;
+  };
+
+  const header = await vi.waitFor(() => effortHeader("Opus 5.5"));
+  await userEvent.hover(header);
+  await vi.waitFor(() =>
+    // An unavailable model keeps its marker; the slug follows it.
+    expect(header.getAttribute("title")).toBe("Claude Opus 5.5 Fast (Unavailable) · opus-4.5"),
+  );
+
+  // Picking another model replaces the header node, so the previous title cannot carry over.
+  await page.getByRole("option", { name: /Claude Sonnet 5.5 Fast/ }).click();
+  const next = await vi.waitFor(() => effortHeader("Sonnet 5.5"));
+  expect(next.getAttribute("title")).toBeNull();
+  await userEvent.hover(next);
+  await vi.waitFor(() =>
+    expect(next.getAttribute("title")).toBe("Claude Sonnet 5.5 Fast · sonnet-4.5"),
+  );
 });
 
 it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {

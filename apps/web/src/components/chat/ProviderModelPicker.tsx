@@ -26,7 +26,12 @@ import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPick
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
+import {
+  ModelEsque,
+  getDisplayModelName,
+  getTriggerDisplayModelName,
+  joinModelTitle,
+} from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
@@ -86,7 +91,10 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
 }
 
 /** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
+export const DockedPickerContext = createContext<{ modelLabel: string; modelTitle: string }>({
+  modelLabel: "",
+  modelTitle: "",
+});
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -182,6 +190,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerLabel = selectedModel
     ? withUnavailable(getDisplayModelName(selectedModel), selectedModel.isUnavailable)
     : triggerTitle;
+  // The header shows the trigger's short form; its hover names the selected model and its slug.
+  // A model missing from the catalog has no full name, so the truncated id is all there is.
+  const modelTitle = selectedModel
+    ? joinModelTitle(
+        withUnavailable(selectedModel.name, selectedModel.isUnavailable),
+        selectedModel.slug,
+      )
+    : triggerTitle.trim();
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -470,7 +486,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
+          <DockedPickerContext value={{ modelLabel: triggerTitle, modelTitle }}>
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}
