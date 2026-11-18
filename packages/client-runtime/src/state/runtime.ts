@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -803,9 +805,19 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               return Effect.fail(
                 new EnvironmentRpcUnavailableError({
                   environmentId: target.environmentId,
-                  message: `Environment ${target.environmentId} is ${
-                    connectionState.phase === "available" ? "not connected" : connectionState.phase
-                  }.`,
+                  ...translatableMessage(
+                    connectionState.phase === "offline"
+                      ? msg("Environment {environmentId} is offline.", {
+                          environmentId: target.environmentId,
+                        })
+                      : connectionState.phase === "blocked"
+                        ? msg("Environment {environmentId} is blocked.", {
+                            environmentId: target.environmentId,
+                          })
+                        : msg("Environment {environmentId} is not connected.", {
+                            environmentId: target.environmentId,
+                          }),
+                  ),
                 }),
               );
           }
