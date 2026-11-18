@@ -3782,6 +3782,7 @@
   "2e3999c63ac1c29b": "모델 선택",
   "ea8ddb5bf4b0088e": "{count, plural, other {{models} 외 {count}개}}",
   "9ae42b0f35599fb6": "모델 선택기가 비활성화되어 있습니다",
+  "ee1d86f7faea19f0": "Model picker",
   "07d380ebce7c7cba": "이 환경에 {provider}을(를) 설치하려면 제공자 설정을 여세요.",
   "f1ab192c62a6e680": "Google로 로그인하려면 제공자 설정을 여세요.",
   "6457e38508a19b22": "로그인하려면 제공자 설정을 여세요.",

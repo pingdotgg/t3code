@@ -3799,6 +3799,7 @@
   "2e3999c63ac1c29b": "选择模型",
   "ea8ddb5bf4b0088e": "{count, plural, other {{models}，另有 {count} 个}}",
   "9ae42b0f35599fb6": "模型选择器已停用",
+  "ee1d86f7faea19f0": "Model picker",
   "07d380ebce7c7cba": "打开提供方设置，在此环境中安装 {provider}。",
   "f1ab192c62a6e680": "打开提供方设置，使用 Google 登录。",
   "6457e38508a19b22": "打开提供方设置进行登录。",
