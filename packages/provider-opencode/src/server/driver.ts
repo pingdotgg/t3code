@@ -403,7 +403,10 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      // An external server may not have the host's cwd; without a location it uses its own default.
+      openCode2Server.withConnection(({ client, external }) =>
+        loadOpenCode2Catalog(client, external ? undefined : host.paths.cwd),
+      ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
@@ -488,7 +491,10 @@ export const OpenCodeDriver: ProviderDriver<
         connection.usageLimits(host.paths.cwd),
       );
       if (limits === undefined) unsupportedUsageVersion = runtime.version;
-      return limits ?? (yield* legacyUsageLimits);
+      if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
+      // Without a Console workspace the server reports nothing, but a local Go key still has usage.
+      const legacy = yield* legacyUsageLimits;
+      return limits !== undefined && legacy.unavailable?.reason === "unsupported" ? limits : legacy;
     }).pipe(
       Effect.timeout("10 seconds"),
       Effect.catch(() =>

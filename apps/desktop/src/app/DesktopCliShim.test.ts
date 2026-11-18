@@ -56,7 +56,7 @@ const fakeAppImage = (canMount = true, app = REPORTER) => {
       `echo $$ >'${root}/mounter.pid'`,
       canMount ? `echo '${image}'` : 'echo "Cannot mount AppImage"; exit 1',
       // Like the FUSE runtime, any of these unmounts. fd 3 reports to the test when it is open.
-      `trap 'echo unmounted >&3 2>/dev/null; touch "${root}/unmounted"; exit 0' TERM HUP INT`,
+      "trap 'echo unmounted >&3 2>/dev/null; exit 0' TERM HUP INT",
       "trap 'echo mounted >&3 2>/dev/null' WINCH",
       "while :; do sleep 0.05; done",
       "",
