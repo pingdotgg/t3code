@@ -8691,6 +8691,42 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* assertLatest(wakeRunId);
       yield* updateWake("before-reset", {});
       yield* assertLatest(original.id);
+      // A wake that ran a command did work.
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-command"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-shell:wake-command"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 5,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "true",
+          output: "",
+          exitCode: 0,
+        },
+      });
+      yield* assertLatest(wakeRunId);
+      yield* (yield* SqlClient.SqlClient)`
+        DELETE FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${"limit-shell:wake-command"}
+      `;
+      yield* assertLatest(original.id);
       yield* store.apply({
         id: EventId.make("event:limit-shell:wake-user-start"),
         type: "turn-item.updated",
@@ -9495,41 +9531,56 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
         original.id,
       );
-      // A one-row window loads the last wake's run but not its notification. The notification
-      // is read without its detail.
+      // A one-row window shows a later notice of the last wake but not its start. The start is
+      // read without its detail, and the wake still holds only inputs.
       const lastWake = RunId.make("run:limit-window:wake-5");
       const lastNode = NodeId.make("node:limit-window:wake-5");
-      yield* store.apply({
-        id: EventId.make("event:limit-window:wake-5:command"),
-        type: "turn-item.updated",
-        threadId,
-        runId: lastWake,
-        nodeId: lastNode,
-        driver,
-        occurredAt: now,
-        payload: {
-          ...base,
-          id: TurnItemId.make("limit-window:wake-5:command"),
+      const addToLastWake = (id: string, item: Record<string, unknown>) =>
+        store.apply({
+          id: EventId.make(`event:${id}`),
+          type: "turn-item.updated",
+          threadId,
           runId: lastWake,
           nodeId: lastNode,
-          parentItemId: null,
-          ordinal: 100,
-          status: "completed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "command_execution",
-          input: "true",
-          output: "",
-          exitCode: 0,
-        },
+          driver,
+          occurredAt: now,
+          payload: {
+            ...base,
+            id: TurnItemId.make(id),
+            runId: lastWake,
+            nodeId: lastNode,
+            parentItemId: null,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            ...item,
+          } as never,
+        });
+      yield* addToLastWake("limit-window:wake-5:notice", {
+        ordinal: 100,
+        type: "notification",
+        source: { kind: "delegated_task", taskIds: [] },
+        outcome: "failed",
+        summary: "Another subagent failed",
       });
       const narrow = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
-      const notification = narrow.turnItems.find((item) => item.id === "limit-window:wake-5");
-      assert.equal(notification?.type, "notification");
-      assert.notProperty(notification!, "detail");
+      const start = narrow.turnItems.find((item) => item.id === "limit-window:wake-5");
+      assert.equal(start?.type, "notification");
+      assert.notProperty(start!, "detail");
       assert.equal(usageLimitBlockedRun(narrow.runs, narrow.turnItems, null)?.id, original.id);
+      // Once the wake runs a command it did work, so it stays the latest run.
+      yield* addToLastWake("limit-window:wake-5:command", {
+        ordinal: 101,
+        type: "command_execution",
+        input: "true",
+        output: "",
+        exitCode: 0,
+      });
+      const worked = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
+      assert.isUndefined(worked.turnItems.find((item) => item.id === "limit-window:wake-5"));
+      assert.isNull(usageLimitBlockedRun(worked.runs, worked.turnItems, null));
       assert.notInclude(
         projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
         "limit-window:error",

@@ -307,6 +307,15 @@ describe("thread execution presentation", () => {
     // A wake on another provider ran there; the limited provider's failure stays behind it.
     const otherProvider = { ...wake, providerInstanceId: ProviderInstanceId.make("other") };
     expect(usageLimitBlockedRun([failed, otherProvider], hidden.turnItems, null)).toBeNull();
+    // A notification run that answered did work; it replaces the limited run as on main.
+    const answer = {
+      ...notification,
+      id: TurnItemId.make("wake-answer"),
+      type: "assistant_message",
+    };
+    expect(
+      usageLimitBlockedRun([failed, wake], [...hidden.turnItems, answer as never], null),
+    ).toBeNull();
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {

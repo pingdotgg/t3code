@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   latestRootProviderFailure,
+  NO_WORK_ITEM_TYPES,
   usageLimitBlockedRun,
   usageLimitWakeCandidates,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -563,10 +564,9 @@ function isRetainedDependency(
   );
 }
 
-// usageLimitBlockedRun needs the limited run's latest root error and the first input of each wake
-// candidate, and a long chain of wakes pushes both out of the window. Inputs are kept as stubs
-// without their unbounded text, and dropped past a quarter of the budget (clients then show
-// the plain latest run).
+// usageLimitBlockedRun needs the limited run's root error and each wake candidate's first input
+// (a notification start only for runs without work), which long wake chains push out of the
+// window. Inputs are kept as stubs and dropped past a quarter of the budget.
 function limitRecoveryItems(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
   maxEncodedBytes: number,
@@ -580,7 +580,9 @@ function limitRecoveryItems(
   const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
   const failure = latestRootProviderFailure(blocked, projection.turnItems);
   const firstInputs = new Map<string, OrchestrationV2TurnItem>();
+  const worked = new Set<string>();
   for (const item of projection.turnItems) {
+    if (item.runId !== null && !NO_WORK_ITEM_TYPES.has(item.type)) worked.add(String(item.runId));
     if (item.type === "error" && failure !== null && item.failure === failure) {
       items.set(String(item.id), item);
     } else if (
@@ -599,6 +601,8 @@ function limitRecoveryItems(
   for (const item of firstInputs.values()) {
     let stub: OrchestrationV2TurnItem;
     if (item.type === "notification") {
+      // Without its other items, a notification start would mark a run that did work as a wake.
+      if (item.runId !== null && worked.has(String(item.runId))) continue;
       const { detail: _detail, ...rest } = item;
       stub = { ...rest, title: null, summary: item.summary.slice(0, 120).trimEnd() };
     } else if (item.type === "user_message") {

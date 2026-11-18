@@ -6,11 +6,12 @@ import type {
 import * as DateTime from "effect/DateTime";
 
 type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
-/** Error items and the first input of each run are read, so callers may pass items stripped of other fields. */
+/** Error items, run inputs and the run of other items are read, so callers may pass stripped items. */
 type FailureScanTurnItem =
   | ErrorTurnItem
   | {
       readonly type: Exclude<OrchestrationV2TurnItem["type"], "error">;
+      readonly runId?: OrchestrationV2TurnItem["runId"];
       readonly nodeId?: OrchestrationV2TurnItem["nodeId"];
       readonly ordinal?: number;
     };
@@ -127,17 +128,20 @@ export function usageLimitWakeCandidates(
   );
 }
 
-/**
- * Drops the wake candidates a notification started, so they cannot replace the limited run
- * and leave the thread never armed or resumed. Items of types other than user_message,
- * notification and error may be omitted.
- */
-function runsWithoutLimitedWakes(
+/** Inputs, and the interrupt signal Stop leaves on the latest run, are not work. */
+export const NO_WORK_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "user_message",
+  "notification",
+  "run_interrupt_request",
+]);
+
+/** The wake candidates a notification started; only those without any other item are wakes. */
+export function notificationStartedWakeCandidates(
   runs: ReadonlyArray<OrchestrationV2Run>,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
 ): ReadonlyArray<OrchestrationV2Run> {
   const candidates = usageLimitWakeCandidates(runs, turnItems);
-  if (candidates.length === 0) return runs;
+  if (candidates.length === 0) return candidates;
   const firstInputs = new Map<string, { readonly type: string; readonly ordinal: number }>();
   for (const item of turnItems) {
     if (item.nodeId == null || item.ordinal == null) continue;
@@ -147,11 +151,27 @@ function runsWithoutLimitedWakes(
       firstInputs.set(item.nodeId, { type: item.type, ordinal: item.ordinal });
     }
   }
-  const wakes = new Set(
-    candidates.filter(
-      (run) => run.rootNodeId !== null && firstInputs.get(run.rootNodeId)?.type === "notification",
-    ),
+  return candidates.filter(
+    (run) => run.rootNodeId !== null && firstInputs.get(run.rootNodeId)?.type === "notification",
   );
+}
+
+/**
+ * Drops notification-started candidates that hold no work item, so they cannot replace the
+ * limited run. Callers must pass every item
+ * of notificationStartedWakeCandidates; other runs need only user_message, notification, error.
+ */
+function runsWithoutLimitedWakes(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const started = notificationStartedWakeCandidates(runs, turnItems);
+  if (started.length === 0) return runs;
+  const worked = new Set<string>();
+  for (const item of turnItems) {
+    if (item.runId != null && !NO_WORK_ITEM_TYPES.has(item.type)) worked.add(item.runId);
+  }
+  const wakes = new Set(started.filter((run) => !worked.has(run.id)));
   return wakes.size === 0 ? runs : runs.filter((run) => !wakes.has(run));
 }
 

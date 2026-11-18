@@ -4765,10 +4765,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         LIMIT 1
       )`;
     };
-    // A wake candidate that a notification started did no work, so it must not replace the
-    // usage-limit failure as the latest run (usageLimitBlockedRun).
+    const holdsNoWork = (alias: string) =>
+      sql`NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_turn_items work
+        WHERE work.run_id = ${sql.literal(alias)}.run_id
+          -- NO_WORK_ITEM_TYPES
+          AND work.type NOT IN ('user_message', 'notification', 'run_interrupt_request')
+      )`;
+    // A wake candidate that a notification started and that holds nothing but its inputs did
+    // no work, so it must not replace the usage-limit failure (usageLimitBlockedRun).
     const isLimitedWake = (alias: string) =>
-      sql`(${isWakeCandidate(alias)} AND ${firstRootInput(alias, "type")} IS 'notification')`;
+      sql`(${isWakeCandidate(alias)} AND ${firstRootInput(alias, "type")} IS 'notification'
+        AND ${holdsNoWork(alias)})`;
 
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
@@ -7890,6 +7898,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             projection.runs.map((run) => run.id),
           )}))
           AND ${isWakeCandidate("run")}
+          -- A notification start alone would mark a run that did work as a wake.
+          AND (${firstRootInput("run", "type")} IS 'user_message' OR ${holdsNoWork("run")})
       `;
       const loadedRunIds = new Set<string>(projection.runs.map((run) => run.id));
       const loadedItemIds = new Set<string>(projection.turnItems.map((item) => item.id));

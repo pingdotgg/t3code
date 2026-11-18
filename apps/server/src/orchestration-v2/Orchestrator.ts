@@ -10,6 +10,7 @@ import {
   latestExecutedRun,
   latestRootProviderFailure,
   latestRunIgnoringLimitedWakes,
+  notificationStartedWakeCandidates,
   orchestrationV2WorktreePending,
   runRanAfter,
   usageLimitBlockedRun,
@@ -1714,32 +1715,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   // Only wake candidates' inputs decide usage-limit recovery, and a dispatcher thread keeps
-  // thousands of notifications, so they are read for those runs alone.
-  const withWakeInputs = <
+  // thousands of notifications, so they are read for those runs alone. A notification-started
+  // candidate counts as a wake only without other items, so all of its items are read.
+  const withWakeInputs = Effect.fn("Orchestrator.withWakeInputs")(function* <
     R extends {
       readonly runs: ReadonlyArray<OrchestrationV2Run>;
       readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
     },
-  >(
-    threadId: ThreadId,
-    records: R,
-  ) => {
+  >(threadId: ThreadId, records: R) {
+    const read = (filter: ProjectionRecordFilter) =>
+      projectionStore
+        .getThreadRecords(threadId, ["turnItems"], filter)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     const runIds = usageLimitWakeCandidates(records.runs, records.turnItems).map((run) => run.id);
-    if (runIds.length === 0) return Effect.succeed(records);
+    if (runIds.length === 0) return records;
+    const inputs = (yield* read({
+      turnItemTypes: ["user_message", "notification"],
+      turnItemRunIds: runIds,
+    })).turnItems;
     const loaded = new Set(records.turnItems.map((item) => item.id));
-    return projectionStore
-      .getThreadRecords(threadId, ["turnItems"], {
-        turnItemTypes: ["user_message", "notification"],
-        turnItemRunIds: runIds,
-      })
-      .pipe(
-        Effect.map(({ turnItems }): R => ({
-          ...records,
-          turnItems: [...records.turnItems, ...turnItems.filter((item) => !loaded.has(item.id))],
-        })),
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      );
-  };
+    let turnItems = [...records.turnItems, ...inputs.filter((item) => !loaded.has(item.id))];
+    const started = notificationStartedWakeCandidates(records.runs, turnItems).map((run) => run.id);
+    if (started.length > 0) {
+      const known = new Set(turnItems.map((item) => item.id));
+      const all = (yield* read({ turnItemRunIds: started })).turnItems;
+      turnItems = [...turnItems, ...all.filter((item) => !known.has(item.id))];
+    }
+    return { ...records, turnItems };
+  });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
   const readCommandProjection = (
@@ -12764,25 +12767,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let { thread } = input.projection;
     let recovery = thread.limitRecovery;
     // Stop must also disarm a limited run that completed notification wakes hide. Only the
-    // latest failure's errors and the inputs of its wake candidates can matter.
-    const readItems = (filter: Parameters<typeof projectionStore.getThreadRecords>[2]) =>
-      projectionStore
-        .getThreadRecords(thread.id, ["turnItems"], filter)
-        .pipe(mapDispatchError(input.command));
+    // latest failure's errors and its wake candidates' items can matter.
     const failed = latestExecutedRun(runs.filter((run) => run.status === "failed"));
     const errors =
       failed === null
         ? []
-        : (yield* readItems({ turnItemTypes: ["error"], turnItemRunIds: [failed.id] })).turnItems;
-    const wakeRunIds = usageLimitWakeCandidates(runs, errors).map((run) => run.id);
-    const inputs =
-      wakeRunIds.length === 0
-        ? []
-        : (yield* readItems({
-            turnItemTypes: ["user_message", "notification"],
-            turnItemRunIds: wakeRunIds,
-          })).turnItems;
-    const turnItems = [...errors, ...inputs];
+        : (yield* projectionStore
+            .getThreadRecords(thread.id, ["turnItems"], {
+              turnItemTypes: ["error"],
+              turnItemRunIds: [failed.id],
+            })
+            .pipe(mapDispatchError(input.command))).turnItems;
+    const { turnItems } = yield* withWakeInputs(thread.id, { runs, turnItems: errors }).pipe(
+      mapDispatchError(input.command),
+    );
     const latest = latestRunIgnoringLimitedWakes(runs, turnItems);
     if (latest?.status === "failed") {
       const failure = latestRootProviderFailure(latest, turnItems);
