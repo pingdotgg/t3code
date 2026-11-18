@@ -242,14 +242,14 @@ export function WorkingSectionSettings() {
       <Text className="px-2 text-sm text-foreground-muted">
         {projectFoldersEnabled ? (
           <T>
-            In project layout, working threads stay in their project folders. Your Working
-            section preference returns when you turn project layout off.
+            In project layout, working threads stay in their project folders. Your Working section
+            preference returns when you turn project layout off.
           </T>
         ) : (
           <T>
-            Fold working and monitoring threads into a Working section. They return to the top
-            of the list when they need you. While this is on, active threads are ordered by time
-            and cannot be moved.
+            Fold working and monitoring threads into a Working section. They return to the top of
+            the list when they need you. While this is on, active threads are ordered by time and
+            cannot be moved.
           </T>
         )}
       </Text>

@@ -5207,5 +5207,15 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "9b9df5ba41c4a8e2": "Group threads by project",
+  "e8db798a0575c8e9": "Group active threads into project folders. Pinned threads stay above, and Snoozed and Settled stay below.",
+  "0d7b8e66a12aa64b": "In project layout, working threads stay in their project folders. Your Working section preference returns when you turn project layout off.",
+  "7e5c3008b5c0d2d9": "group threads by project",
+  "e09d04e9f25b7ba8": "project folders",
+  "d25661576338fcf0": "Needs you",
+  "7367ac6d7473df6c": "{project}, {count} hidden threads",
+  "5af190a4b64e6d6f": "{project}, {count} hidden threads, {status}",
+  "1acf5ae561eb2754": "Collapses the project",
+  "793a282af8116867": "Expands the project"
 }

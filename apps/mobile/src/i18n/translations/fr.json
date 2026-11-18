@@ -5200,5 +5200,15 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "9b9df5ba41c4a8e2": "Regrouper les conversations par projet",
+  "e8db798a0575c8e9": "Regroupe les conversations actives dans des dossiers de projet. Les conversations épinglées restent au-dessus, et les reportées et closes en dessous.",
+  "0d7b8e66a12aa64b": "Dans la vue par projet, les conversations en cours restent dans leur dossier de projet. Votre préférence pour la section « En cours » est rétablie lorsque vous désactivez cette vue.",
+  "7e5c3008b5c0d2d9": "regrouper les conversations par projet",
+  "e09d04e9f25b7ba8": "dossiers de projet",
+  "d25661576338fcf0": "Nécessite votre attention",
+  "7367ac6d7473df6c": "{project}, {count} conversations masquées",
+  "5af190a4b64e6d6f": "{project}, {count} conversations masquées, {status}",
+  "1acf5ae561eb2754": "Replie le projet",
+  "793a282af8116867": "Déplie le projet"
 }

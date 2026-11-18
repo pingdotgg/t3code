@@ -5206,5 +5206,15 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "9b9df5ba41c4a8e2": "Threads nach Projekt gruppieren",
+  "e8db798a0575c8e9": "Gruppiert aktive Threads in Projektordnern. Angeheftete Threads bleiben darüber, zurückgestellte und erledigte darunter.",
+  "0d7b8e66a12aa64b": "In der Projektansicht bleiben laufende Threads in ihren Projektordnern. Deine Einstellung für den Abschnitt mit laufenden Threads wird beim Deaktivieren der Projektansicht wiederhergestellt.",
+  "7e5c3008b5c0d2d9": "Threads nach Projekt gruppieren",
+  "e09d04e9f25b7ba8": "Projektordner",
+  "d25661576338fcf0": "Braucht deine Aufmerksamkeit",
+  "7367ac6d7473df6c": "{project}, {count} ausgeblendete Threads",
+  "5af190a4b64e6d6f": "{project}, {count} ausgeblendete Threads, {status}",
+  "1acf5ae561eb2754": "Klappt das Projekt ein",
+  "793a282af8116867": "Klappt das Projekt aus"
 }

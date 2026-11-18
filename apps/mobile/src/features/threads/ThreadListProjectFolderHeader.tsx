@@ -50,9 +50,7 @@ export const ThreadListProjectFolderHeader = memo(function ThreadListProjectFold
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
-        accessibilityHint={
-          item.expanded ? gt("Collapses the project") : gt("Expands the project")
-        }
+        accessibilityHint={item.expanded ? gt("Collapses the project") : gt("Expands the project")}
         accessibilityState={{ expanded: item.expanded, disabled: item.disabled }}
         disabled={item.disabled}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"

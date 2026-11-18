@@ -5206,5 +5206,15 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "9b9df5ba41c4a8e2": "Gruppera trådar efter projekt",
+  "e8db798a0575c8e9": "Grupperar aktiva trådar i projektmappar. Fästa trådar ligger ovanför och snoozade och klara trådar nedanför.",
+  "0d7b8e66a12aa64b": "I projektvyn stannar arbetande trådar i sina projektmappar. Din inställning för arbetssektionen återställs när du stänger av projektvyn.",
+  "7e5c3008b5c0d2d9": "gruppera trådar efter projekt",
+  "e09d04e9f25b7ba8": "projektmappar",
+  "d25661576338fcf0": "Behöver din uppmärksamhet",
+  "7367ac6d7473df6c": "{project}, {count} dolda trådar",
+  "5af190a4b64e6d6f": "{project}, {count} dolda trådar, {status}",
+  "1acf5ae561eb2754": "Fäller ihop projektet",
+  "793a282af8116867": "Fäller ut projektet"
 }
