@@ -1,9 +1,12 @@
+import { msg } from "gt-i18n";
+import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import {
   WS_METHODS,
   PullRequestActivity,
   PullRequestDetail as PullRequestDetailSchema,
   PullRequestPreview,
   PullRequestReviewGuideResult,
+  PullRequestStack,
   PullRequestListResult,
   PullRequestChecks,
   PullRequestDiffResult,
@@ -65,7 +68,7 @@ export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 /** @public Required to name the error in consumers' inferred pull request results. */
 export class EnvironmentHttpConnectionNotReadyError extends Schema.TaggedError<EnvironmentHttpConnectionNotReadyError>()(
   "EnvironmentHttpConnectionNotReadyError",
-  { message: Schema.String },
+  { message: Schema.String, i18nMessage: Schema.optionalKey(MarkedText) },
 ) {}
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
@@ -776,14 +779,31 @@ export function createPullRequestStackAtomFamily<R, E>(
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   const routedRequest = createPullRequestRouter();
-  return createEnvironmentRpcQueryAtomFamily(runtime, {
+  const hostAnswers = Atom.family((_key: string) =>
+    Atom.make(false).pipe(Atom.setIdleTTL(5 * 60_000)),
+  );
+  const answeredKey = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => JSON.stringify([target.environmentId, target.input]);
+  const stack = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:stack",
+    // A saved answer paints at once; `answered` stays false until the host answers.
+    persistence: persistQuery(Schema.NullOr(PullRequestStack)),
     tag: WS_METHODS.pullRequestsStack,
     execute: (input) => routedRequest(WS_METHODS.pullRequestsStack, input),
     staleTimeMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    onAnswer: (target, _value, registry) =>
+      Effect.sync(() => registry.set(hostAnswers(answeredKey(target)), true)),
   });
+  /** Whether this session has the host's own answer, which is what merging one layer alone needs. */
+  const answered = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => hostAnswers(answeredKey(target));
+  return Object.assign(stack, { answered });
 }
 
 export function pullRequestDetailToVcsStatus(
@@ -1064,7 +1084,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     const prepared = yield* SubscriptionRef.get(supervisor.prepared);
     if (Option.isNone(prepared)) {
       return yield* new EnvironmentHttpConnectionNotReadyError({
-        message: "The environment HTTP connection is not ready.",
+        ...translatableMessage(msg("The environment HTTP connection is not ready.")),
       });
     }
     return yield* loader.load(prepared.value, input);
@@ -1274,7 +1294,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:diff",
       persistence: persistQuery(PullRequestDiffResult),
       staleTimeMs: 60_000,
-      execute: loadDiff,
+      // A guide tied to a commit must not reuse another push's cached pages.
+      execute: ({
+        cacheHeadSha: _cacheHeadSha,
+        ...input
+      }: PullRequestDiffInput & {
+        readonly cacheHeadSha?: string;
+      }) => loadDiff(input),
     }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",

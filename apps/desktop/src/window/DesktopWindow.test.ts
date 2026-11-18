@@ -1226,6 +1226,38 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect(
+    "brings the window back after the renderer dies more often than the reload budget",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const renderProcessGone = fakeWindow.webContentsListeners.get("render-process-gone");
+          if (!renderProcessGone) {
+            return yield* Effect.die("render-process-gone listener was not registered");
+          }
+          for (let crash = 1; crash <= 4; crash++) {
+            const loadsBefore = fakeWindow.loadURL.mock.calls.length;
+            renderProcessGone({}, { reason: "oom", exitCode: -536870904 });
+            yield* TestClock.adjust(crash < 4 ? 1_000 : 60_000);
+            yield* Effect.promise(() => Promise.resolve());
+            assert.isAbove(
+              fakeWindow.loadURL.mock.calls.length,
+              loadsBefore,
+              `window shows nothing after renderer crash ${crash}`,
+            );
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
   it.effect("updates title bar overlays only on windows created with one", () =>
     Effect.gen(function* () {
       const framed = makeFakeBrowserWindow();

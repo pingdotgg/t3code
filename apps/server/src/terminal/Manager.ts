@@ -43,7 +43,7 @@ import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { mergePathEntries } from "@t3tools/shared/shell";
+import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -216,7 +216,14 @@ export class TerminalManager extends Context.Service<
       registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void, TerminalError>;
 
-    readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
+    /**
+     * Attached viewers share one reply owner per PTY until it detaches. Marked replies
+     * from other or detached viewer IDs are dropped; identity-free writes do not claim ownership.
+     */
+    readonly write: (
+      input: TerminalWriteInput,
+      viewerId?: string,
+    ) => Effect.Effect<void, TerminalError>;
 
     readonly resize: (
       input: TerminalResizeInput,
@@ -329,6 +336,7 @@ interface TerminalGrid {
 interface TerminalViewer {
   streams: number;
   grid: TerminalGrid | null;
+  answersQueries: boolean;
 }
 
 interface PersistHistoryRequest {
@@ -580,6 +588,10 @@ function joinWindowsPath(...parts: ReadonlyArray<string>): string {
     .join("\\");
 }
 
+// PowerShell decodes native output with the console code page (often OEM 437), mangling UTF-8.
+const POWERSHELL_UTF8_SETUP =
+  "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()";
+
 function shellCandidateFromCommand(
   command: string | null,
   platform: NodeJS.Platform,
@@ -587,7 +599,10 @@ function shellCandidateFromCommand(
   if (!command || command.length === 0) return null;
   const shellName = basenameForPlatform(command, platform).toLowerCase();
   if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
-    return { shell: command, args: ["-NoLogo"] };
+    return { shell: command, args: ["-NoLogo", "-NoExit", "-Command", POWERSHELL_UTF8_SETUP] };
+  }
+  if (platform === "win32" && (shellName === "bash.exe" || shellName === "bash")) {
+    return { shell: command, args: ["--login", "-i"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
@@ -639,7 +654,10 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   shellResolver: () => string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  terminalShell: string | undefined,
 ) {
+  // This is an executable path, not a command line; spaces belong to the path.
+  const configured = shellCandidateFromCommand(terminalShell?.trim() || null, platform);
   const requested = shellCandidateFromCommand(
     yield* normalizeShellCommand(shellResolver(), platform),
     platform,
@@ -647,6 +665,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
 
   if (platform === "win32") {
     return uniqueShellCandidates([
+      configured,
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
@@ -658,6 +677,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   }
 
   return uniqueShellCandidates([
+    configured,
     requested,
     shellCandidateFromCommand(yield* normalizeShellCommand(env.SHELL, platform), platform),
     shellCandidateFromCommand("/bin/zsh", platform),
@@ -897,7 +917,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const command =
-    'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
       command: "powershell.exe",
@@ -1769,6 +1789,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const agentScope = yield* AgentScope;
+  const resolveExecutable = yield* SpawnExecutableResolution;
   // Inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
@@ -1999,7 +2020,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       // After a viewer's first size, resizes own it; attach retries resend the original size.
       viewer.grid ??= grid;
     } else {
-      viewers.set(viewerId, { streams: 1, grid });
+      viewers.set(viewerId, { streams: 1, grid, answersQueries: false });
     }
   };
 
@@ -2012,6 +2033,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (viewer.streams > 0) return false;
     viewers.delete(viewerId);
     if (viewers.size === 0) terminalViewers.delete(sessionKey);
+    return true;
+  };
+
+  // The first attached viewer to answer a query keeps answering until it detaches.
+  const acceptsQueryReply = (sessionKey: string, viewerId: string | undefined) => {
+    const viewers = terminalViewers.get(sessionKey);
+    const viewer = viewerId === undefined ? undefined : viewers?.get(viewerId);
+    if (viewerId !== undefined && !viewer) return false;
+    if (viewer?.answersQueries) return true;
+    for (const other of viewers?.values() ?? []) {
+      if (other.answersQueries) return false;
+    }
+    if (viewer) viewer.answersQueries = true;
     return true;
   };
 
@@ -2703,8 +2737,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    // PATH lookup must use the child's working directory, not the server's.
+    const lookupEnv =
+      platform === "win32"
+        ? spawnEnv
+        : {
+            ...spawnEnv,
+            PATH: (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
+              .split(":")
+              // An empty entry means the working directory, which resolve("") yields.
+              .map((entry) => path.resolve(session.cwd, entry.replace(/^"+|"+$/g, "")))
+              .join(":"),
+          };
+    // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
+    const executable =
+      platform !== "win32"
+        ? resolveExecutable(
+            candidate.shell.includes("/")
+              ? path.resolve(session.cwd, candidate.shell)
+              : candidate.shell,
+            platform,
+            lookupEnv,
+          )
+        : candidate.shell;
+    if (executable === undefined) {
+      return yield* trySpawn(
+        shellCandidates,
+        spawnEnv,
+        session,
+        index + 1,
+        new PtyAdapter.PtySpawnError({ adapter: "terminal-manager", shell: candidate.shell }),
+      );
+    }
+
     const launch = yield* agentScope.wrap({
-      command: candidate.shell,
+      command: executable,
       args: candidate.args ?? [],
       name: "terminal",
       env: spawnEnv,
@@ -2781,6 +2848,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               shellResolver,
               platform,
               baseEnv,
+              session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
             ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
@@ -3686,29 +3754,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
-    const terminalId = input.terminalId;
-    const session = yield* requireSession(input.threadId, terminalId);
-    const process = session.process;
-    if (!process || session.status !== "running") {
-      if (session.status === "exited") return;
-      return yield* new TerminalNotRunningError({
-        threadId: input.threadId,
-        terminalId,
-      });
-    }
-    session.inputCount += 1;
-    yield* Effect.try({
-      try: () => process.write(input.data),
-      catch: (cause) =>
-        new TerminalWriteError({
+  const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
+    function* (input, viewerId) {
+      const terminalId = input.terminalId;
+      const session = yield* requireSession(input.threadId, terminalId);
+      const process = session.process;
+      if (!process || session.status !== "running") {
+        if (session.status === "exited") return;
+        return yield* new TerminalNotRunningError({
           threadId: input.threadId,
           terminalId,
-          terminalPid: process.pid,
-          cause,
-        }),
-    });
-  });
+        });
+      }
+      if (input.reply && !acceptsQueryReply(toSessionKey(input.threadId, terminalId), viewerId)) {
+        return;
+      }
+      session.inputCount += 1;
+      yield* Effect.try({
+        try: () => process.write(PtyAdapter.ptyInput(input.data, input.binary)),
+        catch: (cause) =>
+          new TerminalWriteError({
+            threadId: input.threadId,
+            terminalId,
+            terminalPid: process.pid,
+            cause,
+          }),
+      });
+    },
+  );
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (
     input: TerminalResizeInput,
