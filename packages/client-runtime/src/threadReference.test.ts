@@ -117,7 +117,7 @@ describe("resolveThreadReferenceCopyTarget", () => {
     const other = {
       threadRef: {
         environmentId: EnvironmentId.make("env-2"),
-        threadId: ThreadId.make("thread-2"),
+        threadId: ThreadId.make("thread-1"),
       },
       title: "Ship the release",
     };
@@ -127,10 +127,11 @@ describe("resolveThreadReferenceCopyTarget", () => {
     const pasted = decodeComposerContextFragment(encodeComposerContextFragment(target.fragment!));
     expect(pasted?.records).toEqual([
       expect.objectContaining({ environmentId: "env-1", threadId: "thread-1" }),
-      expect.objectContaining({ environmentId: "env-2", threadId: "thread-2" }),
+      expect.objectContaining({ environmentId: "env-2", threadId: "thread-1" }),
     ]);
+    expect(new Set(pasted!.records.map((record) => record.contextId)).size).toBe(2);
     expect(target.value).toBe(
-      "https://app.t3.codes/threads/env-1/thread-1\nhttps://app.t3.codes/threads/env-2/thread-2",
+      "https://app.t3.codes/threads/env-1/thread-1\nhttps://app.t3.codes/threads/env-2/thread-1",
     );
     expect(
       threadLinkContextReferences(target.value, pasted!.records, () => undefined).records,

@@ -999,13 +999,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     noun: string;
   }>({
     onCopy: ({ count, noun }) => {
-      toastManager.add({ type: "success", title: gt("{count} {noun} copied", { count, noun }) });
+      toastManager.add({
+        type: "success",
+        title:
+          noun === "paths"
+            ? gt("{count} paths copied", { count })
+            : noun === "branches"
+              ? gt("{count} branches copied", { count })
+              : noun === "titles"
+                ? gt("{count} titles copied", { count })
+                : gt("{count} thread IDs copied", { count }),
+      });
     },
     onError: (error, { noun }) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: gt("Failed to copy {noun}", { noun }),
+          title:
+            noun === "paths"
+              ? gt("Failed to copy paths")
+              : noun === "branches"
+                ? gt("Failed to copy branches")
+                : noun === "titles"
+                  ? gt("Failed to copy titles")
+                  : gt("Failed to copy thread IDs"),
           description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );

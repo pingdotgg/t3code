@@ -3,7 +3,10 @@ import type {
   ScopedThreadRef,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  threadContextRecord,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
@@ -47,7 +50,17 @@ export function threadChipsCopyTarget(
   hostedAppUrl?: string,
   resolve: MFunctionType = mFallback,
 ): ThreadReferenceCopyTarget {
-  const records = threads.map(({ threadRef, title }) => threadContextRecord(threadRef, title));
+  const records = threads.map(({ threadRef, title }) => ({
+    ...threadContextRecord(threadRef, title),
+    ...(threads.length > 1
+      ? {
+          contextId: toKindScopedComposerContextId(
+            "thread",
+            JSON.stringify([threadRef.environmentId, threadRef.threadId]),
+          ),
+        }
+      : {}),
+  }));
   const single = records.length === 1;
   return {
     kind: "thread",
