@@ -88,6 +88,13 @@ describe("compactDynamicToolOutput", () => {
     expect(
       compactDynamicToolOutput([{ text: "{}" }, { text: JSON.stringify({ threadId: "second" }) }]),
     ).toBeUndefined();
+    // A later block's plain { text } stays opaque instead of spending the parse budget again.
+    expect(
+      compactDynamicToolOutput([
+        { text: JSON.stringify({ threadId: "first" }) },
+        { text: JSON.stringify({ text: "x".repeat(9_000) }) },
+      ]),
+    ).toEqual({ threadId: "first" });
   });
 
   it("keeps complete thread creation batches and rollback markers without row bodies", () => {

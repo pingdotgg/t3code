@@ -2496,7 +2496,10 @@ describe("AcpRegistryAdapterV2", () => {
         title: args.title,
         height: 160,
       };
-      const droidCall = (toolCallId: string, reference: typeof page) => [
+      const failedPage = { ...page, attachmentId: "thread-claude-lifecycle-failed-html" };
+      const blockPage = { ...page, attachmentId: "thread-claude-lifecycle-block-html" };
+      const resultText = (reference: typeof page) => JSON.stringify({ htmlRender: reference });
+      const droidCall = (toolCallId: string, completion: Record<string, unknown>) => [
         update(CLAUDE_ROOT_SESSION, {
           sessionUpdate: "tool_call",
           toolCallId,
@@ -2509,25 +2512,40 @@ describe("AcpRegistryAdapterV2", () => {
           sessionUpdate: "tool_call_update",
           toolCallId,
           status: "completed",
-          rawOutput: { text: JSON.stringify({ htmlRender: reference }) },
+          ...completion,
         }),
       ];
       const session = yield* openClaudeReplaySession([
         ...claudeFrames.open,
         ...claudeFrames.prompt(1),
-        ...droidCall("droid-render", page),
-        ...droidCall("droid-unpublished", { ...page, attachmentId: "thread-other-page-html" }),
+        ...droidCall("droid-unpublished", {
+          rawOutput: { text: resultText({ ...page, attachmentId: "thread-other-page-html" }) },
+        }),
+        ...droidCall("droid-render", { rawOutput: { text: resultText(page) } }),
+        // A repeated completion with new _meta and an unpublished page keeps the claimed page.
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-render",
+          status: "completed",
+          rawOutput: { text: resultText({ ...page, attachmentId: "thread-other-page-html" }) },
+          _meta: { unrelated: true },
+        }),
+        ...droidCall("droid-failed", {
+          rawOutput: { result: { isError: true, structuredContent: { htmlRender: failedPage } } },
+        }),
+        ...droidCall("droid-content-block", {
+          content: [{ type: "content", content: { type: "text", text: resultText(blockPage) } }],
+        }),
         claudeMarker("tools complete"),
         claudeFrames.idle("end_turn"),
         claudeFrames.closeRequest,
         claudeFrames.closed,
       ]);
       const input = session.turnInput(1);
-      yield* (yield* McpProviderSessions.McpProviderSessions).recordHtmlRender(
-        input.threadId,
-        args,
-        page,
-      );
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      for (const published of [page, failedPage, blockPage]) {
+        yield* mcpSessions.recordHtmlRender(input.threadId, args, published);
+      }
       yield* session.runtime.startTurn(input);
       const events = yield* session.throughMarker("tools complete");
       const lastItem = (nativeId: string) =>
@@ -2540,12 +2558,22 @@ describe("AcpRegistryAdapterV2", () => {
               : [],
           )
           .at(-1);
-      const rendered = lastItem("droid-render");
-      assert.equal(rendered?.toolName, "t3-code.html_render");
-      assert.deepEqual(rendered === undefined ? undefined : htmlRenderFromToolItem(rendered), page);
-      const unpublished = lastItem("droid-unpublished");
-      assert.equal(unpublished?.status, "completed");
-      assert.notEqual(unpublished?.toolName, "t3-code.html_render");
+      for (const [nativeId, expected] of [
+        ["droid-render", page],
+        ["droid-content-block", blockPage],
+      ] as const) {
+        const rendered = lastItem(nativeId);
+        assert.equal(rendered?.toolName, "t3-code.html_render");
+        assert.deepEqual(
+          rendered === undefined ? undefined : htmlRenderFromToolItem(rendered),
+          expected,
+        );
+      }
+      for (const nativeId of ["droid-unpublished", "droid-failed"]) {
+        const generic = lastItem(nativeId);
+        assert.equal(generic?.status, "completed");
+        assert.notEqual(generic?.toolName, "t3-code.html_render");
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 
