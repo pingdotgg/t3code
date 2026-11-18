@@ -4213,6 +4213,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         (thread) => thread?.pullRequests?.[0]?.watch,
       );
 
+      yield* TestClock.adjust("250 millis");
+      const now = yield* DateTime.now;
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-start"),
@@ -4230,6 +4232,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isDefined(started);
       if (started === undefined) return;
       assert.isTrue(started.includeOwnRemarks);
+      assert.equal(started.startedAt, DateTime.formatIso(now));
+      assert.equal(started.remarksThrough, DateTime.formatIso(DateTime.startOf(now, "second")));
 
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -4263,7 +4267,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const changed = yield* watchOf;
       assert.isFalse(changed?.includeOwnRemarks);
       assert.equal(changed?.startedAt, started.startedAt);
-      assert.equal(changed?.remarksThrough, DateTime.formatIso(yield* DateTime.now));
+      assert.equal(changed?.remarksThrough, DateTime.formatIso(DateTime.startOf(now, "second")));
       assert.deepEqual(changed?.failedChecks, recorded.failedChecks);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
@@ -5897,6 +5901,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
         });
 
+        let remarks: ReadonlyArray<PullRequestComment> = [];
         let reads = 0;
         let invalidations = 0;
         const host = Layer.mergeAll(
@@ -5924,13 +5929,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 };
               }),
             activity: () =>
-              Effect.succeed({
-                comments: [],
-                commentCount: 0,
+              Effect.sync(() => ({
+                comments: remarks,
+                commentCount: remarks.length,
                 commentsTruncated: false,
                 reviewThreads: [],
                 commits: [],
-              }),
+              })),
           }),
         );
         const wakes = Effect.map(
@@ -5961,6 +5966,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.equal(reads, readsAfterNotice);
         assert.lengthOf(yield* wakes, 1);
 
+        yield* TestClock.adjust("250 millis");
+        const policyChange = yield* DateTime.now;
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(`pr-watch-due-change-policy-${fingerprinted}`),
@@ -5969,7 +5976,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           watching: true,
           includeOwnRemarks: true,
         });
+        const boundaryRemark: PullRequestComment = {
+          id: "same-second",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Remark posted in the policy change second.",
+          createdAt: DateTime.formatIso(DateTime.startOf(policyChange, "second")),
+          url: null,
+          path: null,
+          reviewState: null,
+        };
+        const earlier = DateTime.makeUnsafe(DateTime.toEpochMillis(policyChange) - 1_000);
+        remarks = [
+          {
+            ...boundaryRemark,
+            id: "earlier",
+            createdAt: DateTime.formatIso(DateTime.startOf(earlier, "second")),
+          },
+          boundaryRemark,
+        ];
         yield* sweep;
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.deepEqual(watch?.remarkIds, [boundaryRemark.id]);
         assert.equal(reads, readsAfterNotice + 1);
         assert.equal(invalidations, invalidationsAfterNotice + 1);
 

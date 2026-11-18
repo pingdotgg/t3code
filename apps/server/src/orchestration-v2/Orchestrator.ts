@@ -5038,6 +5038,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
           const startedAt = DateTime.formatIso(now);
+          // A host may round remarks to whole seconds; allow that whole boundary second.
+          const remarksStartedAt = DateTime.formatIso(DateTime.startOf(now, "second"));
           const linked = threadPullRequestsOf(thread);
           const visible = (link: ThreadPullRequestLink) =>
             link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
@@ -5108,7 +5110,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                     }),
-                    remarksThrough: startedAt,
+                    remarksThrough: remarksStartedAt,
                     remarkIds: [],
                     wakes: 0,
                   });
@@ -5123,7 +5125,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ...watch,
               includeOwnRemarks: command.includeOwnRemarks,
               remarksPolicyRevision: (watch.remarksPolicyRevision ?? 0) + 1,
-              remarksThrough: DateTime.formatIso(now),
+              remarksThrough: remarksStartedAt,
               remarkIds: [],
               wakes: 0,
             };
