@@ -269,6 +269,18 @@ export interface MergedIssueList {
 
 const NO_ISSUE_LISTS: MergedIssueList = { answers: [], error: null, isPending: false };
 
+function refreshFailed<Target, A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  targets: ReadonlyArray<Target>,
+  query: (target: Target) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) {
+  for (const target of targets) {
+    const atom = query(target);
+    const result = registry.get(atom);
+    if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
+  }
+}
+
 /**
  * One listing read across every environment at once: React cannot subscribe to a list of atoms
  * whose length changes, so the fan-out lives in one derived atom keyed by the targets. An
@@ -312,13 +324,8 @@ export function createMergedIssueListAtoms<E>(
       return atom;
     },
     refresh,
-    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueListTarget>) => {
-      for (const target of targets) {
-        const atom = list(target);
-        const result = registry.get(atom);
-        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
-      }
-    },
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueListTarget>) =>
+      refreshFailed(registry, targets, list),
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
       for (const node of registry.getNodes().values()) {
@@ -397,12 +404,7 @@ export function createMergedIssueCandidatesAtoms<E>(
   return {
     atom: (targets: ReadonlyArray<IssueCandidatesTarget>) =>
       targets.length === 0 ? empty : family(JSON.stringify(targets)),
-    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) => {
-      for (const target of targets) {
-        const atom = candidates(target);
-        const result = registry.get(atom);
-        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
-      }
-    },
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) =>
+      refreshFailed(registry, targets, candidates),
   };
 }
