@@ -166,7 +166,10 @@ describe("native pasted image cleanup", () => {
       ).toString("base64");
     }
 
-    const attachments = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+    const { attachments } = await convertPastedImagesToAttachments({
+      uris: [uri],
+      existingCount: 0,
+    });
 
     expect(files.get(`file:///cache/rendered.${format}`)?.deleted).toBe(true);
     expect(files.get(uri)?.deleted).toBe(owned);

@@ -625,8 +625,8 @@ export async function convertPastedImagesToAttachments(input: {
       const rendered = mimeType === sourceMimeType ? null : await renderPhoto(uri);
       const pastedBase64 = rendered?.base64 ?? (await file.base64());
       const fitted = rendered ?? (await fitComposerImage({ uri, mimeType, base64: pastedBase64 }));
-      if (fitted !== null) {
-        temporaryUris.push(fitted.uri);
+      if (rendered !== null) {
+        temporaryUris.push(rendered.uri);
       }
       let base64 = fitted?.base64 ?? pastedBase64;
       if (
