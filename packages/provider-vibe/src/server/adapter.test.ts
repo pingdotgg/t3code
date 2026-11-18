@@ -759,6 +759,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(completed.status).toBe("completed");
         expect(completed.startedAt).not.toBeNull();
         expect(millis(completed.startedAt)).toBe(millis(started.providerTurn.startedAt));
+        expect(millis(completed.completedAt)).toBe(completedAt);
       }).pipe(Effect.provide(layerTest)),
     ),
   );
