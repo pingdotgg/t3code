@@ -16,7 +16,9 @@ import * as ServerConfig from "../config.ts";
 
 export { ZaiUsageHistory, ZaiUsageHistoryReadError } from "@t3tools/provider-acp-registry/server";
 
-// `unavailable` turns and payloads without recorded usage fail decoding and are skipped.
+// Only glm-acp-agent sessions record ACP Registry turn usage, and editing an instance rebuilds
+// its adapter, so recorded usage proves GLM ran the turn: an earlier agent on the same instance
+// ID left `unavailable` or no usage, which fails decoding and is skipped.
 // The run row reflects later steering, so the instance and model come from the attempt.
 const GlmTurnUsageJson = Schema.Struct({
   usageStatus: Schema.Literals(["complete", "partial"]),

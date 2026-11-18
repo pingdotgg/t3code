@@ -24,7 +24,9 @@ The server keeps scanned usage history for 92 days by default. Claude Code delet
 transcripts after 30 days, so for older Claude usage this history is the only record left. To keep
 it longer, set `usageHistoryRetentionDays` in `<T3 home>/userdata/settings.json` to a number of days
 such as `365`, or to `"unlimited"`. Usage views still show at most 90 days. Lowering the value
-prunes older history on the next refresh, and raising it again does not bring pruned history back.
+prunes older scanned history on the next refresh, and raising it again does not bring pruned history
+back. Z.ai GLM turns stay in T3's thread history, so lowering the value only hides older GLM turns
+and raising it shows them again.
 While `settings.json` cannot be read, nothing is pruned.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
@@ -50,8 +52,11 @@ depend on each project's working directory and cannot be reliably discovered by 
 sharing a history directory count once.
 
 Z.ai GLM usage comes from the turns T3 itself runs through the ACP Registry's GLM agent, recorded as
-each turn finishes. GLM run as a local ACP command is not counted. Use outside T3, or on environments you have not connected, does not appear, so Z.ai's own
-dashboard can show more. Turns that fail or are interrupted may report partial or no usage.
+each turn finishes. It counts turns of ACP Registry instances currently set to the GLM agent. If you
+switch an instance from another agent to GLM, its earlier turns are not counted; if you switch it
+away from GLM, its GLM turns no longer show. GLM run as a local ACP command is not counted. Use
+outside T3, or on environments you have not connected, does not appear, so Z.ai's own dashboard can
+show more. Turns that fail or are interrupted may report partial or no usage.
 
 The server saves its first hostname in `<T3 home>/usage-host-id`, so a recreated container keeps
 its usage identity when T3 home is persisted. Set `T3CODE_HOST_ID` to choose the identity

@@ -686,6 +686,13 @@ describe("Z.ai usage history", () => {
         },
       });
       yield* seedZaiGlmTurn({ id: "glm-no-usage" });
+      // The GLM instance ran Kimi before an edit kept its ID; that adapter recorded no usage.
+      yield* seedZaiGlmTurn({
+        id: "kimi-before-glm",
+        model: "kimi-k2",
+        completedAt: "2026-08-01T09:00:00Z",
+        turnUsage: { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false },
+      });
       yield* seedZaiGlmTurn({
         id: "kimi-1",
         instanceId: "acpRegistry_kimi",
