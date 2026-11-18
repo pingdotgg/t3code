@@ -11,6 +11,7 @@ import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpReg
 import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.testkit.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -103,6 +104,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
   commandPath: "/usr/local/bin/omp",
@@ -2037,6 +2039,39 @@ describe("AcpAdapterV2", () => {
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
     },
+    {
+      scenario: "Devin allowOther choice accepts a typed answer",
+      settings: DEVIN_SETTINGS,
+      meta: { "cognition.ai/allowOther": true },
+      schema: {
+        type: "object",
+        properties: {
+          q0: {
+            type: "string",
+            title: "Fruit",
+            description: "Which fruit?",
+            oneOf: [
+              { const: "Apple", title: "Apple" },
+              { const: "Banana", title: "Banana" },
+            ],
+          },
+        },
+        required: ["q0"],
+      },
+      questions: [
+        {
+          id: "q0",
+          header: "Fruit",
+          question: "Which fruit?",
+          options: [
+            { label: "Apple", description: "Apple", value: "Apple" },
+            { label: "Banana", description: "Banana", value: "Banana" },
+          ],
+        },
+      ],
+      answers: { q0: "Mango" },
+      result: { action: "accept", content: { q0: "Mango" } },
+    },
   ])("Registry elicitation $scenario", (fixture) => {
     const { schema, questions, answers, result } = fixture;
     const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
@@ -2120,6 +2155,7 @@ describe("AcpAdapterV2", () => {
                   sessionId: "droid-session",
                   message: "Your answer?",
                   requestedSchema: schema,
+                  ...("meta" in fixture ? { _meta: fixture.meta } : {}),
                 },
               },
             },
@@ -3380,34 +3416,55 @@ describe("AcpAdapterV2", () => {
           update: { sessionUpdate, messageId, content: { type: "text", text } },
         });
 
-      yield* replay("user_message_chunk", "u1", "hel");
-      yield* replay("user_message_chunk", "u1", "lo");
+      yield* replay("user_message_chunk", "u1", "<monitor-event> is ");
+      yield* replay("user_message_chunk", "u1", "XML");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
       yield* replay("agent_message_chunk", "a1", " ");
       yield* replay("agent_message_chunk", "a1", "there");
       yield* replay("agent_message_chunk", "a3", "\t");
-      yield* replay("agent_message_chunk", "a3", "code");
+      yield* replay("agent_message_chunk", "a3", "code with <monitor-event>");
       yield* replay("agent_message_chunk", "a4", "\n\n");
+      yield* replay("user_message_chunk", "u3", "Why did Monitor 0123abcd ended appear?");
+      // Grok's injected monitor wakes replay as user chunks and stay out of history.
+      yield* replay(
+        "user_message_chunk",
+        "u4",
+        '\n<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">\nline\n</monitor-event>',
+      );
+      yield* replay(
+        "user_message_chunk",
+        "u5",
+        'Monitor "019f44a5-87d1-7640-8e35-6a4667ffc873" ended: exit 0',
+      );
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");
       yield* replay("user_message_chunk", "u2", "\tone");
+      yield* sessionUpdateHandler({
+        sessionId: "mock-child-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Child private work" },
+        },
+      });
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
       assert.deepEqual(texts(first), [
-        "user:hello",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next",
-        "assistant:\tcode",
+        "assistant:\tcode with <monitor-event>",
+        "user:Why did Monitor 0123abcd ended appear?",
       ]);
       assert.deepEqual(texts(second), [
-        "user:hello",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next\n\tone",
-        "assistant:\tcode",
+        "assistant:\tcode with <monitor-event>",
+        "user:Why did Monitor 0123abcd ended appear?",
         "assistant:done",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
@@ -4682,6 +4739,11 @@ describe("AcpAdapterV2", () => {
         const startupMethods = yield* pollProtocolMethods(protocolEvents);
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
+        const loaded = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(
+          loaded.messages.map((message) => `${message.role}:${message.text}`),
+          ["user:replay"],
+        );
 
         yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
@@ -5766,6 +5828,128 @@ describe("AcpAdapterV2", () => {
         providerThread,
         providerTurnId: pending.runtimeRequest.providerTurnId,
       });
+      yield* Fiber.join(turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("Stop closes an MCP-over-ACP call stalled on its SSE response", () =>
+    Effect.gen(function* () {
+      const responseStarted = yield* Deferred.make<void>();
+      const responseClosed = yield* Deferred.make<void>();
+      const server = yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeHttp.Server>((resolve) => {
+              const server = NodeHttp.createServer((_request, response) => {
+                response.on("close", () => Deferred.doneUnsafe(responseClosed, Effect.void));
+                response.writeHead(200, { "content-type": "text/event-stream" });
+                response.write('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n');
+                Deferred.doneUnsafe(responseStarted, Effect.void);
+              });
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
+        ),
+        (server) =>
+          Effect.sync(() => {
+            server.closeAllConnections();
+            server.close();
+          }),
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        return yield* Effect.die("Expected a TCP address");
+      }
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let mcpConnect: Parameters<RuntimeService["handleMcpConnect"]>[0] | undefined;
+      let mcpMessage: Parameters<RuntimeService["handleMcpMessage"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-stop-mcp-call");
+      const threadId = ThreadId.make("thread-acp-stop-mcp-call");
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-stop-mcp-call"),
+        threadId,
+        providerSessionId: "mcp-session-acp-stop-mcp-call",
+        providerInstanceId: instanceId,
+        endpoint: `http://127.0.0.1:${address.port}/mcp`,
+        authorizationHeader: "Bearer stop-mcp-call-token",
+        browserToolsAvailable: false,
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleMcpConnect: (handler) =>
+                Effect.sync(() => {
+                  mcpConnect = handler;
+                }).pipe(Effect.andThen(runtime.handleMcpConnect(handler))),
+              handleMcpMessage: (handler) =>
+                Effect.sync(() => {
+                  mcpMessage = handler;
+                }).pipe(Effect.andThen(runtime.handleMcpMessage(handler))),
+            }),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-stop-mcp-call"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      if (mcpConnect === undefined || mcpMessage === undefined) {
+        return yield* Effect.die("ACP runtime must register MCP-over-ACP handlers");
+      }
+      const { connectionId } = yield* mcpConnect(
+        { serverId: "t3-code" },
+        { requestId: "stop-mcp-connect", method: "mcp/connect" },
+      );
+      const call = yield* mcpMessage(
+        { connectionId, method: "tools/call", params: { name: "task_status", arguments: {} } },
+        { requestId: "stop-mcp-call", method: "mcp/message" },
+      ).pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(responseStarted);
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        }),
+      });
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(call)));
+      yield* Deferred.await(responseClosed);
       yield* Fiber.join(turnFiber);
     }).pipe(Effect.provide(layerTest)),
   );
@@ -11187,6 +11371,19 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
       acpPostSettleContinuationOfferEvidence(monitorStartAck, {
         normalizeToolCall: normalizeXAiAcpToolCallState,
       }),
+    );
+  });
+  it("offers on a reply that only mentions monitor markup, not on monitor chatter", () => {
+    const reply = (text: string) =>
+      ({
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      }) as const;
+    assert.isTrue(acpPostSettleContinuationOfferEvidence(reply("<monitor-event> tags wrap it")));
+    assert.isFalse(
+      acpPostSettleContinuationOfferEvidence(
+        reply('<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">line</monitor-event>'),
+      ),
     );
   });
 });
