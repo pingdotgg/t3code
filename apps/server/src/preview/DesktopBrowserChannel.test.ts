@@ -151,6 +151,9 @@ it.effect(
         const first = yield* connect;
         yield* first.send({ type: "attached", ...key });
         expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+        const turn = { type: "turn", threadId: key.threadId, active: true };
+        yield* channel.turn(key.threadId, true);
+        expect(JSON.parse(yield* Queue.take(first.commands))).toEqual(turn);
         // The desktop redials before the first socket's close is seen, while an endpoint is open.
         const second = yield* Effect.scoped(
           Effect.gen(function* () {
@@ -169,6 +172,8 @@ it.effect(
         yield* Fiber.join(first.served);
         expect(yield* channel.isAttached(key)).toBe(true);
         yield* channel.pointer(key, { phase: "move", x: 1, y: 2 });
+        // A desktop that redialed forgot the running turn, so it hears of it again first.
+        expect(JSON.parse(yield* Queue.take(second.commands))).toEqual(turn);
         expect(JSON.parse(yield* Queue.take(second.commands))).toEqual({
           type: "pointer",
           ...key,

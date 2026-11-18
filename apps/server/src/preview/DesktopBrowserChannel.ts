@@ -118,6 +118,7 @@ const make = Effect.gen(function* () {
   }
 
   // The desktop's socket once it dials in; commands sent before then have no tab to reach.
+  const activeTurns = new Set<string>();
   let socketWrite: ((line: string) => Effect.Effect<void, Socket.SocketError>) | null = null;
   const write = (line: string): Effect.Effect<void, unknown> =>
     overFds
@@ -185,6 +186,17 @@ const make = Effect.gen(function* () {
       // A redial can arrive before the old socket's close is seen here.
       yield* retireConnection;
       socketWrite = send;
+      // The desktop forgets its turns when it dials. Its first frame shows that it has by now.
+      let turnsRestored = false;
+      const restoreTurns = Effect.suspend(() => {
+        if (turnsRestored) return Effect.void;
+        turnsRestored = true;
+        return Effect.forEach(
+          [...activeTurns],
+          (threadId) => command({ type: "turn", threadId, active: true }),
+          { discard: true },
+        );
+      });
       const reader = yield* socket.reader;
       const decoder = new TextDecoder();
       yield* reader.pull.pipe(
@@ -193,7 +205,9 @@ const make = Effect.gen(function* () {
             frames,
             (frame) =>
               decodeEventLine(typeof frame === "string" ? frame : decoder.decode(frame)).pipe(
-                Effect.flatMap((event) => (socketWrite === send ? receive(event) : Effect.void)),
+                Effect.flatMap((event) =>
+                  socketWrite === send ? Effect.andThen(restoreTurns, receive(event)) : Effect.void,
+                ),
                 Effect.ignore,
               ),
             { discard: true },
@@ -334,6 +348,8 @@ const make = Effect.gen(function* () {
     loadFailure: (key) => loadFailures.get(keyOf(key)),
     endpoint,
     turn: Effect.fn("DesktopBrowserChannel.turn")(function (threadId, active) {
+      if (active) activeTurns.add(threadId);
+      else activeTurns.delete(threadId);
       return command({ type: "turn", threadId, active });
     }),
     pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
