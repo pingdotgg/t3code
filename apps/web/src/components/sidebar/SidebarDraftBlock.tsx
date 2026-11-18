@@ -18,6 +18,7 @@ import { cn } from "~/lib/utils";
 import { isDraftSnoozed, resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { snoozeWakeLabel, type SnoozePreset } from "../Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   composerDraftHasUserContent,
@@ -29,9 +30,6 @@ import {
 import { draftPenClassName, draftSurfaceClassName, SnoozeMenuButton } from "./SidebarThreadRow";
 
 type SidebarDraftSection = "drafts" | "snoozed";
-
-const rowActionClassName =
-  "pointer-events-none inline-flex h-full cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
@@ -150,22 +148,24 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               ) : null}
               <span
                 className={cn(
-                  "flex h-full items-center",
+                  "pointer-events-none flex h-full items-center opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
                   props.wakeLabel !== null && "absolute inset-y-0 right-0",
+                  snoozeMenuOpen && "pointer-events-auto opacity-100",
                 )}
               >
                 {props.wakeLabel !== null ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <button
+                        <Button
                           type="button"
+                          size="icon-micro"
+                          variant="ghost-muted"
                           aria-label={gt("Wake draft now")}
                           onClick={handleUnsnooze}
-                          className={rowActionClassName}
                         >
-                          <AlarmClockOffIcon className="mb-px size-3" />
-                        </button>
+                          <AlarmClockOffIcon />
+                        </Button>
                       }
                     />
                     <TooltipPopup side="top">
@@ -173,33 +173,27 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                     </TooltipPopup>
                   </Tooltip>
                 ) : !props.canSnooze ? null : (
-                  <span
-                    className={cn(
-                      "pointer-events-none inline-flex h-full opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
-                      snoozeMenuOpen && "pointer-events-auto opacity-100",
-                    )}
-                  >
-                    <SnoozeMenuButton
-                      open={snoozeMenuOpen}
-                      onOpenChange={setSnoozeMenuOpen}
-                      onSnooze={(preset) => onSnooze(draftId, preset)}
-                      timestampFormat={props.timestampFormat}
-                      environmentId={props.session.environmentId}
-                      label={gt("Snooze draft")}
-                    />
-                  </span>
+                  <SnoozeMenuButton
+                    open={snoozeMenuOpen}
+                    onOpenChange={setSnoozeMenuOpen}
+                    onSnooze={(preset) => onSnooze(draftId, preset)}
+                    timestampFormat={props.timestampFormat}
+                    environmentId={props.session.environmentId}
+                    label={gt("Snooze draft")}
+                  />
                 )}
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <button
+                      <Button
                         type="button"
+                        size="icon-micro"
+                        variant="ghost-muted"
                         aria-label={gt("Discard draft")}
                         onClick={handleDiscard}
-                        className={rowActionClassName}
                       >
-                        <XIcon className="size-3" />
-                      </button>
+                        <XIcon />
+                      </Button>
                     }
                   />
                   <TooltipPopup side="top">

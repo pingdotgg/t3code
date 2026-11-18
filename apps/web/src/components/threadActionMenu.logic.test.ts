@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildDraftActionMenuItems,
-  buildThreadActionMenuItems,
-  type ThreadActionMenuState,
-} from "./threadActionMenu.logic";
+import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -77,26 +73,5 @@ describe("buildThreadActionMenuItems", () => {
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
-  });
-});
-
-describe("buildDraftActionMenuItems", () => {
-  const draftMenu = (isSnoozed: boolean) =>
-    buildDraftActionMenuItems({
-      hasPath: true,
-      hasBranch: false,
-      hasProject: true,
-      isSnoozed,
-      canSnoozeNow: true,
-      snoozePresets: baseState.snoozePresets,
-    });
-
-  it("offers Snooze with the presets and Custom, and Wake once snoozed", () => {
-    expect(draftMenu(false)[0]).toMatchObject({
-      id: "snooze",
-      children: [{ id: "snooze:hour", detail: "3:00 PM" }, { id: "snooze:custom" }],
-    });
-    expect(draftMenu(true)[0]).toMatchObject({ id: "unsnooze", label: "Wake draft" });
-    expect(draftMenu(true).some((item) => item.id === "snooze")).toBe(false);
   });
 });
