@@ -46,6 +46,8 @@ import {
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
+/** Between sweeps, pending checks get a fingerprint probe this often; a full read only follows a change. */
+const PENDING_PROBE_MS = 30_000;
 const READ_FAILURE_LIMIT = 8;
 /** Group reads in flight at once, inside the host's own request limit. */
 const GROUP_READS = 4;
@@ -88,6 +90,8 @@ interface LastRead {
   readonly at: number;
   readonly fingerprint: string;
   readonly inFlight: boolean;
+  /** Some watch still waits on checks, including a head whose checks have not registered yet. */
+  readonly checksPending: boolean;
   readonly remarksComplete: boolean;
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
@@ -682,6 +686,12 @@ export const make = Effect.gen(function* () {
           fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
         )
       : null;
+    const reports = new Map(
+      group.targets.map((target) => [
+        target,
+        evaluatePullRequestWatch(target.watch, detail, remarks, now),
+      ]),
+    );
     lastReads.set(group.key, {
       at:
         plan.activity || last === undefined
@@ -691,13 +701,14 @@ export const make = Effect.gen(function* () {
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
+      checksPending: [...reports.values()].some((report) => report.next.checksPending === true),
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report = reports.get(target)!;
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -840,6 +851,34 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
+  // Hosts without fingerprints are left to the sweep, since every probe there would be a full read.
+  // One pass per moved pull request covers every project watching it.
+  const probePending = Effect.gen(function* () {
+    const moved = new Set<string>();
+    yield* Effect.forEach(
+      currentGroups.filter((group) => {
+        const last = lastReads.get(group.key);
+        return last !== undefined && (last.inFlight || last.checksPending) && last.status !== null;
+      }),
+      (group) =>
+        fingerprintOf(group).pipe(
+          Effect.map((fingerprint) => {
+            const last = lastReads.get(group.key);
+            if (
+              fingerprint !== null &&
+              fingerprint !== "paused" &&
+              last !== undefined &&
+              (last.status !== fingerprint.status || last.remarks !== fingerprint.remarks)
+            ) {
+              moved.add(pullRequestOf(group));
+            }
+          }),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+    yield* Effect.forEach(moved, readOnChange, { concurrency: "unbounded", discard: true });
+  });
+
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",
   )(function* () {
@@ -885,6 +924,9 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     );
+    // A host without a live feed leaves the sweep as the only reader, so a pending watch
+    // would wait the whole sweep for its checks; the probes catch the conclusion sooner.
+    yield* forkParked(probePending.pipe(Effect.delay(PENDING_PROBE_MS), Effect.forever));
   });
 
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];

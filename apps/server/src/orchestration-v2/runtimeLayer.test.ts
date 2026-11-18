@@ -5993,6 +5993,137 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  // A fresh head has no checks yet; the watch waits for them all the same.
+  it.effect.each(["pending", "not yet registered"] as const)(
+    "wakes %s checks from the interim probe when the host has no live feed",
+    (start) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-probe-${start}`);
+        const projectId = ProjectId.make(`pr-watch-probe-project-${start}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch probe",
+          workspaceRoot: "/workspace/watch-probe",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-probe-create-${start}`),
+          threadId,
+          projectId,
+          title: "Watch probe",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-probe-start-${start}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+        });
+
+        let checks: PullRequestDetail["checks"] =
+          start === "pending"
+            ? [{ name: "lint", status: "pending", description: null, url: null, required: true }]
+            : [];
+        let status: string = start;
+        const detailReads = yield* Queue.unbounded<void>();
+        const fingerprintReads = yield* Queue.unbounded<void>();
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            detail: (input) =>
+              // Watches left by earlier cases in this layer are swept too.
+              (input.projectId === projectId
+                ? Queue.offer(detailReads, undefined)
+                : Effect.void
+              ).pipe(
+                Effect.as({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 14,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  headSha: "6074dd48ff",
+                  checks,
+                }),
+              ),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+            watchFingerprint: (input) =>
+              (input.projectId === projectId
+                ? Queue.offer(fingerprintReads, undefined)
+                : Effect.void
+              ).pipe(Effect.andThen(Effect.sync(() => ({ status, remarks: "none" })))),
+            invalidate: () => Effect.void,
+            // Without the GitHub app sign-in no feed is on, so only the sweep hears checks.
+            changes: () => Stream.empty,
+          }),
+        );
+        const wakes = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) =>
+            messages.filter(
+              (message) => message.notification !== undefined && message.notification !== null,
+            ),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* reactor.start();
+        yield* Queue.take(fingerprintReads);
+        yield* Queue.take(detailReads);
+        yield* worker.drain();
+        assert.lengthOf(yield* wakes, 0);
+
+        // A probe whose fingerprint has not moved reads nothing more.
+        yield* TestClock.adjust("30 seconds");
+        yield* Queue.take(fingerprintReads);
+        status = "passed";
+        checks = [
+          { name: "lint", status: "success", description: null, url: null, required: true },
+        ];
+        // The probe must hear the concluded checks long before the 2-minute sweep could.
+        yield* TestClock.adjust("30 seconds");
+        yield* Queue.take(detailReads);
+        yield* worker.drain();
+        const woken = yield* wakes;
+        assert.lengthOf(woken, 1);
+        assert.equal(woken[0]!.notification?.summary, "#14: checks passed");
+        assert.equal(yield* Queue.size(detailReads), 0);
+
+        // The settled pull request stays quiet until the sweep.
+        yield* TestClock.adjust("30 seconds");
+        yield* worker.drain();
+        assert.lengthOf(yield* wakes, 1);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-probe-end-${start}`),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {
