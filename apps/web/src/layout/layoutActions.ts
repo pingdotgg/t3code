@@ -2,7 +2,7 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useClosedViewStore } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
@@ -16,12 +16,20 @@ import {
   type LayoutOpenPlacement,
   type LayoutTabContent,
 } from "./layoutModel";
-import { readThreadLineage } from "../state/entities";
+import {
+  readLastUsedProjectKey,
+  resolveDefaultProjectRef,
+  type NewThreadHandler,
+} from "../hooks/useHandleNewThread";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readProjects, readThreadLineage, readThreadShell } from "../state/entities";
+import { defaultProjectFallbackReadyAtom } from "../state/projects";
+import { useUiStateStore } from "../uiStateStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
-import { useLayoutStore } from "./layoutStore";
+import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
-import { threadlessSurfacesRef } from "../threadlessSurfaces";
+import { threadlessSurfacesProjectRef, threadlessSurfacesRef } from "../threadlessSurfaces";
 
 /** Remove a parked or discarded thread everywhere, without settling it again. */
 export function closeLayoutThread(threadRef: ScopedThreadRef): void {
@@ -83,15 +91,54 @@ export function closeLayoutProject(
 }
 
 /**
- * Open a launcher tab: in the focused pane (cmd+T, "+"), in a new column
- * after it (cmd+\), or in a new pane below it (cmd+shift+D). Focus moves to
- * it. Its surfaces open for the thread focus was on.
+ * Open a launcher tab: in a new column after the focused pane (cmd+\), in a
+ * new pane below it (cmd+shift+D), or in it when no project can take a new
+ * thread. Focus moves to it. Its surfaces open for the thread focus was on.
  */
 export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane"): void {
   useLayoutStore.getState().openTab(createLayoutNewTabContent(), {
     placement,
     position: getLayoutBehavior().newTabPosition,
   });
+}
+
+/**
+ * cmd+T and "+": a new tab holding a new thread's composer, in the project of
+ * the tab focus was on, or else the default project.
+ */
+export async function openLayoutNewThreadTab(handleNewThread: NewThreadHandler): Promise<void> {
+  const projectRef =
+    launcherContextProjectRef(createLayoutNewTabContent().context) ?? readDefaultProjectRef();
+  if (projectRef === null) {
+    openLayoutNewTab();
+    return;
+  }
+  await runInNewLayoutTab(() => handleNewThread(projectRef), "active-pane");
+}
+
+function launcherContextProjectRef(context: ThreadRouteTarget | null): ScopedProjectRef | null {
+  if (context === null) return null;
+  const drafts = useComposerDraftStore.getState();
+  const draft =
+    context.kind === "draft"
+      ? drafts.getDraftSession(context.draftId)
+      : drafts.getDraftThreadByRef(context.threadRef);
+  if (draft) return scopeProjectRef(draft.environmentId, draft.projectId);
+  if (context.kind === "draft") return null;
+  const thread = readThreadShell(context.threadRef);
+  return thread
+    ? scopeProjectRef(thread.environmentId, thread.projectId)
+    : threadlessSurfacesProjectRef(context.threadRef);
+}
+
+function readDefaultProjectRef(): ScopedProjectRef | null {
+  const lastUsedProjectKey = readLastUsedProjectKey();
+  return resolveDefaultProjectRef(
+    readProjects(),
+    useUiStateStore.getState().projectOrder,
+    lastUsedProjectKey,
+    appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
+  );
 }
 
 /** The launcher a new tab opened from `tabId`, or from the focused tab, shows. */

@@ -94,7 +94,7 @@ export function LayoutOnboarding() {
   const steps = [
     {
       title: gt("New tab"),
-      text: gt("Opens a new chat, terminal, browser or files in this pane."),
+      text: gt("Opens a new chat in this pane."),
       selector: '[data-layout-pane-focused="true"] [data-layout-new-tab]',
       Icon: PlusIcon,
     },

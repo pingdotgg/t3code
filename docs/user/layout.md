@@ -5,12 +5,12 @@ Tabs sit in panes, panes stack into columns, and columns share the window.
 **Settings › Labs › Scrolling workspaces** lets columns scroll sideways and adds
 workspaces stacked vertically, with an overview to move between them.
 
-- **New tab:** `mod+t` opens an empty tab that starts a thread in a project you pick,
-  or opens a terminal, files, diff, browser, pull request or device for the thread you
-  were on, each with its letter key. `mod+n` starts a thread right away. The `+` in a
-  chat's notch offers the same; right-click it for a terminal, browser, files or diff
-  beside the chat.
-- **Split:** `mod+\` opens a new tab in a pane to the right, `mod+alt+shift+d` one below.
+- **New tab:** `mod+t` or the `+` in a pane's notch opens a new thread's composer in a
+  new tab, in the project of the tab you were on. Pick another project above the
+  composer. `mod+n` starts a thread in the current tab instead.
+- **Split:** `mod+\` opens a tab in a pane to the right, `mod+alt+shift+d` one below. It
+  starts a thread in a project you pick, or opens a terminal, files, diff, browser, pull
+  request or device for the thread you were on, each with its letter key.
   Or drag a tab onto a side of any pane, or onto the window's left or right edge for a
   new column. Inside a terminal, `mod+d` and `mod+shift+d` split the terminal.
 - **Terminal and surfaces:** a diff, files, a browser, a terminal or a pull request is a

@@ -1,10 +1,13 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 
 const environmentId = EnvironmentId.make("local");
 const parentRef = scopeThreadRef(environmentId, ThreadId.make("parent"));
 const subagentRef = scopeThreadRef(environmentId, ThreadId.make("subagent"));
+const projectId = ProjectId.make("project");
 
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
@@ -12,9 +15,16 @@ vi.mock(import("../state/entities"), async (original) => ({
     ref.threadId === subagentRef.threadId
       ? { parentThreadId: parentRef.threadId, relationshipToParent: "subagent" }
       : null) as never,
+  readThreadShell: ((ref: typeof parentRef) =>
+    ref.threadId === parentRef.threadId ? { environmentId, projectId } : null) as never,
+  readProjects: () => [],
 }));
 
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  openLayoutNewThreadTab,
+} from "./layoutActions";
 import {
   createLayoutState,
   findLayoutTab,
@@ -122,5 +132,46 @@ describe("runInNewLayoutTab", () => {
       vi.useRealTimers();
       useLayoutStore.getState().clearNewTabRequest();
     }
+  });
+});
+
+describe("openLayoutNewThreadTab", () => {
+  it("starts a thread in the focused thread's project, in a new tab", async () => {
+    using _layout = setup([parent]);
+    const handleNewThread = vi.fn(async () => {
+      expect(useLayoutStore.getState().newTabRequest?.request).toBe("active-pane");
+      return null;
+    });
+    await openLayoutNewThreadTab(handleNewThread);
+    expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(environmentId, projectId));
+  });
+
+  it("starts a thread in an unsent draft's project from that draft's surface", async () => {
+    const draftThreadId = ThreadId.make("draft-thread");
+    const draftProjectRef = scopeProjectRef(environmentId, ProjectId.make("draft-project"));
+    useComposerDraftStore
+      .getState()
+      .setLogicalProjectDraftThreadId("draft-project", draftProjectRef, DraftId.make("draft"), {
+        threadId: draftThreadId,
+      });
+    using _layout = setup([
+      {
+        kind: "surface",
+        threadRef: scopeThreadRef(environmentId, draftThreadId),
+        surfaceId: "terminal",
+      },
+    ]);
+    const handleNewThread = vi.fn(async () => null);
+    await openLayoutNewThreadTab(handleNewThread);
+    expect(handleNewThread).toHaveBeenCalledWith(draftProjectRef);
+  });
+
+  it("opens the launcher when no project can take the thread", async () => {
+    using layout = setup([other]);
+    const handleNewThread = vi.fn(async () => null);
+    await openLayoutNewThreadTab(handleNewThread);
+    expect(handleNewThread).not.toHaveBeenCalled();
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.content.kind).toBe("launcher");
+    expect(layout.chats()).toEqual([other]);
   });
 });

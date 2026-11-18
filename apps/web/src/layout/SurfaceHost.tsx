@@ -1754,10 +1754,14 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
   );
   // Paint the pane before rendering ChatView in a separate task. Avoid transitions, whose
   // interruption can destroy the composer editor beneath the pane. The first frame after a
-  // load has no pane to hold steady, so the focused chat renders in it.
+  // load has no pane to hold steady, so the focused chat renders in it. A focused new draft
+  // also renders at once: its stand-in would blank the composer the user just asked for.
   const wanted = paneState.visible && near;
   const [rendered, setRendered] = useState(
-    () => !documentFirstFrameDrawn && wanted && (paneState.focused || paneState.related),
+    () =>
+      (!documentFirstFrameDrawn || target.kind === "draft") &&
+      wanted &&
+      (paneState.focused || paneState.related),
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A committed chat must reach a browser frame before the next jump counts as isolated.
   useLayoutEffect(() => {
