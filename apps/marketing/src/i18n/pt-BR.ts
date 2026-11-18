@@ -33,7 +33,7 @@ export const ptBR: Messages = {
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
       "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
-    endorsementsTitle: "Tolerado por mais de {users} devs",
+    endorsementsTitle: "Mais de {users} devs ainda aturam a gente",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
     readPost: "Ler o post de {handle} no X",
@@ -59,7 +59,7 @@ export const ptBR: Messages = {
     gitPoints: [
       "Títulos e descrições de PR gerados automaticamente",
       "Revisão do diff inline antes do push",
-      "PRs em rascunho, stacks de PRs e amend",
+      "PRs em rascunho, stacks de PRs e atualização de PRs",
       "Funciona com a sua autenticação atual do GitHub",
     ],
     openTitle: "Se não gostar de algo, faça um fork.",
@@ -76,7 +76,7 @@ export const ptBR: Messages = {
     browseSource: "Ver o código",
     ctaTitle: "Seus agentes merecem mais do que um terminal.",
     ctaSub:
-      "O T3 Code é gratuito, open source e rápido. Instale, conecte a assinatura que você já tem e deixe seus agentes trabalharem.",
+      "O T3 Code é gratuito, open source e rápido. Instale, conecte o provedor que você já paga para usar e deixe seus agentes trabalharem.",
     otherPlatforms: "Outras plataformas",
   },
   download: {

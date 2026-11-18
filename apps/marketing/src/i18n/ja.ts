@@ -34,7 +34,7 @@ export const ja: Messages = {
     alsoOnPhone: "スマホでも使えます：",
     screenshotAlt:
       "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
-    endorsementsTitle: "{users} 人以上の開発者が我慢して使っています",
+    endorsementsTitle: "{users}人以上の開発者が、まだ付き合ってくれています",
     endorsementsSub: "ツイートまでしてくれた人もいます。",
     endorsementsLabel: "開発者の声",
     readPost: "X で {handle} の投稿を読む",

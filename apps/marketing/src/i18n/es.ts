@@ -33,7 +33,7 @@ export const es: Messages = {
     sourceLink: "Roba nuestro código (legalmente)",
     alsoOnPhone: "También en tu teléfono:",
     screenshotAlt: "T3 Code ejecutando subagentes de Claude, Codex, Muse y Gemini en un mismo hilo",
-    endorsementsTitle: "Tolerado por más de {users} desarrolladores",
+    endorsementsTitle: "Más de {users} devs todavía nos aguantan",
     endorsementsSub: "Algunos hasta tuitearon al respecto.",
     endorsementsLabel: "Opiniones de desarrolladores",
     readPost: "Leer la publicación de {handle} en X",
