@@ -207,6 +207,7 @@ export function LinkRequestRouteScreen({
   readonly itemId: TurnItemId;
 }>) {
   const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const thread = useEnvironmentThread(route.params.environmentId, route.params.threadId);
   const item = Option.getOrNull(thread.data)?.turnItems.find(
@@ -220,7 +221,7 @@ export function LinkRequestRouteScreen({
       <SheetHeader title={gt("Link a machine")} onClose={close} />
       <ScreenContent>
         <Text className="p-5 text-sm text-foreground-muted">
-          <T>This link request is no longer pending.</T>
+          {m(msg("Request no longer waiting"))}
         </Text>
       </ScreenContent>
     </View>
