@@ -41,7 +41,7 @@ Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Mast
 
 Issues that arrive without triage labels (filed by hand or from outside) go through the `triage-issues` skill first.
 
-Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, a maestro thread needs one line with `t3_thread_send`: `dispatch now`. A daemon needs nothing.
+Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`, in that order: the label goes on last, after every edge exists, or a dispatcher can claim a task whose blocker is not linked yet. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, a maestro thread needs one line with `t3_thread_send`: `dispatch now`. A daemon needs nothing.
 
 To run an issue on another provider, label it `provider:<instanceId>`, for example `provider:grok`. Only the maestro thread reads that label; the daemon starts every worker on its own model.
 
@@ -109,7 +109,9 @@ gh issue view <n> --json state,labels \
   --jq '.state == "OPEN" and (any(.labels[]; .name == "in-progress" or .name == "needs-help" or .name == "ready-for-human") | not)'
 ```
 
-On `true`, `gh issue edit <n> --add-label in-progress` and `gh issue comment <n> --body "maestro: claimed"`, then delegate to a subagent (in T3 Code: `delegate_task`) with `isolation: "worktree"`, `mode: "async"`, `role: "implementation"`, `title: "mw-<n> <short title>"`, and the task:
+Then skip it if it has an open blocker, since the search's `-is:blocked` lags behind edges added seconds ago: `gh api repos/<owner/repo>/issues/<n>/dependencies/blocked_by --jq '[.[] | select(.state == "open")] | length'` must be `0`.
+
+On `true` and no open blocker, `gh issue edit <n> --add-label in-progress` and `gh issue comment <n> --body "maestro: claimed"`, then delegate to a subagent (in T3 Code: `delegate_task`) with `isolation: "worktree"`, `mode: "async"`, `role: "implementation"`, `title: "mw-<n> <short title>"`, and the task:
 
 ```
 Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <your thread id>.

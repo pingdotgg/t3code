@@ -28,11 +28,20 @@ gh issue edit <n> --add-label needs-help
 gh issue comment <n> --body "<what needs a decision, and what you would do>"
 ```
 
+## Split the issue
+
+When the issue is too big for one PR and you split it instead of shipping it, file the parts as sub-issues of `<n>` without `ready-for-agent`, link every blocked-by edge, and only then add `ready-for-agent` to each. A labelled part with its blocker not yet linked gets dispatched early. Then close `<n>`, or label it `needs-help` when the split itself needs a decision.
+
+## Settle
+
+Before your final message, settle every thread you started (review and research children, by their `childThreadId`) with `t3_thread_organize` and `action: "settle"`. When you end without a merged PR (help, split, blocked), settle your own thread too: the same call without `threadId`. A merged PR settles it already.
+
 ## Final message
 
 Exactly one line, nothing else:
 
 - `#<n> merged <PR url>`
 - `#<n> needs-help: <why>`
+- `#<n> split into #<a>, #<b>, …`
 
 If the maestro tells you the issue is still open, finish it or ask for help, then end with that line again.

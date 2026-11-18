@@ -121,7 +121,7 @@ requeue() {
 
 # Starts workers for frontier issues; prints the number started.
 dispatch() {
-  local folder="$1" name="$2" live="$3" room="$4" repo base frontier n title free started=0 err
+  local folder="$1" name="$2" live="$3" room="$4" repo base frontier n title free blockers started=0 err
   [ "$room" -gt 0 ] || {
     echo 0
     return
@@ -138,6 +138,10 @@ dispatch() {
     # Search lags by a few seconds; re-read before claiming.
     free="$(gh issue view "$n" --json state,labels --jq '.state == "OPEN" and (any(.labels[]; .name | IN("in-progress", "needs-help", "ready-for-human")) | not)')"
     [ "$free" = true ] || continue
+    # The search's -is:blocked lags behind edges added seconds ago, as when an issue is split.
+    blockers="$(gh api "repos/$repo/issues/$n/dependencies/blocked_by" --paginate |
+      jq -s '[add // [] | .[] | select(.state == "open")] | length')" || continue
+    [ "$blockers" = 0 ] || continue
     gh issue edit "$n" --add-label in-progress >/dev/null
     gh issue comment "$n" --body "maestro: claimed" >/dev/null
     if err="$("${t3[@]}" thread start "$folder" "Use the \`maestro-worker\` skill for issue #$n in $repo." \

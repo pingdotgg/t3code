@@ -67,7 +67,7 @@ Create the tasks in dependency order, blockers first, so every blocking edge can
 issue number:
 
 ```bash
-gh issue create --title "[Phase title]" --label task --label ready-for-agent --parent <epic-id> \
+gh issue create --title "[Phase title]" --label task --parent <epic-id> \
   --blocked-by <other-id>,<other-id> --body "[first paragraph of phase content]"
 ```
 
@@ -76,6 +76,8 @@ gh issue create --title "[Phase title]" --label task --label ready-for-agent --p
 - Preserve any acceptance criteria or specific requirements in the body
 - If a phase has sub-steps, include them as a checklist in the body
 - Capture each created issue number from the output
+
+After every task and blocking edge exists, add the readiness label to each: `gh issue edit <id> --add-label ready-for-agent`. Labelling at creation lets a dispatcher claim a task before its blockers are linked.
 
 `ready-for-agent` goes on blocked tasks too. It says the task is specified well enough for an
 agent. Whether it can start yet comes from its blockers, which GitHub tracks, so no label

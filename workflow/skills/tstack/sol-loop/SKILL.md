@@ -103,6 +103,8 @@ Mark each old id `resolved` or `still open: <reason>`.
 
 ## 5. Stop and ship
 
+When the loop ends, agreed or stuck, settle each round's review thread: `t3_thread_organize` with `action: "settle"` and that round's `childThreadId`. A review thread has nothing left for anyone to read.
+
 Agreed: APPROVE on the current behavior diff, no blocker or should open,
 no concern of your own. Stuck: an item stays disputed after two replies,
 or budget ends. Show both sides in 2-3 lines each. The user decides.
