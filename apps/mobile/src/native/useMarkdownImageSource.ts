@@ -9,6 +9,7 @@ import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import { useCallback } from "react";
 import * as Option from "effect/Option";
 
+import { m } from "../i18n/messages";
 import { assetEnvironment } from "../state/assets";
 import { environmentSession, usePreparedConnection } from "../state/session";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -24,12 +25,15 @@ export function useMarkdownImageSource(props: {
   const environment = useEnvironmentPresentation(environmentId);
   const connectionPhase = environment.presentation?.connection.phase;
   const session = useEnvironmentQuery(environmentSession.sessionStateAtom(environmentId));
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: environment.isReady,
-    connection: environment.presentation?.connection ?? null,
-    session: session.data,
-    sessionError: session.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: environment.isReady,
+      connection: environment.presentation?.connection ?? null,
+      session: session.data,
+      sessionError: session.error,
+    },
+    m,
+  );
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   return useCallback(

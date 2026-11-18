@@ -1,3 +1,7 @@
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
+
 const PROMPT_LINK_PARAM_KEYS = ["prompt", "repo", "pr", "provider", "model"] as const;
 
 type RouteParams = Readonly<Record<string, unknown>> | undefined;
@@ -23,20 +27,32 @@ export function withoutPromptLinkParams(params: object | undefined): Record<stri
   );
 }
 
-export function promptLinkNotice(input: {
-  readonly hiddenCharacters: number;
-  readonly modelUnavailable?: boolean;
-  readonly pullRequestUnavailable?: number | null;
-}): string {
+export function promptLinkNotice(
+  input: {
+    readonly hiddenCharacters: number;
+    readonly modelUnavailable?: boolean;
+    readonly pullRequestUnavailable?: number | null;
+  },
+  resolve: MessageResolver = m,
+): string {
   return [
     input.hiddenCharacters > 0
-      ? "This prompt had hidden characters, it may be malicious. They were removed. Read it before you send."
-      : "This prompt came from a link. Read it before you send.",
+      ? resolve(
+          msg(
+            "This prompt had hidden characters, it may be malicious. They were removed. Read it before you send.",
+          ),
+        )
+      : resolve(msg("This prompt came from a link. Read it before you send.")),
     input.modelUnavailable
-      ? "The requested model is not available, so your default is used."
+      ? resolve(msg("The requested model is not available, so your default is used."))
       : null,
     input.pullRequestUnavailable != null
-      ? `Pull request #${input.pullRequestUnavailable} could not be loaded, so this task starts from your default branch.`
+      ? resolve(
+          msg(
+            "Pull request #{number} could not be loaded, so this task starts from your default branch.",
+            { number: input.pullRequestUnavailable },
+          ),
+        )
       : null,
   ]
     .filter((line) => line !== null)
