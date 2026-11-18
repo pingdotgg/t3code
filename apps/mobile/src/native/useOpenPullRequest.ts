@@ -1,5 +1,6 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import {
+  isLinearIssueLink,
   linksAnotherLinearWorkspace,
   resolveIssueLinkTarget,
 } from "@t3tools/client-runtime/issue-links";
@@ -50,8 +51,11 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     if (!destination) {
       // An issue link from the same text opens the issue; anything else leaves for the browser.
       const environmentId = context && EnvironmentId.make(context.environmentId);
+      const issuesSupported =
+        environmentId !== null &&
+        serverConfigs.get(environmentId)?.environment.capabilities.issues === true;
       const resolveIssue = (trackerBindings?: IssueTrackerConnectionList["bindings"]) =>
-        environmentId && serverConfigs.get(environmentId)?.environment.capabilities.issues === true
+        environmentId && issuesSupported
           ? resolveIssueLinkTarget({
               url,
               projects: projects.filter((project) => project.environmentId === environmentId),
@@ -61,7 +65,7 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
           : null;
       let issue = resolveIssue();
       let standalone = false;
-      if (!issue && environmentId) {
+      if (!issue && environmentId && issuesSupported && isLinearIssueLink(url)) {
         // Linear links resolve through the projects bound to a team in Settings.
         const trackers = await readTrackers({ environmentId, input: {} });
         if (trackers._tag === "Success") issue = resolveIssue(trackers.value.bindings);
@@ -87,9 +91,9 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
         if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
       }
       if (standalone) {
-        // Team keys repeat across Linear workspaces; another workspace's issue is not ours to show.
+        // Team keys repeat across Linear workspaces; an issue whose workspace is unconfirmed goes to the browser.
         const detail = await readIssue({ environmentId, input: issue.ref });
-        if (detail._tag === "Success" && linksAnotherLinearWorkspace(url, detail.value.url)) {
+        if (detail._tag !== "Success" || linksAnotherLinearWorkspace(url, detail.value.url)) {
           return tryOpenExternalUrl(url, "pull-request");
         }
       }

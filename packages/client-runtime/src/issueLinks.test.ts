@@ -6,7 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { linksAnotherLinearWorkspace, resolveIssueLinkTarget } from "./issueLinks.ts";
+import {
+  isLinearIssueLink,
+  linksAnotherLinearWorkspace,
+  resolveIssueLinkTarget,
+} from "./issueLinks.ts";
 
 const project = (id: string, repository: string) =>
   ({
@@ -126,5 +130,16 @@ describe("linksAnotherLinearWorkspace", () => {
     },
   ])("$link opening $issue is another workspace's: $expected", ({ link, issue, expected }) => {
     expect(linksAnotherLinearWorkspace(link, issue)).toBe(expected);
+  });
+});
+
+describe("isLinearIssueLink", () => {
+  it.each([
+    { url: "https://linear.app/acme/issue/ENG-12/a-title", expected: true },
+    { url: "https://linear.app/acme/project/roadmap", expected: false },
+    { url: "https://docs.example.com/guide", expected: false },
+    { url: "not a url", expected: false },
+  ])("$url is a Linear issue link: $expected", ({ url, expected }) => {
+    expect(isLinearIssueLink(url)).toBe(expected);
   });
 });

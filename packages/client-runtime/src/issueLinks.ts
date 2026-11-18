@@ -134,6 +134,11 @@ function resolveLinearIssueLink<Project extends LinkProject>(input: {
   };
 }
 
+/** Whether a link names a Linear issue, so tracker bindings could open it. */
+export function isLinearIssueLink(url: string): boolean {
+  return URL.canParse(url) && parseLinearIssueUrl(new URL(url)) !== null;
+}
+
 /**
  * Whether a Linear link names another workspace than the issue it opened. Team keys repeat across
  * workspaces, so the connected one can hold an issue under the same key; only the issue's own
