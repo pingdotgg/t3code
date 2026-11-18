@@ -440,7 +440,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     kind: NonNullable<typeof busy>,
     command: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
   ) => {
-    if (busy !== null || registry.get(pager.view).loadingOlder) return false;
+    if (busy !== null) return false;
     setBusy(kind);
     setError(null);
     const failure = issueCommandError(await command());
@@ -462,8 +462,10 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     access?.comment === true
       ? run("comment", () => postComment({ ...target, input: { ...target.input, body } }))
       : Promise.resolve(false);
-  const moveTo = (state: string) =>
+  const moveTo = (state: string) => {
+    if (registry.get(pager.view).loadingOlder) return;
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
+  };
 
   const showComposer = detail?.capabilities.comment === true;
   const commentBlocked =

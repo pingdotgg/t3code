@@ -104,7 +104,6 @@ export function createIssueCommentPager<E>(
       const current = registry.get(state);
       if (current.refreshing) return;
       // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
-      // A page still in flight is dropped here, so it no longer holds paging or posting.
       registry.set(state, {
         ...current,
         older: null,
@@ -199,16 +198,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       },
     }),
     detail,
-    /** Older comments past the cursor the detail handed over; the panel prepends what arrives. */
+    // The pager guards duplicate taps; after a refresh the same cursor needs a new read.
     comments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:comments",
       tag: WS_METHODS.issuesComments,
-      scheduler: commandScheduler,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.projectId, input.scope, input.key, input.cursor]),
-      },
     }),
     /** Read when the composer opens: what a scope offers a new issue changes with a commit. */
     templates: createEnvironmentRpcQueryAtomFamily(runtime, {
