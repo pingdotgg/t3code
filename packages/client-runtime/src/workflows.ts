@@ -531,39 +531,37 @@ export function buildWorkflowFeed(timeline: WorkflowTimeline): ReadonlyArray<Wor
   return rows;
 }
 
-export interface WorkflowPathNode {
-  readonly key: string;
-  readonly label: string;
-  readonly status: "done" | "current" | "failed";
-}
+/** The steps of a feed that take a place in the run's flow: every beat, in order. */
+const beatsOf = (rows: ReadonlyArray<WorkflowFeedRow>) =>
+  rows.flatMap((row) => (row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row]));
 
-/** Where the run has been and where it is: one stop per beat, in order. Nothing is predicted. */
-export function workflowPath(
-  rows: ReadonlyArray<WorkflowFeedRow>,
-  resolve: MFunctionType = mFallback,
-): ReadonlyArray<WorkflowPathNode> {
-  const statusOf = (beats: ReadonlyArray<WorkflowBeat>): WorkflowPathNode["status"] =>
-    beats.some((beat) => beat.status === "failed")
-      ? "failed"
-      : beats.some((beat) => beat.status === "running")
-        ? "current"
-        : "done";
-  return rows.flatMap((row): ReadonlyArray<WorkflowPathNode> => {
-    if (row.kind === "quick") return [];
-    if (row.kind !== "together") {
-      return [{ key: row.name, label: row.name, status: statusOf([row]) }];
-    }
-    return [
-      {
-        key: row.beats[0]!.name,
-        label:
-          row.beats.length === 2
-            ? `${row.beats[0]!.name} + ${row.beats[1]!.name}`
-            : resolve(msg("{count} at once", { count: row.beats.length })),
-        status: statusOf(row.beats),
-      },
-    ];
-  });
+/**
+ * Which part of a run's flow to open on: what waits on a person, then where it failed, then how
+ * it ended, then what is under way. Keys are `step:<name>`, `question:<name>`, `pause` and `end`.
+ */
+export function workflowFlowFocus(input: {
+  readonly rows: ReadonlyArray<WorkflowFeedRow>;
+  readonly status: WorkflowRun["status"];
+  readonly ended: boolean;
+  /** The names of the questions that wait on a person. */
+  readonly questions: ReadonlyArray<string>;
+}): string | null {
+  const beats = beatsOf(input.rows);
+  const asked = input.questions[0];
+  if (asked !== undefined) {
+    const at = beats.find(
+      (beat) =>
+        beat.kind === "ask" && beat.status === "running" && input.questions.includes(beat.name),
+    );
+    return at === undefined ? `question:${asked}` : `step:${at.name}`;
+  }
+  if (input.status === "paused") {
+    const failed = beats.findLast((beat) => beat.status === "failed");
+    return failed === undefined ? "pause" : `step:${failed.name}`;
+  }
+  if (input.ended) return "end";
+  const last = beats.findLast((beat) => beat.status === "running") ?? beats.at(-1);
+  return last === undefined ? null : `step:${last.name}`;
 }
 
 const FACT_LENGTH = 48;

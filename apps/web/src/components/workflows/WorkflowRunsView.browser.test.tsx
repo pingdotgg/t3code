@@ -249,7 +249,7 @@ describe("WorkflowRunsView", () => {
     );
   });
 
-  it("tells a finished run as a feed: agents speak, bookkeeping is a line", async () => {
+  it("draws a finished run as a flow, and shows the step that is picked", async () => {
     setup(
       {
         runs: [
@@ -296,8 +296,15 @@ describe("WorkflowRunsView", () => {
     const thread = vi.fn();
     await using screen = await render(page("fix", { thread }, "thread-1"));
 
+    // A finished run opens on how it ended; the flow has a node for each step that mattered.
     const happened = screen.getByRole("region", { name: "What happened" });
-    await expect.element(happened).toMatchTextContent("load, existing-prs");
+    await expect.element(happened).toMatchTextContent(/Finished.*merged as ba6ac7/);
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect
+      .element(flow)
+      .toMatchTextContent(/load, existing-prs.*triage.*Reproduced on main\..*implement.*approve/);
+
+    await flow.getByRole("button", { name: /triage/ }).click();
     const triage = screen.getByRole("region", { name: "triage" });
     await expect.element(triage).toMatchTextContent(/3m 0s.*Reproduced on main\..*kind.*bug/);
     // Its thread is the one open beside the run, and the button says so.
@@ -306,16 +313,18 @@ describe("WorkflowRunsView", () => {
     await transcript.click();
     expect(thread).toHaveBeenCalledWith({ threadId: "thread-1", environmentId: null });
     // This client is not connected to the linked environment, so there is nothing to open.
+    await flow.getByRole("button", { name: /implement/ }).click();
     await expect
       .element(screen.getByRole("region", { name: "implement" }))
       .toMatchTextContent("Thread on build-box");
+    await flow.getByRole("button", { name: /approve/ }).click();
     await expect
       .element(screen.getByRole("region", { name: "approve" }))
       .toMatchTextContent("You said Fix it: It hits everyone on Windows");
-    await expect.element(happened).toMatchTextContent(/Finished.*merged as ba6ac7/);
+    await flow.getByRole("button", { name: /load, existing-prs/ }).click();
     await expect
-      .element(screen.getByRole("navigation", { name: "Steps so far" }))
-      .toMatchTextContent("triageimplementapprove");
+      .element(screen.getByRole("region", { name: "Quick steps" }))
+      .toMatchTextContent("loadexisting-prs");
     await expect
       .element(screen.getByRole("button", { name: "Cancel run" }))
       .not.toBeInTheDocument();
