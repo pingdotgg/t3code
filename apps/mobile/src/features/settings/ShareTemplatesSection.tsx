@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import { SHARE_TEMPLATE_PLACEHOLDER, type ShareTemplate } from "../sharing/share
 import { SettingsSection } from "./components/SettingsSection";
 
 export function ShareTemplatesSection() {
+  const gt = useGT();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const [addedTemplateId, setAddedTemplateId] = useState<string | null>(null);
@@ -38,8 +40,8 @@ export function ShareTemplatesSection() {
       return;
     }
     Dialog.confirm({
-      title: "Delete this template?",
-      confirmText: "Delete",
+      title: gt("Delete this template?"),
+      confirmText: gt("Delete"),
       destructive: true,
       onConfirm: remove,
     });
@@ -47,8 +49,11 @@ export function ShareTemplatesSection() {
 
   return (
     <SettingsSection
-      title="Share templates"
-      footer={`When you share to T3 Code from another app, choose a template to wrap what you shared. Write ${SHARE_TEMPLATE_PLACEHOLDER} where the shared text goes, or it goes at the end.`}
+      title={gt("Share templates")}
+      footer={gt(
+        "When you share to T3 Code from another app, choose a template to wrap what you shared. Write {placeholder} where the shared text goes, or it goes at the end.",
+        { placeholder: SHARE_TEMPLATE_PLACEHOLDER },
+      )}
     >
       {(templates ?? []).map((template) => (
         <View
@@ -57,10 +62,12 @@ export function ShareTemplatesSection() {
         >
           {/* Uncontrolled so saving each keystroke never moves the cursor. */}
           <TextInput
-            accessibilityLabel="Template prompt"
+            accessibilityLabel={gt("Template prompt")}
             className="min-h-12 flex-1 py-2 text-base text-foreground"
             placeholderTextColorClassName="accent-foreground-muted"
-            placeholder={`Review this for bugs:\n\n${SHARE_TEMPLATE_PLACEHOLDER}`}
+            placeholder={gt("Review this for bugs:\n\n{placeholder}", {
+              placeholder: SHARE_TEMPLATE_PLACEHOLDER,
+            })}
             multiline
             autoFocus={template.id === addedTemplateId}
             defaultValue={template.prompt}
@@ -73,7 +80,7 @@ export function ShareTemplatesSection() {
             }
           />
           <IconButton
-            accessibilityLabel="Delete template"
+            accessibilityLabel={gt("Delete template")}
             icon="trash"
             tintColorClassName="accent-danger-foreground"
             onPress={() => removeTemplate(template)}
@@ -82,7 +89,7 @@ export function ShareTemplatesSection() {
       ))}
       <ListActionRow
         icon="plus"
-        label="Add template"
+        label={gt("Add template")}
         disabled={templates === null}
         onPress={addTemplate}
       />

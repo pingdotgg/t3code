@@ -1,3 +1,7 @@
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
+
 export interface ShareTemplate {
   readonly id: string;
   readonly prompt: string;
@@ -16,9 +20,9 @@ export function applyShareTemplate(prompt: string, sharedText: string): string {
   return sharedText ? `${template}\n\n${sharedText}` : template;
 }
 
-export function shareTemplateLabel(prompt: string): string {
+export function shareTemplateLabel(prompt: string, resolve: MessageResolver = m): string {
   const firstLine = prompt.trim().split("\n", 1)[0] ?? "";
-  return firstLine.split(SHARE_TEMPLATE_PLACEHOLDER).join("…").trim() || "Template";
+  return firstLine.split(SHARE_TEMPLATE_PLACEHOLDER).join("…").trim() || resolve(msg("Template"));
 }
 
 export function usableShareTemplates(
