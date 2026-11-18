@@ -1395,28 +1395,33 @@ const make = Effect.gen(function* () {
           withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
         );
         const next = yield* normalizeServerSettings(persisted.settings);
-        const materializedNext = yield* Effect.uninterruptibleMask(() =>
+        return yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
-            yield* invalidateMaterialized;
-            const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
-            const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
-            if (Exit.isFailure(materializedExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(materializedExit.cause);
-            }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
-            if (Exit.isFailure(writeExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(writeExit.cause);
-            }
-            return materializedExit.value;
-          }).pipe(Effect.ensuring(invalidateMaterialized)),
+            const materializedNext = yield* Effect.gen(function* () {
+              yield* invalidateMaterialized;
+              const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
+              const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
+              if (Exit.isFailure(materializedExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(materializedExit.cause);
+              }
+              const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+              if (Exit.isFailure(writeExit)) {
+                yield* rollbackSecretChanges;
+                return yield* Effect.failCause(writeExit.cause);
+              }
+              return materializedExit.value;
+            }).pipe(Effect.ensuring(invalidateMaterialized));
+            yield* Cache.set(settingsCache, cacheKey, {
+              settings: next,
+              parseFailure: Option.none(),
+            });
+            const resolved = toEffective(materializedNext);
+            materialized = { source: next, value: resolved };
+            yield* emitChange(next);
+            return { settings: resolved, result };
+          }),
         );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
-        const resolved = toEffective(materializedNext);
-        materialized = { source: next, value: resolved };
-        yield* emitChange(next);
-        return { settings: resolved, result };
       }),
     );
 
