@@ -41,6 +41,10 @@ import { m } from "../../i18n/messages";
 export function PullRequestDiscussionScreen({
   route,
 }: StaticScreenProps<PullRequestParams & { readonly discussionId: string }>) {
+  const target = pullRequestTarget(route.params);
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   return (
     <Discussion
       key={`${pullRequestReviewKey(route.params, detail.data?.viewer ?? null)}:${route.params.discussionId}`}

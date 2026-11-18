@@ -19,7 +19,6 @@ import { PullRequestCardRow } from "./PullRequestControls";
 import { PullRequestAgentRow } from "./PullRequestAgentRow";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 import { composerPullRequests } from "../../state/pull-requests";
-import { useEnvironmentQuery } from "../../state/query";
 import {
   allowedUpdateMethods,
   PR_ACTION_ICONS,
