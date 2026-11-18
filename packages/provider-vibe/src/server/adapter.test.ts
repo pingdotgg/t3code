@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
   CheckpointId,
+  ContextHandoffId,
   MessageId,
   NodeId,
   ProjectId,
@@ -253,43 +254,57 @@ describe("Vibe adapter against an in-memory app-server", () => {
           method === "session/history/list" ? { result: { items: [] } } : undefined,
         );
         const id = ProviderThreadId.make("orchestrator-thread");
+        const stored = {
+          ...providerThread,
+          id,
+          createdAt: DateTime.makeUnsafe(1_700_000_000_000),
+          handoffIds: [ContextHandoffId.make("previous-handoff")],
+          forkedFrom: { providerThreadId: ProviderThreadId.make("parent-thread") },
+        };
         const resumed = yield* runtime.ensureThread({
           threadId,
           modelSelection,
           runtimePolicy,
-          existingProviderThread: { ...providerThread, id },
+          existingProviderThread: stored,
         });
-        expect(resumed.id).toBe(id);
+        expect(resumed).toMatchObject({
+          id,
+          createdAt: stored.createdAt,
+          handoffIds: stored.handoffIds,
+          forkedFrom: stored.forkedFrom,
+        });
         yield* notify("turn/started", { turn: { id: "stable-thread-turn" } });
         expect((yield* takeEvent("provider_turn.updated")).providerTurn.providerThreadId).toBe(id);
-        let attached = false;
-        const restarted = yield* openFakeVibe((method) => {
-          if (method === "session/resume") attached = true;
+        const nativeHistory = [
+          {
+            id: "u1",
+            type: "message",
+            role: "user",
+            turnId: "t1",
+            content: [{ type: "text", text: "one" }],
+          },
+          {
+            id: "u2",
+            type: "message",
+            role: "user",
+            turnId: "t2",
+            content: [{ type: "text", text: "two" }],
+          },
+        ];
+        const nativeMutations: string[] = [];
+        const restarted = yield* openFakeVibe((method, params) => {
+          if (method === "session/resume") nativeMutations.push(method);
           if (method === "session/read")
             return { result: { state: { session: { id: "native-session" } } } };
-          if (method === "session/history/list")
-            return {
-              result: {
-                items: [
-                  {
-                    id: "u1",
-                    type: "message",
-                    role: "user",
-                    turnId: "t1",
-                    content: [{ type: "text", text: "one" }],
-                  },
-                  {
-                    id: "u2",
-                    type: "message",
-                    role: "user",
-                    turnId: "t2",
-                    content: [{ type: "text", text: "two" }],
-                  },
-                ],
-              },
-            };
-          if (method === "session/rewind" && !attached)
-            return { error: { code: "conflict", message: "Session is not attached" } };
+          if (method === "session/history/list") return { result: { items: nativeHistory } };
+          if (method === "session/rewind") {
+            if (nativeMutations.at(-1) !== "session/resume")
+              return { error: { code: "conflict", message: "Session is not attached" } };
+            expect(params).toEqual({ sessionId: "native-session", entryId: "u2", inplace: true });
+            nativeMutations.push(method);
+            nativeHistory.splice(1);
+            return { result: {} };
+          }
           return undefined;
         }, resumed);
         const snapshot = yield* restarted.runtime.readThreadSnapshot({ providerThread: resumed });
@@ -304,6 +319,11 @@ describe("Vibe adapter against an in-memory app-server", () => {
           },
         });
         expect(restored.providerTurns.map((turn) => turn.nativeTurnRef?.nativeId)).toEqual(["t1"]);
+        expect(nativeMutations).toEqual(["session/resume", "session/rewind"]);
+        const restoredNative = yield* restarted.runtime.readThreadSnapshot({
+          providerThread: resumed,
+        });
+        expect(restoredNative.messages.map((message) => message.text)).toEqual(["one"]);
       }).pipe(Effect.provide(layerTest)),
     ),
   );
@@ -589,6 +609,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         let modelWrites = 0;
         let starts = 0;
         let failNextResume = false;
+        let failNextHistory = false;
         const resumedAgents: unknown[] = [];
         const vibe = yield* openFakeVibe((method, params) => {
           if (method === "session/resume") {
@@ -602,7 +623,21 @@ describe("Vibe adapter against an in-memory app-server", () => {
             return { result: { failures: ["Model unavailable"] } };
           }
           if (method === "turn/start") starts += 1;
-          if (method === "session/history/list") return { result: { items: [] } };
+          if (method === "session/history/list") {
+            if (failNextHistory) {
+              failNextHistory = false;
+              return {
+                error: { code: "unavailable", message: "History read failed after resume" },
+                notifications: [
+                  {
+                    method: "turn/interrupted",
+                    params: { sessionId: "native-session", turn: { id: "turn-1" } },
+                  },
+                ],
+              };
+            }
+            return { result: { items: [] } };
+          }
           return undefined;
         });
         const {
@@ -690,7 +725,10 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(
           (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
         ).toBe("ProviderAdapterProtocolError");
-        yield* notify("turn/interrupted", { turn: { id: "turn-1" } });
+        failNextHistory = true;
+        expect(
+          (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
+        ).toBe("ProviderAdapterProtocolError");
         expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
           id: first.id,
           nodeId: input(1).rootNodeId,
@@ -721,13 +759,18 @@ describe("Vibe adapter against an in-memory app-server", () => {
           "ProviderAdapterProtocolError",
         );
         yield* runtime.interruptTurn({ ...stale, requestRuntimeRestart: true });
-        const steer = { ...stale, threadId, runId: input(3).runId, message: input(3).message };
+        const steer = {
+          ...stale,
+          threadId,
+          runId: input(3).runId,
+          message: { ...input(3).message, messageId: MessageId.make("steered-message") },
+        };
         expect((yield* Effect.flip(runtime.steerTurn(steer)))._tag).toBe(
           "ProviderAdapterProtocolError",
         );
         yield* runtime.steerTurn({ ...steer, providerTurnId: second.id });
         expect(yield* takeRequest("turn/steer")).toMatchObject({
-          clientUserMessageId: "message-3",
+          clientUserMessageId: "steered-message",
           expectedTurnId: "turn-2",
           message: [
             { type: "text", text: "Fix this layout" },
@@ -766,7 +809,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ))._tag,
         ).toBe("ProviderAdapterProtocolError");
         yield* runtime.startTurn(input(4));
-        expect(resumedAgents).toHaveLength(5);
+        expect(resumedAgents).toHaveLength(7);
         expect(resumedAgents.at(-1)).toMatchObject({ agent: "accept-edits" });
       }).pipe(Effect.provide(layerTest)),
     ),
