@@ -54,6 +54,8 @@ type NativeStreamBridge = {
   readonly onRefused: (delayMs: number) => void;
   readonly onGone?: () => void;
   readonly onViewport?: (viewport: { readonly width: number; readonly height: number }) => void;
+  /** The direction a drag scrolls the page, every few dozen pixels of it. */
+  readonly onScrollDirection?: (direction: "up" | "down") => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. */
@@ -219,6 +221,7 @@ function PreviewStreamDocumentView({
   onUnauthorized,
   onGone,
   onViewport,
+  onScrollDirection,
   onControl,
   onPictureInPicture,
   onStreamingChange,
@@ -323,19 +326,18 @@ function PreviewStreamDocumentView({
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
-      {!compact ? (
+      {/* With control, the bar's menu offers releasing it, so the row would only take space. */}
+      {!compact && control?.controller !== "you" ? (
         <View className="flex-row items-center justify-between gap-2 border-b border-secondary-border px-3 py-2">
           <AppText className="text-xs text-foreground-muted">
             {previewStreamControlLabel(control)}
           </AppText>
           {control?.canOperate ? (
             <Button
-              label={control.controller === "you" ? "Release control" : "Take control"}
+              label="Take control"
               tone="secondary"
               disabled={control.controller === "another-viewer"}
-              onPress={() =>
-                command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-              }
+              onPress={() => command({ type: "takeControl" })}
             />
           ) : null}
         </View>
@@ -391,6 +393,9 @@ function PreviewStreamDocumentView({
                 return;
               case "viewport":
                 onViewport?.(message);
+                return;
+              case "scroll":
+                onScrollDirection?.(message.direction);
                 return;
               case "clipboard":
                 void Clipboard.setStringAsync(message.text).catch(() => undefined);
