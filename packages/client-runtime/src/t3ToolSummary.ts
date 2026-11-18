@@ -901,6 +901,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "mcp-server": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Managed MCP server sign-in {count} time} other {Managed MCP server sign-in {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to manage MCP server sign-in {count} time} other {Tried to manage MCP server sign-in {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "schedule-list": {
       const count = selected.length;
       label = done

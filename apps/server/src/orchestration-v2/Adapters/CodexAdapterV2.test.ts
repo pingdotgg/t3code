@@ -90,6 +90,24 @@ const isProviderAdapterEventStreamError = Schema.is(
 );
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
+describe("CodexAdapterV2 MCP server status", () => {
+  it.each([
+    [{ authStatus: "oAuth", runtimeStatus: "connected" }, "connected"],
+    [{ authStatus: "oAuth", runtimeStatus: "authenticationRequired" }, "needs-auth"],
+    [{ authStatus: "notLoggedIn", runtimeStatus: "failed" }, "failed"],
+    [{ authStatus: "oAuth", runtimeStatus: "cancelled" }, "failed"],
+    [{ authStatus: "oAuth", runtimeStatus: "starting" }, "pending"],
+    [{ authStatus: "oAuth", runtimeStatus: "notStarted" }, "pending"],
+    [{ authStatus: "oAuth", runtimeStatus: "disabled" }, "disabled"],
+    // `toolsAndAuthOnly` may omit the runtime status; auth and the tool listing decide.
+    [{ authStatus: "notLoggedIn" }, "needs-auth"],
+    [{ authStatus: "oAuth", toolsError: "boom" }, "failed"],
+    [{ authStatus: "bearerToken", runtimeStatus: null }, "connected"],
+  ] as const)("maps %j to %s", (server, status) => {
+    assert.equal(CodexAdapterV2.codexMcpServerStatus(server), status);
+  });
+});
+
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
     const usage = CodexAdapterV2.codexProviderTurnTokenUsage(
@@ -8638,6 +8656,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             NodeServices.layer,
             NodeCrypto.layer,
           ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("checks the named MCP server before reloading Codex servers", () =>
+    Effect.gen(function* () {
+      const scenario = "mcp-reconnect";
+      const nativeThreadId = "native-mcp-reconnect";
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "unused-turn",
+            prompt: "unused-prompt",
+          }).slice(0, 5),
+          ...[3, 4].flatMap((id) => [
+            {
+              type: "expect_outbound" as const,
+              label: "list servers",
+              frame: {
+                id,
+                method: "mcpServerStatus/list",
+                params: { threadId: nativeThreadId, detail: "toolsAndAuthOnly" },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: "server listing",
+              frame: {
+                id,
+                result: {
+                  data: [
+                    {
+                      name: "linear",
+                      authStatus: "notLoggedIn",
+                      tools: {},
+                      resources: [],
+                      resourceTemplates: [],
+                    },
+                  ],
+                  nextCursor: null,
+                },
+              },
+            },
+          ]),
+          {
+            type: "expect_outbound",
+            label: "reload known server",
+            frame: { id: 5, method: "config/mcpServer/reload" },
+          },
+          { type: "emit_inbound", label: "reload completed", frame: { id: 5, result: {} } },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const auth = harness.runtime.mcpServerAuth!;
+      const target = { providerThread: harness.providerThread };
+      const error = yield* Effect.flip(auth.reconnect({ ...target, server: "lienar" }));
+      assert.equal(error._tag, "ProviderAdapterProtocolError");
+      yield* auth.reconnect({ ...target, server: "linear" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
     ),

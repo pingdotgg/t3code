@@ -699,6 +699,17 @@ export interface ClaudeAgentSdkQuerySession {
     ReadonlyArray<ClaudePermissionRule>,
     ClaudeAgentSdkQueryRunnerError
   >;
+  /** The CLI holds the pending sign-in and reconnects the server itself once it finishes. */
+  readonly mcpAuth: {
+    readonly authenticate: (
+      server: string,
+    ) => Effect.Effect<ClaudeMcpAuthenticateReply, ClaudeAgentSdkQueryRunnerError>;
+    readonly submitCallback: (input: {
+      readonly server: string;
+      readonly callbackUrl: string;
+    }) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+    readonly reconnect: (server: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  };
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -888,7 +899,12 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
 async function sendClaudeControlRequest(
   queryRuntime: ClaudeQuery,
   request: {
-    readonly subtype: "mcp_call" | "list_permission_rules" | "rename_session";
+    readonly subtype:
+      | "mcp_call"
+      | "list_permission_rules"
+      | "rename_session"
+      | "mcp_authenticate"
+      | "mcp_oauth_callback_url";
     readonly [key: string]: unknown;
   },
 ): Promise<unknown> {
@@ -899,6 +915,23 @@ async function sendClaudeControlRequest(
   const reply: unknown = await Reflect.apply(send, queryRuntime, [request]);
   return Predicate.isObject(reply) ? reply.response : undefined;
 }
+
+function claudeMcpServerAuthError(action: string) {
+  return (error: ClaudeAgentSdkQueryRunnerError) =>
+    new ProviderAdapter.ProviderAdapterProtocolError({
+      driver: CLAUDE_PROVIDER,
+      detail: `Claude could not ${action}`,
+      cause: error,
+    });
+}
+
+// No `authUrl` means the sign-in finished without the user.
+const ClaudeMcpAuthenticateReply = Schema.Struct({
+  authUrl: Schema.optional(Schema.String),
+  callbackExpected: Schema.optional(Schema.Boolean),
+});
+type ClaudeMcpAuthenticateReply = typeof ClaudeMcpAuthenticateReply.Type;
+const decodeClaudeMcpAuthenticateReply = Schema.decodeUnknownEffect(ClaudeMcpAuthenticateReply);
 
 const ClaudePermissionRules = Schema.Struct({
   state: Schema.Struct({
@@ -1884,6 +1917,35 @@ export const layerQueryRunner: Layer.Layer<
           Effect.map(({ state }) => state.rules),
           Effect.mapError((cause) => queryRunnerError(cause, "listPermissionRules")),
         ),
+        mcpAuth: {
+          authenticate: (server) =>
+            Effect.tryPromise({
+              try: () =>
+                sendClaudeControlRequest(queryRuntime, {
+                  subtype: "mcp_authenticate",
+                  serverName: server,
+                }),
+              catch: (cause) => queryRunnerError(cause, "mcpAuthenticate"),
+            }).pipe(
+              Effect.flatMap(decodeClaudeMcpAuthenticateReply),
+              Effect.mapError((cause) => queryRunnerError(cause, "mcpAuthenticate")),
+            ),
+          submitCallback: ({ server, callbackUrl }) =>
+            Effect.tryPromise({
+              try: () =>
+                sendClaudeControlRequest(queryRuntime, {
+                  subtype: "mcp_oauth_callback_url",
+                  serverName: server,
+                  callbackUrl,
+                }),
+              catch: (cause) => queryRunnerError(cause, "mcpSubmitOAuthCallbackUrl"),
+            }).pipe(Effect.asVoid),
+          reconnect: (server) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.reconnectMcpServer(server),
+              catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
+            }),
+        },
         interrupt: Effect.tryPromise({
           try: () => queryRuntime.interrupt(),
           catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -8616,20 +8678,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             registry: target.toolCalls,
           });
 
-        // App requests never start a CLI; they reuse the live process that ran the tool.
-        const mcpAppQuery = Effect.fn("ClaudeAdapterV2.mcpAppQuery")(function* (
+        // App and sign-in requests never start a CLI; they reuse the live process that ran the tool.
+        const liveQueryFor = Effect.fn("ClaudeAdapterV2.liveQueryFor")(function* (
           providerThread: OrchestrationV2ProviderThread,
         ) {
           const liveQuery = yield* Ref.get(queryContext);
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           if (
             liveQuery === null ||
             liveQuery.stopping ||
-            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            nativeThreadId == null ||
+            (liveQuery.nativeThreadId !== nativeThreadId &&
+              clearedNativeSessions.get(liveQuery.nativeThreadId) !== nativeThreadId)
           ) {
             return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
               driver: CLAUDE_PROVIDER,
             });
           }
+          return liveQuery;
+        });
+
+        const mcpAppQuery = Effect.fn("ClaudeAdapterV2.mcpAppQuery")(function* (
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          const liveQuery = yield* liveQueryFor(providerThread);
           if (!claudeSupportsMcpApps(liveQuery.capabilities)) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: CLAUDE_PROVIDER,
@@ -14290,6 +14362,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             yield* applySessionTitle(live.query, live.nativeThreadId, title);
           }),
+          mcpServerAuth: {
+            list: Effect.fn("ClaudeAdapterV2.listMcpServers")(function* ({ providerThread }) {
+              const liveQuery = yield* liveQueryFor(providerThread);
+              const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+                Effect.mapError(claudeMcpServerAuthError("list MCP servers")),
+              );
+              return statuses.map(({ name, status }) => ({ name, status }));
+            }),
+            authenticate: Effect.fn("ClaudeAdapterV2.authenticateMcpServer")(function* ({
+              providerThread,
+              server,
+            }) {
+              const liveQuery = yield* liveQueryFor(providerThread);
+              const reply = yield* liveQuery.query.mcpAuth
+                .authenticate(server)
+                .pipe(Effect.mapError(claudeMcpServerAuthError("start sign-in")));
+              return {
+                ...(reply.authUrl === undefined ? {} : { authorizationUrl: reply.authUrl }),
+                callbackExpected: reply.callbackExpected === true,
+              };
+            }),
+            submitCallback: Effect.fn("ClaudeAdapterV2.submitMcpOAuthCallback")(function* ({
+              providerThread,
+              server,
+              callbackUrl,
+            }) {
+              const liveQuery = yield* liveQueryFor(providerThread);
+              yield* liveQuery.query.mcpAuth
+                .submitCallback({ server, callbackUrl })
+                .pipe(Effect.mapError(claudeMcpServerAuthError("finish sign-in")));
+            }),
+            reconnect: Effect.fn("ClaudeAdapterV2.reconnectMcpServer")(function* ({
+              providerThread,
+              server,
+            }) {
+              const liveQuery = yield* liveQueryFor(providerThread);
+              yield* liveQuery.query.mcpAuth
+                .reconnect(server)
+                .pipe(Effect.mapError(claudeMcpServerAuthError("reconnect")));
+            }),
+          },
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);
             const task = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);

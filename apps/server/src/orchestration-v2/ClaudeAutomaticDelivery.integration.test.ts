@@ -44,6 +44,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { unexpectedClaudeMcpAuth } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
@@ -172,6 +173,7 @@ it.effect.each(deliveries)(
               renameSession: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
+              mcpAuth: unexpectedClaudeMcpAuth,
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
@@ -522,6 +524,7 @@ it.effect("applies an effort change to the running Claude query without waiting 
             renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
+            mcpAuth: unexpectedClaudeMcpAuth,
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
@@ -638,6 +641,7 @@ const renamedClaudeSessionTitles = (options: { readonly renameDuringStartup: boo
               }),
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
+            mcpAuth: unexpectedClaudeMcpAuth,
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
@@ -864,6 +868,7 @@ it.effect("offers a continuation for a later wake after a queued continuation is
                 renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
+                mcpAuth: unexpectedClaudeMcpAuth,
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),

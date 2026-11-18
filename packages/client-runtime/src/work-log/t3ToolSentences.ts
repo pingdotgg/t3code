@@ -16,6 +16,14 @@ export function t3ToolSentence(labels: ReadonlyArray<string>): T3ToolSentence | 
 
 const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T3ToolSentence>([
   [
+    "Manage\nManaging\nManaged\nMCP server sign-in",
+    {
+      detail: msg(
+        "{status, select, inProgress {Managing MCP server sign-in} completed {Managed MCP server sign-in} failed {Failed to manage MCP server sign-in} declined {Declined to manage MCP server sign-in} stopped {Stopped managing MCP server sign-in} other {Managing MCP server sign-in}}",
+      ),
+    },
+  ],
+  [
     "Link\nLinking\nLinked\na pull request",
     {
       detail: msg(
