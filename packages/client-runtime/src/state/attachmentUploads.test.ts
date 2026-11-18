@@ -210,8 +210,16 @@ describe("attachment upload registry", () => {
       reason: "Server unavailable",
     });
     expect(progress).toEqual([0, 0.1, 1]);
-    upload.mockImplementationOnce(async () => "uploaded");
+    upload.mockImplementationOnce(async (_request, _signal, report) => {
+      report(0.5);
+      return "uploaded";
+    });
     queue.retry(uploadKey(environmentId, "file"));
+    expect(states[uploadKey(environmentId, "file")]).toEqual({
+      status: "uploading",
+      progress: 0.5,
+      retrying: true,
+    });
     await queue.settled();
     expect(states[uploadKey(environmentId, "file")]).toEqual({ status: "ready" });
     queue.dispose();
