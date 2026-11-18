@@ -97,7 +97,7 @@ export type ScreenAction =
   | { kind: "type"; ref: string; text: string }
   | { kind: "press"; key: Key }
   /** `ref`: the list or area to scroll (a control of this observation); the window's middle when absent. */
-  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string }
+  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string; amount?: number }
   /** Open the control's context menu. */
   | { kind: "menu"; ref: string }
   /** Press the item of an open menu with this title. */
@@ -154,7 +154,7 @@ export function fitScale(w: number, h: number, maxEdge: number = SCREENSHOT_MAX_
  * `allowPointer`: the person allowed the real pointer and keyboard for this one step. Without it a backend acts in the
  * background or throws NeedsPointer, and never touches the real pointer or global keyboard.
  */
-export type ActOptions = { signal?: AbortSignal; allowPointer?: boolean };
+export type ActOptions = { signal?: AbortSignal; allowPointer?: boolean; app?: string };
 
 /**
  * Thrown by a backend when an action cannot be done in the background (a canvas or game with no accessible control, an

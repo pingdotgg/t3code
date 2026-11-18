@@ -37,6 +37,9 @@ export class FakeNotes implements ScreenBackend {
   selected: number | null = null;
   /** The open context menu's items, and the items picked from one. */
   menu: string[] = [];
+  /** Whether the list scrolls, and how many pages down it is. */
+  scrollable = false;
+  page = 0;
   readonly picked: string[] = [];
   private focus: "search" | null = null;
   private at: Point = { x: 400, y: 300 };
@@ -68,7 +71,7 @@ export class FakeNotes implements ScreenBackend {
         : "Notes";
     const text = this.searched
       ? `Search results for “${this.query}”: ${visible.map((index) => this.notes[index]).join("; ") || "no notes match"}`
-      : `${this.notes.length} notes`;
+      : `${this.notes.length} notes${this.page ? `, page ${this.page + 1}` : ""}`;
     return {
       backend: "desktop",
       app: "Notes",
@@ -122,6 +125,11 @@ export class FakeNotes implements ScreenBackend {
         }
         return done(undefined);
       case "scroll":
+        if (this.scrollable)
+          this.page = Math.max(
+            0,
+            this.page + (action.direction === "up" ? -1 : 1) * (action.amount ?? 1),
+          );
         return done({ x: 400, y: 300 });
       case "menu":
         this.menu = action.ref === "search" ? ["Paste", "Select password"] : [];

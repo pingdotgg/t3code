@@ -307,6 +307,7 @@ describe("DesktopBackend", () => {
     await desktop.act({ kind: "press", key: "enter" });
     await desktop.act({ kind: "scroll", direction: "bottom" });
     await desktop.act({ kind: "scroll", direction: "down", ref: "0.3" });
+    await desktop.act({ kind: "scroll", direction: "down", amount: 3 });
     await desktop.act({ kind: "press", key: "space" });
     await desktop.act({ kind: "press", key: "up" });
     await desktop.act({ kind: "press", key: "cmd+l" });
@@ -317,6 +318,7 @@ describe("DesktopBackend", () => {
       ["press", JSON.stringify({ code: 36 })],
       ["scroll", JSON.stringify({ direction: "bottom" })],
       ["scroll", JSON.stringify({ direction: "down", ref: "0.3" })],
+      ["scroll", JSON.stringify({ direction: "down", amount: 3 })],
       ["press", JSON.stringify({ code: 49 })],
       ["press", JSON.stringify({ code: 126 })],
       ["press", JSON.stringify({ code: 37, command: "L" })],

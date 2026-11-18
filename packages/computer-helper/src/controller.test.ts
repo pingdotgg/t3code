@@ -31,6 +31,7 @@ import type {
   BrowserTab,
   BrowserTabs,
   Observation,
+  ObserveOptions,
   ScreenAction,
   ScreenBackend,
   ScreenControl,
@@ -1279,6 +1280,47 @@ describe("an act the agent chose", () => {
       { kind: "click", ref: "menu", role: "menuitem", label: "Password for dana@acme.test" },
     ]);
     expect(page.picked).toEqual(["Select password", "Password for dana@acme.test"]);
+  });
+
+  it("acts on the window of the app it names, as a look does", async () => {
+    const { page, computer } = actWith();
+    const observed: Array<string | undefined> = [];
+    const acted: Array<string | undefined> = [];
+    const observe = page.observe.bind(page);
+    const act = page.act.bind(page);
+    page.observe = async (options?: ObserveOptions) => {
+      observed.push(options?.app);
+      return observe();
+    };
+    page.act = async (action, options) => {
+      acted.push(options?.app);
+      return act(action, options);
+    };
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "scroll", direction: "down", app: "Notes" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: ["scrolled down", "nothing moved: the view is at its end, or does not scroll"],
+    });
+    expect(new Set(observed)).toEqual(new Set(["Notes"]));
+    expect(acted).toEqual(["Notes"]);
+  });
+
+  it("scrolls by pages, and the screen after shows it moved", async () => {
+    const { page, computer } = actWith();
+    page.scrollable = true;
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "scroll", direction: "down", amount: 2 },
+      }),
+    ).toMatchObject({ status: "done", steps: ["scrolled down 2 pages"] });
+    expect((await page.observe()).text).toContain("page 3");
   });
 
   it("returns a popup once it has filled, not the first frame of it", async () => {

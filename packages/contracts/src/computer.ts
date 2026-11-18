@@ -292,7 +292,11 @@ export const ComputerAct = Schema.Struct({
   y: Schema.optionalKey(Schema.Number),
   key: Schema.optionalKey(ComputerKey),
   direction: Schema.optionalKey(Schema.Literals(["up", "down", "top", "bottom"])),
+  /** `scroll` up or down: how many screens, 1 to 10; one when left out. */
+  amount: Schema.optionalKey(Schema.Number),
   url: Schema.optionalKey(Schema.String),
+  /** The app whose window to act on, as computer_look reads it; defaults to the app in front. */
+  app: Schema.optionalKey(Schema.String),
 });
 export type ComputerAct = typeof ComputerAct.Type;
 
@@ -309,7 +313,7 @@ export const ComputerLook = Schema.Struct({
   app: Schema.String,
   title: Schema.String,
   url: Schema.optionalKey(Schema.String),
-  /** The visible text, at most 1,500 characters. */
+  /** The visible text (a browser's page, not its tabs and toolbar), at most 8,000 characters. */
   text: Schema.String,
   controls: Schema.Array(
     Schema.Struct({
@@ -325,7 +329,7 @@ export const ComputerLook = Schema.Struct({
   truncated: Schema.optionalKey(Schema.Boolean),
   /** The page was still loading when the wait for it ran out: look again. */
   loading: Schema.optionalKey(Schema.Boolean),
-  /** A popup open over the window (saved sign-ins, a menu), its highlighted line marked ▸: pick with `down` then `return`. */
+  /** A popup open over the window (saved sign-ins, a menu), its highlighted line marked ▸: click a line by its text as `label`. */
   popup: Schema.optionalKey(Schema.String),
   /** Read from a screenshot, because the app would not show its window through accessibility. */
   visual: Schema.optionalKey(Schema.Boolean),

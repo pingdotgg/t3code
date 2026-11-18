@@ -41,7 +41,11 @@ export type ComputerAct = {
   y?: number;
   key?: Key | "return";
   direction?: "up" | "down" | "top" | "bottom";
+  /** `scroll` up or down: how many screens. */
+  amount?: number;
   url?: string;
+  /** The app whose window to act on; the app in front when left out. */
+  app?: string;
 };
 
 export type ComputerOutcome = {
@@ -212,6 +216,8 @@ type Run = {
   authorized: number;
   /** The text box the task typed into, for the Enter that follows. */
   typedInto: ScreenControl | null;
+  /** The app whose window an act targets; otherwise the app in front. */
+  app?: string;
 };
 
 type Decision =
@@ -293,7 +299,7 @@ export class ComputerUse {
       let opened = false;
       for (let step = 0; step < run.maxSteps; step += 1) {
         this.checkpoint(run);
-        const screen = await settled(backend, { signal: run.signal }, this.clock);
+        const screen = await settled(backend, this.where(run), this.clock);
         const key = screenKey(screen);
         const avoid = avoidBy.get(key) ?? new Map<string, string>();
         avoidBy.set(key, avoid);
@@ -387,6 +393,7 @@ export class ComputerUse {
       waited: 0,
       authorized: 0,
       typedInto: null,
+      ...(act.app ? { app: act.app } : {}),
     };
     let surface: string | null = null;
     const end = (status: ComputerOutcome["status"], reason: string, where = surface) => {
@@ -437,24 +444,24 @@ export class ComputerUse {
           "Computer use needs accessibility access on this computer.",
           null,
         );
-      const seen = await backend.observe({ signal: run.signal });
+      const seen = await backend.observe(this.where(run));
       surface = `${seen.app}: ${clip(seen.title, 60)}`;
       const screen = await this.reopenPopup(run, backend, seen, act);
       const chosen = actOn(screen, this.resolveRef(screen, act), task.text);
       if ("stop" in chosen) return end("stuck", chosen.stop);
       await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
+      // A scroll that changed nothing says so, so the agent does not keep scrolling.
+      if (chosen.action.kind === "scroll") {
+        const after = await settled(backend, this.where(run), this.clock);
+        if (screenKey(after) === screenKey(seen))
+          this.record(run, "nothing moved: the view is at its end, or does not scroll");
+      }
       // A browser closes its saved-account pickers within seconds, so the popup comes back with the step itself.
       if (chosen.action.kind !== "type" && chosen.action.kind !== "scroll") {
-        let after = await backend.observe({ signal: run.signal });
+        let after = await backend.observe(this.where(run));
         // Its lines arrive after the popup itself (saved accounts load late): wait until it stops changing.
         if (after.popup)
-          after = await settled(
-            backend,
-            { signal: run.signal },
-            this.clock,
-            () => true,
-            POPUP_SETTLE_MS,
-          );
+          after = await settled(backend, this.where(run), this.clock, () => true, POPUP_SETTLE_MS);
         if (this.deps.popupSeen) this.deps.popupSeen.text = after.popup ?? "";
         if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
       }
@@ -471,6 +478,10 @@ export class ComputerUse {
     if (run.signal.aborted) throw new Halt("stopped", stopReason(run.signal));
     if (this.now() - run.started - run.waited > run.timeoutMs)
       throw new Halt("stuck", "It was taking too long.");
+  }
+
+  private where(run: Run) {
+    return { signal: run.signal, ...(run.app ? { app: run.app } : {}) };
   }
 
   private record(run: Run, text: string) {
@@ -595,7 +606,7 @@ export class ComputerUse {
       { kind: "press", key: "down" },
       "pressed down to reopen the popup",
     );
-    return settled(backend, { signal: run.signal }, this.clock, (seen) =>
+    return settled(backend, this.where(run), this.clock, (seen) =>
       popupLines(seen).includes(label),
     );
   }
@@ -689,7 +700,7 @@ export class ComputerUse {
   ) {
     if (action.kind !== "click" && action.kind !== "type") return;
     const chosen = this.control(screen, action.ref);
-    const now = await backend.observe({ signal: run.signal });
+    const now = await backend.observe(this.where(run));
     // A screen point the agent named is what was approved: only the app under it must be the same.
     if (chosen.role === "other" && chosen.ref.startsWith("v:")) {
       if (now.app !== screen.app)
@@ -721,7 +732,7 @@ export class ComputerUse {
     let result: ActResult;
     try {
       result = (await backend.act(action, {
-        signal: run.signal,
+        ...this.where(run),
         ...(allowPointer ? { allowPointer: true } : {}),
       })) ?? { mode: "background" };
     } catch (error) {
@@ -1181,10 +1192,19 @@ function actOn(
     }
     case "scroll": {
       const direction = act.direction ?? "down";
+      const pages =
+        direction === "up" || direction === "down"
+          ? Math.min(10, Math.max(1, Math.round(act.amount ?? 1)))
+          : 1;
       return {
         screen,
-        action: { kind: "scroll", direction, ...(byRef ? { ref: byRef.ref } : {}) },
-        said: `scrolled ${direction}`,
+        action: {
+          kind: "scroll",
+          direction,
+          ...(byRef ? { ref: byRef.ref } : {}),
+          ...(pages > 1 ? { amount: pages } : {}),
+        },
+        said: `scrolled ${direction}${pages > 1 ? ` ${pages} pages` : ""}`,
       };
     }
     case "open_url":

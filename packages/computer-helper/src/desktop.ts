@@ -344,33 +344,55 @@ function showsLoading(el, role) {
   if (role !== 'AXGroup' && role !== 'AXWebArea') return false;
   return plain(el, 'AXElementBusy') === true || LOADER.test(plain(el, 'AXDOMIdentifier') || '');
 }
+// A browser window's page: its first web area, found before the walk so the page, not the tabs, toolbar and bookmarks
+// around it, gets the walk's budget. Refs stay paths from the window.
+function pageOf(win) {
+  var queue = [{ el: win, path: [], depth: 0 }], seen = 0;
+  while (queue.length && seen < 600) {
+    var node = queue.shift(), kids = children(node.el);
+    for (var i = 0; i < kids.length; i++, seen++) {
+      var path = node.path.concat([i]);
+      if (plain(kids[i], 'AXRole') === 'AXWebArea') return { el: kids[i], path: path, depth: node.depth + 1 };
+      if (node.depth < 12) queue.push({ el: kids[i], path: path, depth: node.depth + 1 });
+    }
+  }
+  return null;
+}
+var MAX_TEXT = 8000, MAX_NODES = 4000, MAX_CONTROLS = 200;
 function run(argv) {
   var target = front(argv && argv[0]);
   if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
   var win = target.win, started = Date.now(), truncated = false, loading = false;
   var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
   var left = wp[0], top = wp[1], right = wp[0] + ws[0], bottom = wp[1] + ws[1];
-  var queue = [{ el: win, path: [], depth: 0 }], visited = 0, controls = [], text = '', url = '';
+  var page = pageOf(win), url = page ? urlOf(page.el) : '';
+  var queue = [page || { el: win, path: [], depth: 0 }], visited = 0, controls = [], text = '';
+  // Chrome reports what is scrolled out of view as 1 point tall on the page's top or bottom edge.
+  var pp = page && pair(page.el, 'AXPosition'), psz = page && pair(page.el, 'AXSize');
+  var pageTop = pp ? pp[1] : -1e9, pageBottom = pp && psz ? pp[1] + psz[1] : 1e9;
   while (queue.length) {
-    if (visited >= 2500 || controls.length >= 150 || Date.now() - started > WALK_MS) { truncated = true; break; }
+    if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS || Date.now() - started > WALK_MS) { truncated = true; break; }
     var node = queue.shift(), kids = children(node.el);
     for (var i = 0; i < kids.length; i++) {
-      if (visited >= 2500 || controls.length >= 150) { truncated = true; break; }
+      if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS) { truncated = true; break; }
       visited++;
       var el = kids[i], role = plain(el, 'AXRole'), p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
       var sized = p && s && s[0] > 0 && s[1] > 0;
       if (sized && (p[0] >= right || p[1] >= bottom || p[0] + s[0] <= left || p[1] + s[1] <= top)) continue;
+      var pinned = p && s && s[1] <= 1 && (Math.abs(p[1] - pageTop) <= 1 || Math.abs(p[1] + s[1] - pageBottom) <= 1);
       var path = node.path.concat([i]);
       if (role === 'AXWebArea' && !url) url = urlOf(el);
       if (!loading && sized && showsLoading(el, role)) loading = true;
-      if (role === 'AXStaticText') {
+      if (pinned) {
+        // Scrolled out of view: neither listed nor read, but its children may be on screen.
+      } else if (role === 'AXStaticText') {
         var words = plain(el, 'AXValue');
-        if (text.length < 1500 && words) text += (text ? ' ' : '') + clip(words, 1500);
+        if (text.length < MAX_TEXT && words) text += (text ? ' ' : '') + clip(words, 1500);
       } else if (ROLES[role] && sized) {
         // A password field (subrole AXSecureTextField) is listed so it can be typed into, never with its value.
         var kind = ROLES[role], value = plain(el, 'AXSubrole') === 'AXSecureTextField' ? '' : plain(el, 'AXValue');
         var label = plain(el, 'AXTitle') || plain(el, 'AXDescription') || (kind === 'textbox' ? '' : value) ||
-          (kind === 'row' ? innerText(el, 0) : '') ||
+          (kind === 'row' || kind === 'link' || kind === 'button' ? innerText(el, 0) : '') ||
           (plain(el, 'AXSubrole') ? plain(el, 'AXRoleDescription') : '') || plain(el, 'AXHelp') || '';
         label = clip(label, 100);
         if (kind !== 'row' || label) {
@@ -386,8 +408,15 @@ function run(argv) {
     }
   }
   if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
+  // A web card is often a link wrapping a link to the same place: one control, the outer one.
+  controls = controls.filter(function (c, i) {
+    return !controls.slice(0, i).some(function (o) {
+      return o.role === c.role && o.label === c.label && c.bounds.x >= o.bounds.x && c.bounds.y >= o.bounds.y &&
+        c.bounds.x + c.bounds.w <= o.bounds.x + o.bounds.w && c.bounds.y + c.bounds.h <= o.bounds.y + o.bounds.h;
+    });
+  });
   controls.sort(function (a, b) { return Math.round(a.bounds.y / 8) - Math.round(b.bounds.y / 8) || a.bounds.x - b.bounds.x; });
-  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, 1500), window: { x: left, y: top, w: ws[0], h: ws[1] } };
+  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, MAX_TEXT), window: { x: left, y: top, w: ws[0], h: ws[1] } };
   if (url) out.url = url;
   if (truncated) out.truncated = true;
   if (loading) out.loading = true;
@@ -421,6 +450,8 @@ function frontWindow(name) {
  * "v:x,y" is a spot read from a screenshot (the app refused accessibility), clicked where it was seen.
  */
 const ACT_SCRIPT = `${JXA_HELPERS}${FRONT}${WINDOW_LIST}
+// The app an act targets (computer_act's \`app\`); empty is the app in front.
+var TARGET_APP = '';
 function resolve(win, ref) {
   var el = win, parts = String(ref).split('.');
   for (var i = 0; i < parts.length; i++) {
@@ -433,12 +464,12 @@ function resolve(win, ref) {
 // The window's middle, from accessibility when the app answers, else from the window list.
 function middleOfWindow() {
   try {
-    var target = front();
+    var target = front(TARGET_APP);
     if (!target.win) throw new Error('ADA_NO_WINDOW');
     return center(target.win);
   } catch (error) {
     if (String(error.message).indexOf('ADA_UNREACHABLE') < 0) throw error;
-    var seen = frontWindow().window;
+    var seen = frontWindow(TARGET_APP).window;
     if (!seen) throw new Error('ADA_NO_WINDOW');
     return [seen.x + seen.w / 2, seen.y + seen.h / 2];
   }
@@ -466,6 +497,17 @@ function focusInPlace(el) {
   if (!focusable(el)) return false;
   if ($.AXUIElementSetAttributeValue(el, $('AXFocused'), $.NSNumber.numberWithBool(true)) !== 0) return false;
   return true;
+}
+function webAreaOf(win) {
+  var queue = [{ el: win, depth: 0 }], seen = 0;
+  while (queue.length && seen < 600) {
+    var node = queue.shift(), kids = children(node.el);
+    for (var i = 0; i < kids.length; i++, seen++) {
+      if (plain(kids[i], 'AXRole') === 'AXWebArea') return kids[i];
+      if (node.depth < 12) queue.push({ el: kids[i], depth: node.depth + 1 });
+    }
+  }
+  return null;
 }
 // The scroll view a person would scroll: the largest scroll or web area inside the window (not a sidebar), else null.
 function scrollArea(win) {
@@ -543,11 +585,12 @@ function paste(app, text, events) {
 }
 function run(argv) {
   var op = argv[0], payload = JSON.parse(argv[1] || '{}'), dryrun = payload.dryrun === true;
+  TARGET_APP = typeof payload.app === 'string' ? payload.app : '';
   trusted();
   if (op === 'press') {
     // A key to the app's own process (CGEventPostToPid), not the global tap, so the person's keyboard is untouched. A
     // Command shortcut is the app's own menu item first, which does not depend on the keyboard layout.
-    var app = front();
+    var app = front(TARGET_APP);
     if (dryrun) return JSON.stringify({ mode: 'background' });
     var keyPid = app.name ? pidOf(app.name) : 0;
     if (!payload.command) keyToPid(keyPid, payload.code);
@@ -556,27 +599,35 @@ function run(argv) {
     return JSON.stringify({ mode: 'background' });
   }
   if (op === 'scroll') {
-    var target = null;
+    var target = null, times = Math.min(10, Math.max(1, Number(payload.amount) || 1));
+    var spid = 0; try { spid = pidOf(front(TARGET_APP).name); } catch (e) { spid = 0; }
+    // A browser's page takes no wheel events posted to its process, but does take its page keys, in the background.
+    var shown = null; try { shown = !payload.ref && front(TARGET_APP).win ? webAreaOf(front(TARGET_APP).win) : null; } catch (e) { shown = null; }
+    if (shown && spid) {
+      var PAGE_KEYS = { down: 121, up: 116, top: 115, bottom: 119 };
+      var pageKey = PAGE_KEYS[payload.direction] || 121;
+      for (var t = 0; t < (pageKey === 115 || pageKey === 119 ? 1 : times); t++) if (!dryrun) keyToPid(spid, pageKey);
+      return JSON.stringify({ mode: 'background', how: 'page keys to the page' });
+    }
     if (payload.ref) {
-      var w = front().win;
+      var w = front(TARGET_APP).win;
       if (!w) throw new Error('ADA_NO_WINDOW');
       target = center(resolve(w, payload.ref));
       if (!target) throw new Error('ADA_GONE');
     } else {
-      try { var fw = front().win; target = fw ? scrollArea(fw) : null; } catch (error) { target = null; }
+      try { var fw = front(TARGET_APP).win; target = fw ? scrollArea(fw) : null; } catch (error) { target = null; }
       target = target || middleOfWindow();
     }
     if (!target) throw new Error('ADA_NO_WINDOW');
     if (!onScreen(target)) throw new Error('ADA_OFFSCREEN');
     var up = payload.direction === 'up' || payload.direction === 'top';
-    var steps = payload.direction === 'top' || payload.direction === 'bottom' ? 20 : 3;
+    var steps = payload.direction === 'top' || payload.direction === 'bottom' ? 20 : 3 * times;
     // Scroll wheel events to the window's process, at the scroll area: the person's pointer is not moved.
-    var spid = 0; try { spid = pidOf(front().app); } catch (e) { spid = 0; }
     for (var n = 0; n < steps; n++) { var ev = $.CGEventCreateScrollWheelEvent($(), $.kCGScrollEventUnitLine, 1, up ? 15 : -15); $.CGEventSetLocation(ev, $.CGPointMake(target[0], target[1])); postToPid(spid, ev, dryrun); }
     return JSON.stringify({ mode: 'background', at: { x: target[0], y: target[1] } });
   }
   if (op === 'setvalue') {
-    var box = resolve(front().win, payload.ref);
+    var box = resolve(front(TARGET_APP).win, payload.ref);
     // AXValue set directly on the field (no keyboard): a native field and Chrome's omnibox take it; others do not.
     if (dryrun) return JSON.stringify({ mode: 'background' });
     if ($.AXUIElementSetAttributeValue(box, $('AXValue'), $(payload.text)) !== 0) throw new Error('ADA_NEEDS_POINTER:this field does not accept text without the keyboard:');
@@ -591,15 +642,15 @@ function run(argv) {
     return JSON.stringify({ mode: 'pointer' });
   }
   if (op === 'menu') {
-    var owner = front();
+    var owner = front(TARGET_APP);
     if (!owner.win) throw new Error('ADA_NO_WINDOW');
     var menuOf = resolve(owner.win, payload.ref), menuAt = center(menuOf);
     if (!dryrun && $.AXUIElementPerformAction(menuOf, $('AXShowMenu')) !== 0) throw new Error('ADA_NEEDS_POINTER:that control has no menu:');
     return JSON.stringify(menuAt ? { mode: 'background', at: { x: menuAt[0], y: menuAt[1] } } : { mode: 'background' });
   }
   if (op === 'pick') {
-    var items = openMenuItems(front().app).filter(function (item) { return plain(item, 'AXTitle') === payload.label; });
-    if (!items.length) items = popupRows(front().app, payload.label);
+    var items = openMenuItems(front(TARGET_APP).app).filter(function (item) { return plain(item, 'AXTitle') === payload.label; });
+    if (!items.length) items = popupRows(front(TARGET_APP).app, payload.label);
     if (!items.length) throw new Error('ADA_GONE');
     if (!dryrun && $.AXUIElementPerformAction(items[0], $('AXPress')) !== 0) throw new Error('ADA_GONE');
     return JSON.stringify({ mode: 'background', how: 'the menu item' });
@@ -609,7 +660,7 @@ function run(argv) {
     point = [Number(spot[1]), Number(spot[2])];
     if (op === 'click') el = elementAt(point);
   } else {
-    var here = front();
+    var here = front(TARGET_APP);
     if (!here.win) throw new Error('ADA_NO_WINDOW');
     ax = here.app;
     el = resolve(here.win, payload.ref);
@@ -617,7 +668,7 @@ function run(argv) {
   }
   if (op === 'value') return JSON.stringify({ value: el && plain(el, 'AXSubrole') !== 'AXSecureTextField' ? plain(el, 'AXValue') : null });
   if (op === 'paste') {
-    if (!dryrun) paste(ax || front().app, payload.text, payload.events === true);
+    if (!dryrun) paste(ax || front(TARGET_APP).app, payload.text, payload.events === true);
     return 'ok';
   }
   if (op === 'click') {
@@ -755,9 +806,11 @@ function actionPayload(action: ScreenAction): object {
       ? { code: KEY_CODES[action.key], command: action.key.slice(4).toUpperCase() }
       : { code: KEY_CODES[action.key] };
   if (action.kind === "scroll")
-    return action.ref
-      ? { direction: action.direction, ref: action.ref }
-      : { direction: action.direction };
+    return {
+      direction: action.direction,
+      ...(action.ref ? { ref: action.ref } : {}),
+      ...(action.amount ? { amount: action.amount } : {}),
+    };
   if (action.kind === "type") return { ref: action.ref, text: action.text };
   if (action.kind === "pick") return { label: action.label };
   return { ref: action.ref };
@@ -1042,7 +1095,11 @@ export class DesktopBackend implements ScreenBackend {
     const signal = options.signal;
     if (signal?.aborted) throw stopped(signal);
     if (action.kind === "type") return this.type(action.ref, action.text, options);
-    const payload = { ...actionPayload(action), ...(options.allowPointer ? { allow: true } : {}) };
+    const payload = {
+      ...actionPayload(action),
+      ...(options.allowPointer ? { allow: true } : {}),
+      ...(options.app ? { app: options.app } : {}),
+    };
     return resultOf(await this.call(ACT_SCRIPT, [action.kind, JSON.stringify(payload)], signal));
   }
 
@@ -1053,27 +1110,36 @@ export class DesktopBackend implements ScreenBackend {
    */
   private async type(ref: string, text: string, options: ActOptions): Promise<ActResult> {
     const signal = options.signal;
+    const on = options.app ? { app: options.app } : {};
     if (!options.allowPointer) {
-      await this.call(ACT_SCRIPT, ["setvalue", JSON.stringify({ ref, text })], signal);
+      await this.call(ACT_SCRIPT, ["setvalue", JSON.stringify({ ref, text, ...on })], signal);
       await this.sleep(READBACK_MS);
-      if (!landed(await this.readValue(ref, signal), text))
+      if (!landed(await this.readValue(ref, signal, on), text))
         throw new Error("The text did not land in the text box, so it stopped.");
       return { mode: "background", how: "value set through accessibility" };
     }
     const events = await this.systemEvents();
     const left = resultOf(
-      await this.call(ACT_SCRIPT, ["focus", JSON.stringify({ ref, allow: true, events })], signal),
+      await this.call(
+        ACT_SCRIPT,
+        ["focus", JSON.stringify({ ref, allow: true, events, ...on })],
+        signal,
+      ),
     );
     if (KEYBOARD_TEXT.test(text)) {
       for (const chunk of chunks(text, KEY_CHUNK)) {
         if (signal?.aborted) throw stopped(signal);
-        await this.call(ACT_SCRIPT, ["keys", JSON.stringify({ text: chunk, events })], signal);
+        await this.call(
+          ACT_SCRIPT,
+          ["keys", JSON.stringify({ text: chunk, events, ...on })],
+          signal,
+        );
       }
     } else {
-      await this.call(ACT_SCRIPT, ["paste", JSON.stringify({ ref, text, events })], signal);
+      await this.call(ACT_SCRIPT, ["paste", JSON.stringify({ ref, text, events, ...on })], signal);
     }
     await this.sleep(READBACK_MS);
-    if (!landed(await this.readValue(ref, signal), text))
+    if (!landed(await this.readValue(ref, signal, on), text))
       throw new Error("The text did not land in the text box, so it stopped.");
     return {
       ...left,
@@ -1084,10 +1150,14 @@ export class DesktopBackend implements ScreenBackend {
     };
   }
 
-  private async readValue(ref: string, signal: AbortSignal | undefined): Promise<string | null> {
+  private async readValue(
+    ref: string,
+    signal: AbortSignal | undefined,
+    on: { app?: string },
+  ): Promise<string | null> {
     const read = object(
       json(
-        (await this.call(ACT_SCRIPT, ["value", JSON.stringify({ ref })], signal)).trim(),
+        (await this.call(ACT_SCRIPT, ["value", JSON.stringify({ ref, ...on })], signal)).trim(),
         "typed value",
       ),
       "typed value",
