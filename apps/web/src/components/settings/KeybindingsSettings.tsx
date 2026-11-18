@@ -1272,18 +1272,22 @@ function NewKeybindingCommandSelect({
         <ComboboxEmpty>{gt("No results found.")}</ComboboxEmpty>
         <ComboboxList>
           {(command: KeybindingCommandOption) => {
-            const bindings = allRows.filter((row) => row.command === command && !row.isShadowed);
+            const bindings = allRows.filter(
+              (row) => row.command === command && row.previewLabels.length > 0,
+            );
             return (
               <ComboboxItem key={command} value={command}>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                   <span>{commandLabel(command, m)}</span>
                   {bindings.length > 0 && (
                     <span className="flex shrink-0 flex-col items-end gap-1">
-                      {bindings.map((row) => (
-                        <Kbd key={row.id} title={row.when || undefined}>
-                          {formatShortcutLabel(row.binding.shortcut)}
-                        </Kbd>
-                      ))}
+                      {bindings.flatMap((row) =>
+                        row.previewLabels.map((label) => (
+                          <Kbd key={`${row.id}:${label}`} title={row.when || undefined}>
+                            {label}
+                          </Kbd>
+                        )),
+                      )}
                     </span>
                   )}
                 </div>

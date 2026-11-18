@@ -75,12 +75,12 @@ describe("KeybindingsSettings.logic", () => {
       { command: "terminal.toggle", key: "mod+l" },
     ]);
     const rows = buildKeybindingRows(bindings, "MacIntel");
-    expect(rows.filter((row) => row.isShadowed).map((row) => row.binding)).toEqual([
+    expect(rows.filter((row) => row.previewLabels.length === 0).map((row) => row.binding)).toEqual([
       bindings[8],
       bindings[2],
       bindings[0],
     ]);
-    expect(rows.filter((row) => !row.isShadowed)).toHaveLength(7);
+    expect(rows.filter((row) => row.previewLabels.length > 0)).toHaveLength(7);
     const sendBindings = compileResolvedKeybindingsConfig([
       { command: "composer.sendAlternate", key: "mod+enter" },
       { command: "chat.new", key: "mod+enter" },
@@ -89,8 +89,16 @@ describe("KeybindingsSettings.logic", () => {
       expect(
         buildKeybindingRows(sendBindings, "MacIntel", sendShortcut).find(
           (row) => row.command === "composer.sendAlternate",
-        )?.isShadowed,
+        )?.previewLabels.length === 0,
       ).toBe(sendShortcut === "enter");
+    }
+    for (const command of ["composer.sendAlternate", "composer.sendBackground"] as const) {
+      const binding = compileResolvedKeybindingsConfig([{ command, key: "mod+enter" }]);
+      const labels = (mode: "enter" | "mod-enter" | "mod-enter-multiline") =>
+        buildKeybindingRows(binding, "Win32", mode)[0]?.previewLabels;
+      expect(labels("enter")).toEqual(["Ctrl+Enter"]);
+      expect(labels("mod-enter")).toEqual(["Ctrl+Shift+Enter"]);
+      expect(labels("mod-enter-multiline")).toEqual(["Ctrl+Enter", "Ctrl+Shift+Enter"]);
     }
     const shiftedBindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+shift+enter" },
@@ -100,12 +108,12 @@ describe("KeybindingsSettings.logic", () => {
       expect(
         buildKeybindingRows(shiftedBindings, "MacIntel", sendShortcut).find(
           (row) => row.command === "chat.new",
-        )?.isShadowed,
+        )?.previewLabels.length === 0,
       ).toBe(sendShortcut === "mod-enter");
     }
     expect(
       buildKeybindingRows(bindings, "Win32").find((row) => row.command === "sidebar.toggle")
-        ?.isShadowed,
+        ?.previewLabels.length === 0,
     ).toBe(false);
   });
 
@@ -316,6 +324,7 @@ describe("KeybindingsSettings.logic", () => {
       rows[0]!.binding,
       { ...rows[1]!.binding, whenAst: { type: "identifier", name: "false" } },
     ]);
+    expect(disabledRows.find((row) => row.when === "false")?.previewLabels).toEqual([]);
     expect(disabledRows.map((row) => row.conflicts)).toEqual([[], []]);
 
     expect(
