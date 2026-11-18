@@ -235,7 +235,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
-  const scratchStartInFlightRef = useRef(false);
+  // A project tapped while No project still opens replaces it.
+  const pendingScratchRef = useRef<object | null>(null);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
@@ -292,13 +293,20 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     });
   }
 
+  function chooseProject(project: EnvironmentProject): void {
+    pendingScratchRef.current = null;
+    void selectProject(project);
+  }
+
   async function startScratch(): Promise<void> {
-    if (!canStartScratch || !scratchOption || scratchStartInFlightRef.current) return;
+    if (!canStartScratch || !scratchOption || pendingScratchRef.current) return;
     const environmentId = scratchOption.environmentId;
-    scratchStartInFlightRef.current = true;
+    const request = {};
+    pendingScratchRef.current = request;
     const result = await openScratch({ environmentId, input: {} });
+    if (pendingScratchRef.current !== request) return;
     if (result._tag === "Failure") {
-      scratchStartInFlightRef.current = false;
+      pendingScratchRef.current = null;
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
@@ -311,7 +319,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     }
     // selectProject handles its own failures, so this never throws.
     await selectProject(result.value);
-    scratchStartInFlightRef.current = false;
+    if (pendingScratchRef.current === request) pendingScratchRef.current = null;
   }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates to the incoming share's reserved destination draft once its project loads and the screen is focused
@@ -545,7 +553,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => chooseProject(selectionTarget)}
                       leading={
                         <ProjectFavicon
                           environmentId={scope.representative.environmentId}
@@ -568,7 +576,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       accessibilityRole="button"
                       accessibilityLabel={scope.title}
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => chooseProject(selectionTarget)}
                       className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                     >
                       <View className="h-7 w-7 items-center justify-center">
