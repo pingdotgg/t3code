@@ -28,7 +28,7 @@ const resetAsr = () => {
   stream = session = undefined;
 };
 const newAudio = (filterSilence) => createSpeechAudio({
-  frameSamples: 512, filterSilence, nativeStreaming: model.capabilities.supportsStreaming,
+  frameSamples: 512, filterSilence, nativeStreaming,
   longForm: model.supports("long_form"), maxAudioMs: model.capabilities.maxAudioMs,
 });
 const openAsr = async () => {
@@ -45,7 +45,7 @@ const begin = async (message, live) => {
   scored = revision = 0;
   heardAudio = false;
   useVad = Boolean(message.vadPath) && (message.filterSilence ||
-    (!model.capabilities.supportsStreaming && !model.supports("long_form")));
+    (!nativeStreaming && !model.supports("long_form")));
   if (useVad) {
     try {
       if (!vadModel) {
@@ -182,7 +182,8 @@ process.on("message", async (message) => {
       error: error instanceof Error ? error.stack ?? error.message : String(error) });
   }
 });
-process.on("disconnect", () => process.exit(0));
+// Exit teardown under in-flight native inference segfaults, so terminate without it.
+process.on("disconnect", () => process.kill(process.pid, "SIGKILL"));
 `;
 
 type Reply = {

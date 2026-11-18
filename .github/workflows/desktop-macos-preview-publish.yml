@@ -316,6 +316,7 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: false
+      untrusted_bundle: true
 
   # Release assets download without a GitHub account, unlike workflow
   # artifacts. All preview DMGs live on one rolling prerelease tagged
