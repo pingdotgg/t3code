@@ -116,7 +116,10 @@ export type Deps = Session & {
   /** Running app names, for apps that are not in the Dock, and bringing one to the front. */
   apps: { running(): Promise<string[]>; activate(name: string): Promise<void> } | null;
   /** Opens a web address in the default browser and names that browser. */
-  urls?: { open(url: string): Promise<string> } | null;
+  /** `browser`: the default browser's name, so its open tabs can be reused. */
+  urls?: { open(url: string): Promise<string>; browser?(): Promise<string> } | null;
+  /** Where each site led (a sign-in host it redirected to), kept across tasks so its tab is found again. */
+  landed?: Map<string, string>;
   log: Logger;
   minConfidence?: number;
   /** Time for the screen to settle after an action. */
@@ -398,18 +401,29 @@ export class ComputerUse {
           return end("unavailable", "This computer cannot open web addresses.", null);
         await this.authorize(run, { app: "", title: "" }, { kind: "open_url", url });
         await this.beforeTouching(run);
-        const browser = await this.deps.urls.open(url);
-        this.record(run, `opened ${url} in ${browser}`);
+        const site = hostOf(url);
+        const hosts = new Set([site, this.deps.landed?.get(site) ?? site]);
+        const existing = await this.siteTab(hosts);
+        let browser: string;
+        if (existing) {
+          browser = existing.browser;
+          await existing.press();
+          this.record(run, `reused existing tab: “${clip(existing.tab.title, 60)}” in ${browser}`);
+        } else {
+          browser = await this.deps.urls.open(url);
+          this.record(run, `opened new tab: ${url} in ${browser}`);
+        }
         // Ends once the page has loaded, so the agent's next look reads the page rather than its spinner.
         if (this.deps.desktop) {
           await settled(
             this.deps.desktop,
             { app: browser, signal: run.signal },
             this.clock,
-            (seen) => navigationReached(`open ${url}`, seen),
+            (seen) => sameSite(hostOf(seen.url ?? ""), site),
             NAVIGATION_SETTLE_MS,
           );
         }
+        if (!existing) await this.noteLanding(site);
         return end("done", "", browser);
       }
       const backend = this.deps.desktop;
@@ -524,6 +538,30 @@ export class ComputerUse {
   }
 
   /** The local stop's last word before the helper touches anything. */
+  /** A tab of the default browser already on one of `hosts`, switched to in the background. */
+  private async siteTab(hosts: Set<string>) {
+    const { tabs, urls } = this.deps;
+    if (!tabs?.press || !urls?.browser) return null;
+    const press = tabs.press.bind(tabs);
+    try {
+      if ((await urls.browser()) !== tabs.browser) return null;
+      const tab = (await tabs.list()).find((candidate) => hosts.has(hostOf(candidate.url)));
+      return tab ? { tab, browser: tabs.browser, press: () => press(tab) } : null;
+    } catch (error) {
+      this.deps.log.warn("computer_use.tabs_unread", { error: messageOf(error) });
+      return null;
+    }
+  }
+
+  /** Remembers the host a new tab for `site` ended on (a sign-in page elsewhere), to find that tab next time. */
+  private async noteLanding(site: string) {
+    const { tabs, landed } = this.deps;
+    if (!tabs || !landed) return;
+    const active = (await tabs.list().catch(() => [])).find((tab) => tab.active && tab.url);
+    const host = active ? hostOf(active.url) : "";
+    if (host && host !== site && sameSite(host, site)) landed.set(site, host);
+  }
+
   private async beforeTouching(run: Run) {
     if (run.watch) await run.watch.check();
     this.checkpoint(run);
@@ -1148,6 +1186,12 @@ const hostOf = (address: string) =>
  * Whether a navigation goal's page is not on screen yet: the goal names an address, the screen says which page it
  * shows, and that page is on another host. When the backend cannot read the page (no `url`), the decider's word stands.
  */
+/** Two hosts of one site: the same last two labels (appstoreconnect.apple.com and idmsa.apple.com). */
+function sameSite(a: string, b: string): boolean {
+  const site = (host: string) => host.split(".").slice(-2).join(".");
+  return a !== "" && b !== "" && site(a) === site(b);
+}
+
 /** How long a read waits for a loading page, and how often it reads again meanwhile. */
 const SETTLE_MAX_MS = 8_000;
 const SETTLE_POLL_MS = 400;

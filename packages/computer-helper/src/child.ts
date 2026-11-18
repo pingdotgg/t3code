@@ -37,7 +37,7 @@ export type Mac = {
   dock: { list(): Promise<string[]>; activate(name: string): Promise<unknown> } | null;
   apps: { running(): Promise<string[]>; activate(name: string): Promise<void> } | null;
   controls: MacControlRunner | null;
-  urls?: { open(url: string): Promise<string> } | null;
+  urls?: { open(url: string): Promise<string>; browser?(): Promise<string> } | null;
 };
 
 /** A window as a look reads it: the observation, and a PNG of it when asked or when it lists no controls. */
@@ -206,10 +206,20 @@ export function createChild(options: ChildOptions): Child {
     pending.clear();
   };
 
+  const landed = new Map<string, string>();
   const runs = new ComputerUseRuns({
     create: (session: Session) => {
       const { desktop, tabs, dock, apps, urls } = machine();
-      return new ComputerUse({ ...session, desktop, tabs, dock, apps, urls: urls ?? null, log });
+      return new ComputerUse({
+        ...session,
+        desktop,
+        tabs,
+        dock,
+        apps,
+        urls: urls ?? null,
+        landed,
+        log,
+      });
     },
     watch: (abort) =>
       localStop()?.watch((reason) => {
@@ -405,7 +415,7 @@ function defaultMac(): Mac {
     dock: new DockApps(),
     apps: controls,
     controls,
-    urls: { open: (url) => controls.openUrl(url) },
+    urls: { open: (url) => controls.openUrl(url), browser: () => controls.defaultBrowser() },
   };
 }
 

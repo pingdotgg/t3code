@@ -219,6 +219,8 @@ export interface BrowserTabs {
   groups?(): Promise<TabGroup[]>;
   /** Brings the browser forward and clicks the tab in its tab strip. */
   activate(tab: BrowserTab): Promise<void>;
+  /** Brings the browser forward and presses the tab through accessibility, without the real pointer. */
+  press?(tab: BrowserTab): Promise<void>;
   /** For when the browser's tabs cannot be read: switches with the browser's own tab search, or null when nothing matched. */
   search?(name: string): Promise<string | null>;
 }

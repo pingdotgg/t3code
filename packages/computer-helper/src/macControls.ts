@@ -371,6 +371,11 @@ export class MacControls {
 
   /** Runs one control and returns a short sentence saying what was done. */
   /** Opens a web address with `open`, as a person's click on a link would, and names the browser that took it. */
+  /** The app that opens web addresses on this Mac. */
+  async defaultBrowser(): Promise<string> {
+    return (await this.runner.run(...jxa(DEFAULT_BROWSER_SCRIPT, ["https://example.com"]))).trim();
+  }
+
   async openUrl(url: string): Promise<string> {
     if (!/^https?:\/\/[^\s/]+/i.test(url) || !URL.canParse(url))
       throw new ControlError(

@@ -162,6 +162,17 @@ function skool() {
   return { page, tabs, actions, activated, state };
 }
 
+/** Time that passes only when the run waits, so a wait for a page never spins on the wall clock. */
+function fakeClock() {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: async (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
 function computerWith(
   replies: Answers[],
   parts: { page: ScreenBackend; tabs: BrowserTabs | null },
@@ -178,7 +189,7 @@ function computerWith(
     apps: null,
     log: silentLogger,
     settleMs: 0,
-    sleep: async () => undefined,
+    ...fakeClock(),
     ...extra,
   });
   return { computer, asked };
@@ -1213,8 +1224,59 @@ describe("an act the agent chose", () => {
     expect(outcome).toMatchObject({
       status: "done",
       surface: "Safari",
-      steps: ["opened https://example.com in Safari"],
+      steps: ["opened new tab: https://example.com in Safari"],
     });
+  });
+
+  it("switches to a tab already on the site, or the sign-in page it led to, instead of opening another", async () => {
+    const opened: string[] = [];
+    const pressed: string[] = [];
+    const tabs: BrowserTab[] = [
+      {
+        window: 0,
+        index: 0,
+        title: "Agent Storage",
+        url: "https://dev.example.net/",
+        active: true,
+      },
+    ];
+    let landedOn = "https://idmsa.apple.com/signin";
+    const { computer } = actWith({
+      tabs: {
+        browser: "Google Chrome",
+        list: async () => tabs,
+        activate: async () => {
+          throw new Error("the real pointer is never used to switch tabs");
+        },
+        press: async (tab) => {
+          pressed.push(tab.title);
+        },
+      },
+      urls: {
+        browser: async () => "Google Chrome",
+        open: async (url) => {
+          opened.push(url);
+          for (const tab of tabs) tab.active = false;
+          tabs.push({ window: 0, index: 1, title: "Sign In", url: landedOn, active: true });
+          return "Google Chrome";
+        },
+      },
+      landed: new Map(),
+    });
+    const open = () =>
+      computer.run({
+        goal: "",
+        text: null,
+        act: { action: "open_url", url: "https://appstoreconnect.apple.com/apps" },
+      });
+    expect((await open()).steps).toEqual([
+      "opened new tab: https://appstoreconnect.apple.com/apps in Google Chrome",
+    ]);
+    landedOn = "unused";
+    // The first open led to Apple's sign-in host: opening the same site again goes back to that tab.
+    expect((await open()).steps).toEqual(["reused existing tab: “Sign In” in Google Chrome"]);
+    expect(opened).toHaveLength(1);
+    expect(pressed).toEqual(["Sign In"]);
   });
 });
 

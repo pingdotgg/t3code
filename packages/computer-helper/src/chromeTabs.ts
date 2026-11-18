@@ -166,7 +166,7 @@ const tabsSchema = {
  */
 const ACTIVATE_SCRIPT = `${JXA_HELPERS}${TAB_BUTTONS}
 function run(argv) {
-  var pid = Number(argv[0]), title = argv[1], index = Number(argv[2]), dryrun = argv[3] === 'dryrun';
+  var pid = Number(argv[0]), title = argv[1], index = Number(argv[2]), dryrun = argv[3] === 'dryrun', press = argv[3] === 'press';
   trusted();
   var app = axApp(pid);
   var windows = attr(app, 'AXWindows'), exact = null, loose = null;
@@ -182,6 +182,10 @@ function run(argv) {
     $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid).activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
     $.AXUIElementPerformAction(hit.win, $('AXRaise'));
     delay(0.3);
+  }
+  if (press) {
+    if ($.AXUIElementPerformAction(hit.button, $('AXPress')) !== 0) throw new Error('ADA_NO_PRESS');
+    return JSON.stringify({ pressed: true });
   }
   var point = center(hit.button);
   if (!point) throw new Error('ADA_NO_TAB');
@@ -365,14 +369,24 @@ export class ChromeTabs implements BrowserTabs {
   }
 
   async activate(tab: BrowserTab): Promise<void> {
+    await this.switchTo(tab, "click");
+  }
+
+  async press(tab: BrowserTab): Promise<void> {
+    await this.switchTo(tab, "press");
+  }
+
+  private async switchTo(tab: BrowserTab, how: "click" | "press"): Promise<void> {
     const target = await this.instance();
     if (!target) throw new Error("Google Chrome is not open.");
     try {
       await this.runner.run(
-        ...jxa(ACTIVATE_SCRIPT, [String(target.pid), tab.title, String(tab.index), "click"]),
+        ...jxa(ACTIVATE_SCRIPT, [String(target.pid), tab.title, String(tab.index), how]),
       );
     } catch (error) {
       const message = messageOf(error);
+      if (message.includes("ADA_NO_PRESS"))
+        throw new Error("Chrome would not switch to that tab without the mouse.", { cause: error });
       if (message.includes("ADA_NO_TAB"))
         throw new Error("Could not find that tab in Chrome's tab strip.", { cause: error });
       throw macAccessError(message) ?? error;
