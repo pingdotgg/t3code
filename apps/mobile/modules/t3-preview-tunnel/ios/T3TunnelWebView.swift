@@ -12,7 +12,6 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   let onPageScroll = EventDispatcher()
 
   private var webView: WKWebView?
-  private var listener: T3SocksListener?
   private var proxyPort: UInt16?
   private var environmentId: String?
   private var pendingUrl: String?
@@ -20,34 +19,14 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var observations: [NSKeyValueObservation] = []
   private var reportedScrollY: CGFloat = 0
 
-  required init(appContext: AppContext? = nil) {
-    super.init(appContext: appContext)
-    let listener = T3SocksListener { [weak self] completion in
-      T3TunnelAccess.shared.request(
-        ask: { requestId in
-          DispatchQueue.main.async { self?.onAccessRequest(["requestId": requestId]) }
-        },
-        completion: completion
-      )
-    }
-    self.listener = listener
-    listener.start { [weak self] port in
-      DispatchQueue.main.async {
-        self?.proxyPort = port
-        self?.attachWebView()
-      }
-    }
-  }
-
-  deinit {
-    listener?.stop()
-  }
-
   /// JavaScript remounts the view for another environment, so only the first one counts.
   func setEnvironment(_ environmentId: String) {
     guard self.environmentId == nil else { return }
     self.environmentId = environmentId
-    attachWebView()
+    T3EnvironmentProxy.forEnvironment(environmentId).attach(self) { [weak self] port in
+      self?.proxyPort = port
+      self?.attachWebView()
+    }
   }
 
   private func attachWebView() {
@@ -170,4 +149,59 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       "url": failingUrl ?? "",
     ])
   }
+}
+
+/// An identified data store keeps the first proxy port WebKit saw for the app's life, so each
+/// environment keeps one listener on one port, restarted there if iOS tore it down, and asks its
+/// newest live view for tunnel access. Main thread only.
+private final class T3EnvironmentProxy {
+  nonisolated(unsafe) private static var proxies: [String: T3EnvironmentProxy] = [:]
+
+  static func forEnvironment(_ environmentId: String) -> T3EnvironmentProxy {
+    if let proxy = proxies[environmentId] { return proxy }
+    let proxy = T3EnvironmentProxy()
+    proxies[environmentId] = proxy
+    return proxy
+  }
+
+  private var views: [WeakView] = []
+  private var listener: T3SocksListener?
+  private var port: UInt16?
+  private var waiting: [(UInt16) -> Void] = []
+
+  func attach(_ view: T3TunnelWebView, onReady: @escaping (UInt16) -> Void) {
+    views = views.filter { $0.view != nil } + [WeakView(view: view)]
+    if let port, listener?.isListening == true { return onReady(port) }
+    waiting.append(onReady)
+    guard waiting.count == 1 else { return }
+    listener?.stop()
+    let listener = T3SocksListener { [weak self] completion in
+      T3TunnelAccess.shared.request(
+        ask: { requestId in
+          DispatchQueue.main.async {
+            guard let view = self?.views.last(where: { $0.view != nil })?.view else {
+              return T3TunnelAccess.shared.resolve(requestId: requestId, url: nil)
+            }
+            view.onAccessRequest(["requestId": requestId])
+          }
+        },
+        completion: completion
+      )
+    }
+    self.listener = listener
+    listener.start(port: port) { [weak self] port in
+      DispatchQueue.main.async { self?.ready(port) }
+    }
+  }
+
+  private func ready(_ port: UInt16) {
+    self.port = port
+    let waiting = self.waiting
+    self.waiting = []
+    for onReady in waiting { onReady(port) }
+  }
+}
+
+private struct WeakView {
+  weak var view: T3TunnelWebView?
 }
