@@ -87,8 +87,8 @@ export const ReviewDiffFileContentsInput = Schema.Struct({
   changeType: ReviewDiffChangeType,
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   headRef: Schema.NullOr(TrimmedNonEmptyString),
-  oldPath: TrimmedNonEmptyString,
-  newPath: TrimmedNonEmptyString,
+  oldPath: Schema.NonEmptyString,
+  newPath: Schema.NonEmptyString,
 });
 export type ReviewDiffFileContentsInput = typeof ReviewDiffFileContentsInput.Type;
 

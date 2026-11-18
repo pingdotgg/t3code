@@ -80,6 +80,10 @@ Fix:
 3. If the check fails only on the host, check the host's DNS, VPN, or proxy.
    If it says the host's network has an old cached answer, wait: it usually
    clears within about 30 minutes.
+4. If it says the address no longer points to this machine's tunnel, the
+   environment was likely removed from T3 Connect. Link it again: on a desktop
+   host, turn **T3 Connect** off and on in **Settings > Sharing & access**. On a
+   command-line host, run `t3 connect link`, then restart T3 Code.
 
 ## This device can't reach T3 Connect
 
