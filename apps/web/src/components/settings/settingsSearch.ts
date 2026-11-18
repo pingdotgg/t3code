@@ -488,6 +488,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "local-machine-icon",
+    title: msg("Machine icon on local threads"),
+    to: "/settings/general",
+    searchTerms: ["environment computer device laptop desktop remote server sidebar thread icon"],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
