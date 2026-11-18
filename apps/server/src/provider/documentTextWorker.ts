@@ -112,12 +112,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.children.pop();
       return;
     }
-    // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
-    // Keep one when no Choice carries text, such as a chart with a VML caption.
-    if (node.name === "Fallback" && parent.hasTextChoice) {
-      parent.children.pop();
-      return;
-    }
+    if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
@@ -135,6 +130,29 @@ function xml(source: string, extension: string): XmlNode {
 
 const children = (node: XmlNode | undefined) =>
   node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
+
+function retainCompatibilityFallback(parent: XmlNode, fallback: XmlNode): boolean {
+  // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
+  // Keep one when no Choice carries text, such as a chart with a VML caption.
+  if (parent.hasTextChoice) {
+    parent.children.pop();
+    return false;
+  }
+  if (fallback.hasText || hasInlineTab(fallback, ["tab", "ptab"])) {
+    parent.children = parent.children.filter(
+      (child) =>
+        typeof child === "string" || child.name !== "Choice" || !hasInlineTab(child, ["ptab"]),
+    );
+  }
+  return true;
+}
+
+function hasInlineTab(node: XmlNode, names: readonly string[]): boolean {
+  return (
+    !HIDDEN.has(node.name) &&
+    (names.includes(node.name) || children(node).some((child) => hasInlineTab(child, names)))
+  );
+}
 function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
@@ -143,7 +161,7 @@ function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNod
 }
 function* text(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
-  if (["tab", "cell"].includes(node.name)) yield "\t";
+  if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
