@@ -34,11 +34,13 @@ login and settings. Run `codex login` on the environment's machine to sign in.
 
 ## Use Traex bridge
 
-Run traex-bridge at `127.0.0.1:8317` on the selected environment's macOS or Linux
-machine. Store its API key in `~/.traex-bridge/api-key` on that machine.
+Run traex-bridge at `127.0.0.1:8317` on the Mac or Linux machine that hosts it.
+Store its API key in `~/.traex-bridge/api-key` on that machine.
 In **Settings > Providers**, choose **Add provider**, then **Traex**.
 The preset uses Codex from that machine's PATH or a copy T3 Code has installed.
 To use another executable, set its path in **Config**.
+
+To share the bridge, turn on **Share inference with paired environments** on its host. Connect the host and the environment where you run threads to the same T3 client once, using connections that can manage providers. T3 discovers the bridge and saves the route. The client can then disconnect from the host. The picker offers Traex while a local or shared bridge serves models, and your thread keeps its workspace on its original environment.
 
 Traex stores its sessions and configuration in a separate Codex home.
 

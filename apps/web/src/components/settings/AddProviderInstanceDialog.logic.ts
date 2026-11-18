@@ -133,11 +133,6 @@ export function resolveAcpRegistryWizardNavigation(
   });
 }
 
-const TRAEX_BRIDGE_PROVIDER =
-  'model_providers.traex={name="traex-bridge",base_url="http://127.0.0.1:8317/v1",wire_api="responses",supports_websockets=false,auth={command="sh",args=["-c","cat ~/.traex-bridge/api-key"],timeout_ms=1000}}';
-
-export const TRAEX_BRIDGE_CODEX_LAUNCH_ARGS = `-c 'model_provider="traex"' -c '${TRAEX_BRIDGE_PROVIDER}'`;
-
 export function inferenceAccountHostId(
   instances: ServerSettings["providerInstances"],
   selection: string,

@@ -563,7 +563,10 @@ export function resolveComposerInteractionMode(input: {
 
 export function getProviderModelSendBlockReason(
   provider:
-    | Pick<ServerProvider, "driver" | "installed" | "auth" | "models" | "status">
+    | Pick<
+        ServerProvider,
+        "driver" | "installed" | "auth" | "models" | "status" | "requiresListedModel"
+      >
     | null
     | undefined,
   model: string,

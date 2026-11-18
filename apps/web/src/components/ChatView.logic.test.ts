@@ -759,6 +759,15 @@ describe("resolveComposerProviderSelection", () => {
       "That Antigravity model is no longer available. Choose another model.",
     );
     expect(getProviderModelSendBlockReason(provider, "gemini-pro")).toBeNull();
+    const bridge = {
+      ...provider,
+      driver: ProviderDriverKind.make("codex"),
+      requiresListedModel: true,
+    };
+    expect(
+      getProviderModelSendBlockReason(bridge, "saved-model-not-in-current-catalog"),
+    ).not.toBeNull();
+    expect(getProviderModelSendBlockReason(bridge, "gemini-pro")).toBeNull();
   });
 
   it("allows a saved native model to retry after a provider error without changing it", () => {

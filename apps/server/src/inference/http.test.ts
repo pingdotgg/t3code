@@ -185,6 +185,104 @@ it("streams an authorized request with a host key, then denies the revoked consu
   }
 });
 
+it("forwards Traex responses through the peer's direct bridge with a separate key at each hop", async () => {
+  const bridge = HttpClient.make((request) =>
+    Effect.sync(() => {
+      expect(request.url).toBe("http://127.0.0.1:8317/v1/responses");
+      expect(request.headers.authorization).toBe("Bearer bridge-secret");
+      expect(request.headers["x-api-key"]).toBeUndefined();
+      return HttpClientResponse.fromWeb(request, Response.json({ model: "traex-fixture" }));
+    }),
+  );
+  const peer = HttpRouter.toWebHandler(
+    InferenceHttp.layer.pipe(
+      Layer.provide(
+        Layer.mock(InferenceProxy)({
+          traexCandidates: (scope, key) =>
+            Effect.succeed(
+              scope === "host" && key === "peer-grant"
+                ? [{ baseUrl: "http://127.0.0.1:8317", key: "bridge-secret", models: [] }]
+                : null,
+            ),
+        }),
+      ),
+      Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, bridge)),
+    ),
+    { disableLogger: true },
+  );
+  let forwarded = 0;
+  let localAttempts = 0;
+  const peerTransport = HttpClient.make((request) =>
+    Effect.promise(async () => {
+      if (request.url === "http://127.0.0.1:8317/v1/responses") {
+        localAttempts++;
+        expect(request.headers.authorization).toBe("Bearer local-bridge");
+        return HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }));
+      }
+      forwarded++;
+      expect(request.url).toBe("https://peer.test/api/inference/traex/host/v1/responses");
+      expect(request.headers.authorization).toBe("Bearer peer-grant");
+      expect(request.headers.cookie).toBeUndefined();
+      const body = request.body;
+      expect(body._tag).toBe("Uint8Array");
+      const result = await peer.handler(
+        new Request(request.url, {
+          method: request.method,
+          headers: request.headers,
+          body: body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : null,
+        }),
+      );
+      return HttpClientResponse.fromWeb(request, result);
+    }),
+  );
+  const consumer = HttpRouter.toWebHandler(
+    InferenceHttp.layer.pipe(
+      Layer.provide(
+        Layer.mock(InferenceProxy)({
+          hasTraexConsumerKey: (key) => Effect.succeed(key === "local-key"),
+          traexCandidates: (scope, key, model) =>
+            Effect.succeed(
+              scope !== "resolve" || key !== "local-key"
+                ? null
+                : model === "traex-fixture"
+                  ? [
+                      { baseUrl: "http://127.0.0.1:8317", key: "local-bridge", models: [model] },
+                      {
+                        baseUrl: "https://peer.test/api/inference/traex/host",
+                        key: "peer-grant",
+                        models: [model],
+                      },
+                    ]
+                  : [],
+            ),
+        }),
+      ),
+      Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, peerTransport)),
+    ),
+    { disableLogger: true },
+  );
+  const submit = (model: string, key = "local-key") =>
+    consumer.handler(
+      new Request("http://consumer.test/api/inference/traex/resolve/v1/responses", {
+        method: "POST",
+        headers: { authorization: "Bearer " + key, cookie: "session=private" },
+        body: JSON.stringify({ model }),
+      }),
+    );
+  try {
+    expect((await submit("traex-fixture", "untrusted")).status).toBe(403);
+    expect((await submit("generic-codex-only")).status).toBe(503);
+    expect(localAttempts).toBe(0);
+    expect(forwarded).toBe(0);
+    expect(await (await submit("traex-fixture")).json()).toEqual({ model: "traex-fixture" });
+    expect(localAttempts).toBe(1);
+    expect(forwarded).toBe(1);
+  } finally {
+    await consumer.dispose();
+    await peer.dispose();
+  }
+});
+
 it("tries another authorized host for the same model after an upstream auth failure", async () => {
   const calls: string[] = [];
   let recordedRetry: unknown;

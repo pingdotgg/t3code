@@ -19,6 +19,15 @@ describe("inference routes", () => {
       environmentId: "host",
       driver: "codex",
     });
+    expect(inferenceTarget("GET", "/api/inference/traex/host/v1/models")).toMatchObject({
+      traex: "host",
+      path: "/v1/models",
+    });
+    expect(inferenceTarget("POST", "/api/inference/traex/resolve/v1/responses")).toMatchObject({
+      traex: "resolve",
+      path: "/v1/responses",
+    });
+    expect(inferenceTarget("POST", "/api/inference/traex/host/v1/messages")).toBeNull();
     expect(inferencePath("POST", "/api/inference/health")).toBeNull();
     expect(inferencePath("POST", "/api/inference/v1/chat/completions")).toBe(
       "/v1/chat/completions",

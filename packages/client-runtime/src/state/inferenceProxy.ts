@@ -113,15 +113,29 @@ export function planInferenceFallbacks(
 ): ReadonlyArray<{
   host: InferenceConsumer;
   consumer: InferenceConsumer;
-  driver: InferenceDriver;
+  driver: InferenceDriver | "traex";
   fallback: true;
 }> {
-  if (!status.enabled || !status.running || host.connection.phase !== "connected") return [];
+  if (!status.enabled || host.connection.phase !== "connected") return [];
   return consumers.flatMap((consumer) => {
     const config = consumer.serverConfig;
     if (consumer.connection.phase !== "connected" || !config) return [];
     if (host.environmentId !== consumer.environmentId && !status.sharing) return [];
-    return INFERENCE_DRIVERS.flatMap((driver) => {
+    const drivers: ReadonlyArray<InferenceDriver | "traex"> =
+      status.traexAvailable &&
+      config.environment?.capabilities.traexPeerRouting &&
+      host.environmentId !== consumer.environmentId
+        ? [...INFERENCE_DRIVERS, "traex"]
+        : INFERENCE_DRIVERS;
+    return drivers.flatMap((driver) => {
+      const input = {
+        host: { environmentId: host.environmentId, label: host.label },
+        consumer: { environmentId: consumer.environmentId, label: consumer.label },
+        driver,
+        fallback: true as const,
+      };
+      if (driver === "traex") return [input];
+      if (!status.running) return [];
       if (!status.availableDrivers.includes(driver)) return [];
       const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(driver));
       const instance = config.settings.providerInstances[instanceId];
@@ -130,14 +144,7 @@ export function planInferenceFallbacks(
         isInferenceProviderConfig(route) &&
         route.inferenceEnabled &&
         route.inferenceHostId !== host.environmentId
-        ? [
-            {
-              host: { environmentId: host.environmentId, label: host.label },
-              consumer: { environmentId: consumer.environmentId, label: consumer.label },
-              driver,
-              fallback: true as const,
-            },
-          ]
+        ? [input]
         : [];
     });
   });
@@ -146,7 +153,7 @@ export function planInferenceFallbacks(
 export function inferenceFallbackKey(
   host: InferenceConsumer,
   consumer: InferenceFleetEnvironment,
-  driver: InferenceDriver,
+  driver: InferenceDriver | "traex",
   status: InferenceProxyStatus,
 ): string {
   const instance =
@@ -164,6 +171,7 @@ export function inferenceFallbackKey(
     status.sharing,
     status.running,
     status.availableDrivers,
+    status.traexAvailable,
     status.accounts.map((account) => [
       account.name,
       account.provider,
@@ -212,7 +220,7 @@ export function createInferenceProxyAtoms<R, E>(
       input: {
         host: InferenceConsumer;
         consumer: InferenceConsumer;
-        driver: InferenceDriver;
+        driver: InferenceDriver | "traex";
         fallback?: boolean;
         automatic?: boolean;
         preserveProviderEnabled?: boolean;
@@ -230,6 +238,7 @@ export function createInferenceProxyAtoms<R, E>(
           const grant = yield* requestGuarded(WS_METHODS.inferenceGrant, {
             environmentId: input.consumer.environmentId,
             label: input.consumer.label,
+            ...(input.driver === "traex" ? { capability: "traex" as const } : {}),
             ...(input.fallback || input.automatic ? { automatic: true } : {}),
           });
           const supervisor = yield* EnvironmentSupervisor;
@@ -292,7 +301,7 @@ export function createInferenceProxyAtoms<R, E>(
       input: {
         readonly host: InferenceConsumer;
         readonly consumer: InferenceConsumer;
-        readonly driver: InferenceDriver;
+        readonly driver: InferenceDriver | "traex";
         readonly fallback?: boolean;
       },
       registry,

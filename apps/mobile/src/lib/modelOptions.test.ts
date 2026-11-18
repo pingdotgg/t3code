@@ -288,11 +288,17 @@ describe("mobile model options", () => {
         enabled: true,
         installed: true,
         auth: { status: "authenticated" },
-        models: [{ slug: "test", name: "Test", capabilities: null }],
+        models: [{ slug: "gpt-6.2-astra", name: "gpt-6.2-astra", capabilities: null }],
       })),
     } as unknown as ServerConfig;
-    const selection = { instanceId: ProviderInstanceId.make("codex_work"), model: "saved" };
+    const selection = { instanceId: ProviderInstanceId.make("codex_work"), model: "gpt-6.2-sol" };
     const options = buildModelOptions(config, selection, undefined, null);
+    expect(options.map((option) => option.label)).toEqual([
+      "GPT-6.2-Astra",
+      "GPT-6.2-Astra",
+      "GPT-6.2-Sol",
+    ]);
+    expect(options[2]?.selection).toBe(selection);
     expect(options[0]?.providerBadge).toEqual({ displayName: "Personal", showBadge: true });
     expect(options[1]?.providerBadge).toEqual({
       displayName: "Work",
@@ -427,6 +433,16 @@ describe("mobile model options", () => {
     expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
     expect(isModelSelectionUnavailable(config, removed, null)).toBe(true);
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
+    const endpoint = {
+      ...config,
+      providers: config.providers.map((provider) => ({ ...provider, requiresListedModel: true })),
+    };
+    expect(isModelSelectionUnavailable(endpoint, usable, null)).toBe(true);
+    expect(resolveSelectableModelSelection(endpoint, usable, null)).toBeNull();
+    expect(buildModelOptions(endpoint, usable, undefined, null)[0]).toMatchObject({
+      selection: usable,
+      isUnavailable: true,
+    });
     const cooling = {
       ...config,
       providers: config.providers.map((provider) => ({
@@ -533,7 +549,7 @@ describe("mobile model options", () => {
       const options = buildModelOptions(changedConfig, selection, undefined, null);
       const missing = options.find((option) => option.selection.model === selection.model);
       expect(missing).toMatchObject({
-        label: selection.model,
+        label: "Gemini 3.1 Pro High",
         providerLabel: "Google Work",
         providerDriver: "antigravity",
         isUnavailable: true,

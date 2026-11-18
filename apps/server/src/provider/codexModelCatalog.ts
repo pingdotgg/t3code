@@ -43,6 +43,7 @@ export function applyCodexModelCatalog(
   draft: ServerProviderDraft,
   catalog: ModelCatalog.ProviderCatalog | undefined,
 ): ServerProviderDraft {
+  if (draft.requiresListedModel) return draft;
   const updateRequiredModels = codexUpdateRequiredModels(catalog, draft);
   return {
     ...ModelCatalog.applyModelCatalog(draft, catalog, CODEX_MATCHING),

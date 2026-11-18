@@ -213,6 +213,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       Effect.scoped,
     );
   }).pipe(
+    Effect.provideService(HttpClient.HttpClient, http),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),

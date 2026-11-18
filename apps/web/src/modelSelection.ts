@@ -171,19 +171,26 @@ function normalizeCustomModelEntries(
 
 export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
-  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models"> & {
+    readonly snapshot?: Pick<ServerProvider, "requiresListedModel"> | undefined;
+  },
   selectedModel?: string | null,
 ): AppModelOption[] {
   const config = settings.providerInstances[entry.instanceId]?.config;
   const hostedModelCatalog = usesHostedModelCatalog(entry.instanceId, entry.driverKind, config);
+  const requiresListedModel = entry.snapshot?.requiresListedModel === true;
   // Server custom-model snapshots can lag removals; rebuild native custom rows from settings.
-  const serverModels = hostedModelCatalog
-    ? normalizeHostedModelCatalog(entry.models, config)
-    : entry.models.filter((model) => !model.isCustom);
+  const serverModels = requiresListedModel
+    ? entry.models
+    : hostedModelCatalog
+      ? normalizeHostedModelCatalog(entry.models, config)
+      : entry.models.filter((model) => !model.isCustom);
   const options = serverModels.map((model) => toAppModelOption(model, entry.driverKind));
   const builtInModelSlugs = new Set(options.map((option) => option.slug));
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = requiresListedModel
+    ? []
+    : readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
     const shortName = resolveModelShortName(custom, entry.driverKind);
     options.push({
@@ -201,7 +208,7 @@ export function getAppModelOptionsForInstance(
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
-    hostedModelCatalog,
+    hostedModelCatalog || requiresListedModel,
   );
 }
 
@@ -218,6 +225,7 @@ export function resolveAppModelSelection(
     {
       instanceId,
       driverKind: resolvedProvider,
+      snapshot: providers.find((provider) => provider.instanceId === instanceId),
       models: getProviderModels(providers, resolvedProvider),
     },
     selectedModel,

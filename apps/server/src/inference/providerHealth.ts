@@ -1,6 +1,7 @@
 import {
   isInferenceProviderConfig,
   ProviderInstanceId,
+  TRAEX_BRIDGE_INSTANCE_ID,
   type ServerProvider,
   type InferenceProviderConfig,
 } from "@t3tools/contracts";
@@ -155,8 +156,11 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
     fresh?: boolean,
     instanceId?: ProviderInstanceId,
   ) {
-    const ids = yield* instanceIds;
-    if (instanceId === undefined ? ids.length > 0 : ids.includes(instanceId))
+    if (
+      instanceId === undefined ||
+      instanceId === TRAEX_BRIDGE_INSTANCE_ID ||
+      (yield* instanceIds).includes(instanceId)
+    )
       yield* proxy.refreshModelCatalog(fresh, instanceId);
   });
   return {

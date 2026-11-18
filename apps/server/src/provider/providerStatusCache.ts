@@ -71,6 +71,7 @@ export const hydrateCachedProvider = (input: {
   }
 
   if (
+    input.fallbackProvider.availability === "unavailable" ||
     !input.fallbackProvider.enabled ||
     input.cachedProvider.enabled !== input.fallbackProvider.enabled
   ) {

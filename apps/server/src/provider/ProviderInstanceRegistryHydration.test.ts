@@ -5,7 +5,10 @@ import {
   ProviderInstanceId,
   SecretProviderId,
   SecretProviderKind,
+  TRAEX_BRIDGE_CODEX_LAUNCH_ARGS,
+  resolveProjectProviderInstanceEnabled,
   type ServerSettings,
+  type ProviderInstanceConfigMap,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
@@ -16,6 +19,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import * as TraexProviderRoutes from "../inference/TraexProviderRoutes.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   DEV_REPLAY_INSTANCE_ID,
@@ -33,6 +37,74 @@ function settingsWith(overrides: Partial<ServerSettings>): ServerSettings {
 }
 
 describe("deriveProviderInstanceConfigMap", () => {
+  effectIt.effect(
+    "discovers a verified Traex route without overwriting custom or disabled instances",
+    () =>
+      Effect.gen(function* () {
+        const id = ProviderInstanceId.make("codex_traex");
+        const driver = ProviderDriverKind.make("codex");
+        const stock = { driver, config: { launchArgs: TRAEX_BRIDGE_CODEX_LAUNCH_ARGS } };
+        const empty = deriveProviderInstanceConfigMap(settingsWith({}));
+        const routes = yield* TraexProviderRoutes.TraexProviderRoutes;
+        routes.bind(4123, "scoped-test-key", false);
+        expect(routes.apply(empty)[id]).toBeUndefined();
+        routes.setDiscovered(true);
+        const effective = routes.apply(empty);
+        expect(resolveProjectProviderInstanceEnabled(settingsWith({}), projectId, id)).toBe(true);
+        expect(effective[id]?.config).toMatchObject({
+          launchArgs: expect.stringContaining(
+            "http://127.0.0.1:4123/api/inference/traex/resolve/v1",
+          ),
+        });
+        expect(effective[id]?.environment).toContainEqual({
+          name: "T3_TRAEX_ROUTE_KEY",
+          sensitive: true,
+          value: "scoped-test-key",
+        });
+        expect(effective[id]?.environment).toContainEqual({
+          name: "T3CODE_CODEX_LAUNCH_ARGS",
+          value: expect.stringContaining('env_key="T3_TRAEX_ROUTE_KEY"'),
+          sensitive: false,
+        });
+        expect(effective[ProviderInstanceId.make("codex")]?.environment).toBeUndefined();
+        expect(JSON.stringify(empty)).not.toContain("scoped-test-key");
+        expect(empty[id]).toBeUndefined();
+        const custom = { driver, config: { launchArgs: "--custom" } };
+        const disabled = { ...stock, enabled: false };
+        expect(routes.apply({ ...empty, [id]: custom })[id]).toEqual(custom);
+        expect(routes.apply({ ...empty, [id]: disabled })[id]).toEqual(disabled);
+        for (const overridden of [
+          { ...stock, config: { ...stock.config, setupMode: "managed" } },
+          { ...stock, config: { ...stock.config, inferenceEnabled: true } },
+          {
+            ...stock,
+            environment: [
+              { name: "T3CODE_CODEX_LAUNCH_ARGS", value: "--custom", sensitive: false },
+            ],
+          },
+        ]) {
+          const configured = { ...empty, [instanceId]: overridden };
+          expect(routes.apply(configured)).toEqual(configured);
+        }
+        const saved: ProviderInstanceConfigMap = { ...empty, [instanceId]: stock };
+        const renamed = routes.apply(saved);
+        expect(renamed[id]).toBeUndefined();
+        expect(renamed[instanceId]?.config).toMatchObject({
+          launchArgs: expect.stringContaining('env_key="T3_TRAEX_ROUTE_KEY"'),
+        });
+        expect(saved[instanceId]).toEqual(stock);
+        routes.setDiscovered(false);
+        expect(routes.apply(empty)[id]).toBeUndefined();
+        expect(
+          routes.apply(saved, {
+            organization: "Example",
+            lockedSettings: [],
+            limits: { providers: { lockedInstanceFields: { [driver]: ["config.launchArgs"] } } },
+          }),
+        ).toEqual(saved);
+      }).pipe(Effect.provide(TraexProviderRoutes.layer)),
+  );
+
   it("overlays only T3's proxy runtime and preserves saved native selections", () => {
     const driver = ProviderDriverKind.make("codex");
     const id = ProviderInstanceId.make("codex");

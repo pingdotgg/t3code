@@ -552,6 +552,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
 )(function* <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
+  readonly prepareConfigMap?: (instances: ProviderInstanceConfigMap) => ProviderInstanceConfigMap;
   /** A reason to show instead of running a driver, such as an administrator's policy. */
   readonly blockedReason?: BlockedReason | undefined;
 }): Effect.fn.Return<
@@ -589,16 +590,19 @@ export const makeProviderInstanceRegistry = Effect.fn(
     blockedReason: input.blockedReason ?? (() => undefined),
     parentScope,
   });
-  const configMapRef = yield* Ref.make(input.configMap);
+  const initial = input.prepareConfigMap?.(input.configMap) ?? input.configMap;
+  const configMapRef = yield* Ref.make(initial);
   const semaphore = yield* Semaphore.make(1);
   const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
-    (configMap) =>
-      semaphore.withPermits(1)(
+    (map) => {
+      const configMap = input.prepareConfigMap?.(map) ?? map;
+      return semaphore.withPermits(1)(
         Ref.set(configMapRef, configMap).pipe(
           Effect.andThen(reconcileWithR(configMap)),
           Effect.provideContext(driverContext),
         ),
       );
+    };
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
   // not restart providers whose credentials are the same. Without `checked` the cached values are
@@ -694,12 +698,12 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
-    Ref.set(configMapRef, input.configMap).pipe(
-      Effect.andThen(reconcileWithR(input.configMap, new Set(), true)),
+    Ref.set(configMapRef, initial).pipe(
+      Effect.andThen(reconcileWithR(initial, new Set(), true)),
       Effect.provideContext(driverContext),
     ),
   );
-  const startupReferences = yield* Effect.filter(Object.entries(input.configMap), ([, entry]) =>
+  const startupReferences = yield* Effect.filter(Object.entries(initial), ([, entry]) =>
     secretReferencesOf(driversById, entry).length > 0
       ? isEntryEnabled(driversById, entry)
       : Effect.succeed(false),
@@ -714,7 +718,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
       yield* semaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* Ref.get(configMapRef);
-          if (current === input.configMap) yield* reconcileWithR(current);
+          if (current === initial) yield* reconcileWithR(current);
         }),
       );
     }).pipe(Effect.provideContext(driverContext), Effect.forkScoped);
@@ -752,6 +756,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
 export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
+  readonly prepareConfigMap?: (instances: ProviderInstanceConfigMap) => ProviderInstanceConfigMap;
   readonly blockedReason?: BlockedReason | undefined;
 }): Layer.Layer<
   ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,

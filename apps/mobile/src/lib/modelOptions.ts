@@ -21,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  formatModelSlugName,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
@@ -258,6 +259,7 @@ function isProviderSelectionUnavailable(
     provider.availability === "unavailable" ||
     provider.status === "error" ||
     provider.status === "disabled" ||
+    (provider.requiresListedModel && unavailableModelReason(provider, selection.model) !== null) ||
     providerLimitedUntilMs(provider, Date.now()) !== null
   )
     return true;
@@ -459,7 +461,7 @@ export function buildModelOptions(
       const shortName = resolveModelShortName(model, provider.driver);
       options.set(key, {
         key,
-        label: model.name,
+        label: model.name === model.slug ? formatModelSlugName(model.slug) : model.name,
         ...(shortName ? { shortName } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
@@ -529,7 +531,7 @@ export function buildModelOptions(
         : undefined;
       options.set(key, {
         key,
-        label: model?.name ?? fallbackModelSelection.model,
+        label: model?.name ?? formatModelSlugName(fallbackModelSelection.model),
         ...(shortName ? { shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,

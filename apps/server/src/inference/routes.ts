@@ -64,6 +64,17 @@ export function inferenceRetryDelayMs(
 }
 
 export function inferenceTarget(method: string, rawUrl: string) {
+  const bridge = /^\/api\/inference\/traex\/(host|resolve)(\/v1\/[^?]+)$/.exec(rawUrl);
+  if (bridge) {
+    const [scope, path] = [bridge[1], bridge[2]];
+    if (
+      (scope === "host" || scope === "resolve") &&
+      ((method === "GET" && path === "/v1/models") ||
+        (method === "POST" && (path === "/v1/responses" || path === "/v1/responses/compact")))
+    )
+      return { traex: scope, path, environmentId: undefined } as const;
+    return null;
+  }
   const linked = /^\/api\/inference\/linked\/([^/]+)\/([^/]+)(\/.*)$/.exec(rawUrl);
   const driver = linked && isInferenceDriver(linked[1]) ? linked[1] : undefined;
   if (rawUrl.startsWith(PREFIX + "/linked/") && !driver) return null;

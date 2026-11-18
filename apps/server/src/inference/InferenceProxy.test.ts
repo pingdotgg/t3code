@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
   PeerLinkError,
   EnvironmentId,
@@ -38,6 +39,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as InferenceProxy from "./InferenceProxy.ts";
+import { traexConsumerRouteKey } from "./traex.ts";
 import { proxyVersion } from "./install.ts";
 
 const keychainState = vi.hoisted(() => ({
@@ -121,6 +123,7 @@ it.effect(
         let currentExit: Deferred.Deferred<void> | undefined;
         let expectRecovery = false;
         const recovered = yield* Deferred.make<void>();
+        let configPath = "";
         let starts = 0;
         let stops = 0;
         const spawner = ChildProcessSpawner.make((command) =>
@@ -137,6 +140,7 @@ it.effect(
             }
             const exited = yield* Deferred.make<void>();
             if (!tailscale) {
+              if (ChildProcess.isStandardCommand(command)) configPath = String(command.args[1]);
               currentExit = exited;
               if (expectRecovery) yield* Deferred.succeed(recovered, undefined);
               yield* Effect.addFinalizer(() => Deferred.succeed(exited, undefined));
@@ -181,10 +185,29 @@ it.effect(
         const importedClaudeAuth: Record<string, unknown>[] = [];
         const importedCodexFiles: string[] = [];
         const importedClaudeFiles: string[] = [];
+        let registryReconciles = 0;
         let activeCodexConfig: unknown;
         let activeCodexEnabled: boolean | undefined;
         const remoteCatalogKeys: (string | undefined)[] = [];
+        let peerBridgeKey = "";
         const http = HttpClient.make((request) => {
+          if (
+            request.url.endsWith("/traex/host/v1/models") ||
+            request.url === "http://127.0.0.1:8317/v1/models"
+          ) {
+            const direct = request.url.startsWith("http://127.0.0.1:8317/");
+            const permitted =
+              request.headers.authorization ===
+              "Bearer " + (direct ? "local-bridge-secret" : peerBridgeKey);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                permitted
+                  ? Response.json({ data: [{ id: "traex-test" }] })
+                  : new Response(null, { status: 403 }),
+              ),
+            );
+          }
           if (request.url.endsWith("/v0/management/api-call")) {
             const body = request.body;
             if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing usage request");
@@ -413,6 +436,7 @@ it.effect(
             Layer.succeed(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, {
               reconcile: (instances) =>
                 Effect.sync(() => {
+                  registryReconciles++;
                   const activeCodex = instances[ProviderInstanceId.make("codex")];
                   activeCodexConfig = activeCodex?.config;
                   activeCodexEnabled = activeCodex?.enabled;
@@ -540,7 +564,7 @@ it.effect(
             },
           }),
         );
-        const grant = yield* Effect.scoped(
+        const { grant, oldPort } = yield* Effect.scoped(
           Effect.gen(function* () {
             const proxy = yield* InferenceProxy.InferenceProxy;
             expect((yield* proxy.status).enabled).toBe(false);
@@ -1001,13 +1025,43 @@ it.effect(
             yield* proxy.manage({ operation: "setRouting", strategy: "fill-first" });
             yield* proxy.manage({ operation: "setRouting", sessionAffinity: false });
             const readConfig = fs
-              .readFileString(config.stateDir + "/inference-proxy/config.yaml")
+              .readFileString(configPath)
               .pipe(Effect.map((s) => JSON.parse(s) as Record<string, unknown>));
             expect(yield* readConfig).toMatchObject({
               routing: { strategy: "fill-first", "session-affinity": false },
             });
             expect((yield* readConfig)["oauth"]).not.toHaveProperty("model-alias");
             const issued = yield* proxy.grant(peer);
+            yield* fs.makeDirectory(home + "/.traex-bridge", { recursive: true });
+            yield* fs.writeFileString(home + "/.traex-bridge/api-key", "local-bridge-secret");
+            const beforeDiscovery = registryReconciles;
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex_traex"));
+            expect(registryReconciles).toBe(beforeDiscovery + 1);
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex_traex"));
+            expect(registryReconciles).toBe(beforeDiscovery + 1);
+            expect((yield* proxy.status).traexAvailable).toBe(true);
+            const bridgeGrant = yield* proxy.grant({
+              ...peer,
+              capability: "traex",
+              automatic: true,
+            });
+            peerBridgeKey = bridgeGrant.key;
+            expect(bridgeGrant.key).not.toBe(issued.key);
+            expect(yield* proxy.authorize(bridgeGrant.key)).toBeNull();
+            expect(yield* proxy.traexCandidates("host", issued.key)).toBeNull();
+            expect(yield* proxy.traexCandidates("host", bridgeGrant.key)).toEqual([
+              { baseUrl: "http://127.0.0.1:8317", key: "local-bridge-secret", models: [] },
+            ]);
+            const consumerBridgeKey = yield* traexConsumerRouteKey(state);
+            expect(
+              yield* proxy.traexCandidates("resolve", consumerBridgeKey, "generic-codex-only"),
+            ).toEqual([]);
+            expect(
+              yield* proxy.traexCandidates("resolve", consumerBridgeKey, "traex-test"),
+            ).toMatchObject([{ baseUrl: "http://127.0.0.1:8317", models: ["traex-test"] }]);
+            yield* fs.remove(home + "/.traex-bridge/api-key");
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex_traex"));
+            expect(registryReconciles).toBe(beforeDiscovery + 2);
             yield* proxy.manage({
               operation: "configure",
               enabled: true,
@@ -1346,6 +1400,24 @@ it.effect(
               (yield* proxy.connect({ ...connect, grant: linkedGrant }).pipe(Effect.flip)).message,
             ).toContain("Connect to the inference host");
             linked = true;
+            yield* proxy.registerFallback({
+              ...connect,
+              driver: "traex",
+              grant: { ...linkedGrant, key: peerBridgeKey },
+            });
+            expect(
+              yield* proxy.traexCandidates("resolve", consumerBridgeKey, "traex-test"),
+            ).toEqual([
+              {
+                baseUrl: linkedUrl + "/api/inference/traex/host",
+                key: peerBridgeKey,
+                models: ["traex-test"],
+              },
+            ]);
+            expect(
+              yield* proxy.traexCandidates("resolve", consumerBridgeKey, "generic-codex-only"),
+            ).toEqual([]);
+            expect(yield* proxy.traexCandidates("host", peerBridgeKey)).toEqual([]);
             yield* proxy.connect({ ...connect, grant: linkedGrant });
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
@@ -1739,10 +1811,14 @@ it.effect(
             expect(yield* fs.exists(staleRuntime)).toBe(false);
             expect(yield* fs.exists(otherPlatform)).toBe(true);
             expect(yield* fs.exists(runtime)).toBe(true);
-            return issued;
+            return { grant: issued, oldPort: Number(new URL(local.baseUrl).port) };
           }).pipe(Effect.provide(service)),
         );
         expect(stops).toBe(3);
+        const legacyConfig = config.stateDir + "/inference-proxy/config.yaml";
+        expect(yield* fs.exists(configPath)).toBe(false);
+        yield* NodeSocketServer.make({ host: "127.0.0.1", port: oldPort });
+        yield* fs.writeFileString(legacyConfig, "occupied listener configuration");
         yield* Effect.scoped(
           Effect.gen(function* () {
             const proxy = yield* InferenceProxy.InferenceProxy;
@@ -1750,9 +1826,13 @@ it.effect(
               strategy: "fill-first",
               sessionAffinity: false,
             });
-            expect((yield* proxy.authorize(grant.key))?.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+            const restoredUrl = (yield* proxy.authorize(grant.key))!.baseUrl;
+            expect(restoredUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+            expect(new URL(restoredUrl).port).not.toBe(String(oldPort));
+            expect(yield* fs.readFileString(legacyConfig)).toBe("occupied listener configuration");
             yield* proxy.manage({ operation: "revoke", environmentId: peer.environmentId });
             expect(yield* proxy.authorize(grant.key)).toBeNull();
+            expect(yield* proxy.traexCandidates("host", peerBridgeKey)).toBeNull();
             expect(yield* proxy.health(grant.key)).toBeNull();
             expect(
               yield* proxy.grant({ ...peer, automatic: true }).pipe(Effect.result),
@@ -1764,6 +1844,9 @@ it.effect(
             yield* Deferred.succeed(currentExit!, undefined);
             yield* TestClock.adjust("1 second");
             yield* Deferred.await(recovered);
+            expect((yield* proxy.grant({ environmentId: hostId, label: "Local" })).baseUrl).toBe(
+              restoredUrl,
+            );
             yield* proxy.manage({ operation: "configure", enabled: false, sharing: false });
             expect((yield* proxy.status).consumers).toEqual([]);
             expect(Option.isSome(yield* state.get("inference-proxy-state"))).toBe(true);

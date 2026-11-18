@@ -15,6 +15,8 @@ import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
+import { HttpClient } from "effect/http";
+import { readTraexModels, traexCatalogRoute, usesTraexLaunchArgs } from "./codexEndpointModels.ts";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as CodexClient from "effect-codex-app-server/client";
@@ -157,6 +159,7 @@ const CODEX_PRESENTATION = {
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
   readonly endpoint?: string | undefined;
+  readonly traexRoute?: ReturnType<typeof traexCatalogRoute>;
   readonly nativeUsage?: boolean;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
@@ -814,6 +817,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   return {
     account: accountResponse,
     endpoint: config ? codexCustomEndpoint(config) : undefined,
+    traexRoute: traexCatalogRoute(config),
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
@@ -933,6 +937,20 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
   appendCustomCodexModels([], codexSettings.customModels);
 
+function unavailableTraex(
+  draft: ServerProviderDraft,
+  reason = draft.message ?? "The Traex bridge is unavailable.",
+): ServerProviderDraft {
+  return {
+    ...draft,
+    availability: "unavailable",
+    requiresListedModel: true,
+    unavailableReason: reason,
+    message: reason,
+    models: [],
+  };
+}
+
 const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvider")(function* (
   codexSettings: CodexSettings,
 ): Effect.fn.Return<ServerProviderDraft> {
@@ -956,7 +974,7 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
     });
   }
 
-  return buildServerProvider({
+  const draft = buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: true,
     checkedAt,
@@ -970,6 +988,9 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
       message: "Codex provider status has not been checked in this session yet.",
     },
   });
+  return usesTraexLaunchArgs(codexSettings.launchArgs)
+    ? unavailableTraex(draft, "Checking the Traex bridge.")
+    : draft;
 });
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -1035,7 +1056,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpClient.HttpClient
 > {
   const resolvedEnvironment = providerProbeEnvironment(environment ?? process.env);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -1063,11 +1087,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     CODEX_AUTH_PROBE_TIMEOUT_MS,
     resolvedEnvironment,
   );
+  const launchArgs = resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment);
+  const traexLaunch = usesTraexLaunchArgs(launchArgs);
   const probeResult = yield* probe({
     probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+    launchArgs,
     cwd: process.cwd(),
     environment: resolvedEnvironment,
     ...(codexSettings.setupMode === "cli" ? { extendEnv: false } : {}),
@@ -1090,7 +1116,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           environment: resolvedEnvironment,
         })
       : null;
-    return buildServerProvider({
+    const draft = buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -1109,10 +1135,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
               : " Make sure the configured executable exists and can be run."),
       },
     });
+    return traexLaunch ? unavailableTraex(draft) : draft;
   }
 
   if (Option.isNone(probeResult.success)) {
-    return buildServerProvider({
+    const draft = buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -1126,6 +1153,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         message: "Timed out while checking Codex app-server provider status.",
       },
     });
+    return traexLaunch ? unavailableTraex(draft) : draft;
   }
 
   const snapshot = probeResult.success.value;
@@ -1155,12 +1183,22 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             checkedAt,
           });
 
-  return buildServerProvider({
+  const traex = snapshot.traexRoute !== undefined || traexLaunch;
+  const catalog = traex
+    ? yield* readTraexModels(snapshot.traexRoute, resolvedEnvironment, snapshot.models ?? [])
+    : snapshot.models;
+  const offline = traex && catalog?.length === 0;
+  const customModels = traex
+    ? codexSettings.customModels.filter((entry) =>
+        catalog?.some((model) => model.slug === (typeof entry === "string" ? entry : entry.slug)),
+      )
+    : codexSettings.customModels;
+  const draft = buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
     models: pipe(
-      appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
+      appendCustomCodexModels(catalog ?? [], customModels),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
       (models) => applyConfiguredCodexCyberAccess(models, snapshot),
@@ -1182,18 +1220,26 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: snapshot.version ?? null,
-      status: snapshot.models === undefined ? "warning" : accountStatus.status,
+      status: catalog === undefined ? "warning" : accountStatus.status,
       auth: snapshot.endpoint
         ? { ...accountStatus.auth, endpoint: snapshot.endpoint }
         : accountStatus.auth,
       ...(accountStatus.message
         ? { message: accountStatus.message }
-        : snapshot.models === undefined
+        : catalog === undefined
           ? { message: "Codex did not return its model catalog in time." }
           : {}),
       ...(managedAuth ? {} : { usageLimits }),
     },
   });
+  return offline
+    ? unavailableTraex(
+        { ...draft, status: "warning" },
+        "The Traex bridge did not return any available models.",
+      )
+    : traex
+      ? { ...draft, requiresListedModel: true }
+      : draft;
 });
 
 export { makePendingCodexProvider };

@@ -221,6 +221,30 @@ describe("scoped default model selections", () => {
 });
 
 describe("instance-scoped model selection", () => {
+  it("keeps an endpoint's missing selection disabled and excludes unverified custom models", () => {
+    const instanceId = ProviderInstanceId.make("private_bridge");
+    const driver = ProviderDriverKind.make("codex");
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [instanceId]: { driver, config: { customModels: ["unverified"] } } },
+    };
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({ instanceId, provider: driver, models: ["actual"] }),
+        requiresListedModel: true,
+      },
+    ]);
+    expect(
+      getAppModelOptionsForInstance(settings, entry!, "saved").map((model) => [
+        model.slug,
+        model.isUnavailable === true,
+      ]),
+    ).toEqual([
+      ["actual", false],
+      ["saved", true],
+    ]);
+  });
+
   it.each([
     { driver: "codex", replacesAccounts: true },
     { driver: "claudeAgent", replacesAccounts: true },

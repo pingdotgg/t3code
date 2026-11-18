@@ -213,6 +213,7 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.requiresListedModel || provider.availability === "unavailable") return false;
   if (provider.driver === ProviderDriverKind.make("pi")) {
     // Pi auth becomes known only after inventory discovery: empty means unauthenticated; failed/interactive discovery preserves unknown auth and cached models.
     return !(
@@ -1377,10 +1378,28 @@ export const layer = Layer.effect(
       );
     });
 
+    const refreshEndpointCatalogs = yield* Ref.get(providersRef).pipe(
+      Effect.flatMap((providers) =>
+        Effect.forEach(
+          providers.filter((provider) => provider.enabled && provider.requiresListedModel),
+          (provider) =>
+            instanceRegistry
+              .getInstance(provider.instanceId)
+              .pipe(
+                Effect.flatMap((instance) => (instance ? refreshOneSource(instance) : Effect.void)),
+              ),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+      Effect.cachedWithTTL(Duration.seconds(5)),
+    );
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
       yield* inferenceHealth.refreshModelCatalog();
       yield* refreshInferenceProviders();
       const { updatedAt } = yield* manifestService.refreshOnDemand;
+      if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) {
+        return yield* refreshEndpointCatalogs;
+      }
       // The first pass can be one that started before the fetch, so allow one more.
       for (let pass = 0; pass < 2; pass++) {
         if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) return;

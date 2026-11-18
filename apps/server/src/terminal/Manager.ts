@@ -76,6 +76,7 @@ import {
   resolveCodexRuntime,
 } from "../provider/Drivers/CodexRuntime.ts";
 import { claudeAccountSettings, resolveClaudeRuntime } from "../provider/Drivers/ClaudeHome.ts";
+import * as TraexProviderRoutes from "../inference/TraexProviderRoutes.ts";
 import type { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ManagedProviders from "../policy/managedProviders.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1801,11 +1802,13 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
+  const traex = yield* TraexProviderRoutes.TraexProviderRoutes;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
     resolveProviderInstanceTerminalEnvironment({
-      deriveProviderInstanceConfigMap: deriveConfigMap,
+      deriveProviderInstanceConfigMap: (settings, env) =>
+        traex.apply(deriveConfigMap(settings, env), serverSettings.managedPolicy),
       serverSettings,
       path,
       rawProviderInstanceId,
@@ -3995,4 +3998,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 });
 
 export const layer = (deriveConfigMap: typeof deriveProviderInstanceConfigMap) =>
-  Layer.effect(TerminalManager, make(deriveConfigMap)).pipe(Layer.provide(ProcessRunner.layer));
+  Layer.effect(TerminalManager, make(deriveConfigMap)).pipe(
+    Layer.provide(ProcessRunner.layer),
+    Layer.provide(TraexProviderRoutes.layer),
+  );
