@@ -33,6 +33,10 @@ export function closeAppWindow(id: AppWindowId): void {
   if (windows.includes(id)) setWindows(windows.filter((open) => open !== id));
 }
 
+export function isAppWindowOpen(id: AppWindowId): boolean {
+  return windows.includes(id);
+}
+
 export function activeAppWindowId(): AppWindowId | null {
   return windows.at(-1) ?? null;
 }

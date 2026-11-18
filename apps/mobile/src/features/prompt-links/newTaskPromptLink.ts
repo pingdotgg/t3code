@@ -103,6 +103,7 @@ let stopWaitingForShells: (() => void) | null = null;
  */
 export function takeNewTaskPromptLink(
   state: PartialState<NavigationState> | undefined,
+  windowId = rootNavigationWindowId(),
 ): PartialState<NavigationState> | undefined {
   const route = findLinkedRoute(state, NEW_TASK_ROUTES);
   const search = promptLinkSearchFromParams(
@@ -110,7 +111,7 @@ export function takeNewTaskPromptLink(
   );
   if (search === null) return state;
   pendingLink = search;
-  pendingWindow = rootNavigationWindowId();
+  pendingWindow = windowId;
   return updateLinkedRoute(state, NEW_TASK_ROUTES, (linked) => ({
     ...linked,
     params: withoutPromptLinkParams(linked.params),

@@ -74,6 +74,18 @@ it("follows the window in use, and falls back when it closes", () => {
 });
 
 it("runs queued navigation when a ready window takes over from one still mounting", () => {
+  const detachInitial = attachRootNavigation(1, fakeContainer());
+  activateAppWindow(1);
+  activateAppWindow(2);
+  expect(rootNavigationRef.current).toBeNull();
+  const queued = vi.fn();
+  whenRootNavigationReady(queued);
+  expect(queued).not.toHaveBeenCalled();
+  closeAppWindow(2);
+  expect(queued).toHaveBeenCalledOnce();
+  closeAppWindow(1);
+  detachInitial();
+
   const navigate = vi.fn();
   const detachReady = attachRootNavigation(1, fakeContainer());
   activateAppWindow(1);

@@ -5,7 +5,12 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 
-import { activeAppWindowId, subscribeAppWindows, type AppWindowId } from "./appWindows";
+import {
+  activeAppWindowId,
+  isAppWindowOpen,
+  subscribeAppWindows,
+  type AppWindowId,
+} from "./appWindows";
 
 type RootNavigation = NavigationContainerRef<ReactNavigation.RootParamList>;
 
@@ -23,9 +28,7 @@ const containers = new Map<AppWindowId, RootNavigation>();
 function retarget() {
   const active = activeAppWindowId();
   rootNavigationRef.current =
-    (active === null ? undefined : containers.get(active)) ??
-    [...containers.values()].at(-1) ??
-    null;
+    (active === null ? [...containers.values()].at(-1) : containers.get(active)) ?? null;
   // Work queued for a window that was still mounting runs in the ready one that took over.
   flushRootNavigationQueue();
 }
@@ -72,7 +75,7 @@ export function rootNavigationWindowStatus(
 ): "current" | "waiting" | "closed" {
   if (windowId === null) return "current";
   const container = containers.get(windowId);
-  if (container === undefined) return "closed";
+  if (container === undefined) return isAppWindowOpen(windowId) ? "waiting" : "closed";
   return container === rootNavigationRef.current ? "current" : "waiting";
 }
 

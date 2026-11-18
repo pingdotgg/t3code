@@ -115,6 +115,7 @@ import {
   attachRootNavigation,
   flushRootNavigationQueue,
   rootNavigationWindowStatus,
+  rootNavigationWindowId,
   linkToRootPath,
   rootNavigationRef,
   rootNavigationRoutes,
@@ -137,13 +138,17 @@ const linkingConfig = {
   screens: createPathConfigForStaticNavigation(RootStack, { initialRouteName: "Home" }) ?? {},
 } as const;
 
-function getAppStateFromPath(path: string, options: Parameters<typeof getStateFromPath>[1]) {
+function getAppStateFromPath(
+  path: string,
+  options: Parameters<typeof getStateFromPath>[1],
+  windowId = rootNavigationWindowId(),
+) {
   return pipe(
     getStateFromPath(path, options),
     (state) => restoreDraftLinkState(state, path),
     (state) => restoreSettingsLinkState(state, settingsLinkPage()),
-    takeThreadPromptLink,
-    takeNewTaskPromptLink,
+    (state) => takeThreadPromptLink(state, windowId),
+    (state) => takeNewTaskPromptLink(state, windowId),
     withoutPairingTarget,
     startDevAutoConnect,
     takeScheduledTaskNewLink,
@@ -203,6 +208,8 @@ function windowLinking(windowId: AppWindowId) {
   return {
     ...appLinking,
     getInitialURL: () => initialWindowURL(windowId),
+    getStateFromPath: (path: string, options: Parameters<typeof getStateFromPath>[1]) =>
+      getAppStateFromPath(path, options, windowId),
     subscribe: (listener: (url: string) => void) => {
       const subscription = Linking.addEventListener("url", ({ url }) => {
         if (rootNavigationWindowStatus(windowId) === "current") listener(url);

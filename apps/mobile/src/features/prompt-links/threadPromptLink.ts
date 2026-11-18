@@ -51,6 +51,7 @@ let stopWaitingForDetail: (() => void) | null = null;
  */
 export function takeThreadPromptLink(
   state: PartialState<NavigationState> | undefined,
+  windowId = rootNavigationWindowId(),
 ): PartialState<NavigationState> | undefined {
   if (!state) return state;
   const index = state.routes.findIndex((route) => route.name === "Thread");
@@ -77,7 +78,7 @@ export function takeThreadPromptLink(
     pendingLink = {
       ref: { environmentId: EnvironmentId.make(environmentId), threadId: ThreadId.make(threadId) },
       prompt: parsed.value,
-      windowId: rootNavigationWindowId(),
+      windowId,
     };
   }
   return nextState;
