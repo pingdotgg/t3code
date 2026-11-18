@@ -301,7 +301,19 @@ describe("MessagesTimeline work rows", () => {
     });
   });
 
-  it("keeps the worked-for heading in place when expanded at the bottom", async () => {
+  it("labels the running timer as elapsed time", async () => {
+    const runId = RunId.make("live-elapsed");
+    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    await using screen = await renderTimeline([message("Check the project", { runId })], {
+      isWorking: true,
+      activeTurnStartedAt: startedAt,
+      latestRun: { runId, status: "running", startedAt, completedAt: null },
+    });
+
+    await vi.waitFor(() => expect(screen.container.textContent).toMatch(/Elapsed [0-9]+s/));
+  });
+
+  it("keeps the elapsed-time heading in place when expanded at the bottom", async () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
     const container = document.createElement("div");
@@ -321,7 +333,7 @@ describe("MessagesTimeline work rows", () => {
       />,
       { container },
     );
-    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    const heading = screen.getByRole("button", { name: /^Elapsed / });
     // LegendList keeps rows click-through until its initial scroll settles on animation
     // frames, which the fake clock below would freeze.
     await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
@@ -362,7 +374,7 @@ describe("MessagesTimeline work rows", () => {
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
       container,
     });
-    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    const heading = screen.getByRole("button", { name: /^Elapsed / });
     await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
     const viewport = props.listRef.current!.getScrollableNode()!;
     const distanceFromEnd = () =>

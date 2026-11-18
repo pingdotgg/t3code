@@ -3617,7 +3617,7 @@
   "a265d829e76c30fb": "Executou {program}",
   "3b8635b46a63c2f0": "Você parou após {duration}",
   "abebe26bc3e613e8": "Você parou esta resposta",
-  "cf180966ebd1c307": "Trabalhou por {duration}",
+  "69c895518032a308": "Tempo decorrido: {duration}",
   "ea45064fb0582c38": "Trabalhou",
   "cbf71f6bf85f65e4": "Continuou por {duration}",
   "8571e67ea1596019": "Continuou",
@@ -4297,8 +4297,8 @@
   "e81991d4a58ce959": "Script de configuração",
   "512e5f7d08325a74": "A configuração em segundo plano ainda está em execução: {scriptName}. Mostrar o progresso.",
   "ff6edf13509031be": "Configurando o worktree…",
-  "eb06160a98c4dd18": [
-    "Trabalhando há ",
+  "4415a92a506827b7": [
+    "Tempo decorrido: ",
     {
       "t": "WorkingTimer",
       "i": 1

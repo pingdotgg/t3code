@@ -3617,7 +3617,7 @@
   "a265d829e76c30fb": "Körde {program}",
   "3b8635b46a63c2f0": "Du stoppade efter {duration}",
   "abebe26bc3e613e8": "Du stoppade det här svaret",
-  "cf180966ebd1c307": "Arbetade i {duration}",
+  "69c895518032a308": "Förfluten tid: {duration}",
   "ea45064fb0582c38": "Arbetade",
   "cbf71f6bf85f65e4": "Fortsatte i {duration}",
   "8571e67ea1596019": "Fortsatte",
@@ -4298,8 +4298,8 @@
   "e81991d4a58ce959": "Konfigurationsskript",
   "512e5f7d08325a74": "Konfigurationen i bakgrunden körs fortfarande: {scriptName}. Visa förloppet.",
   "ff6edf13509031be": "Konfigurerar worktree…",
-  "eb06160a98c4dd18": [
-    "Har arbetat i ",
+  "4415a92a506827b7": [
+    "Förfluten tid: ",
     {
       "t": "WorkingTimer",
       "i": 1
