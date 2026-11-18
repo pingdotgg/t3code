@@ -116,6 +116,13 @@ function xml(source: string, extension: string): XmlNode {
       return;
     }
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
+    if (
+      extension === ".odp" &&
+      (node.name === "table-cell" || node.name === "covered-table-cell") &&
+      odfValue(node).trim()
+    ) {
+      node.hasText = true;
+    }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
