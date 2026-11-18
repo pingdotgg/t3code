@@ -220,6 +220,7 @@ describe("AzureDevOpsIssueTracker", () => {
       const bodies: string[] = [];
       const hydrated: string[] = [];
       let typeReads = 0;
+      let finished = "Shipped";
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
@@ -238,8 +239,17 @@ describe("AzureDevOpsIssueTracker", () => {
                   }),
                 );
               }
+              if (resource === "workitemtypes") {
+                typeReads += 1;
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    encode({
+                      value: [{ name: "Bug", states: [{ name: finished, category: "Completed" }] }],
+                    }),
+                  ),
+                );
+              }
               if (resource !== "wiql" && resource !== "workitemsbatch") {
-                if (resource === "workitemtypes") typeReads += 1;
                 return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
               }
               return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
@@ -286,6 +296,19 @@ describe("AzureDevOpsIssueTracker", () => {
       expect(bodies).toHaveLength(2);
       expect(bodies[1]).toBe(bodies[0]);
       expect(bodies[0]).toContain("AND [System.State] NOT IN ('shipped')");
+      // A first page is a fresh list, so it sees a finished state added since.
+      finished = "Released";
+      yield* api.listIssues({
+        cwd: "/w",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 2,
+      });
+      expect(typeReads).toBe(2);
+      expect(bodies[2]).toContain("AND [System.State] NOT IN ('released')");
       const { query } = JSON.parse(bodies[0]!) as { query: string };
       // Mentions cannot be asked for over REST, so the filter sends no clause for them.
       expect(query).not.toContain("@RecentMentions");
