@@ -552,6 +552,7 @@ describe("VS Code theme import", () => {
         name: "Dracula",
         type: "dark",
         colors: { "editor.background": bg, "editor.foreground": "#f8f8f2" },
+        tokenColors: [{ scope: "keyword", settings: { foreground: "#ff79c6" } }],
       }),
       css,
     });
@@ -562,6 +563,10 @@ describe("VS Code theme import", () => {
     expect(themes.map((theme) => theme.label)).toEqual(["Dracula", "Dracula Soft"]);
     expect(themes.map((theme) => theme.id)).toEqual(["dracula", "dracula-soft"]);
     expect(themes.map((theme) => theme.css)).toEqual([css, css]);
+    expect(themes.map((theme) => theme.syntax?.dark?.keyword?.color)).toEqual([
+      "#ff79c6",
+      "#ff79c6",
+    ]);
     const numbered = resolveThemeLabelCollisions([
       { theme: dracula("#282a36") },
       { theme: dracula("#22232e") },
