@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
+import { TextLayer } from "pdfjs-dist";
 import { render } from "../../../test/render";
 import "~/index.css";
 
@@ -222,5 +223,79 @@ it("restores page, within-page offset and zoom after a remount", async () => {
     await expect.element(screen.getByText("Fit width")).toBeVisible();
   } finally {
     URL.revokeObjectURL(url);
+  }
+});
+
+it("renews the URL and keeps the latest reading position through a page error and retry", async () => {
+  const pages = Array.from({ length: 6 }, (_, index) => ({
+    box: index === 5 ? "0 0 612 2400" : "0 0 612 792",
+    rotate: 0,
+    text: "BT /F1 24 Tf 30 70 Td (Retry document) Tj ET",
+  }));
+  const url = URL.createObjectURL(testPdf(pages));
+  const renewed = URL.createObjectURL(testPdf(pages));
+  try {
+    const viewer = (key: number) => (
+      <div className="flex h-[300px] w-[320px]">
+        <PdfViewer
+          key={key}
+          src={url}
+          title="Retry PDF"
+          positionKey="retry:cached"
+          refreshSrc={async () => renewed}
+        />
+      </div>
+    );
+    await using screen = await render(viewer(1));
+    await expect.element(screen.getByText("1 / 6 pages")).toBeVisible();
+    await screen.rerender(viewer(2));
+    await expect.element(screen.getByText("1 / 6 pages")).toBeVisible();
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    for (let page = 2; page <= 6; page++) {
+      await screen.getByRole("button", { name: "Next page", exact: true }).click();
+      await expect.element(screen.getByText(`${page} / 6 pages`)).toBeVisible();
+    }
+    const region = () => screen.getByRole("region", { name: "Retry PDF" }).element();
+    await vi.waitFor(() => {
+      const page = region().querySelector('canvas[aria-label="Page 6"]')!;
+      expect(page.getBoundingClientRect().height).toBeGreaterThan(1000);
+    });
+    const readingTop = region().scrollTop + 1000;
+    region().scrollTo({ top: readingTop, left: 60 });
+    await vi.waitFor(() => expect(region().scrollTop).toBe(readingTop));
+
+    let failRender!: () => void;
+    const released = new Promise<void>((resolve) => {
+      failRender = resolve;
+    });
+    const renderText = TextLayer.prototype.render;
+    using failingPage = vi.spyOn(TextLayer.prototype, "render").mockImplementation(function (
+      this: TextLayer,
+    ) {
+      return renderText.call(this).then(async () => {
+        await released;
+        throw new Error("This PDF page could not render.");
+      });
+    });
+    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await vi.waitFor(() => expect(failingPage).toHaveBeenCalled());
+    const top = region().scrollTop;
+    const left = region().scrollLeft;
+    const zoom = screen.container.textContent!.match(/\d+%/)![0];
+    failRender();
+    await expect.element(screen.getByRole("alert")).toBeVisible();
+    await vi.waitFor(() => expect(region().scrollTop).toBe(0));
+    failingPage.mockRestore();
+
+    // Only a retry that renews the URL can load the document now.
+    URL.revokeObjectURL(url);
+    await screen.getByRole("button", { name: "Try again", exact: true }).click();
+    await expect.element(screen.getByText("6 / 6 pages")).toBeVisible();
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
+    expect(region().scrollLeft).toBe(left);
+    expect(screen.container.textContent).toContain(zoom);
+  } finally {
+    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(renewed);
   }
 });
