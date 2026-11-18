@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunEditStore,
@@ -133,7 +136,7 @@ async function submitQueuedRunEdit(input: {
     await refreshExpiredAttachmentUploads({ environmentId, images: files, draftTarget });
     validateFiles();
     const uploaded = getUploadedAttachments({ environmentId, images: files });
-    if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
+    if (uploaded === null) throw new Error(m(msg("Retry or remove failed uploads before saving.")));
     return uploaded;
   };
   try {
@@ -145,7 +148,7 @@ async function submitQueuedRunEdit(input: {
       uploadFiles,
     });
     if (input.draftChanged())
-      return "Draft changed while preparing this message. Review it and save again.";
+      return m(msg("Draft changed while preparing this message. Review it and save again."));
     // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
@@ -190,9 +193,9 @@ async function submitQueuedRunEdit(input: {
         },
       },
     });
-    return result._tag === "Failure" ? "Could not save the edited queued message." : null;
+    return result._tag === "Failure" ? m(msg("Could not save the edited queued message.")) : null;
   } catch (error) {
-    return error instanceof Error ? error.message : "Could not save the edited queued message.";
+    return thrownErrorMessage(error, m) ?? m(msg("Could not save the edited queued message."));
   }
 }
 
@@ -315,15 +318,18 @@ export function useQueuedRunEdit(input: {
           const title = appAtomRegistry.get(
             environmentThreadShells.threadShellAtom(threadRef),
           )?.title;
-          const where = title === undefined ? "" : ` in “${title}”`;
           toastManager.add(
             stackedThreadToast({
               type: recovery === "kept" ? "info" : "warning",
-              title: "Queued message is no longer queued",
+              title: m(msg("Queued message is no longer queued")),
               description:
-                recovery === "kept"
-                  ? `Your unsaved edit${where} was kept in the composer.`
-                  : `Your unsaved edit${where} was discarded.`,
+                title === undefined
+                  ? recovery === "kept"
+                    ? m(msg("Your unsaved edit was kept in the composer."))
+                    : m(msg("Your unsaved edit was discarded."))
+                  : recovery === "kept"
+                    ? m(msg("Your unsaved edit in “{title}” was kept in the composer.", { title }))
+                    : m(msg("Your unsaved edit in “{title}” was discarded.", { title })),
             }),
           );
         },
@@ -389,7 +395,11 @@ export function useQueuedRunEdit(input: {
     ) {
       setThreadError(
         editing.threadId,
-        `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        m(
+          msg("A message can have at most {max} attachments.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
       );
       return;
     }
@@ -422,7 +432,7 @@ export function useQueuedRunEdit(input: {
     setThreadError(
       editing.threadId,
       changedAfterSave
-        ? "The earlier edit was saved. Review your newer changes and save again."
+        ? m(msg("The earlier edit was saved. Review your newer changes and save again."))
         : error,
     );
     const current = finishSave(error === null && !changedAfterSave);
