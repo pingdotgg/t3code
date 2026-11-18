@@ -8683,10 +8683,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           providerThread: OrchestrationV2ProviderThread,
         ) {
           const liveQuery = yield* Ref.get(queryContext);
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           if (
             liveQuery === null ||
             liveQuery.stopping ||
-            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            nativeThreadId == null ||
+            (liveQuery.nativeThreadId !== nativeThreadId &&
+              clearedNativeSessions.get(liveQuery.nativeThreadId) !== nativeThreadId)
           ) {
             return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
               driver: CLAUDE_PROVIDER,

@@ -8661,6 +8661,74 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("checks the named MCP server before reloading Codex servers", () =>
+    Effect.gen(function* () {
+      const scenario = "mcp-reconnect";
+      const nativeThreadId = "native-mcp-reconnect";
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "unused-turn",
+            prompt: "unused-prompt",
+          }).slice(0, 5),
+          ...[3, 4].flatMap((id) => [
+            {
+              type: "expect_outbound" as const,
+              label: "list servers",
+              frame: {
+                id,
+                method: "mcpServerStatus/list",
+                params: { threadId: nativeThreadId, detail: "toolsAndAuthOnly" },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: "server listing",
+              frame: {
+                id,
+                result: {
+                  data: [
+                    {
+                      name: "linear",
+                      authStatus: "notLoggedIn",
+                      tools: {},
+                      resources: [],
+                      resourceTemplates: [],
+                    },
+                  ],
+                  nextCursor: null,
+                },
+              },
+            },
+          ]),
+          {
+            type: "expect_outbound",
+            label: "reload known server",
+            frame: { id: 5, method: "config/mcpServer/reload" },
+          },
+          { type: "emit_inbound", label: "reload completed", frame: { id: 5, result: {} } },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const auth = harness.runtime.mcpServerAuth!;
+      const target = { providerThread: harness.providerThread };
+      const error = yield* Effect.flip(auth.reconnect({ ...target, server: "lienar" }));
+      assert.equal(error._tag, "ProviderAdapterProtocolError");
+      yield* auth.reconnect({ ...target, server: "linear" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("captures an MCP app's resource and holds the turn open until it lands", () =>
     Effect.gen(function* () {
       const appCaptured = yield* Deferred.make<OrchestrationV2TurnItem>();

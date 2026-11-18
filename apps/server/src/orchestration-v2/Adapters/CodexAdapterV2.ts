@@ -7961,7 +7961,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           // Codex reloads every server's config on loaded threads for their next turn; it has no per-server reconnect.
           reconnect: Effect.fn("CodexAdapterV2.reloadMcpServers")(
-            function* () {
+            function* ({ providerThread, server }) {
+              const servers = yield* mcpServerAuth.list({ providerThread });
+              if (!servers.some((candidate) => candidate.name === server)) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CODEX_PROVIDER,
+                  detail: "The requested MCP server does not exist.",
+                });
+              }
               yield* ensureInitialized;
               yield* client.request("config/mcpServer/reload", undefined);
             },

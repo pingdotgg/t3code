@@ -169,7 +169,7 @@ const BackgroundWaitTool = Tool.make("t3_background_wait", {
 
 const McpServerTool = Tool.make("t3_mcp_server", {
   description:
-    "Sign in to an MCP server that needs auth. list: names and status (`needs-auth`). authenticate: returns `authorizationUrl` for the user, who only logs in (none: done). callback: if `callbackExpected` and their browser cannot reach this machine, pass the address it ended on as `callbackUrl` (Claude). reconnect if still not connected.",
+    "MCP sign-in: list servers; authenticate returns authorizationUrl (absent: done). Codex: open on provider host or forward callback port; no pasted callback. Claude: if callbackExpected, submit final browser address as callbackUrl. reconnect retries connection (Codex reloads all servers).",
   parameters: Schema.Struct({
     action: Schema.Literals(["list", "authenticate", "callback", "reconnect"]),
     server: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),

@@ -4302,6 +4302,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : harness.providerThread;
       };
       assert.equal(latest().nativeThreadRef?.nativeId, "cleared-native-session");
+      assert.deepEqual(
+        yield* harness.runtime.mcpServerAuth!.list({ providerThread: latest() }),
+        [],
+      );
       yield* harness.runtime.interruptTurn({
         providerThread: latest(),
         providerTurnId: lastProviderTurn(harness.events).id,
