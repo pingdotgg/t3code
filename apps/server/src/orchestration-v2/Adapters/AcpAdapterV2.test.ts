@@ -8561,10 +8561,13 @@ describe("AcpAdapterV2", () => {
             | Parameters<RuntimeService["handleSessionUpdate"]>[0]
             | undefined;
           const promptSettled = yield* Deferred.make<void>();
+          const finalizationScheduled = yield* Deferred.make<void>();
           const adapter = yield* makeAcpAdapterV2({
             testHooks: {
               afterPromptSettledWithBackgroundWork: () =>
                 Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
+              onDeferredFinalizeScheduled: () =>
+                Deferred.succeed(finalizationScheduled, undefined).pipe(Effect.asVoid),
             },
             instanceId,
             flavor: {
@@ -8677,9 +8680,7 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "FIRST_DONE" },
             },
           }).pipe(Effect.provideService(Clock.Clock, blockingClock));
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            yield* Effect.yieldNow;
-          }
+          yield* Deferred.await(finalizationScheduled);
 
           yield* sessionUpdateHandler!({
             sessionId: "mock-session-1",
@@ -8693,8 +8694,6 @@ describe("AcpAdapterV2", () => {
             },
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
-
-          while (Option.isSome(yield* Queue.poll(events))) {}
 
           blockNextClockRead = true;
           const adjustFiber = yield* TestClock.adjust("3 seconds").pipe(Effect.forkScoped);
@@ -8722,8 +8721,6 @@ describe("AcpAdapterV2", () => {
           yield* Deferred.succeed(releaseFinalizationClockRead, undefined);
           yield* Fiber.join(adjustFiber);
           yield* Fiber.join(compactFiber);
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
 
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: ACP_TEST_DRIVER,
@@ -8731,9 +8728,11 @@ describe("AcpAdapterV2", () => {
           });
           let completedSubagentUpdates = 0;
           let rootTerminalStatus: string | null = null;
-          let polled = yield* Queue.poll(events);
-          while (Option.isSome(polled)) {
-            const event = polled.value;
+          while (
+            rootTerminalStatus === null ||
+            providerThread.nativeMetadata?.acpInstructions !== null
+          ) {
+            const event = yield* Queue.take(events);
             if (event.type === "provider_thread.updated") providerThread = event.providerThread;
             if (
               event.type === "turn_item.updated" &&
@@ -8746,7 +8745,6 @@ describe("AcpAdapterV2", () => {
             if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
               rootTerminalStatus = event.status;
             }
-            polled = yield* Queue.poll(events);
           }
           assert.equal(rootTerminalStatus, "completed");
           assert.isNull(providerThread.nativeMetadata?.acpInstructions);
