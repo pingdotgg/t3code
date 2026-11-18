@@ -322,13 +322,12 @@ function CloudEnvironmentRowShell(props: {
     props.connectionError && props.connectionState !== "unsupported" && !props.awaitingApproval
       ? "text-danger-foreground"
       : "text-foreground-muted";
-  const accessibilityHint =
-    [
-      props.dimmed ? statusText : null,
-      props.onRemove ? gt("Long press to remove from this device") : null,
-    ]
-      .filter(Boolean)
-      .join(". ") || undefined;
+  const removalHint = props.onRemove ? gt("Long press to remove from this device") : undefined;
+  const accessibilityHint = props.dimmed
+    ? removalHint
+      ? `${statusText}. ${removalHint}`
+      : statusText
+    : removalHint;
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
     readonly lineCount: number;
