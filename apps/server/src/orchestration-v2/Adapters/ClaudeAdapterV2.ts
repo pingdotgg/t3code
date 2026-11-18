@@ -2139,11 +2139,12 @@ function parseClaudeInteger(text: string): number {
   return Number.parseInt(value, 10);
 }
 
-const CLAUDE_SLEEP_DURATION = String.raw`(?:\d[\w.]*|\$\(\([\w\s+*/%-]+\)\)|\$\{\w+(?::?[-=]\d[\w.]*)?\}|\$\w+)`;
+const CLAUDE_SLEEP_DURATION = String.raw`(?:\d[\w.]*|\$\(\([\d\s+*/%-]+\)\)|\$\{\w+(?::?[-=]\d[\w.]*)?\}|\$\w+)`;
 const CLAUDE_SLEEP_TIMER_START = new RegExp(
-  String.raw`^\s*sleep\s+(?:${CLAUDE_SLEEP_DURATION}|"${CLAUDE_SLEEP_DURATION}"|'\d[\w.]*')\s*(?:$|;|&&|\n)`,
+  String.raw`^[ \t\n]*sleep[ \t]+(?:${CLAUDE_SLEEP_DURATION}|"${CLAUDE_SLEEP_DURATION}"|'\d[\w.]*')[ \t]*(?:$|;|&&|\n)`,
 );
-const CLAUDE_SLEEP_TIMER_REPORT = /^(?:(?:date|echo|printf|true|:)(?:\s[^|&`()]*)?)?$/;
+// Bash separates words only with spaces and tabs, so `\s` would read `true\rnpm` as `true`.
+const CLAUDE_SLEEP_TIMER_REPORT = /^[ \t]*(?:$|(?:date|echo|printf|true|:)(?:[ \t]|$))/;
 
 // A background command that only sleeps for a finite time, then at most prints the time or a
 // note, is a timer the agent set to check back, which Claude wakes it for when it ends. Any other
@@ -2151,10 +2152,52 @@ const CLAUDE_SLEEP_TIMER_REPORT = /^(?:(?:date|echo|printf|true|:)(?:\s[^|&`()]*
 function isClaudeSleepTimer(command: string | undefined): boolean {
   const start = command === undefined ? null : CLAUDE_SLEEP_TIMER_START.exec(command);
   if (command === undefined || start === null) return false;
-  return command
-    .slice(start[0].length)
-    .split(/;|&&|\n/)
-    .every((step) => CLAUDE_SLEEP_TIMER_REPORT.test(step.trim()));
+  const steps = splitClaudeSleepTimerSteps(command.slice(start[0].length));
+  return steps !== undefined && steps.every((step) => CLAUDE_SLEEP_TIMER_REPORT.test(step));
+}
+
+// Splits at unquoted `;`, `&&` and newlines. Gives up on anything a report never needs that could
+// run or hide another command: pipes, `||`, a lone `&`, subshells, heredocs, substitutions, `${…}`,
+// `$'…'`, comments, and unbalanced quotes or escapes.
+function splitClaudeSleepTimerSteps(tail: string): string[] | undefined {
+  const steps: string[] = [];
+  let step = "";
+  let quote: string | undefined;
+  for (let index = 0; index < tail.length; index++) {
+    const char = tail[index] ?? "";
+    const next = tail[index + 1] ?? "";
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      step += char;
+      continue;
+    }
+    if (char === "\\") {
+      if (next === "") return undefined;
+      step += char + next;
+      index++;
+      continue;
+    }
+    if (char === "`" || (char === "$" && "({'\"".includes(next) && next !== "")) return undefined;
+    if (quote === '"') {
+      if (char === '"') quote = undefined;
+      step += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === ";" || char === "\n" || (char === "&" && next === "&")) {
+      steps.push(step);
+      step = "";
+      if (char === "&") index++;
+      continue;
+    } else if (char === "&" ? next !== ">" && tail[index - 1] !== ">" : "|()<#".includes(char)) {
+      return undefined;
+    }
+    step += char;
+  }
+  if (quote !== undefined) return undefined;
+  steps.push(step);
+  return steps;
 }
 
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
