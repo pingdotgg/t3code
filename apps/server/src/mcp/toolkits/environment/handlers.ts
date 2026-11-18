@@ -300,13 +300,14 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   ),
   t3_app_navigate: McpToolAccess.writesEnvironment(({ to }) =>
     Effect.gen(function* () {
-      const { appControl } = yield* access;
+      const { appControl, scope } = yield* access;
       if (to.page === "thread") {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const shell = yield* threads.getThreadShell(to.threadId).pipe(Effect.mapError(unavailable));
         if (shell === null || shell.deletedAt !== null)
           return yield* threadNotFound(
             threads,
+            scope,
             to.threadId,
             `Thread ${to.threadId} was not found.`,
           );

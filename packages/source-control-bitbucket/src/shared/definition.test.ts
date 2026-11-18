@@ -76,4 +76,15 @@ describe("Bitbucket remotes", () => {
     );
     expect(recognize("https://notbitbucket.example.com/workspace/repo.git")).toBeNull();
   });
+
+  it.each([
+    "git@ssh.bitbucket.org:workspace/repo.git",
+    "ssh://git@altssh.bitbucket.org:443/workspace/repo.git",
+  ])("recognises Bitbucket Cloud's SSH host in %s", (url) => {
+    expect(recognize(url)).toEqual({
+      kind: "bitbucket",
+      name: "Bitbucket",
+      baseUrl: "https://bitbucket.org",
+    });
+  });
 });
