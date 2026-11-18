@@ -33,7 +33,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as NonBlockingSpawner from "./process/NonBlockingSpawner.ts";
 import * as KeepAwake from "./background/KeepAwake.ts";
 import * as ServerConfig from "./config.ts";
-import { withUntracedRequests } from "./http.ts";
+import { withRootRequestSpans, withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
   guardHttpResponseWriteErrors,
@@ -45,6 +45,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
@@ -54,6 +55,10 @@ import { speechHttpApiLayer } from "./speech/http.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
+import * as IssueTrackerBindings from "./persistence/IssueTrackerBindings.ts";
+import * as IssueTrackerRegistry from "./issue/IssueTrackerRegistry.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
@@ -215,11 +220,12 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
+import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
-import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
+import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -349,6 +355,9 @@ const layerRelayClient = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
+// NodeServices and NodeHttpServer each output Node's own spawner, so each is followed by this one.
+const layerSpawner = SpawnWorker.layerServer.pipe(Layer.provide(NodeServices.layer));
+
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -361,17 +370,14 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
           keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
         );
         if (config.privateNetworkOnly) {
-          server.on("connection", (socket) => {
-            if (!acceptsPrivateNetworkConnection(socket)) {
-              socket.destroy();
-            }
-          });
+          runSync(closeNonPrivateNetworkConnections(server));
         }
         return server;
       },
@@ -385,7 +391,7 @@ const layerHttpServer = Layer.unwrap(
         // `threshold` when context takeover is disabled).
         websocket: { perMessageDeflate: true },
       },
-    );
+    ).pipe(Layer.merge(layerSpawner));
   }),
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
@@ -395,7 +401,7 @@ const layerHttpServer = Layer.unwrap(
 
 const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(NonBlockingSpawner.layer),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)),
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
@@ -437,6 +443,15 @@ const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(layerSourceControlProviderRegistry),
   Layer.provide(SourceControlRateLimit.layer),
 );
+
+// Both read the one registry, so a standalone tracker connected in Settings is the same
+// instance the listing reads through.
+const layerIssueService = Layer.merge(IssueService.layer, IssueTrackerConnections.layer).pipe(
+  Layer.provide(Layer.merge(IssueTrackerRegistry.layer, IssueTrackerBindings.layer)),
+);
+
+// One instance serves MCP link calls and refreshes snapshots on thread events.
+const layerThreadIssueService = ThreadIssueService.layer;
 
 const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
@@ -503,7 +518,10 @@ const layerVcs = Layer.empty.pipe(
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
-const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const layerPortScanner = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(layerBackground),
+);
 
 const layerTerminal = TerminalManager.layer(
   ProviderInstanceRegistryHydration.deriveProviderInstanceConfigMap,
@@ -859,6 +877,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(PeerLinkRequests.layer),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
+  Layer.provide(layerThreadIssueService),
+  Layer.provide(layerIssueService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(
@@ -1321,6 +1341,7 @@ const layerMakeServer = Layer.unwrap(
       routerConfig: HTTP_ROUTER_CONFIG,
     }).pipe(
       withUntracedRequests,
+      withRootRequestSpans,
       Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
     );
     const layerServerApplication = Layer.mergeAll(
@@ -1357,6 +1378,6 @@ const layerMakeServer = Layer.unwrap(
 ).pipe(Layer.provide(ProcessRunner.layer));
 
 export const runServer = Layer.launch(
-  // For the layers above whose spawner requirement is met by the caller's runtime.
-  layerMakeServer.pipe(Layer.provide(NonBlockingSpawner.layer)),
+  // For the layers above whose spawner requirement is not met by one of them.
+  layerMakeServer.pipe(Layer.provide(NonBlockingSpawner.layer.pipe(Layer.provide(layerSpawner)))),
 );

@@ -16,6 +16,7 @@ import {
   ServerSettings,
   ServerSettingsPatch,
   UsageLimitSourceId,
+  type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -1487,7 +1488,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             {
               kind: "eas",
               id: "eas",
-              label: "EAS Simulator",
+              label: "Expo Simulators",
               accessToken: "expo-secret",
               maxSessionMinutes: 30,
               idleMinutes: 10,
@@ -1804,7 +1805,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
             {
               kind: "eas",
               id: "eas",
-              label: "EAS Simulator",
+              label: "Expo Simulators",
               accessToken: easReference,
               maxSessionMinutes: 30,
               idleMinutes: 10,
@@ -1877,6 +1878,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        // A saved token goes only to the gateway it was saved for, however it is echoed.
+        const moved = (agentToken: SimlockDeviceHostConfig["agentToken"]) =>
+          serverSettings.updateSettings({
+            simlockDeviceHosts: [
+              {
+                ...echoed.simlockDeviceHosts[0]!,
+                gatewayUrl: "https://elsewhere.test",
+                agentToken,
+              },
+            ],
+          });
+        assert.equal((yield* moved(SECRET_REDACTED)).simlockDeviceHosts[0]?.agentToken, "");
+        yield* serverSettings.updateSettings({ simlockDeviceHosts: echoed.simlockDeviceHosts });
+        assert.equal((yield* moved(simlockReference)).simlockDeviceHosts[0]?.agentToken, "");
+        assert.equal(
+          (yield* moved("typed-token")).simlockDeviceHosts[0]?.agentToken,
+          "typed-token",
+        );
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
@@ -1924,7 +1943,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           {
             kind: "eas",
             id: "eas",
-            label: "EAS Simulator",
+            label: "Expo Simulators",
             accessToken: personal("Expo/token"),
             maxSessionMinutes: 30,
             idleMinutes: 10,
@@ -2383,7 +2402,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+  it.effect.each([
+    { label: "malformed JSON", broken: '{"defaultAutoPull": tru' },
+    { label: "invalid retention", broken: '{"usageHistoryRetentionDays": 0}' },
+  ])("leaves settings.json with $label untouched and disables destructive defaults", ({ broken }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2398,12 +2420,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
         )
       `;
-      const broken = '{"defaultAutoPull": tru';
       yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
 
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.equal(settings.usageHistoryRetentionDays, "unlimited");
       assert.deepEqual(settings.projectSettingsOverrides, {});
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);

@@ -12,6 +12,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isDelegatedAppThread,
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
@@ -404,6 +405,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
+  readonly getRunCount: Orchestrator.OrchestratorV2["Service"]["getRunCount"];
   readonly getMessagesById: Orchestrator.OrchestratorV2["Service"]["getMessagesById"];
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
@@ -853,7 +855,7 @@ const make = Effect.gen(function* () {
           .filter((thread) =>
             input.includeSubagents
               ? thread.lineage.sideChat !== true
-              : isListedThreadLineage(thread.lineage),
+              : isListedThreadLineage(thread.lineage) && !isDelegatedAppThread(thread),
           )
           .toSorted(
             (left, right) =>
@@ -1717,6 +1719,11 @@ const make = Effect.gen(function* () {
     getMessageCount: Effect.fn("ThreadManagementService.getMessageCount")(function (threadId) {
       return ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(orchestrator.getMessageCount(threadId)),
+      );
+    }),
+    getRunCount: Effect.fn("ThreadManagementService.getRunCount")(function (threadId) {
+      return ensureProjectionTranscript(threadId).pipe(
+        Effect.andThen(orchestrator.getRunCount(threadId)),
       );
     }),
     getMessagesById: Effect.fn("ThreadManagementService.getMessagesById")(

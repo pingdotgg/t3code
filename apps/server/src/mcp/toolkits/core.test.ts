@@ -20,9 +20,12 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
+import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -449,6 +452,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
               Effect.succeed(
                 McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
               ),
+            listActiveShellIndex: () => Effect.succeed([]),
             dispatch: () => Effect.succeed({ sequence: 1 } as never),
           }),
         ),
@@ -695,7 +699,7 @@ const clientScope = (
   thread: undefined,
   client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
-  capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+  capabilities: new Set(["orchestration", "worktree", "pull-requests", "issues"]),
 });
 
 it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
@@ -758,6 +762,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
                   deletedAt: null,
                 },
               } as never),
+            listActiveShellIndex: () => Effect.succeed([]),
             dispatch: () => Effect.succeed({ sequence: 7, storedEvents: [] }),
           }),
         ),
@@ -765,6 +770,78 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     ),
   ),
 );
+
+it.effect("an MCP pin lands above every existing pin, as a client pin does", () => {
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  let targetPinnedAt: DateTime.Utc | null = null;
+  const pinnedAt = DateTime.makeUnsafe("2026-11-10T00:00:00.000Z");
+  const indexEntry = (id: string, pinned: boolean, pinOrderKey: string | null) => ({
+    ...McpToolAccessTestkit.liveThreadShell(ThreadId.make(id)),
+    pinnedAt: pinned ? pinnedAt : null,
+    pinOrderKey,
+    mayBeLive: false,
+    hasRemoteTasks: false,
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const pin = server
+      .callTool({
+        name: "t3_thread_organize",
+        arguments: { action: "pin", threadId: "pin-target" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+
+    const first = yield* pin;
+    expect(first.isError).toBe(false);
+    const orderKey = (dispatched[0] as { readonly orderKey?: string }).orderKey;
+    expect(dispatched[0]).toMatchObject({ type: "thread.pin", threadId: "pin-target" });
+    // The smallest key among pinned threads is "g"; the unpinned "b" and keyless pin are ignored.
+    expect(orderKey).toBe(pinOrderKeyBetween(null, "g"));
+
+    // A thread the handler last saw pinned still gets a key: an unpin can commit
+    // before this command, and the reducer ignores the key if the pin holds.
+    targetPinnedAt = pinnedAt;
+    const again = yield* pin;
+    expect(again.isError).toBe(false);
+    expect(dispatched[1]).toMatchObject({ type: "thread.pin", orderKey });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: ({ threadId: id }) => {
+              const projection = McpToolAccessTestkit.idleThreadProjection(
+                McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" }),
+              );
+              return Effect.succeed({
+                ...projection,
+                thread: { ...projection.thread, pinnedAt: targetPinnedAt },
+              });
+            },
+            listActiveShellIndex: () =>
+              Effect.succeed([
+                indexEntry("pinned-late", true, "t"),
+                indexEntry("pinned-top", true, "g"),
+                indexEntry("pinned-keyless", true, null),
+                indexEntry("unpinned-stale-key", false, "b"),
+              ]),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("search names the calling thread, so an agent can tell its own match apart", () =>
   Effect.gen(function* () {
@@ -890,22 +967,23 @@ it.effect("a read-only client reads threads and is refused every write before it
 );
 const dispatched: Array<string> = [];
 
-it.effect("refuses act-as-caller tools to a client caller", () =>
+it.effect("hides act-as-caller tools from a client caller", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
+    const error = yield* server
       .callTool({
         name: "delegate_task",
         arguments: { task: "Review", mode: "async" },
       })
       .pipe(
+        Effect.flip,
         Effect.provideService(
           McpInvocationContext.McpInvocationContext,
           clientScope("full-access"),
         ),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+    expect(error.message).toContain("Tool 'delegate_task' not found");
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -1045,6 +1123,55 @@ it.effect.each([
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({
             list: () => Effect.succeed({ tasks }),
             runNow: () => Effect.fail(error),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("run_scheduled_task_now reports why a started run failed to dispatch", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-full-access" } })
+      .pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          clientScope("full-access"),
+        ),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      threadId: null,
+      lastRunStatus: "failed",
+      lastRunError: "the provider is disabled",
+    });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(Layer.mock(ThreadProjectMove.ThreadProjectMove)({})),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () =>
+              Effect.succeed({ tasks: [scheduledTask("task-full-access", "full-access")] }),
+            runNow: () =>
+              Effect.succeed({
+                threadId: null,
+                task: {
+                  ...(scheduledTask("task-full-access", "full-access") as object),
+                  lastRunStatus: "failed" as const,
+                  lastRunError: "the provider is disabled",
+                },
+              } as never),
           }),
         ),
       ),
@@ -1214,6 +1341,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
+            getRunCount: () => Effect.succeed(1),
             getTimelinePage: () =>
               Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
             stopWorkflow: (input) =>
@@ -1296,6 +1424,100 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+const sendTargetId = ThreadId.make("send-target-thread");
+const sendCommand = {
+  commandId: CommandId.make("mcp-core-send"),
+  commandType: "message.dispatch",
+};
+
+it.effect.each([
+  {
+    outcome: "says that the missing workspace could not be recreated",
+    refusal: new ThreadManagement.ThreadManagementWorktreeRestoreError({
+      threadId: sendTargetId,
+      cause: new Error("The branch no longer exists."),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "thread_not_sendable",
+      message:
+        "Couldn't recreate the missing workspace of thread send-target-thread, so the message was not sent. The branch no longer exists.",
+    },
+  },
+  {
+    outcome: "passes on the text reason of an orchestrator rejection",
+    refusal: new OrchestratorCommandRejectedError({
+      ...sendCommand,
+      cause: "Thread send-target-thread is deleted.",
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "Thread send-target-thread is deleted.",
+    },
+  },
+  {
+    outcome: "keeps an internal dispatch cause private",
+    refusal: new OrchestratorDispatchError({
+      ...sendCommand,
+      cause: new Error("private-storage-path"),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "The operation could not be completed.",
+    },
+  },
+])("t3_thread_send_attachments $outcome", ({ refusal, reply }) => {
+  const stored = ChatImageAttachment.make({
+    type: "image",
+    id: "owned-image",
+    name: "original.png",
+    mimeType: "image/png",
+    sizeBytes: 12,
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_send_attachments",
+        arguments: { threadId: sendTargetId, message: "See the file.", attachments: [stored] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toEqual(reply);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerAttachmentToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                ...McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(sendTargetId),
+                ),
+                messages: [{ attachments: [stored] }],
+              } as never),
+            sendToThread: () => Effect.fail(refusal),
+          }),
+        ),
+        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
+        Layer.provide(
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
+});
 
 it.effect(
   "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
