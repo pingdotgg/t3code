@@ -3,7 +3,7 @@ import { m } from "~/i18n/messages";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -87,6 +87,7 @@ interface PendingConnection {
 
 /** Mounted only while connecting, so the idle dialog never subscribes to the tick. */
 function PendingConnectionStatus({ pending }: { readonly pending: PendingConnection }) {
+  const messages = useMessages();
   const elapsedMs = useNowSecond() - pending.startedAt;
   return (
     <div className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 text-xs text-muted-foreground transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none sm:h-8 dark:border-transparent dark:bg-white/[0.035]">
@@ -96,7 +97,7 @@ function PendingConnectionStatus({ pending }: { readonly pending: PendingConnect
         {pending.target ? <span className="font-mono"> {pending.target}</span> : null}
       </span>
       {elapsedMs >= 1_000 ? (
-        <span className="shrink-0 tabular-nums">· {formatDuration(elapsedMs)}</span>
+        <span className="shrink-0 tabular-nums">· {formatDuration(elapsedMs, messages)}</span>
       ) : null}
     </div>
   );
