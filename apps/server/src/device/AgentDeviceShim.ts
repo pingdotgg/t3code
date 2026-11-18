@@ -151,6 +151,32 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--wait",
 ];
 
+/**
+ * agent-device 0.21.36's flags whose value is a path. It ties a session's device claim to its cwd's
+ * workspace and refuses install, push and the like from another, so the launcher runs it in its own
+ * directory and resolves these, and path operands, against the caller's.
+ */
+const PATH_FLAGS: ReadonlyArray<string> = [
+  "--artifact",
+  "--artifacts-dir",
+  "-b",
+  "--baseline",
+  "--config",
+  "--dsym",
+  "--ios-simulator-device-set",
+  "--ios-xctest-derived-data-path",
+  "--ios-xctest-env-dir",
+  "--ios-xctestrun-file",
+  "--out",
+  "--project-root",
+  "--remote-config",
+  "--report-junit",
+  "--runtime-file",
+  "--search-path",
+  "--state-dir",
+  "--steps-file",
+];
+
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
@@ -159,6 +185,8 @@ const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArra
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
@@ -214,11 +242,37 @@ if (local) {
     process.exit(1);
   }
 }
+const pathFlags = new Set(${JSON.stringify(PATH_FLAGS)});
+const absolute = value => value && value !== "-" && !isAbsolute(value) ? resolve(value) : value;
+const positionals = [];
+for (let index = 0; index < command.length && command[index] !== "--"; index++) {
+  const arg = command[index];
+  const equals = arg.indexOf("=");
+  if (!arg.startsWith("-") || arg === "-") positionals.push(index);
+  else if (equals > 0) { if (pathFlags.has(arg.slice(0, equals))) command[index] = arg.slice(0, equals + 1) + absolute(arg.slice(equals + 1)); }
+  else if (valued.has(arg) && ++index < command.length && pathFlags.has(arg)) command[index] = absolute(command[index]);
+}
+const [, ...operands] = positionals;
+const operand = position => operands[position] === undefined ? undefined : command[operands[position]];
+const pathOperands = {
+  install: [operands.length - 1],
+  reinstall: [1],
+  screenshot: [0],
+  replay: [operand(0) === "export" ? 1 : 0],
+  test: operands.map((_, position) => position),
+  record: ["start", "contact-sheet"].includes(operand(0)) ? [1] : [],
+  trace: [1],
+  diff: operand(0) === "screenshot" ? [1] : [],
+  session: operand(0) === "save-script" ? [1] : [],
+}[name] ?? [];
+for (const position of pathOperands) if (operands[position] !== undefined) command[operands[position]] = absolute(command[operands[position]]);
+// A push payload is a file or inline JSON.
+if (name === "push" && operands[1] !== undefined && existsSync(absolute(command[operands[1]]))) command[operands[1]] = absolute(command[operands[1]]);
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
 delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
 delete env.AGENT_DEVICE_CONFIG;
-const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env });
+const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env, cwd: dirname(fileURLToPath(import.meta.url)) });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });
 `;

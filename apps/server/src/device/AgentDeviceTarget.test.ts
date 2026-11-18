@@ -144,6 +144,21 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         "--config",
         "/h.json",
       ]);
+      // agent-device runs in the launcher's directory, so relative paths resolve against the caller's.
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, ["install", "com.example.app", "b/App.app", "--out=o.png"]),
+        ),
+      ).toEqual([
+        "install",
+        "com.example.app",
+        path.resolve("b/App.app"),
+        `--out=${path.resolve("o.png")}`,
+        ...target,
+      ]);
+      expect(
+        yield* Effect.promise(() => launch(bound, ["push", "com.example.app", '{"a":1}'])),
+      ).toEqual(["push", "com.example.app", '{"a":1}', ...target]);
       // After `--` everything is text: no help, no overrides, and bound flags go before it.
       for (const text of [["--help"], ["literal text", "--session", "mine"]]) {
         expect(yield* Effect.promise(() => launch(bound, ["fill", "@e5", "--", ...text]))).toEqual([
