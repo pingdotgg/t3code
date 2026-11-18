@@ -11,6 +11,7 @@ import {
   collectProviderUsageLimits,
   displayLimitWindows,
   type LimitPoolWindow,
+  planCapacity,
 } from "@t3tools/shared/usageLimits";
 
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
@@ -52,11 +53,18 @@ export function nextPoolReset(window: LimitPoolWindow, now: number) {
     (reset) => reset.at > now && (!pooled || reset.restoresPercent > 0),
   );
   if (!next || !pooled) return next ?? null;
+  const capacities = window.members.map((member) => planCapacity(member.account, window.kind));
+  const weights = capacities.every((capacity) => capacity !== undefined)
+    ? capacities
+    : window.members.map(() => 1);
+  const weightOf = new Map(window.members.map((member, index) => [member, weights[index]!]));
+  const totalWeight = weights.reduce((total, weight) => total + weight, 0);
   const restoresPercent = window.resets.reduce(
-    (total, reset) => total + (reset.at === next.at ? reset.member.refillPercent : 0),
+    (total, reset) =>
+      total + (reset.at === next.at ? reset.member.refillPercent * weightOf.get(reset.member)! : 0),
     0,
   );
-  return { ...next, restoresPercent: Math.round(restoresPercent / window.members.length) };
+  return { ...next, restoresPercent: Math.round(restoresPercent / totalWeight) };
 }
 
 function driverPool(

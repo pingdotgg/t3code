@@ -73,6 +73,7 @@ interface HubAccountInput {
   readonly id: string;
   readonly email?: string;
   readonly driver?: ProviderDriverKind;
+  readonly plan?: string;
   readonly limits: ServerProviderUsageLimits;
 }
 
@@ -89,6 +90,7 @@ function hub(
     accounts: accounts.map((account) => ({
       id: account.id,
       driver: account.driver ?? claude,
+      ...(account.plan ? { plan: account.plan } : {}),
       ...(account.email ? { email: account.email } : {}),
       usageLimits: account.limits,
     })),
@@ -206,20 +208,42 @@ describe("resolveThreadDetailsLimits", () => {
   });
 
   it.each([
-    { name: "skips unused resets", used: [0, 80], times: ["12:10", "14:00"], restoresPercent: 40 },
+    {
+      name: "skips unused resets",
+      plans: undefined,
+      used: [0, 80],
+      times: ["12:10", "14:00"],
+      restoresPercent: 40,
+    },
     {
       name: "combines simultaneous resets",
+      plans: undefined,
       used: [80, 80],
       times: ["14:00", "14:00"],
       restoresPercent: 80,
     },
     {
       name: "rounds simultaneous restores once",
+      plans: undefined,
       used: [100, 100, 100, 100, 100, 100],
       times: Array(6).fill("14:00"),
       restoresPercent: 100,
     },
-  ])("names the next refill: $name", ({ used, times, restoresPercent }) => {
+    {
+      name: "preserves plan capacity weights",
+      used: [100, 0],
+      times: ["14:00", "14:00"],
+      plans: ["Pro", "Ultra"],
+      restoresPercent: 5,
+    },
+    {
+      name: "combines weighted simultaneous resets",
+      used: [80, 20],
+      times: ["14:00", "14:00"],
+      plans: ["Pro", "Ultra"],
+      restoresPercent: 23,
+    },
+  ])("names the next refill: $name", ({ used, times, plans, restoresPercent }) => {
     const resolved = resolveThreadDetailsLimits(
       instanceId,
       [claudeInstance(unsupported)],
@@ -229,6 +253,7 @@ describe("resolveThreadDetailsLimits", () => {
           used.map((percent, i) => ({
             id: String(i),
             email: i + "@example.com",
+            ...(plans ? { plan: plans[i] } : {}),
             limits: limitsResettingAt(percent, "2026-10-30T" + times[i] + ":00.000Z"),
           })),
         ),

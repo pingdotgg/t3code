@@ -553,7 +553,7 @@ const CODEX_PLAN_CAPACITY: Record<string, number> = {
 // Claude's published plan multipliers describe the session allowance only.
 const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
 
-function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
+export function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
   if (!account.plan) return undefined;
   if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
     return CODEX_PLAN_CAPACITY[account.plan];
