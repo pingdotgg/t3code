@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 
 import {
   isExpiredAgentActivityState,
+  MAX_ACTIVITY_ROWS,
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
@@ -697,7 +698,13 @@ const make = Effect.gen(function* () {
     const muted = currentPreferences?.mutedEnvironmentIds ?? [];
     // A card queued before an environment was turned off is rebuilt without it, keeping the
     // other environments' rows and alert. If the rebuild fails, skip it; the replay repaints.
-    if (aggregate?.activities.some((row) => muted.some((id) => id === row.environmentId))) {
+    // Rows past MAX_ACTIVITY_ROWS still count in activeCount, so a card with hidden rows is rebuilt too.
+    if (
+      aggregate &&
+      muted.length > 0 &&
+      (aggregate.activeCount > MAX_ACTIVITY_ROWS ||
+        aggregate.activities.some((row) => muted.some((id) => id === row.environmentId)))
+    ) {
       aggregate = yield* activityRows.listForUser({ userId: input.target.user_id }).pipe(
         Effect.map((activeStates) =>
           makeAggregateState({
@@ -913,7 +920,8 @@ const make = Effect.gen(function* () {
             preferences,
             nowMs: now.epochMilliseconds,
           })
-        : preferences?.notificationsEnabled === true;
+        : preferences?.notificationsEnabled === true &&
+          !preferences.mutedEnvironmentIds?.some((id) => id === notification.environmentId);
     if (!alertAllowed) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,

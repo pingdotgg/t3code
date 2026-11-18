@@ -153,11 +153,13 @@ const make = Effect.gen(function* () {
           )
           .limit(1)
           .pipe(Effect.mapError(persistError("read-device")));
+        // Read after the lock, so no activity under the old muted list is newer than the reveal.
+        const revealedAt = yield* DateTime.now;
         const environmentRevealedAt = nextEnvironmentRevealedAt({
           previousMuted: previous?.preferences.mutedEnvironmentIds ?? [],
           previousRevealedAt: previous?.environmentRevealedAt ?? null,
           nextMuted: registration.preferences.mutedEnvironmentIds ?? [],
-          nowMs: now.epochMilliseconds,
+          nowMs: revealedAt.epochMilliseconds,
         });
         yield* db
           .insert(relayMobileDevices)
