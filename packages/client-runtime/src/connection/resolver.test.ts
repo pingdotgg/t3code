@@ -206,6 +206,15 @@ describe("ConnectionResolver", () => {
           "ws://127.0.0.1:3777/ws?clientSurface=web&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=2&clientCapabilities=settingsSecretReferences",
         httpAuthorization: null,
         target,
+        // The shell reads the server's build and shell flags here before the socket opens.
+        descriptor: {
+          environmentId: ENVIRONMENT_ID,
+          label: "Compatible environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          capabilities: { repositoryIdentity: true },
+        },
       });
     }),
   );

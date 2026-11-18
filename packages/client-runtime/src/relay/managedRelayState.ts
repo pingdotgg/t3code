@@ -1,19 +1,27 @@
+import { msg } from "gt-i18n";
+import { MarkedText, messageFromError, translatableMessage } from "../errors/translatable.ts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
 import * as ManagedRelay from "./managedRelay.ts";
-import { relayProtectedErrorMessage } from "./errorPresentation.ts";
+import { relayProtectedErrorText } from "./errorPresentation.ts";
 
 const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
 const CLERK_TOKEN_EXPIRY_SKEW_MS = 5_000;
+// Clerk retries a failed token request itself, but waits 3 s before the first
+// retry and longer before each next one. A fresh request usually answers at
+// once, so a slow read is replaced instead of waited out.
+const CLERK_TOKEN_READ_TIMEOUT_MS = 4_000;
+const CLERK_TOKEN_READ_ATTEMPTS = 3;
 const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
 
 export interface ManagedRelaySession {
@@ -35,6 +43,8 @@ interface ManagedRelaySessionControl {
 export interface ManagedRelaySnapshotState<A> {
   readonly data: A | null;
   readonly error: string | null;
+  /** `error` as marked text, when the failure carries it. */
+  readonly i18nError?: MarkedText;
   readonly errorTraceId: string | null;
   readonly isPending: boolean;
 }
@@ -53,6 +63,7 @@ export class ManagedRelaySessionError extends Schema.TaggedError<ManagedRelaySes
   "ManagedRelaySessionError",
   {
     message: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -66,7 +77,10 @@ const managedRelaySessionControls = new WeakMap<ManagedRelaySession, ManagedRela
 
 export function createManagedRelaySession(input: ManagedRelaySessionInput): ManagedRelaySession {
   let cachedToken: { readonly token: string; readonly expiresAtMillis: number } | null = null;
-  let pendingToken: Promise<string | null> | null = null;
+  let pendingToken: {
+    readonly operation: Promise<string | null>;
+    readonly startedAtMillis: number;
+  } | null = null;
   let readClerkToken = input.readClerkToken;
   let tokenProviderGeneration = 0;
 
@@ -74,8 +88,10 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
     if (cachedToken && cachedToken.expiresAtMillis > nowMillis + CLERK_TOKEN_EXPIRY_SKEW_MS) {
       return cachedToken.token;
     }
-    if (pendingToken) {
-      return await pendingToken;
+    // A read that outlived its timeout is left running, since it still fills
+    // the cache, but later readers start a fresh one instead of joining it.
+    if (pendingToken && nowMillis - pendingToken.startedAtMillis < CLERK_TOKEN_READ_TIMEOUT_MS) {
+      return await pendingToken.operation;
     }
 
     const operationGeneration = tokenProviderGeneration;
@@ -99,11 +115,12 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
           : null;
       return token;
     });
-    pendingToken = operation;
+    const pending = { operation, startedAtMillis: nowMillis };
+    pendingToken = pending;
     try {
       return await operation;
     } finally {
-      if (pendingToken === operation) {
+      if (pendingToken === pending) {
         pendingToken = null;
       }
     }
@@ -112,15 +129,21 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
   const session: ManagedRelaySession = {
     accountId: input.accountId,
     readClerkToken: Effect.fn("clientRuntime.managedRelaySession.readClerkToken")(function* () {
-      const nowMillis = yield* Clock.currentTimeMillis;
-      return yield* Effect.tryPromise({
-        try: () => readCachedClerkToken(nowMillis),
-        catch: (cause) =>
-          new ManagedRelaySessionError({
-            message: "Could not obtain the T3 Connect session token.",
-            cause,
-          }),
-      });
+      for (let attempt = 0; attempt < CLERK_TOKEN_READ_ATTEMPTS; attempt += 1) {
+        const nowMillis = yield* Clock.currentTimeMillis;
+        const token = yield* Effect.tryPromise({
+          try: () => readCachedClerkToken(nowMillis),
+          catch: (cause) =>
+            new ManagedRelaySessionError({
+              ...translatableMessage(msg("Could not obtain the T3 Connect session token.")),
+              cause,
+            }),
+        }).pipe(Effect.timeoutOption(CLERK_TOKEN_READ_TIMEOUT_MS));
+        if (Option.isSome(token)) return token.value;
+      }
+      return yield* new ManagedRelaySessionError(
+        translatableMessage(msg("Timed out obtaining the T3 Connect session token.")),
+      );
     }),
   };
   managedRelaySessionControls.set(session, {
@@ -173,23 +196,27 @@ function readSessionClerkToken(
     Effect.filterOrFail(
       (token): token is string => Boolean(token),
       () =>
-        new ManagedRelaySessionError({
-          message: "The T3 Connect session token is unavailable.",
-        }),
+        new ManagedRelaySessionError(
+          translatableMessage(msg("The T3 Connect session token is unavailable.")),
+        ),
     ),
   );
 }
 
+const SIGN_IN_BEFORE = {
+  deregister: msg("Sign in to T3 Connect before deregistering an environment."),
+  "link-t3chat": msg("Sign in to T3 Connect before linking T3 Chat."),
+  "unlink-t3chat": msg("Sign in to T3 Connect before unlinking T3 Chat."),
+};
+
 function requireSessionClerkToken(
   registry: AtomRegistry.AtomRegistry,
   accountId: string,
-  action: string,
+  action: "deregister" | "link-t3chat" | "unlink-t3chat",
 ): Effect.Effect<string, ManagedRelaySessionError> {
   const session = registry.get(managedRelaySessionAtom);
   if (!session || session.accountId !== accountId) {
-    return Effect.fail(
-      new ManagedRelaySessionError({ message: `Sign in to T3 Connect before ${action}.` }),
-    );
+    return Effect.fail(new ManagedRelaySessionError(translatableMessage(SIGN_IN_BEFORE[action])));
   }
   return readSessionClerkToken(session);
 }
@@ -200,11 +227,7 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   registry: AtomRegistry.AtomRegistry,
   input: { readonly accountId: string; readonly environmentId: EnvironmentId },
 ) {
-  const clerkToken = yield* requireSessionClerkToken(
-    registry,
-    input.accountId,
-    "deregistering an environment",
-  );
+  const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "deregister");
   const relay = yield* ManagedRelay.ManagedRelayClient;
   yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
@@ -213,18 +236,14 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
 export const createManagedRelayT3ChatLinkRequest = Effect.fn(
   "clientRuntime.managedRelaySession.createT3ChatLinkRequest",
 )(function* (registry: AtomRegistry.AtomRegistry, input: { readonly accountId: string }) {
-  const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "linking T3 Chat");
+  const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "link-t3chat");
   const relay = yield* ManagedRelay.ManagedRelayClient;
   return (yield* relay.createT3ChatLinkRequest({ clerkToken })).url;
 });
 
 export const unlinkManagedRelayT3Chat = Effect.fn("clientRuntime.managedRelaySession.unlinkT3Chat")(
   function* (registry: AtomRegistry.AtomRegistry, input: { readonly accountId: string }) {
-    const clerkToken = yield* requireSessionClerkToken(
-      registry,
-      input.accountId,
-      "unlinking T3 Chat",
-    );
+    const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "unlink-t3chat");
     const relay = yield* ManagedRelay.ManagedRelayClient;
     yield* relay.unlinkT3Chat({ clerkToken });
   },
@@ -237,9 +256,9 @@ function requireClerkToken(
   const session = get(managedRelaySessionAtom);
   if (!session || session.accountId !== accountId) {
     return Effect.fail(
-      new ManagedRelaySessionError({
-        message: "Sign in to T3 Connect before loading relay data.",
-      }),
+      new ManagedRelaySessionError(
+        translatableMessage(msg("Sign in to T3 Connect before loading relay data.")),
+      ),
     );
   }
   return readSessionClerkToken(session);
@@ -247,18 +266,17 @@ function requireClerkToken(
 
 function describeManagedRelayFailure(cause: Cause.Cause<unknown>): {
   readonly message: string;
+  readonly i18nMessage?: MarkedText;
   readonly traceId: string | null;
 } {
   const error = Cause.squash(cause);
-  return {
-    message:
-      isManagedRelayRequestFailedError(error) && error.relayError
-        ? relayProtectedErrorMessage(error.relayError)
-        : error instanceof Error
-          ? error.message
-          : "Could not load T3 Connect data.",
-    traceId: findErrorTraceId(error),
-  };
+  const traceId = findErrorTraceId(error);
+  if (isManagedRelayRequestFailedError(error) && error.relayError) {
+    return { ...translatableMessage(...relayProtectedErrorText(error.relayError)), traceId };
+  }
+  return error instanceof Error
+    ? { ...messageFromError(error), traceId }
+    : { ...translatableMessage(msg("Could not load T3 Connect data.")), traceId };
 }
 
 export function readManagedRelaySnapshotState<A>(
@@ -268,6 +286,7 @@ export function readManagedRelaySnapshotState<A>(
   return {
     data: AsyncResult.getOrElse(result, () => null),
     error: failure?.message ?? null,
+    ...(failure?.i18nMessage !== undefined ? { i18nError: failure.i18nMessage } : {}),
     errorTraceId: failure?.traceId ?? null,
     isPending: result.waiting,
   };

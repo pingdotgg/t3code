@@ -1,4 +1,6 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
@@ -22,10 +24,12 @@ import {
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { withImplicitFastModeSelection } from "../lib/providerOptions";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -118,9 +122,16 @@ function resolveProviderInteractionMode(
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">> = [],
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle"> & {
+      readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "capabilities">>;
+    }
+  > = [],
 ): ThreadSettingsSnapshot {
-  const modelSelection = message.modelSelection ?? thread.modelSelection;
+  const modelSelection = withImplicitFastModeSelection(
+    message.modelSelection ?? thread.modelSelection,
+    providers,
+  );
   const provider = providers.find(
     (candidate) => candidate.instanceId === modelSelection.instanceId,
   );
@@ -235,7 +246,7 @@ export function resolveThreadOutboxDispatchStep(input: {
   }
   const maxBytes = input.serverConfig.maxFileUploadBytes;
   if (maxBytes === undefined) {
-    return { step: "restore", reason: "This server does not support file attachments." };
+    return { step: "restore", reason: m(msg("This server does not support file attachments.")) };
   }
   const effectiveMaxBytes = clampFileAttachmentUploadBytes(maxBytes);
   const oversized = input.fileAttachments.find(
@@ -279,6 +290,9 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
       case "EnvironmentRpcUnavailableError":
       case "EnvironmentNotRegisteredError":
         return true;
+      // A shared upload's failure decides by what made the upload fail.
+      case "AttachmentUploadError":
+        return "cause" in error && shouldRetryThreadOutboxDelivery(error.cause);
       default:
         break;
     }

@@ -6,7 +6,9 @@ import {
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
@@ -20,6 +22,9 @@ const CHANGE_REQUEST_REFERENCE =
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
+const ISSUE_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/(?:issues|work_items)\/(\d+)(?:\/|$)/u;
+// Every GitLab page inside a project sits below its first `/-/`.
+const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
@@ -45,8 +50,10 @@ export const definition = defineSourceControl({
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
       : `${remoteWebOrigin(host, remoteUrl)}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
+  parseIssueUrl: (url) => parseIssuePath(url, ISSUE_PATH),
   commitUrl: (input) => buildCommitUrl(input, "-/commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
+  repositoryUrlFromPage: (url) => repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH),
   // `!12` already links the merge request itself; `#12` is always an issue.
   changeRequestUrlFromReferenceAutolink: (url) =>
     CHANGE_REQUEST_PATH.test(url.pathname) ? url.toString() : null,
@@ -59,12 +66,14 @@ export const definition = defineSourceControl({
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
+    "revert",
     "delete-branch",
   ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   // `accept` is glab's alias for `merge`.
   changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|accept|close)\b/u,
-  changeRequestCreateCommand: /\bglab\s+mr\s+create\b/u,
+  // `new` is glab's alias for `create`.
+  changeRequestCreateCommand: /\bglab\s+mr\s+(?:create|new)\b/u,
   // Bot users, unlike GitHub's, have real profile pages.
   authorProfileUrl: (login, repositoryUrl) =>
     new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),

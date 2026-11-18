@@ -4,11 +4,11 @@ import {
   type LayoutAnimationFunction,
 } from "react-native-reanimated";
 
-export const THREAD_SIDEBAR_ROW_LAYOUT = LinearTransition.duration(180).reduceMotion(
+export const THREAD_LIST_ROW_LAYOUT = LinearTransition.duration(180).reduceMotion(
   ReduceMotion.System,
 );
 
-const animateSidebarRow = THREAD_SIDEBAR_ROW_LAYOUT.build();
+const animateSidebarRow = THREAD_LIST_ROW_LAYOUT.build();
 
 export const ANDROID_THREAD_SIDEBAR_ROW_LAYOUT: LayoutAnimationFunction = (values) => {
   "worklet";
