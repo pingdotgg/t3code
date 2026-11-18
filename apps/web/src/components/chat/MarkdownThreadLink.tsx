@@ -1,14 +1,16 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import {
   formatHostedThreadLink,
   guessThreadLinkRef,
   threadLinkCandidates,
   type ThreadLink,
-  unknownThreadLinkLabel,
 } from "@t3tools/shared/threadLinks";
+import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
+import { useEnvironmentIdentities } from "../../state/environments";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { UnresolvedChip } from "../contextChipParts";
@@ -20,11 +22,17 @@ export function MarkdownThreadLink(props: {
   readonly link: ThreadLink;
   readonly label: string | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
+  // A linked machine's threads are reachable only through its server, not from this client.
+  const reachable = useEnvironmentIdentities().some(
+    (environment) => environment.environmentId === writtenRef.environmentId,
+  );
   const lookup = useEnvironmentQuery(
-    written === null
+    written === null && reachable
       ? orchestrationEnvironment.threadLinkMetadata({
           environmentId: writtenRef.environmentId,
           input: { threadIds: candidates.map((ref) => ref.threadId) },
@@ -39,7 +47,7 @@ export function MarkdownThreadLink(props: {
           const metadata = lookup.data?.[ref.threadId];
           return metadata ? [{ ref, metadata }] : [];
         })[0] ?? null);
-  const missing = target === null && settled;
+  const missing = target === null && (settled || !reachable);
   const guess = missing && props.link.environmentId === null;
   const refs = useThreadRefs(guess);
   const remoteRef = guess
@@ -51,11 +59,11 @@ export function MarkdownThreadLink(props: {
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
   if (missing && resolved === null) {
-    const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
+    const unknown = unknownThreadLinkLabel(props.link, props.environmentId, messages);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
   }
   const ref = resolved?.ref ?? writtenRef;
-  const title = resolved?.metadata.title.trim() || props.label || "Thread";
+  const title = resolved?.metadata.title.trim() || props.label || gt("Thread");
   return (
     <ThreadContextChip
       record={{ ...ref, title }}
