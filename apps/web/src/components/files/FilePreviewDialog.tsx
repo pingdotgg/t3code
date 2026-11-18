@@ -8,6 +8,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { T, useGT } from "gt-react";
 import { PanelRightIcon, XIcon } from "lucide-react";
 import { createContext, lazy, Suspense } from "react";
 
@@ -79,6 +80,7 @@ export function FilePreviewDialogHost(props: {
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly workspaceMutationId: string | null;
 }) {
+  const gt = useGT();
   const state = useAtomValue(filePreviewDialogAtom);
   if (
     state === null ||
@@ -103,12 +105,12 @@ export function FilePreviewDialogHost(props: {
         <div className="flex items-center justify-end gap-1 border-b px-2 py-1">
           <Button variant="ghost" size="xs" onClick={openInPanel}>
             <PanelRightIcon />
-            Open in panel
+            <T>Open in panel</T>
           </Button>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Close"
+            aria-label={gt("Close")}
             onClick={closeFilePreviewDialog}
           >
             <XIcon />
