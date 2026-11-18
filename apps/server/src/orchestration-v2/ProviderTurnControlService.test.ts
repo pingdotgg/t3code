@@ -3,7 +3,6 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
-  type OrchestrationV2Message,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -149,7 +148,7 @@ function layerProjectionStore(
       getThreadTitles: () => Effect.die("unused getThreadTitles"),
       getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
       findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
-      getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
+      getThread: () => Effect.die("unused getThread"),
       findThread: () => Effect.die("unused findThread"),
       getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
       getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
@@ -326,6 +325,7 @@ it.effect(
             layerProjection,
             layerSessionManager,
             Layer.mock(EventSink.EventSinkV2)({}),
+            McpAppModelContext.layerEmpty,
           ),
         ),
       );
@@ -396,8 +396,9 @@ it.effect("steers a running turn with the thread's MCP app model context", () =>
       instanceId: providerInstanceId,
       driver,
       providerSessionId: sessionId,
-      steerTurn: (input) => Effect.sync(() => void steered.push(input)),
-    } as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+      steerTurn: (input: ProviderAdapter.ProviderAdapterV2SteerInput) =>
+        Effect.sync(() => void steered.push(input)),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
     const layerControl = ProviderTurnControlService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -412,7 +413,9 @@ it.effect("steers a running turn with the thread's MCP app model context", () =>
                 attachments: [],
                 createdBy: "user",
                 creationSource: "web",
-              } as OrchestrationV2Message,
+              } as unknown as NonNullable<
+                ProjectionStore.ProjectionProviderControlContext["message"]
+              >,
               run: {
                 id: RunId.make("run:steer-app-context"),
                 status: "running",
