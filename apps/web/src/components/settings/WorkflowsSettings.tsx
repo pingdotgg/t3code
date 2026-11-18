@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { CornerDownRightIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -68,11 +69,12 @@ function RelativeLabel({ value }: { readonly value: string }) {
 
 export function WorkflowsSettings() {
   const { scope, environments } = useSettingsScope();
+  const gt = useGT();
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Workflows" variant="plain">
+      <SettingsSection title={gt("Workflows")} variant="plain">
         {scope.kind === "unavailable" ? (
-          <SettingsSection title="Unavailable selection">
+          <SettingsSection title={gt("Unavailable selection")}>
             <SettingsRow title={scope.message} />
           </SettingsSection>
         ) : environments.length === 0 ? (
@@ -81,8 +83,12 @@ export function WorkflowsSettings() {
               <EmptyMedia variant="icon">
                 <WorkflowIcon />
               </EmptyMedia>
-              <EmptyTitle>No environments available</EmptyTitle>
-              <EmptyDescription>Connect an environment to see its workflow runs.</EmptyDescription>
+              <EmptyTitle>
+                <T>No environments available</T>
+              </EmptyTitle>
+              <EmptyDescription>
+                <T>Connect an environment to see its workflow runs.</T>
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -115,16 +121,19 @@ function WorkflowEnvironmentSection({
     connected ? serverEnvironment.workflowsLive({ environmentId, input: {} }) : null,
   );
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const gt = useGT();
   const snapshot = live.data;
   const status = !connected
     ? {
-        title: "Environment disconnected",
-        description: `Reconnect ${environment.label} to see its workflow runs.`,
+        title: gt("Environment disconnected"),
+        description: gt("Reconnect {label} to see its workflow runs.", {
+          label: environment.label,
+        }),
       }
     : live.error
-      ? { title: "Could not load workflow runs", description: live.error }
+      ? { title: gt("Could not load workflow runs"), description: live.error }
       : !snapshot
-        ? { title: "Loading workflow runs…" }
+        ? { title: gt("Loading workflow runs…") }
         : null;
   return (
     <SettingsSection
@@ -152,26 +161,30 @@ function WorkflowEnvironmentSection({
             <EmptyMedia variant="icon">
               <WorkflowIcon />
             </EmptyMedia>
-            <EmptyTitle>No workflow runs</EmptyTitle>
+            <EmptyTitle>
+              <T>No workflow runs</T>
+            </EmptyTitle>
             <EmptyDescription>
-              Workflows are off on this server, or none has run yet. Start the server with{" "}
-              <code className="font-mono">T3CODE_WORKFLOWS</code> set to a definitions file to turn
-              them on.{" "}
-              <a
-                href={WORKFLOWS_GUIDE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className={LINK_CLASS_NAME}
-              >
-                Read the guide
-              </a>
+              <T>
+                Workflows are off on this server, or none has run yet. Start the server with{" "}
+                <code className="font-mono">T3CODE_WORKFLOWS</code> set to a definitions file to
+                turn them on.{" "}
+                <a
+                  href={WORKFLOWS_GUIDE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={LINK_CLASS_NAME}
+                >
+                  Read the guide
+                </a>
+              </T>
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : snapshot ? (
         <div className="space-y-6">
           {snapshot.questions.length > 0 ? (
-            <SettingsSection title="Waiting on you">
+            <SettingsSection title={gt("Waiting on you")}>
               {snapshot.questions.map((question) => (
                 <WorkflowQuestionRow
                   key={`${question.runId}:${question.name}`}
@@ -183,7 +196,9 @@ function WorkflowEnvironmentSection({
             </SettingsSection>
           ) : null}
           {snapshot.runs.length > 0 ? (
-            <SettingsSection title="Runs">
+            <SettingsSection
+              title={gt("Runs", { $context: "heading over a list of workflow runs" })}
+            >
               {nestWorkflowRuns(snapshot.runs).map(({ run, depth }) => (
                 <WorkflowRunRow
                   key={run.runId}
@@ -214,6 +229,7 @@ function WorkflowQuestionRow({
   const view = readWorkflowQuestion(question);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
   const canAnswer = useAtomValue(
     serverEnvironment.answerWorkflowQuestion.permissionAtom(environmentId),
   );
@@ -234,16 +250,18 @@ function WorkflowQuestionRow({
       },
     });
     setBusy(false);
-    reportFailure("Could not answer the question", result);
+    reportFailure(gt("Could not answer the question"), result);
   };
   return (
     <SettingsRow
       title={view.title}
       description={
-        <>
-          {run ? `${run.title} · ${run.workflow}` : question.runId} · asked{" "}
-          <RelativeLabel value={question.askedAt} />
-        </>
+        <T>
+          <Var>{run ? `${run.title} · ${run.workflow}` : question.runId}</Var> · asked{" "}
+          <Var>
+            <RelativeLabel value={question.askedAt} />
+          </Var>
+        </T>
       }
     >
       <div className="space-y-2 pb-2">
@@ -269,8 +287,8 @@ function WorkflowQuestionRow({
               size="sm"
               value={reason}
               disabled={busy || !canAnswer}
-              aria-label={`Reason for ${view.title}`}
-              placeholder="Reason (optional)"
+              aria-label={gt("Reason for {title}", { title: view.title })}
+              placeholder={gt("Reason (optional)")}
               onChange={(event) => setReason(event.currentTarget.value)}
             />
           </div>
@@ -293,7 +311,8 @@ function WorkflowRunRow({
   readonly selected: boolean;
   readonly onSelect: (runId: string | null) => void;
 }) {
-  const detail = workflowRunDetail(run);
+  const gt = useGT();
+  const detail = workflowRunDetail(run, useMessages());
   return (
     <div
       className={`px-3 py-2.5 sm:px-4 ${RUN_INDENT_CLASS_NAMES[Math.min(depth, RUN_INDENT_CLASS_NAMES.length - 1)]}`}
@@ -308,12 +327,16 @@ function WorkflowRunRow({
           {run.parentRunId !== null ? (
             <CornerDownRightIcon
               className="size-3.5 shrink-0 text-muted-foreground"
-              aria-label="Invoked by another run"
+              aria-label={gt("Invoked by another run")}
             />
           ) : null}
           <span className="min-w-0 truncate text-sm font-medium text-foreground">{run.title}</span>
           <Badge variant={workflowRunStatusVariant(run.status)}>{run.status}</Badge>
-          {run.retired ? <Badge variant="outline">retired</Badge> : null}
+          {run.retired ? (
+            <Badge variant="outline">
+              <T>retired</T>
+            </Badge>
+          ) : null}
         </span>
         <span className="text-xs text-muted-foreground">
           {run.workflow} · <RelativeLabel value={run.updatedAt} />
@@ -342,25 +365,26 @@ function WorkflowRunDetail({
   const resume = useAtomCommand(serverEnvironment.resumeWorkflowRun, { label: "workflow resume" });
   const cancel = useAtomCommand(serverEnvironment.cancelWorkflowRun, { label: "workflow cancel" });
   const [busy, setBusy] = useState(false);
+  const gt = useGT();
   const target = { environmentId, input: { runId: run.runId } };
   const resumeRun = async () => {
     if (busy) return;
     setBusy(true);
     const result = await resume(target);
     setBusy(false);
-    reportFailure("Could not resume the run", result);
+    reportFailure(gt("Could not resume the run"), result);
   };
   const cancelRun = async () => {
     if (busy) return;
     const confirmed = await (requestConfirmDialog(
-      `Cancel ${run.title}? Its agents stop and the run cannot be resumed.`,
+      gt("Cancel {title}? Its agents stop and the run cannot be resumed.", { title: run.title }),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
     setBusy(true);
     const result = await cancel(target);
     setBusy(false);
-    reportFailure("Could not cancel the run", result);
+    reportFailure(gt("Could not cancel the run"), result);
   };
   const steps = detail.data?.steps;
   const ended = run.endedAt !== null;
@@ -370,12 +394,17 @@ function WorkflowRunDetail({
         <p className="text-xs text-destructive">{detail.error}</p>
       ) : !steps ? (
         <p className="text-xs text-muted-foreground" role="status">
-          Loading steps…
+          <T>Loading steps…</T>
         </p>
       ) : steps.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No steps yet.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No steps yet.</T>
+        </p>
       ) : (
-        <ol aria-label={`Steps of ${run.title}`} className="divide-y divide-border/50">
+        <ol
+          aria-label={gt("Steps of {title}", { title: run.title })}
+          className="divide-y divide-border/50"
+        >
           {steps.map((step) => (
             <WorkflowStepRow key={step.name} environmentId={environmentId} step={step} />
           ))}
@@ -383,7 +412,7 @@ function WorkflowRunDetail({
       )}
       {ended && run.result !== null ? (
         <pre
-          aria-label={`Result of ${run.title}`}
+          aria-label={gt("Result of {title}", { title: run.title })}
           className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all"
         >
           {JSON.stringify(run.result, null, 2)}
@@ -393,7 +422,7 @@ function WorkflowRunDetail({
         <div className="flex flex-wrap items-center gap-2">
           {run.status === "paused" ? (
             <Button size="sm" disabled={busy || !canResume} onClick={() => void resumeRun()}>
-              Resume
+              <T>Resume</T>
             </Button>
           ) : null}
           <Button
@@ -402,7 +431,7 @@ function WorkflowRunDetail({
             disabled={busy || !canCancel}
             onClick={() => void cancelRun()}
           >
-            Cancel run
+            <T>Cancel run</T>
           </Button>
         </div>
       )}
@@ -425,16 +454,31 @@ function WorkflowStepRow({
 }) {
   const tookMs =
     step.endedAt === null ? null : Date.parse(step.endedAt) - Date.parse(step.startedAt);
+  const gt = useGT();
   return (
     <li className="space-y-1 py-2 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-foreground">{step.name}</span>
         <Badge variant="outline">{step.kind}</Badge>
         <Badge variant={stepStatusVariant(step.status)}>{step.status}</Badge>
-        {step.attempts > 1 ? <span>{step.attempts} attempts</span> : null}
+        {step.attempts > 1 ? <span>{gt("{count} attempts", { count: step.attempts })}</span> : null}
         <span>
-          started <RelativeLabel value={step.startedAt} />
-          {tookMs === null ? null : ` · took ${formatDuration(tookMs)}`}
+          {tookMs === null ? (
+            <T>
+              started{" "}
+              <Var>
+                <RelativeLabel value={step.startedAt} />
+              </Var>
+            </T>
+          ) : (
+            <T>
+              started{" "}
+              <Var>
+                <RelativeLabel value={step.startedAt} />
+              </Var>{" "}
+              · took <Var>{formatDuration(tookMs)}</Var>
+            </T>
+          )}
         </span>
         {step.threadId !== null ? (
           <WorkflowStepThread
@@ -460,14 +504,22 @@ function WorkflowStepThread({
 }) {
   // This client can only open a thread on an environment it is itself connected to.
   const known = useEnvironment(environmentId) !== null;
-  if (!known) return <span>Thread in environment {environmentId}</span>;
+  if (!known) {
+    return (
+      <span>
+        <T>
+          Thread in environment <Var>{environmentId}</Var>
+        </T>
+      </span>
+    );
+  }
   return (
     <Link
       to="/$environmentId/$threadId"
       params={buildThreadRouteParams(scopeThreadRef(environmentId, threadId))}
       className={LINK_CLASS_NAME}
     >
-      Open thread
+      <T>Open thread</T>
     </Link>
   );
 }

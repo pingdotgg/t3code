@@ -1,4 +1,7 @@
 import type { WorkflowQuestion, WorkflowRun } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -64,9 +67,14 @@ export function nestWorkflowRuns(
 }
 
 /** The line under a run's name: what it waits on, why it paused, or how it ended. */
-export function workflowRunDetail(run: Pick<WorkflowRun, "status" | "detail">): string | null {
+export function workflowRunDetail(
+  run: Pick<WorkflowRun, "status" | "detail">,
+  resolve: MessageResolver = m,
+): string | null {
   if (run.detail === null || run.detail.trim() === "") return null;
-  return run.status === "waiting" ? `Waiting on ${run.detail}` : run.detail;
+  return run.status === "waiting"
+    ? resolve(msg("Waiting on {detail}", { detail: run.detail }))
+    : run.detail;
 }
 
 export function workflowRunStatusVariant(status: WorkflowRun["status"]) {

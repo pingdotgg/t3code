@@ -11262,6 +11262,92 @@
   ],
   "625f25278bc683ba": "Chosen environment (unavailable)",
   "e69e34d4f44d4136": "Built-in",
+  "2dadb2359422121c": "Workflows",
+  "062365c7d1847970": "Reconnect {label} to see its workflow runs.",
+  "5459bf696a187c26": "Could not load workflow runs",
+  "4e788b164525693e": "Loading workflow runs…",
+  "8fb530f35f7911c1": "Waiting on you",
+  "8dc50c37b456e04e": "Runs",
+  "56c48c1f220f2754": "Could not answer the question",
+  "a3c43735e1a81498": "Reason for {title}",
+  "d761f6eb9feea969": "Reason (optional)",
+  "aa74114af894767f": "Invoked by another run",
+  "e39f89c909df4db0": "Could not resume the run",
+  "865f034346b82f47": "Cancel {title}? Its agents stop and the run cannot be resumed.",
+  "6bc75632fd9c9136": "Could not cancel the run",
+  "0f36db603d7a3942": "Steps of {title}",
+  "816f0dc2442994be": "Result of {title}",
+  "daac63db9c9166ca": "{count} attempts",
+  "87e102285375a6c3": "Connect an environment to see its workflow runs.",
+  "fdb57f733a52f0bb": "No workflow runs",
+  "9a5ef256972d1e86": [
+    "Workflows are off on this server, or none has run yet. Start the server with",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "T3CODE_WORKFLOWS"
+    },
+    " set to a definitions file to turn them on.",
+    " ",
+    {
+      "t": "a",
+      "i": 2,
+      "c": "Read the guide"
+    }
+  ],
+  "0a7a3f154faa350d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " · asked",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "b013fcdd19c27076": "retired",
+  "f92d9132f7b85d1a": "Loading steps…",
+  "3165ff13ecdf5cb1": "No steps yet.",
+  "3d9761e81798fcd8": "Resume",
+  "9b5df864942c7460": "Cancel run",
+  "8c303e8335acb135": [
+    "started",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "4251367c9246918e": [
+    "started",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "· took ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "67fcd8dbf6107fa4": [
+    "Thread in environment ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "ae0b91ed52736998": "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
   "81f82840d9589bc9": "Reset new worktrees start from remote to default",
   "f68e05c50f67ab91": "Start new worktrees from remote by default",
@@ -11605,6 +11691,7 @@
   "8d7631ea8e21d4f8": "Press shortcut…",
   "d39dd343104c5458": "Change shortcut",
   "9c73aa0c2e2b4e7d": "Choose shortcut",
+  "9ccdcb71520274a8": "Waiting on {detail}",
   "300a948f90c4d75c": "Go back",
   "2a50e229df85d553": "Go forward",
   "8aa6404c8018ea67": "T3 Code home",
