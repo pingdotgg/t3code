@@ -1,6 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
+import { deleteConfirm } from "../confirmDialog";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -2751,7 +2752,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               "{count, plural, one {This deletes the thread and its chat history. You can't undo this.} other {This deletes these threads and their chat history. You can't undo this.}}",
               { count },
             ),
-            {
+            deleteConfirm({
               variant: "destructive",
               title: gt(
                 "{count, plural, one {Delete {count} thread?} other {Delete {count} threads?}}",
@@ -2762,7 +2763,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               confirmLabel: gt("{count, plural, =1 {Delete thread} other {Delete threads}}", {
                 count,
               }),
-            },
+            }),
           ),
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
@@ -3128,11 +3129,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   gt('This deletes "{title}" and its chat history. You can\'t undo this.', {
                     title: thread.title,
                   }),
-                  {
+                  deleteConfirm({
                     variant: "destructive",
                     title: gt("Delete thread?"),
                     confirmLabel: gt("Delete thread"),
-                  },
+                  }),
                 ),
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;

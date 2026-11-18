@@ -52,6 +52,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
+import { deleteConfirm } from "../confirmDialog";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -389,11 +390,11 @@ export function useThreadActionMenu(input: {
                     title: thread.title,
                   }),
                 ),
-                {
+                deleteConfirm({
                   variant: "destructive",
                   title: m(msg("Delete thread?")),
                   confirmLabel: m(msg("Delete thread")),
-                },
+                }),
               ),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
