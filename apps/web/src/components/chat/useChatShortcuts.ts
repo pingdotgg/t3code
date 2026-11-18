@@ -135,11 +135,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   });
   const handleEmbeddedShortcut = useEffectEvent((event: KeyboardEvent) => {
     const context = input.getShortcutContext(event.target);
-    if (
-      !context.messageAreaFocus &&
-      !(event.target instanceof Node && input.composerElement?.contains(event.target))
-    )
-      return;
+    const composerTarget =
+      event.target instanceof Node && input.composerElement?.contains(event.target);
+    if (!context.messageAreaFocus && !composerTarget) return;
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
       context: input.getShortcutContext(event.target),
@@ -149,7 +147,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
         ? canScrollToEnd(context)
           ? input.commands[command]
           : undefined
-        : command
+        : command && composerTarget
           ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
           : undefined;
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;

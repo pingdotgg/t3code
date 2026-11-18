@@ -156,7 +156,11 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
     composerElement,
     keybindings: sideChatKeybindings,
     scriptKeybindings: [],
-    getShortcutContext: () => shortcutContext,
+    getShortcutContext: () => ({
+      ...shortcutContext,
+      messageAreaFocus:
+        document.activeElement?.getAttribute("aria-label") === "Side chat transcript",
+    }),
     threadFindActive: false,
     composerRef: {
       current: {
@@ -173,6 +177,7 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
       <div ref={setComposerElement}>
         <textarea aria-label="Side chat composer" />
       </div>
+      <div tabIndex={-1} aria-label="Side chat transcript" />
       <textarea aria-label="Main composer" />
     </>
   );
@@ -185,6 +190,8 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   await userEvent.click(screen.getByLabelText("Side chat composer"));
   await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+  screen.getByLabelText("Side chat transcript").element().focus();
+  await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
   await userEvent.click(screen.getByLabelText("Main composer"));
   await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
 
@@ -194,6 +201,7 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
 function ScrollChat(props: {
   onEnd: () => void;
+  onStop?: () => void;
   composerKeys?: string[];
   embedded?: boolean;
   context?: Record<string, boolean>;
@@ -228,7 +236,7 @@ function ScrollChat(props: {
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: { "chat.scrollToEnd": props.onEnd },
+    commands: { "chat.scrollToEnd": props.onEnd, "thread.stop": () => props.onStop?.() },
     fallback: () => undefined,
   });
   return (
@@ -337,13 +345,14 @@ it("preserves custom precedence and leaves dialogs alone", async () => {
       onEnd={() => {
         calls.push("end");
       }}
+      onStop={() => calls.push("stop")}
       keybindings={custom}
     />,
     options,
   );
   await userEvent.click(screen.getByLabelText("Chat input"));
   await userEvent.keyboard("{End}");
-  expect(calls).toEqual([]);
+  expect(calls).toEqual(["stop"]);
   await screen.rerender(
     <>
       <ScrollChat
@@ -358,7 +367,7 @@ it("preserves custom precedence and leaves dialogs alone", async () => {
   );
   await userEvent.click(screen.getByLabelText("Chat input"));
   await userEvent.keyboard("{Control>}{End}{/Control}");
-  expect(calls).toEqual([]);
+  expect(calls).toEqual(["stop"]);
 });
 
 const ctrlAlt = (key: string, command: KeybindingCommand) => ({

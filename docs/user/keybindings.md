@@ -14,7 +14,7 @@ and side chats, even when already at the bottom. Click plain message text or emp
 space to focus the message area. Plain End keeps its normal editing behavior.
 Other editable fields and the terminal retain their existing shortcuts.
 
-Change **Chat: Scroll To End** (`chat.scrollToEnd`) in **Settings → Keybindings**.
+Change **Scroll to end** (`chat.scrollToEnd`) in **Settings → Keybindings**.
 Custom mappings remain restricted to the message area or chat input and leave
 pickers, dialogs, and embedded browsers alone.
 
