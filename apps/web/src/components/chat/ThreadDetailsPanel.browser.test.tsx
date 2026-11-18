@@ -123,6 +123,8 @@ function setup(input: {
   state.folder = input.folder;
   state.pullRequests = input.pullRequests ?? [];
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
+  // The fork starts thread details closed; these cases read the open panel.
+  useRightPanelStore.getState().setThreadPanelOpen(threadRef, "inline", true);
   const anchor = document.createElement("div");
   document.body.append(anchor);
   return {

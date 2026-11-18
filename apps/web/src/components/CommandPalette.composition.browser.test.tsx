@@ -68,6 +68,8 @@ vi.mock("../hooks/useHandleNewThread", () => ({
     handleNewThread: async () => undefined,
   }),
   useNewThreadHandler: () => async () => undefined,
+  readLastUsedProjectKey: () => null,
+  resolveDefaultProjectRef: () => null,
 }));
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
