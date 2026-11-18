@@ -684,16 +684,28 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
-    // Ready catalogs are never re-probed on an interval, and an OpenCode server reads its
-    // config only at startup, so a save retires the shared servers before refreshing.
-    // Mirrors OpenCode loading OPENCODE_CONFIG_DIR on top of the global directory.
+    // Ready catalogs are never re-probed on an interval. OpenCode 1.x reads config only at
+    // startup and 2.x reloads it asynchronously, so a save retires the shared servers first.
+    // OPENCODE_CONFIG_DIR layers on the global directory in 1.x and replaces it in 2.x.
     if (effectiveConfig.enabled) {
       const globalConfigDir = pathService.join(
         processEnv.XDG_CONFIG_HOME ||
           pathService.join(processEnv.HOME || processEnv.USERPROFILE || homeDirectory, ".config"),
         "opencode",
       );
+      const platform = yield* HostProcess.Platform;
+      const systemConfigDir =
+        platform === "darwin"
+          ? "/Library/Application Support/opencode"
+          : platform === "win32"
+            ? pathService.join(
+                // Instance overrides arrive upper-cased; the inherited name keeps its casing.
+                processEnv.PROGRAMDATA || processEnv.ProgramData || "C:\\ProgramData",
+                "opencode",
+              )
+            : "/etc/opencode";
       const configDirs = new Set([
+        systemConfigDir,
         globalConfigDir,
         processEnv.OPENCODE_CONFIG_DIR || globalConfigDir,
       ]);
