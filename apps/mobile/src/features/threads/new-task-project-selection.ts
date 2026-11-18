@@ -14,16 +14,19 @@ type DraftProjectSelectionResolution =
 
 /**
  * The copy of a project a new thread starts in: the preferred environment's, then the
- * representative. A connected copy wins over a disconnected one.
+ * representative. An open copy wins over an archived one, a connected copy over a disconnected one.
  */
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
   connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
 ): EnvironmentProject {
+  const open = scope.projects.filter((project) => project.archivedAt == null);
   const rank = (project: EnvironmentProject) =>
     project.environmentId === preferredEnvironmentId ? 0 : project === scope.representative ? 1 : 2;
-  const ordered = [...scope.projects].sort((left, right) => rank(left) - rank(right));
+  const ordered = [...(open.length > 0 ? open : scope.projects)].sort(
+    (left, right) => rank(left) - rank(right),
+  );
   return (
     ordered.find((project) => connectedEnvironmentIds.has(project.environmentId)) ??
     ordered[0] ??
@@ -190,12 +193,7 @@ export function newTaskFilteredProject(
       (candidate) =>
         candidate.environmentId === lastProject?.environmentId &&
         candidate.id === lastProject.projectId,
-    ) ??
-    getProjectScopeSelectionTarget(
-      { ...scope, projects: live },
-      preferredEnvironmentId,
-      connectedEnvironmentIds,
-    );
+    ) ?? getProjectScopeSelectionTarget(scope, preferredEnvironmentId, connectedEnvironmentIds);
   return { environmentId: project.environmentId, projectId: project.id };
 }
 
