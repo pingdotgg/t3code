@@ -2077,6 +2077,66 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("loads Cursor history that cannot be read in one request within the deadline", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [
+        { timestampMs: CURSOR_NOW - 40 * HOUR_MS, outputTokens: 7 },
+        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 },
+      ];
+      // A large account: a window wider than a day has too many pages for the read deadlines.
+      const read: CursorAccountReader.CursorAccountReader["Service"]["read"] = (
+        credential,
+        sinceMs,
+        untilMs,
+      ) =>
+        untilMs - sinceMs > 24 * HOUR_MS
+          ? Effect.succeed({
+              accountKey: cursor.state.accountKey,
+              records: [],
+              missing: false,
+              error: "Cursor account usage could not be read.",
+            })
+          : cursor.read(credential, sinceMs, untilMs);
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(read);
+        let summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        for (let attempt = 1; attempt < 10 && totalOutputTokens(summary) < 12; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        assert.strictEqual(totalOutputTokens(summary), 12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-large-account",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: {
+              get: () =>
+                Effect.succeed(
+                  Option.some(
+                    new TextEncoder().encode(
+                      encodeUnknownJsonString({
+                        version: 1,
+                        backendUrl: "https://api2.cursor.sh",
+                        apiKey: "large-account-key",
+                        createdAtMs: 0,
+                      }),
+                    ),
+                  ),
+                ),
+            },
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("keeps a new Cursor key's refresh visible beside a failing key", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
