@@ -241,24 +241,33 @@ describe("issue listings", () => {
           httpBaseUrl: "https://issues.example.test",
           wsBaseUrl: "wss://issues.example.test",
         });
-        const cursors = { "github.com acme/app": "opaque-cursor" };
+        const scope = "github.com acme/app";
         const client = {
-          [WS_METHODS.issuesList]: (input: IssueListInput) =>
-            Effect.succeed({
-              entries:
-                input.cursors?.["github.com acme/app"] === cursors["github.com acme/app"] &&
-                input.labels?.join(",") === "bug,p1"
+          [WS_METHODS.issuesList]: (input: IssueListInput) => {
+            const cursor = `page-2:${JSON.stringify(input.labels)}`;
+            const firstPage = input.cursors === undefined;
+            return Effect.succeed<IssueListResult>({
+              entries: firstPage
+                ? [entry({ key: "1" })]
+                : input.cursors?.[scope] === cursor
                   ? [entry({ key: "2" })]
                   : [],
               viewers: {},
               trackers: [],
-              nextCursors: {},
+              nextCursors: firstPage ? { [scope]: cursor } : {},
               errors: [],
-            } satisfies IssueListResult),
+            });
+          },
         };
         const supervisor = EnvironmentSupervisor.of({
           target,
-          state: yield* SubscriptionRef.make<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE),
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+            ...AVAILABLE_CONNECTION_STATE,
+            phase: "connected",
+            network: "online",
+            desired: true,
+            generation: 1,
+          }),
           session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
           prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
           connect: Effect.void,
@@ -267,15 +276,29 @@ describe("issue listings", () => {
         });
         const environment = EnvironmentRegistry.of({
           run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-        } as Pick<EnvironmentRegistry["Service"], "run"> as EnvironmentRegistry["Service"]);
+          followStream: (_id, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+        } as Pick<
+          EnvironmentRegistry["Service"],
+          "run" | "followStream"
+        > as EnvironmentRegistry["Service"]);
         const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
-        const { listPage } = createIssueEnvironmentAtoms(runtime);
+        const { list, listPage } = createIssueEnvironmentAtoms(runtime);
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const labels = ["bug", "p1"];
+        const firstPage = list({ environmentId, input: { state: "open", labels } });
+        yield* Effect.acquireRelease(
+          Effect.sync(() => registry.mount(firstPage)),
+          (unmount) => Effect.sync(unmount),
+        );
+        const { nextCursors } = yield* AtomRegistry.getResult(registry, firstPage, {
+          suspendOnWaiting: true,
+        });
         const page = yield* Effect.promise(() =>
           listPage.run(registry, {
             environmentId,
-            input: { state: "open", labels: ["p1", "bug"], cursors },
+            input: { state: "open", labels: [...labels].reverse(), cursors: nextCursors },
           }),
         );
         expect(page).toMatchObject({ _tag: "Success", value: { entries: [{ key: "2" }] } });
