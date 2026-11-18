@@ -78,25 +78,28 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   );
 
   // Only folders holding nothing but leftovers are cleared, never user files.
-  const isLeftoverFolder = (worktreePath: string) =>
+  const readLeftoverEntries = (worktreePath: string) =>
     fileSystem.exists(path.join(worktreePath, ".git")).pipe(
       Effect.flatMap((hasGit) =>
         hasGit
-          ? Effect.succeed(false)
-          : fileSystem.readDirectory(worktreePath).pipe(
-              Effect.flatMap((entries) =>
-                Effect.forEach(entries, (entry) =>
-                  LEFTOVER_WORKTREE_ENTRIES.has(entry)
-                    ? fileSystem
-                        .stat(path.join(worktreePath, entry))
-                        .pipe(Effect.map((info) => info.type === "Directory"))
-                    : Effect.succeed(false),
+          ? Effect.undefined
+          : fileSystem
+              .readDirectory(worktreePath)
+              .pipe(
+                Effect.flatMap((entries) =>
+                  Effect.forEach(entries, (entry) =>
+                    LEFTOVER_WORKTREE_ENTRIES.has(entry)
+                      ? fileSystem
+                          .stat(path.join(worktreePath, entry))
+                          .pipe(Effect.map((info) => info.type === "Directory"))
+                      : Effect.succeed(false),
+                  ).pipe(
+                    Effect.map((leftovers) => (leftovers.every(Boolean) ? entries : undefined)),
+                  ),
                 ),
               ),
-              Effect.map((leftovers) => leftovers.every(Boolean)),
-            ),
       ),
-      Effect.orElseSucceed(() => false),
+      Effect.orElseSucceed(() => undefined),
     );
 
   const resolveRecreateBase = Effect.fn("restoreMissingWorktree.resolveRecreateBase")(function* (
@@ -170,7 +173,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     if (worktreePath === null) return;
     if (branch === null) return yield* recreateScratchFolder(thread, worktreePath);
     const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
-    const leftover = exists && (yield* isLeftoverFolder(worktreePath));
+    const leftover = exists && (yield* readLeftoverEntries(worktreePath)) !== undefined;
     if ((exists && !leftover) || !(yield* isManagedWorktreePath(worktreePath))) return;
     const project = yield* projects.getById(thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
@@ -184,17 +187,18 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
     });
     // `git worktree add` refuses a non-empty target but accepts an empty one. Keep the folder
     // itself: Windows cannot remove a folder that is still a terminal's or provider's cwd.
-    const clearLeftovers = Effect.suspend(() => fileSystem.readDirectory(worktreePath)).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(
+    yield* Effect.gen(function* () {
+      if (leftover) {
+        const entries = yield* readLeftoverEntries(worktreePath);
+        if (entries === undefined) return;
+        yield* Effect.forEach(
           entries,
           (entry) => fileSystem.remove(path.join(worktreePath, entry), { recursive: true }),
           { discard: true },
-        ),
-      ),
-    );
-    yield* (leftover ? clearLeftovers : Effect.void).pipe(
-      Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
+        );
+      }
+      yield* recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch });
+    }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"
           ? cause

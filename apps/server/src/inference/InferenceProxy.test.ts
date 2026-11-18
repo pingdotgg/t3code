@@ -9,6 +9,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
+  ServerSettingsError,
   isInferenceProviderConfig,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -75,6 +76,7 @@ it.effect(
         keychainState.onRead = undefined;
         const config = yield* ServerConfig.ServerConfig;
         const state = yield* ServerSecretStore.ServerSecretStore;
+        const settings = yield* ServerSettings.ServerSettingsService;
         const savedPort = state.get("inference-proxy-state").pipe(
           Effect.map((value) => {
             const saved = JSON.parse(new TextDecoder().decode(Option.getOrThrow(value))) as {
@@ -131,6 +133,13 @@ it.effect(
         const releaseClaudeUsage = yield* Deferred.make<void>();
         let lan = false;
         let rejectNextLaunch = false;
+        let rejectRouteStateWrite: "before" | "after" | undefined;
+        let rejectNextProviderWrite = false;
+        let providerWriteGate:
+          | { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+          | undefined;
+        let providerCommitGate: typeof providerWriteGate;
+        let routeStateWriteGate: typeof providerWriteGate;
         let currentExit: Deferred.Deferred<void, PlatformError.PlatformError> | undefined;
         let expectRecovery = false;
         const recovered = yield* Deferred.make<void>();
@@ -420,6 +429,74 @@ it.effect(
         });
         const service = InferenceProxy.layer.pipe(
           Layer.provide(
+            Layer.succeed(ServerSettings.ServerSettingsService, {
+              ...settings,
+              reviseProviderInstance: (instanceId, revise) =>
+                settings
+                  .reviseProviderInstance(instanceId, (current, currentSettings) =>
+                    revise(current, currentSettings).pipe(
+                      Effect.tap(() =>
+                        providerWriteGate === undefined
+                          ? Effect.void
+                          : Deferred.succeed(providerWriteGate.entered, undefined).pipe(
+                              Effect.andThen(Deferred.await(providerWriteGate.release)),
+                            ),
+                      ),
+                      Effect.tap(() => {
+                        if (!rejectNextProviderWrite) return Effect.void;
+                        rejectNextProviderWrite = false;
+                        return Effect.fail(
+                          new ServerSettingsError({
+                            settingsPath: config.settingsPath,
+                            operation: "write-file",
+                            cause: new Error("Provider settings could not be written"),
+                          }),
+                        );
+                      }),
+                    ),
+                  )
+                  .pipe(
+                    Effect.tap(() =>
+                      providerCommitGate === undefined
+                        ? Effect.void
+                        : Deferred.succeed(providerCommitGate.entered, undefined).pipe(
+                            Effect.andThen(Deferred.await(providerCommitGate.release)),
+                          ),
+                    ),
+                  ),
+            }),
+          ),
+          Layer.provide(
+            Layer.succeed(ServerSecretStore.ServerSecretStore, {
+              ...state,
+              set: (name, value) =>
+                Effect.suspend(() => {
+                  if (name === "inference-proxy-state" && rejectRouteStateWrite) {
+                    const failure = Effect.fail(
+                      new ServerSecretStore.SecretStorePersistError({
+                        resource: name,
+                        cause: new Error("Route state could not be written"),
+                      }),
+                    );
+                    if (rejectRouteStateWrite === "before") return failure;
+                    rejectRouteStateWrite = undefined;
+                    return state.set(name, value).pipe(Effect.andThen(failure));
+                  }
+                  if (name === "inference-proxy-state" && routeStateWriteGate) {
+                    const gate = routeStateWriteGate;
+                    routeStateWriteGate = undefined;
+                    return state
+                      .set(name, value)
+                      .pipe(
+                        Effect.andThen(Deferred.succeed(gate.entered, undefined)),
+                        Effect.andThen(Deferred.await(gate.release)),
+                      );
+                  }
+                  return state.set(name, value);
+                }),
+            }),
+          ),
+          Layer.provide(
             Layer.mock(PeerLinks.PeerLinks)({
               get: () => Effect.succeed(linked ? Option.some(link) : Option.none()),
               resolveAddress: () =>
@@ -487,7 +564,6 @@ it.effect(
           Layer.provide(NetService.layer),
           Layer.fresh,
         );
-        const settings = yield* ServerSettings.ServerSettingsService;
         const legacyRoutes = [
           {
             driver: "codex" as const,
@@ -1213,6 +1289,25 @@ it.effect(
               instanceId: ProviderInstanceId.make("codex"),
               instance: native,
             });
+            const beforeFailedConnect = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ];
+            const beforeFailedConnectState = yield* state.get("inference-proxy-state");
+            for (const failure of ["before", "after"] as const) {
+              rejectRouteStateWrite = failure;
+              yield* proxy.connect(connect).pipe(Effect.flip);
+              rejectRouteStateWrite = undefined;
+              expect(
+                (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
+              ).toEqual(beforeFailedConnect);
+              expect(yield* state.get("inference-proxy-state")).toEqual(beforeFailedConnectState);
+            }
+            rejectNextProviderWrite = true;
+            yield* proxy.connect(connect).pipe(Effect.flip);
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
+            ).toEqual(beforeFailedConnect);
+            expect(yield* state.get("inference-proxy-state")).toEqual(beforeFailedConnectState);
             yield* proxy.connect(connect);
             let configured = (yield* settings.getSettings).providerInstances[
               ProviderInstanceId.make("codex")
@@ -1247,8 +1342,88 @@ it.effect(
             expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
               availableDrivers: expect.arrayContaining(["codex"]),
             });
+            const priorRoute = yield* proxy.routeCandidates(
+              local.key,
+              hostId,
+              "codex",
+              "codex-auto-review",
+            );
+            expect(priorRoute).toHaveLength(1);
+            providerWriteGate = {
+              entered: yield* Deferred.make<void>(),
+              release: yield* Deferred.make<void>(),
+            };
+            const writeGate = providerWriteGate;
+            rejectNextProviderWrite = true;
+            const otherRoute = {
+              ...connect,
+              grant: {
+                ...local,
+                hostId: EnvironmentId.make("other-host"),
+                baseUrl: "https://fallback.example.ts.net/api/inference",
+                key: "different-primary-key",
+              },
+            };
+            const changingRoute = yield* proxy
+              .connect(otherRoute)
+              .pipe(Effect.exit, Effect.forkChild);
+            const priorRouteDuringChange = yield* Effect.gen(function* () {
+              yield* Deferred.await(writeGate.entered);
+              return yield* proxy
+                .hasRoutePool(local.key, hostId, "codex")
+                .pipe(Effect.forkChild({ startImmediately: true }));
+            }).pipe(Effect.ensuring(Deferred.succeed(writeGate.release, undefined)));
+            expect(yield* Fiber.join(changingRoute)).toMatchObject({ _tag: "Failure" });
+            providerWriteGate = undefined;
+            remoteCatalogKeys.length = 0;
+            expect(yield* Fiber.join(priorRouteDuringChange)).toBe(true);
+            providerCommitGate = {
+              entered: yield* Deferred.make<void>(),
+              release: yield* Deferred.make<void>(),
+            };
+            const commitGate = providerCommitGate;
+            const committedRoute = yield* proxy.connect(otherRoute).pipe(Effect.forkChild);
+            const [healthAfterSettingsCommit, routeAfterSettingsCommit] = yield* Effect.gen(
+              function* () {
+                yield* Deferred.await(commitGate.entered);
+                const committedConfig = (yield* settings.getSettings).providerInstances[
+                  ProviderInstanceId.make("codex")
+                ]?.config;
+                if (!isInferenceProviderConfig(committedConfig))
+                  throw new Error("Expected the newly committed inference route");
+                const health = yield* proxy
+                  .routeHealth(committedConfig, otherRoute.grant.key, "codex")
+                  .pipe(Effect.forkChild({ startImmediately: true }));
+                const route = yield* proxy
+                  .hasRoutePool(otherRoute.grant.key, otherRoute.grant.hostId, "codex")
+                  .pipe(Effect.forkChild({ startImmediately: true }));
+                return [health, route] as const;
+              },
+            ).pipe(Effect.ensuring(Deferred.succeed(commitGate.release, undefined)));
+            yield* Fiber.join(committedRoute);
+            expect(yield* Fiber.join(routeAfterSettingsCommit)).toBe(true);
+            expect(yield* Fiber.join(healthAfterSettingsCommit)).toMatchObject({
+              availableDrivers: ["codex"],
+            });
+            providerCommitGate = undefined;
+            yield* proxy.connect(connect);
+            remoteCatalogKeys.length = 0;
             const initialCatalog = catalog;
             catalog = [...catalog, { id: "gpt-local-new", owned_by: "openai" }];
+            const beforeFailedRefresh = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ];
+            const beforeFailedRefreshState = yield* state.get("inference-proxy-state");
+            for (const failure of ["before", "after", "provider"] as const) {
+              rejectRouteStateWrite = failure === "provider" ? undefined : failure;
+              rejectNextProviderWrite = failure === "provider";
+              yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
+              rejectRouteStateWrite = undefined;
+              expect(
+                (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
+              ).toEqual(beforeFailedRefresh);
+              expect(yield* state.get("inference-proxy-state")).toEqual(beforeFailedRefreshState);
+            }
             yield* proxy.refreshModelCatalog();
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
@@ -1538,7 +1713,7 @@ it.effect(
               { id: "codex-auto-review", owned_by: "openai" },
               { id: "fallback-only", owned_by: "openai" },
             ];
-            yield* proxy.registerFallback({
+            const fallbackRoute = {
               ...connect,
               grant: {
                 ...issued,
@@ -1546,7 +1721,49 @@ it.effect(
                 baseUrl: "https://fallback.example.ts.net/api/inference",
                 alternates: [],
               },
-            });
+            };
+            const beforeFailedFallback = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ];
+            const beforeFailedFallbackState = yield* state.get("inference-proxy-state");
+            for (const failure of ["before", "after", "provider"] as const) {
+              rejectRouteStateWrite = failure === "provider" ? undefined : failure;
+              rejectNextProviderWrite = failure === "provider";
+              yield* proxy.registerFallback(fallbackRoute).pipe(Effect.flip);
+              rejectRouteStateWrite = undefined;
+              expect(
+                (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")],
+              ).toEqual(beforeFailedFallback);
+              expect(yield* state.get("inference-proxy-state")).toEqual(beforeFailedFallbackState);
+            }
+            const fallbackWriteGate = {
+              entered: yield* Deferred.make<void>(),
+              release: yield* Deferred.make<void>(),
+            };
+            routeStateWriteGate = fallbackWriteGate;
+            const interruptedFallback = yield* proxy
+              .registerFallback(fallbackRoute)
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(fallbackWriteGate.entered).pipe(
+              Effect.andThen(
+                Fiber.interrupt(interruptedFallback).pipe(
+                  Effect.forkChild({ startImmediately: true }),
+                ),
+              ),
+              Effect.ensuring(Deferred.succeed(fallbackWriteGate.release, undefined)),
+            );
+            yield* Fiber.await(interruptedFallback);
+            const afterInterruptedFallback = (yield* settings.getSettings).providerInstances[
+              ProviderInstanceId.make("codex")
+            ]?.config;
+            if (!isInferenceProviderConfig(afterInterruptedFallback))
+              throw new Error("Expected the previous inference route to remain configured");
+            expect(
+              new TextDecoder()
+                .decode(Option.getOrThrow(yield* state.get("inference-proxy-state")))
+                .includes('"fallback-only"'),
+            ).toBe(afterInterruptedFallback.inferenceModels.includes("fallback-only"));
+            yield* proxy.registerFallback(fallbackRoute);
             catalog = primaryCatalog;
             fallbackCatalog = [
               { id: "codex-auto-review", owned_by: "openai" },

@@ -1661,6 +1661,9 @@ const make = Effect.gen(function* () {
 
   const reportRef = yield* SubscriptionRef.make<StorageCleanupReport | null>(null);
   const cleanCheckpointRefs = Effect.fn("StorageCleanup.cleanCheckpointRefs")(function* () {
+    // Dev homes copy the real home's thread and scope IDs. Their tombstones cannot
+    // establish ownership of checkpoint refs in a shared repository.
+    if ((yield* resolveWorktreeT3Home(config.baseDir)) === path.resolve(config.baseDir)) return;
     // Forks display their source history even after its thread is deleted. Keep
     // that ancestry, including deleted intermediate forks and archived children.
     const rows = yield* sql<{
