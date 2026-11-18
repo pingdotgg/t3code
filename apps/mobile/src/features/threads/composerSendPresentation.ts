@@ -29,7 +29,6 @@ const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
   restart: msg("Restart", { $context: "verb, restarts the turn with the message" }),
 };
 
-/** Names a follow-up action wherever the user picks between them. */
 export const FOLLOW_UP_ACTION_LABEL = {
   queue: msg("Queue", { $context: "verb, send after the current turn" }),
   steer: msg("Steer now"),

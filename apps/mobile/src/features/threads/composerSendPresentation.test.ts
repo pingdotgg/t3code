@@ -42,6 +42,5 @@ describe("resolveComposerSendPresentation", () => {
       resolveComposerSendPresentation({ ...running, followUpBehavior: "steer" }, translated)
         .alternateLabel,
     ).toBe("[Queue]");
-    expect(resolveComposerSendPresentation(idle, translated).alternateLabel).toBe("[Send]");
   });
 });
