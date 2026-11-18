@@ -134,10 +134,12 @@ export const layer = Layer.effectDiscard(
         Effect.annotateLogs({ operation: error.operation }),
       );
     };
-    yield* sample().pipe(
+    // The first sample waits one interval: the resource monitor sidecar starts with the server
+    // and cannot answer until its handshake completes.
+    yield* Effect.sleep(SAMPLE_INTERVAL).pipe(
+      Effect.andThen(sample()),
       Effect.andThen(recordSuccess),
       Effect.catch(recordFailure),
-      Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),
       Effect.forever,
       Effect.forkScoped,
     );
