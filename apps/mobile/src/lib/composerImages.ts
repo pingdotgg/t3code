@@ -12,6 +12,7 @@ import {
   type PastedTextAttachmentSource,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import type { AttachmentUploadStatus } from "@t3tools/client-runtime/state/attachment-uploads";
 import type { DocumentPickerResult } from "expo-document-picker";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
@@ -82,19 +83,26 @@ export type DraftComposerAttachment = DraftComposerImageAttachment | DraftCompos
 
 /**
  * Non-media attachments require chip references; missing references mean lost draft files.
- * A chip cannot retry an upload, so a document whose upload failed joins the strip.
+ * A chip cannot retry an upload or show its progress, so a document whose upload failed joins
+ * the strip until its retry finishes.
  */
 export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
-  uploadFailed: (attachment: DraftComposerAttachment) => boolean,
+  uploadStatus: (attachment: DraftComposerAttachment) => AttachmentUploadStatus | undefined,
 ): ReadonlyArray<DraftComposerAttachment> {
-  return attachments.filter(
-    (attachment) =>
+  return attachments.filter((attachment) => {
+    if (
       attachment.type === "image" ||
       imageMimeType(attachment) !== null ||
-      videoMimeType(attachment) !== null ||
-      uploadFailed(attachment),
-  );
+      videoMimeType(attachment) !== null
+    ) {
+      return true;
+    }
+    const upload = uploadStatus(attachment);
+    return (
+      upload?.status === "failed" || (upload?.status === "uploading" && upload.retrying === true)
+    );
+  });
 }
 
 /** Promote legacy document-picked images only when their originals fit the image contract. */

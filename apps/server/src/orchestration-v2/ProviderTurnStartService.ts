@@ -1420,6 +1420,15 @@ export const layer: Layer.Layer<
         const nativeSessionLacksKeptTurns =
           !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
           nativeSessionMissesKeptTurns(projection, providerThread, run);
+        // Dispatch prepares no import handoff for a session import: its history is in the native session.
+        const importedNativeSession =
+          projection.thread.historyOrigin === "v1_import" &&
+          !projection.providerTurns.some((turn) => turn.providerThreadId === providerThread.id) &&
+          !projection.contextHandoffs.some(
+            (handoff) =>
+              handoff.toProviderThreadId === providerThread.id &&
+              handoff.strategy === "manual_context",
+          );
         const resumed = yield* Effect.result(
           uncertainDelivery || nativeSessionLacksKeptTurns
             ? Effect.fail(
@@ -1438,6 +1447,7 @@ export const layer: Layer.Layer<
                 threadId: projection.thread.id,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,
+                importedNativeSession,
               }),
         );
         if (resumed._tag === "Success") {
