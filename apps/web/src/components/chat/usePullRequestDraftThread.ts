@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -9,9 +11,14 @@ import { newDraftId, newThreadId } from "~/lib/utils";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { buildDraftThreadRouteParams } from "../../threadRoutes";
-import { type DraftThreadEnvMode, useComposerDraftStore, DraftId } from "../../composerDraftStore";
+import {
+  type DraftCheckoutPullRequest,
+  type DraftThreadEnvMode,
+  useComposerDraftStore,
+  DraftId,
+} from "../../composerDraftStore";
 import { openPullRequestThreadDialog } from "./ChatOverlayHosts";
 interface PullRequestDraftThreadInput {
   readonly routeKind: "server" | "draft";
@@ -62,9 +69,10 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     branch: string;
     worktreePath: string | null;
     envMode: DraftThreadEnvMode;
+    checkoutPullRequest: DraftCheckoutPullRequest;
   }) => {
     if (!activeProject) {
-      throw new Error("No active project is available for this pull request.");
+      throw new Error(m(msg("No active project is available for this pull request.")));
     }
     const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
     const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
@@ -125,11 +133,14 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   const handlePreparedPullRequestThread = async (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => {
+    // The draft carries the pull request until its first send makes it a thread, which links it.
     await openOrReuseProjectDraftThread({
       branch: input.branch,
       worktreePath: input.worktreePath,
       envMode: input.worktreePath ? "worktree" : "local",
+      checkoutPullRequest: { url: input.pullRequestUrl, branch: input.branch },
     });
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);

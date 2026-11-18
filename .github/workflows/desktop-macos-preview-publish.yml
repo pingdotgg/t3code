@@ -55,7 +55,7 @@ jobs:
     steps:
       - id: pr
         name: Resolve the pull request behind the build
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const run = context.payload.workflow_run;
@@ -77,16 +77,19 @@ jobs:
               return;
             }
 
-            // workflow_run.pull_requests is empty for fork PRs, so resolve the
-            // PR from the built commit instead and require exactly one open PR
-            // from the same head repository and branch. The build baked its
+            // workflow_run.pull_requests and the commit-to-PR lookup are both
+            // empty for fork PRs, so list open PRs by head owner and branch
+            // and require exactly one at the built commit. The build baked its
             // PR number into the version, so two candidates would mean the
             // asset name could belong to either.
-            const associated = await github.paginate(
-              github.rest.repos.listPullRequestsAssociatedWithCommit,
-              { owner, repo, commit_sha: run.head_sha, per_page: 100 },
-            );
-            const matching = associated.filter(
+            const open = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: "open",
+              head: `${run.head_repository?.owner?.login}:${run.head_branch}`,
+              per_page: 100,
+            });
+            const matching = open.filter(
               (candidate) =>
                 candidate.state === "open" &&
                 candidate.head.sha === run.head_sha &&
@@ -131,7 +134,7 @@ jobs:
       - id: vouch
         name: Check PR author trust
         if: steps.pr.outputs.eligible == 'true'
-        uses: mitchellh/vouch/action/check-user@d66fa29a64600490892131ad87597c30c91fcac4 # v1
+        uses: mitchellh/vouch/action/check-user@d66fa29a64600490892131ad87597c30c91fcac4 # v1.5.0
         with:
           user: ${{ steps.pr.outputs.author }}
           allow-fail: true
@@ -146,7 +149,7 @@ jobs:
       - id: consume
         name: Consume the preview label
         if: steps.pr.outputs.eligible == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         with:
@@ -268,7 +271,7 @@ jobs:
       # Only validated bundle files cross into the signing job's artifact.
       - name: Stage JS bundle for packaging
         if: steps.gate.outputs.eligible == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: js-bundle
           path: ${{ runner.temp }}/js-bundle
@@ -313,6 +316,7 @@ jobs:
       rust_target: aarch64-apple-darwin
       resource_key: darwin-arm64
       cli_archive: false
+      untrusted_bundle: true
 
   # Release assets download without a GitHub account, unlike workflow
   # artifacts. All preview DMGs live on one rolling prerelease tagged
@@ -335,7 +339,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Download macOS artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: desktop-mac-arm64
           path: release
@@ -428,7 +432,7 @@ jobs:
 
       - name: Comment download link
         if: steps.upload.outputs.download_url != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           DOWNLOAD_URL: ${{ steps.upload.outputs.download_url }}
@@ -549,7 +553,7 @@ jobs:
 
       - name: Mark the preview comment as removed
         if: steps.delete.outputs.removed == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const marker = "<!-- desktop-macos-preview -->";

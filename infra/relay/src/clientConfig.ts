@@ -32,7 +32,7 @@ export class RelayUrlUnavailableError extends Schema.TaggedError<RelayUrlUnavail
   }
 }
 
-export const relayClientConfigEnv = (config: RelayClientConfig & { readonly url: string }) =>
+const relayClientConfigEnv = (config: RelayClientConfig & { readonly url: string }) =>
   ({
     T3CODE_RELAY_URL: config.url,
     T3CODE_MOBILE_OTLP_TRACES_URL: config.mobileTracingUrl,
@@ -45,10 +45,10 @@ export const relayClientConfigEnv = (config: RelayClientConfig & { readonly url:
 
 export class EnvValueNotSingleLineError extends Schema.TaggedError<EnvValueNotSingleLineError>()(
   "EnvValueNotSingleLineError",
-  { name: Schema.String },
+  { key: Schema.String },
 ) {
   override get message(): string {
-    return `${this.name} contains a line break and cannot be written as one .env assignment.`;
+    return `${this.key} contains a line break and cannot be written as one .env assignment.`;
   }
 }
 
@@ -73,8 +73,12 @@ export function reconcileEnvFile(
     const rawValue = match[2] ?? "";
     const quote = /^(['"`])/u.exec(rawValue)?.[1];
     if (quote !== undefined && !closesQuote(rawValue, quote)) {
-      const closing = lines.findIndex((candidate, at) => at > index && candidate.includes(quote));
-      if (closing !== -1) index = closing;
+      for (let closing = index + 1; closing < lines.length; closing += 1) {
+        if (lines[closing]!.includes(quote)) {
+          index = closing;
+          break;
+        }
+      }
     }
     const value = pending.get(name);
     if (value !== undefined) {
@@ -106,7 +110,7 @@ export const PublishClientConfig = Alchemy.Action(
       const entries = relayClientConfigEnv({ ...input, url });
       // Reject line breaks in provider values to prevent injected assignments.
       for (const [name, value] of Object.entries(entries)) {
-        if (/[\r\n]/u.test(value)) return yield* new EnvValueNotSingleLineError({ name });
+        if (/[\r\n]/u.test(value)) return yield* new EnvValueNotSingleLineError({ key: name });
       }
       const existing = (yield* fs.exists(target)) ? yield* fs.readFileString(target) : "";
       yield* fs.writeFileString(target, reconcileEnvFile(existing, entries));

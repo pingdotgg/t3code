@@ -2,6 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
+import { useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -140,6 +141,7 @@ export function FirstRunGate({
     if (transitioned !== gateState) setGateState(transitioned);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists onboarding completion to settings once the gate settles on skipping the wizard
   useEffect(() => {
     if (decision === "wizard" || !hydrated) return;
     if (persistCompletion && onboardingCompletedAt === null) {
@@ -147,6 +149,7 @@ export function FirstRunGate({
     }
   }, [decision, hydrated, onboardingCompletedAt, persistCompletion]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer gives up on a pending first-run decision after the timeout
   useEffect(() => {
     if (!enabled || decision !== "pending" || !hydrated) return;
     const timer = window.setTimeout(
@@ -159,6 +162,7 @@ export function FirstRunGate({
   // Setup opens by itself only from the home route. A direct link, such as
   // Settings, opens as asked so setup can never lock a user out of the app.
   const wizardOwnsRoute = pathname === "/";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates from the home route to /welcome when the gate decides on the wizard
   useEffect(() => {
     if (decision === "wizard" && wizardOwnsRoute) {
       void navigate({ to: "/welcome", replace: true });
@@ -185,16 +189,17 @@ function FirstRunRecovery({
   readonly retrying?: boolean;
 }) {
   const settingsReadFailed = reason === "settings";
+  const gt = useGT();
   return (
     <main className="flex h-dvh min-h-0 items-center justify-center bg-background px-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center text-center">
         <h1 className="text-lg font-semibold">
-          {settingsReadFailed ? "Could not read settings" : "Still connecting"}
+          {settingsReadFailed ? gt("Could not read settings") : gt("Still connecting")}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {settingsReadFailed
-            ? "Your saved settings could not be loaded."
-            : "T3 Code could not confirm this workspace."}
+            ? gt("Your saved settings could not be loaded.")
+            : gt("T3 Code could not confirm this workspace.")}
         </p>
         <Button
           className="mt-5"
@@ -210,7 +215,7 @@ function FirstRunRecovery({
           }}
         >
           <RefreshIcon refreshing={retrying} />
-          {settingsReadFailed ? "Retry" : "Reload"}
+          {settingsReadFailed ? gt("Retry") : gt("Reload")}
         </Button>
       </div>
     </main>

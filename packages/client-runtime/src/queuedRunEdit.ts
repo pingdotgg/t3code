@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 /**
  * A queued-message edit ends on save, cancel, or when its run leaves the queue.
  * The store owns one watcher per edit, so "run left the queue" is handled exactly
@@ -61,6 +63,22 @@ export function resolveQueuedEditExit(input: {
   return input.threadDraftEmpty ? "kept" : "discarded";
 }
 
+/**
+ * Why a queued message can't be opened in the composer now, or null when it
+ * can. An open question takes the composer over for its answer, so an edit
+ * begun then would happen out of sight and could be sent before it is seen.
+ */
+export function queuedRunEditBlockedReason(
+  input: {
+    readonly openQuestionCount: number;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  return input.openQuestionCount > 0
+    ? resolve(msg("Answer the question to edit queued messages"))
+    : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
@@ -69,10 +87,9 @@ interface ExitWatch<E> {
 }
 
 /**
- * Settles a save started with `startSave`. Returns false, changing nothing,
- * when the edit the save started from was ended or begun again meanwhile; the
- * caller must then leave the edit's drafts alone. Otherwise success ends the
- * edit and failure resumes its exit watch.
+ * Settles a save from `startSave`. False, changing nothing, when the edit was
+ * ended or begun again meanwhile. Success ends the edit; failure resumes its
+ * exit watch and returns whether the edit survived it.
  */
 export type FinishQueuedRunEditSave = (succeeded: boolean) => boolean;
 
@@ -196,10 +213,10 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
         if (succeeded) {
           stopWatch(threadKey);
           write(threadKey, null);
-        } else {
-          subscribe(threadKey, watch);
+          return true;
         }
-        return true;
+        subscribe(threadKey, watch);
+        return watches.get(threadKey) === watch;
       };
     },
   };

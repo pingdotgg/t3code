@@ -16,12 +16,15 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -40,24 +43,35 @@ export function PullRequestLabelChip({
   label,
   size = "sm",
   className,
+  focusable = false,
   children,
 }: {
-  label: Pick<PullRequestLabel, "name" | "color">;
+  label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
   className?: string;
+  focusable?: boolean;
   children?: ReactNode;
 }) {
   const color = pullRequestLabelColor(label.color);
-  return (
+  const badge = (
     <Badge
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
+      {...(focusable && label.description ? { tabIndex: 0 } : {})}
       {...(color ? { style: { "--label": color } as CSSProperties } : {})}
     >
       <span className="truncate">{label.name}</span>
+      {label.description ? <span className="sr-only">: {label.description}</span> : null}
       {children}
     </Badge>
+  );
+  if (!label.description) return badge;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup>{label.description}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -66,19 +80,19 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
     case "approved":
       return {
         Icon: UserCheckIcon,
-        label: "Approved",
+        label: msg("Approved", { $context: "review decision" }),
         toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
       };
     case "changes-requested":
       return {
         Icon: UserRoundXIcon,
-        label: "Changes requested",
+        label: msg("Changes requested"),
         toneClassName: "text-amber-600/90 dark:text-amber-400/80",
       };
     case "review-required":
       return {
         Icon: UserRoundIcon,
-        label: "Awaiting review",
+        label: msg("Awaiting review"),
         toneClassName: "text-muted-foreground/60",
       };
   }
@@ -89,24 +103,29 @@ export function PullRequestReviewDecisionGlyph({
 }: {
   decision: PullRequestReviewDecision;
 }) {
+  const m = useMessages();
   const presentation = reviewDecisionPresentation(decision);
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
-        <span className="sr-only">{presentation.label}</span>
+        <span className="sr-only">{m(presentation.label)}</span>
       </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
+      <TooltipPopup>{m(presentation.label)}</TooltipPopup>
     </Tooltip>
   );
 }
 
-export function resolvePullRequestState(input: {
-  readonly state: PullRequestState;
-  readonly isDraft: boolean;
-}): PullRequestStatePresentation {
+export function resolvePullRequestState(
+  input: {
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
+  },
+  resolve: MessageResolver = m,
+): PullRequestStatePresentation {
   const key = input.state === "open" && input.isDraft ? "draft" : input.state;
-  return PULL_REQUEST_STATE_PRESENTATION[key];
+  const presentation = PULL_REQUEST_STATE_PRESENTATION[key];
+  return { ...presentation, label: resolve(presentation.label) };
 }
 
 export interface PullRequestConflictPresentation {
@@ -115,17 +134,22 @@ export interface PullRequestConflictPresentation {
   readonly Icon: PullRequestGlyphIcon;
 }
 
-function resolvePullRequestConflict(input: {
-  readonly state: PullRequestState;
-  readonly isDraft: boolean;
-  readonly mergeability?: PullRequestMergeability;
-  readonly baseBranch?: string;
-}): PullRequestConflictPresentation | null {
+function resolvePullRequestConflict(
+  input: {
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
+    readonly mergeability?: PullRequestMergeability;
+    readonly baseBranch?: string;
+  },
+  resolve: MessageResolver,
+): PullRequestConflictPresentation | null {
   if (input.state !== "open" || input.isDraft || input.mergeability !== "conflicting") {
     return null;
   }
   return {
-    label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
+    label: input.baseBranch
+      ? resolve(msg("Conflicts with {baseBranch}", { baseBranch: input.baseBranch }))
+      : resolve(msg("Has conflicts")),
     toneClassName: "text-destructive",
     Icon: PullRequestGlyph.conflicting,
   };
@@ -140,7 +164,8 @@ export function PullRequestStateGlyph({
   isDraft: boolean;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const m = useMessages();
+  const presentation = resolvePullRequestState({ state, isDraft }, m);
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
@@ -168,12 +193,16 @@ export function PullRequestConflictGlyph({
   baseBranch?: string;
   className?: string;
 }) {
-  const presentation = resolvePullRequestConflict({
-    state,
-    isDraft,
-    ...(mergeability === undefined ? {} : { mergeability }),
-    ...(baseBranch === undefined ? {} : { baseBranch }),
-  });
+  const m = useMessages();
+  const presentation = resolvePullRequestConflict(
+    {
+      state,
+      isDraft,
+      ...(mergeability === undefined ? {} : { mergeability }),
+      ...(baseBranch === undefined ? {} : { baseBranch }),
+    },
+    m,
+  );
   if (presentation === null) return null;
   return (
     <Tooltip>
@@ -190,21 +219,41 @@ export function PullRequestConflictGlyph({
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
+  pending: {
+    label: msg("Running", { $context: "check status" }),
+    Icon: Spinner,
+    toneClassName: "text-amber-500",
+  },
   "action-required": {
-    label: "Awaiting action",
+    label: msg("Awaiting action"),
     Icon: CircleDotIcon,
     toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
   success: {
-    label: "Passed",
+    label: msg("Passed", { $context: "check status" }),
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
-  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
-  neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
+  failure: {
+    label: msg("Failed", { $context: "check status" }),
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+  },
+  cancelled: {
+    label: msg("Cancelled", { $context: "check status" }),
+    Icon: OctagonXIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
+  skipped: {
+    label: msg("Skipped", { $context: "check status" }),
+    Icon: CircleSlashIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
+  neutral: {
+    label: msg("Neutral", { $context: "check status" }),
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
 } as const satisfies Record<
   PullRequestCheckStatus,
   { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
@@ -220,10 +269,11 @@ function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">
 
 export function pullRequestCheckStatusLabel(
   check: Pick<PullRequestCheck, "status" | "url">,
+  resolve: MessageResolver = m,
 ): string {
   return isWorkflowApprovalCheck(check)
-    ? "Awaiting approval"
-    : CHECK_STATUS_PRESENTATION[check.status].label;
+    ? resolve(msg("Awaiting approval"))
+    : resolve(CHECK_STATUS_PRESENTATION[check.status].label);
 }
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
@@ -238,17 +288,17 @@ export function PullRequestCheckStatusIcon({ status }: { status: PullRequestChec
 
 const CHECKS_STATE_PRESENTATION = {
   passing: {
-    label: "All checks have passed",
+    label: msg("All checks have passed"),
     Icon: CircleCheckIcon,
     toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
   },
   failing: {
-    label: "Some checks were not successful",
+    label: msg("Some checks were not successful"),
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
   },
   pending: {
-    label: "Some checks haven't completed yet",
+    label: msg("Some checks haven't completed yet"),
     Icon: CircleDotIcon,
     toneClassName: "text-amber-600 dark:text-amber-400/90",
   },
@@ -257,8 +307,12 @@ const CHECKS_STATE_PRESENTATION = {
   { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
 >;
 
-export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
-  return CHECKS_STATE_PRESENTATION[state];
+export function pullRequestChecksStatePresentation(
+  state: PullRequestChecksState,
+  resolve: MessageResolver = m,
+) {
+  const presentation = CHECKS_STATE_PRESENTATION[state];
+  return { ...presentation, label: resolve(presentation.label) };
 }
 
 export function pullRequestChecksState(
@@ -273,39 +327,54 @@ export function pullRequestChecksState(
 
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
-    label: "Approved",
+    label: msg("Approved", { $context: "review outcome" }),
+    staleLabel: msg("Approved earlier changes", {
+      $context: "tooltip: this approval was given before the latest commits were pushed",
+    }),
     Icon: CircleCheckIcon,
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
     badgeVariant: "success",
   },
   "changes-requested": {
-    label: "Changes requested",
+    label: msg("Changes requested"),
+    staleLabel: msg("Changes requested earlier changes", {
+      $context:
+        "tooltip: the reviewer requested changes on an older version, before the latest commits",
+    }),
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
     staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
+    fillClassName: "fill-destructive",
     badgeVariant: "error",
   },
   dismissed: {
-    label: "Review dismissed",
+    label: msg("Review dismissed"),
+    staleLabel: msg("Review dismissed earlier changes", {
+      $context: "tooltip: a review of an older version, before the latest commits, was dismissed",
+    }),
     Icon: CircleDashedIcon,
     toneClassName: "text-muted-foreground/70",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
+    fillClassName: "fill-muted-foreground",
     badgeVariant: "outline",
   },
 } as const satisfies Record<
   PullRequestReviewOutcome,
   {
     label: string;
+    staleLabel: string;
     Icon: typeof CircleCheckIcon;
     toneClassName: string;
     ringClassName: string;
     staleRingClassName: string;
+    fillClassName: string;
     badgeVariant: "success" | "error" | "outline";
   }
 >;
@@ -323,8 +392,11 @@ export function pullRequestReviewOutcomeRingClassName(
   return stale ? presentation.staleRingClassName : presentation.ringClassName;
 }
 
-export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
-  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
+export function pullRequestReviewOutcomeStaleLabel(
+  outcome: PullRequestReviewOutcome,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(REVIEW_OUTCOME_PRESENTATION[outcome].staleLabel);
 }
 
 export function PullRequestReviewOutcomeIcon({
@@ -343,8 +415,33 @@ export function PullRequestReviewOutcomeIcon({
   );
 }
 
-export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
-  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+// Ring color alone blends into colorful bot avatars; the glyph gives each verdict a shape.
+export function PullRequestReviewOutcomeAvatarBadge({
+  outcome,
+  stale = false,
+}: {
+  outcome: PullRequestReviewOutcome;
+  stale?: boolean;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <presentation.Icon
+      aria-hidden
+      strokeWidth={3}
+      className={cn(
+        "absolute -right-1 -bottom-1 size-3 text-background",
+        presentation.fillClassName,
+        stale && "opacity-50",
+      )}
+    />
+  );
+}
+
+export function pullRequestReviewOutcomeLabel(
+  outcome: PullRequestReviewOutcome,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(REVIEW_OUTCOME_PRESENTATION[outcome].label);
 }
 
 export function PullRequestReviewOutcomeBadge({
@@ -354,12 +451,13 @@ export function PullRequestReviewOutcomeBadge({
   outcome: PullRequestReviewOutcome;
   className?: string;
 }) {
+  const m = useMessages();
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
     <Badge size="sm" variant={presentation.badgeVariant} className={className}>
       <span className="inline-flex items-baseline gap-1">
         <presentation.Icon aria-hidden className="size-3 self-center" />
-        <span>{presentation.label}</span>
+        <span>{m(presentation.label)}</span>
       </span>
     </Badge>
   );
@@ -410,6 +508,7 @@ export function PullRequestActorLabel({
   tooltip?: boolean;
   profileUrl?: string | null;
 }) {
+  const gt = useGT();
   const login = actor?.login ?? "ghost";
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
@@ -433,7 +532,7 @@ export function PullRequestActorLabel({
                   href={profileUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Open ${login}'s profile`}
+                  aria-label={gt("Open {login}'s profile", { login })}
                 />
               }
             />
@@ -446,7 +545,7 @@ export function PullRequestActorLabel({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        {profileUrl ? " · Open profile" : ""}
+        {profileUrl ? ` · ${gt("Open profile")}` : ""}
       </TooltipPopup>
     </Tooltip>
   );
@@ -504,8 +603,11 @@ export function PullRequestMetaLine({
   );
 }
 
-export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+export function summarizePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+): string {
+  if (checks.length === 0) return resolve(msg("No checks reported"));
   const actionRequired = checks.filter((check) => check.status === "action-required");
   const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;
   const otherActionRequired = actionRequired.length - workflowApprovalRequired;
@@ -514,16 +616,35 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
-  if (failed > 0) return `${failed} of ${checks.length} failing`;
+  if (failed > 0)
+    return resolve(msg("{failed} of {total} failing", { failed, total: checks.length }));
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+    return resolve(
+      msg(
+        "{workflows, plural, one {{workflows} workflow} other {{workflows} workflows}} and {checks, plural, one {{checks} check} other {{checks} checks}} awaiting action",
+        { workflows: workflowApprovalRequired, checks: otherActionRequired },
+      ),
+    );
   }
   if (workflowApprovalRequired > 0) {
-    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} awaiting approval`;
+    return resolve(
+      msg(
+        "{count, plural, one {{count} workflow awaiting approval} other {{count} workflows awaiting approval}}",
+        { count: workflowApprovalRequired },
+      ),
+    );
   }
   if (otherActionRequired > 0) {
-    return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+    return resolve(
+      msg(
+        "{count, plural, one {{count} check awaiting action} other {{count} checks awaiting action}}",
+        { count: otherActionRequired },
+      ),
+    );
   }
-  if (pending > 0) return `${pending} of ${checks.length} running`;
-  return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  if (pending > 0)
+    return resolve(msg("{pending} of {total} running", { pending, total: checks.length }));
+  return passed === checks.length
+    ? resolve(msg("All checks passed"))
+    : resolve(msg("{passed} of {total} passing", { passed, total: checks.length }));
 }

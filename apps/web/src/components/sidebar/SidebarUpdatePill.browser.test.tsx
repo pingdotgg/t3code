@@ -1,14 +1,18 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import type { UpdateEverythingRow } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
+    hasUpdates: false,
+    rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -32,7 +36,14 @@ vi.mock("../../env", async (importOriginal) => ({
   isElectron: true,
 }));
 vi.mock("./useUpdateEverything", () => ({
-  useUpdateEverything: () => ({ hasUpdates: false, summary: "", lines: [], restarts: [] }),
+  useUpdateEverything: () => ({
+    hasUpdates: mocks.hasUpdates,
+    summary: "Update everything",
+    version: null,
+    providerCount: 0,
+    rows: mocks.rows,
+    restarts: [],
+  }),
 }));
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
@@ -60,8 +71,16 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
   { version: "0.0.50-nightly.2", items: ["Faster sidebar."], totalItems: 1 },
 ];
 
-function setup(update: DesktopUpdateState | null) {
+function setup(
+  update: DesktopUpdateState | null,
+  {
+    hasUpdates = false,
+    rows = [],
+  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+) {
   mocks.update = update;
+  mocks.hasUpdates = hasUpdates;
+  mocks.rows = rows;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -71,7 +90,7 @@ function publish(update: DesktopUpdateState | null) {
   });
 }
 
-const releaseNotes = () => document.querySelector('[aria-label="Nightly update release notes"]');
+const releaseNotes = () => document.querySelector('[aria-label="Update release notes"]');
 
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {
@@ -90,7 +109,62 @@ describe("SidebarUpdatePill release notes", () => {
     await userEvent.tab();
     expect(releaseNotes()).toBeNull();
 
-    await publish(nightlyUpdate(RELEASE_NOTES));
-    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+    await publish(
+      nightlyUpdate([
+        {
+          version: "0.0.50-nightly.2",
+          items: ["**One-time tasks.** Pick a date."],
+          totalItems: 1,
+          stats: "3 changes from 2 contributors",
+          footer: "Plus 2 more bug fixes.",
+        },
+      ]),
+    );
+    await expect.element(page.getByText("One-time tasks.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Plus 2 more bug fixes.")).toBeVisible();
+  });
+});
+
+describe("SidebarUpdatePill update everything", () => {
+  it("does not refocus the update button after a pointer cancel", async () => {
+    setup(null, { hasUpdates: true });
+    await using screen = await render(<SidebarUpdatePill />);
+    const button = screen.getByRole("button", { name: "Update everything" });
+    await userEvent.click(button);
+    const cancel = page.getByRole("button", { name: "Cancel" });
+    await expect.element(cancel).toBeVisible();
+
+    await userEvent.click(cancel);
+    await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+    expect(document.activeElement).not.toBe(button.element());
+  });
+
+  it("returns focus to the update button after Escape", async () => {
+    setup(null, { hasUpdates: true });
+    await using screen = await render(<SidebarUpdatePill />);
+    const button = screen.getByRole("button", { name: "Update everything" });
+    await userEvent.click(button);
+    await expect.element(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
+  });
+
+  it("exposes the machines as a table with each value in its column", async () => {
+    const label = "DESKTOP-WORKSTATION-UPSTAIRS";
+    setup(null, {
+      hasUpdates: true,
+      rows: [{ environmentId: null, label, app: "this-app", skipped: null, providers: ["Claude"] }],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    const table = page.getByRole("table");
+    await expect.element(table.getByRole("columnheader", { name: "Machine" })).toBeVisible();
+    await expect.element(table.getByRole("columnheader", { name: "T3 Code" })).toBeVisible();
+    await expect.element(table.getByRole("columnheader", { name: "Providers" })).toBeVisible();
+    const row = table.getByRole("row", { name: new RegExp(label) });
+    await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
+    await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
   });
 });

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "alchemy-test";
-
+import { describe, expect, test } from "@alchemy.run/test";
+import * as S from "effect/Schema";
 import {
   getSetValueAST,
   isBooleanSchema,
@@ -13,7 +13,6 @@ import {
   isStringSchema,
   isUndefinedSchema,
 } from "@/Schema";
-import * as S from "effect/Schema";
 
 describe("isStringSchema", { tags: ["unit", "local"] }, () => {
   test("string", () => {

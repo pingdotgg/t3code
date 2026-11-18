@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState, type ComponentProps } from "react";
+import { useGT } from "gt-react";
+import { useId, useRef, useState, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -9,27 +10,28 @@ export function PullRequestCommentBody({
   className,
   ...props
 }: ComponentProps<typeof PullRequestMarkdown>) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
-  const content = useRef<HTMLDivElement>(null);
+  const clip = useRef<HTMLDivElement>(null);
   const id = useId();
-
-  useEffect(() => {
-    const element = content.current;
-    if (!element) return;
-    return observeResize(element, ([entry]) => {
-      if (entry) setOverflowing(entry.contentRect.height > 240);
-    });
-  }, []);
 
   return (
     <div className={cn("min-w-0", className)}>
       <div
+        ref={clip}
         id={id}
         className={cn("relative", !expanded && "max-h-[240px] overflow-hidden")}
         onFocusCapture={() => setExpanded(true)}
       >
-        <div ref={content}>
+        <div
+          ref={(element) => {
+            if (element === null) return;
+            return observeResize(element, ([entry]) => {
+              if (entry) setOverflowing(entry.contentRect.height > 240);
+            });
+          }}
+        >
           <PullRequestMarkdown {...props} />
         </div>
         {overflowing && !expanded ? (
@@ -47,11 +49,11 @@ export function PullRequestCommentBody({
           aria-expanded={expanded}
           aria-controls={id}
           onClick={() => {
-            if (expanded) content.current?.parentElement?.scrollIntoView({ block: "nearest" });
+            if (expanded) clip.current?.scrollIntoView({ block: "nearest" });
             setExpanded(!expanded);
           }}
         >
-          {expanded ? "Show less" : "Show full comment"}
+          {expanded ? gt("Show less") : gt("Show full comment")}
         </Button>
       ) : null}
     </div>

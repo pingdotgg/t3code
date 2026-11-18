@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
-  planPinnedMove,
   planPinnedReorder,
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
@@ -173,6 +172,26 @@ describe("sortThreads", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
   });
+
+  it("orders last user message by what the user wrote, not agent messages in the user role", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "agent-posted",
+          latestUserAuthoredMessageAt: "2026-03-09T10:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:30:00.000Z",
+        }),
+        makeThread({
+          id: "user-wrote",
+          latestUserAuthoredMessageAt: "2026-03-09T10:10:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["user-wrote", "agent-posted"]);
+  });
 });
 
 describe("planPinnedReorder with hidden rows", () => {
@@ -284,24 +303,6 @@ describe("sortActiveThreadsByOrderKey", () => {
         ),
       ).toEqual(["thread-a:env-a", "thread-a:env-b", "thread-b:env-a"]);
     }
-  });
-
-  it("moves a keyless thread into the arranged run with one write", () => {
-    const assignments = planPinnedMove({
-      orderedIds: ["new", "reopened", "first", "last"],
-      keysById: new Map([
-        ["new", null],
-        ["reopened", null],
-        ["first", "f"],
-        ["last", "t"],
-      ]),
-      movedId: "reopened",
-      direction: "down",
-    });
-    expect(assignments).toHaveLength(1);
-    expect(assignments![0]!.id).toBe("reopened");
-    expect(assignments![0]!.orderKey > "f").toBe(true);
-    expect(assignments![0]!.orderKey < "t").toBe(true);
   });
 
   it("materializes a large active list without changing the requested order", () => {

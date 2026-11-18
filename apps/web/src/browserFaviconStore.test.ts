@@ -17,7 +17,7 @@ vi.mock("~/state/session", () => ({
     metadata.httpBaseUrl ? { httpBaseUrl: metadata.httpBaseUrl } : null,
 }));
 
-import { useComposerDraftStore, type DraftThreadState } from "./composerDraftStore";
+import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import {
   lookupFavicon,
   lookupFaviconForThread,
@@ -103,14 +103,11 @@ describe("browser favicon store", () => {
   });
 
   it("files a draft thread's capture under the draft's project with no view registering it", () => {
-    useComposerDraftStore.setState({
-      draftThreadsByThreadKey: {
-        [scopedThreadKey(threadRef)]: {
-          environmentId,
-          projectId: ProjectId.make("project-1"),
-        } as DraftThreadState,
-      },
-    });
+    useComposerDraftStore
+      .getState()
+      .setLogicalProjectDraftThreadId("env-1:project-1", projectRef, DraftId.make("draft-1"), {
+        threadId: threadRef.threadId,
+      });
     expect(recordFaviconForThread(threadRef, favicon("http://localhost:3000/", 1))).toBe(true);
     expect(useBrowserFaviconStore.getState().byKey).toEqual({
       "env-1:project-1 http://localhost:3000": { dataUrl: PNG, capturedAt: 1 },

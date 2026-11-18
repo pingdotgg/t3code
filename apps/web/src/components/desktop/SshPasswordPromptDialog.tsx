@@ -1,8 +1,12 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { msg, T, useGT, Var } from "gt-react";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
+
+import { m } from "../../i18n/messages";
 
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { useNowSecond } from "../../hooks/useNowSecond";
@@ -28,9 +32,9 @@ function formatRemainingSeconds(seconds: number): string {
 }
 
 function getPromptErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "SSH verification prompt failed.";
+  const message = thrownErrorMessage(error, m) ?? m(msg("SSH verification prompt failed."));
   return message.includes("expired") || message.includes("no longer pending")
-    ? "This SSH verification prompt expired. Try connecting again."
+    ? m(msg("This SSH verification prompt expired. Try connecting again."))
     : message;
 }
 
@@ -47,11 +51,17 @@ function setPromptQueue(next: readonly DesktopSshPasswordPromptRequest[]) {
  * that arrives while no dialog is mounted still waits for one.
  */
 export function startSshPasswordPromptQueue(): () => void {
-  return (
-    window.desktopBridge?.onSshPasswordPrompt?.((request) => {
-      setPromptQueue([...promptQueue, request]);
-    }) ?? (() => undefined)
-  );
+  const bridge = window.desktopBridge;
+  if (!bridge) return () => undefined;
+  const stopPrompts = bridge.onSshPasswordPrompt((request) => {
+    if (promptQueue.some((queued) => queued.requestId === request.requestId)) return;
+    setPromptQueue([...promptQueue, request]);
+  });
+  const stopSettled = bridge.onSshPasswordPromptSettled(removeSshPasswordPrompt);
+  return () => {
+    stopPrompts();
+    stopSettled();
+  };
 }
 
 function subscribePromptQueue(listener: () => void): () => void {
@@ -64,7 +74,8 @@ function subscribePromptQueue(listener: () => void): () => void {
 const readPromptQueue = () => promptQueue;
 
 function removeSshPasswordPrompt(requestId: string) {
-  if (promptQueue[0]?.requestId === requestId) setPromptQueue(promptQueue.slice(1));
+  if (!promptQueue.some((request) => request.requestId === requestId)) return;
+  setPromptQueue(promptQueue.filter((request) => request.requestId !== requestId));
 }
 
 export function SshPasswordPromptDialog() {
@@ -83,6 +94,7 @@ function ActiveSshPasswordPrompt({
 }: {
   readonly request: DesktopSshPasswordPromptRequest;
 }) {
+  const gt = useGT();
   const [password, setPassword] = useState("");
   const [isResponding, setIsResponding] = useState(false);
   const [responseError, setResponseError] = useState<string | null>(null);
@@ -102,7 +114,7 @@ function ActiveSshPasswordPrompt({
   const remainingLabel =
     remainingSeconds === null ? null : formatRemainingSeconds(remainingSeconds);
   const visibleResponseError = isExpired
-    ? "This SSH verification prompt expired. Try connecting again."
+    ? gt("This SSH verification prompt expired. Try connecting again.")
     : responseError;
 
   const respond = async (nextPassword: string | null) => {
@@ -112,7 +124,7 @@ function ActiveSshPasswordPrompt({
 
     const requestId = request.requestId;
     if (nextPassword !== null && isExpired) {
-      setResponseError("This SSH verification prompt expired. Try connecting again.");
+      setResponseError(gt("This SSH verification prompt expired. Try connecting again."));
       return;
     }
 
@@ -156,11 +168,18 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-md" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH verification required</DialogTitle>
+          <DialogTitle>
+            <T>SSH verification required</T>
+          </DialogTitle>
           <DialogDescription>
-            Enter the password or verification code required by <code>{target}</code>. T3 Code
-            passes your response to the local SSH process and keeps it in memory to reuse for this
-            host. T3 Code does not write it to disk.
+            <T>
+              Enter the password or verification code required by{" "}
+              <code>
+                <Var>{target}</Var>
+              </code>
+              . T3 Code passes your response to the local SSH process and keeps it in memory to
+              reuse for this host. T3 Code does not write it to disk.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -183,7 +202,7 @@ function ActiveSshPasswordPrompt({
                         : "shrink-0 text-xs text-muted-foreground"
                     }
                   >
-                    {isExpired ? "Expired" : remainingLabel}
+                    {isExpired ? gt("Expired") : remainingLabel}
                   </span>
                 ) : null}
               </div>
@@ -201,18 +220,20 @@ function ActiveSshPasswordPrompt({
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                SSH keys may replace a password, but your server can still require a verification
-                code.
+                <T>
+                  SSH keys may replace a password, but your server can still require a verification
+                  code.
+                </T>
               </p>
             )}
           </form>
         </DialogPanel>
         <DialogFooter>
           <Button disabled={isResponding} type="button" variant="outline" onClick={cancelPrompt}>
-            {isExpired ? "Dismiss" : "Cancel"}
+            {isExpired ? gt("Dismiss") : gt("Cancel")}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            <T>Continue</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

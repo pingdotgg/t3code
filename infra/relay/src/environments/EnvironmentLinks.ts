@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -30,7 +30,13 @@ export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedError<En
     userId: Schema.String,
     environmentId: Schema.String,
     deviceId: Schema.optionalKey(Schema.String),
-    stage: Schema.Literals(["link-lock", "link-upsert", "allocation-generation", "transaction"]),
+    stage: Schema.Literals([
+      "link-lock",
+      "link-upsert",
+      "revoke-previous-links",
+      "allocation-generation",
+      "transaction",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -231,6 +237,12 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(upsertError("link-lock")));
       // Lock the link before the allocation, matching enableRecovery.
       const writeLink = Effect.gen(function* () {
+        // Serialize account switches for the same proven environment identity.
+        yield* db
+          .execute(
+            sql`select pg_advisory_xact_lock(hashtext(${environmentId}), hashtext(${proof.environmentPublicKey}))`,
+          )
+          .pipe(Effect.mapError(upsertError("link-lock")));
         let [previous] = yield* lockLink;
         if (previous === undefined) {
           // FOR UPDATE locks nothing for a missing link; a concurrent first link may insert it first.
@@ -268,6 +280,18 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(upsertError("link-upsert")));
         }
+        yield* db
+          .update(relayEnvironmentLinks)
+          .set({ revokedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(relayEnvironmentLinks.environmentId, environmentId),
+              eq(relayEnvironmentLinks.environmentPublicKey, proof.environmentPublicKey),
+              ne(relayEnvironmentLinks.userId, input.userId),
+              isNull(relayEnvironmentLinks.revokedAt),
+            ),
+          )
+          .pipe(Effect.mapError(upsertError("revoke-previous-links")));
         const recoveryWasUsable =
           previous?.revokedAt === null &&
           previous.environmentPublicKey === proof.environmentPublicKey &&

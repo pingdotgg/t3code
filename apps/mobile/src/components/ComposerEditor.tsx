@@ -1,8 +1,10 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -21,12 +23,16 @@ import {
   setComposerDraftContext,
   setComposerContextImporting,
   useComposerDraft,
+  useComposerDraftResetGeneration,
 } from "../state/use-composer-drafts";
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
 import { startComposerDraftOperation } from "../state/composerDraftOperations";
 import { appAtomRegistry } from "../state/atom-registry";
+import { enrichedModelDetails, enrichedModelReference } from "../lib/enrichedLinkPresentation";
+import { useModelMentions } from "../state/model-mentions";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
+import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
 import {
@@ -34,6 +40,7 @@ import {
   composerMentionPath,
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
+import { m } from "../i18n/messages";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -55,12 +62,15 @@ export function ComposerEditor({
   onInertChipPress,
   ...props
 }: ComposerEditorProps) {
+  const gt = useGT();
   const draft = useComposerDraft(draftKey ?? null);
+  const readResetGeneration = useComposerDraftResetGeneration(draftKey ?? null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const preferredEnterBehavior = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.composerEnterBehavior
     : undefined;
   const contextHistory = createComposerDraftContextHistory();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the attachment file leases held for native text undo when the history is replaced or unmounts
   useEffect(() => () => contextHistory.dispose(), [contextHistory]);
   const changeText = (text: string) => {
     const restored = contextHistory.restore(
@@ -70,12 +80,14 @@ export function ComposerEditor({
     props.onChangeText(text);
     if (draftKey) {
       setComposerDraftContext(draftKey, restored.context);
-      appendComposerDraftAttachments(draftKey, restored.attachments, { allowOverflow: true });
+      appendComposerDraftAttachments(draftKey, restored.attachments, { restore: true });
     }
   };
   const [selected, setSelected] = useState<{ source: string; start: number; end: number } | null>(
     null,
   );
+  const linkedEnvironments = useLinkedEnvironments(environmentId ?? null);
+  const models = useModelMentions(environmentId ?? draft.project?.environmentId, props.value);
   const contextImports = useAtomValue(composerContextImportsAtom);
   const importing = draftKey ? contextImports[draftKey] === true : false;
   const pasteContext = async (
@@ -100,6 +112,7 @@ export function ComposerEditor({
         signal,
         retained.context?.records.length ?? 0,
         environmentId,
+        linkedEnvironments,
       );
       if (signal.aborted) return;
       if (!result) {
@@ -108,24 +121,32 @@ export function ComposerEditor({
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
         Dialog.alert(
-          "Could not paste context",
-          "Remove some attachments or context items from the draft, then paste again.",
+          gt("Could not paste context"),
+          gt("Remove some attachments or context items from the draft, then paste again."),
         );
         return;
       }
       const warnings: string[] = [];
       if (result.failures.length > 0)
         warnings.push(
-          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          gt(
+            "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          ),
         );
       if (result.skippedThreads.length > 0)
         warnings.push(
-          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+          gt(
+            "{count, plural, one {{titles} is on another machine.} other {{titles} are on another machine.}}",
+            {
+              count: result.skippedThreads.length,
+              titles: result.skippedThreads.map((title) => `"${title}"`).join(", "),
+            },
+          ),
         );
       if (warnings.length > 0)
         Dialog.alert(
-          "Some context is unavailable",
-          [...warnings, "Those references are marked unavailable."].join("\n\n"),
+          gt("Some context is unavailable"),
+          [...warnings, gt("Those references are marked unavailable.")].join("\n\n"),
         );
     });
     operation.finish();
@@ -133,8 +154,10 @@ export function ComposerEditor({
     if (AsyncResult.isFailure(settled) && !signal.aborted) {
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
-        "Could not paste context",
-        error instanceof Error ? error.message : "Try copying again.",
+        gt("Could not paste context"),
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("Try copying again."),
       );
     }
   };
@@ -173,8 +196,10 @@ export function ComposerEditor({
       <NativeComposerEditor
         key={hidden ? "hidden" : "visible"}
         {...props}
+        models={models}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
+        readResetGeneration={readResetGeneration}
         readOnly={props.readOnly || importing}
         onSubmit={importing ? undefined : props.onSubmit}
         clipboardFragment={clipboardFragment ?? undefined}
@@ -188,6 +213,11 @@ export function ComposerEditor({
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {
             onOpenMention(path);
+            return;
+          }
+          const model = enrichedModelReference(selection.source, models);
+          if (model) {
+            Dialog.alert(model.label, enrichedModelDetails(model));
             return;
           }
           const document = composerDocumentAttachment(selection.source, draft.context);
@@ -208,12 +238,17 @@ export function ComposerEditor({
         }}
       />
       {importing ? (
-        <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
+        <Text className="py-2 text-xs text-foreground-muted">
+          <T>Copying context…</T>
+        </Text>
       ) : null}
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
           label={
-            selectedReference?.label ?? selectedSkill?.displayName ?? selectedSkill?.name ?? "Skill"
+            selectedReference?.label ??
+            selectedSkill?.displayName ??
+            selectedSkill?.name ??
+            gt("Skill", { $context: "agent skill" })
           }
           record={
             record ??

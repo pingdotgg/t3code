@@ -110,7 +110,7 @@ export default function StateStoreBootstrap({
       }
     };
 
-    run();
+    void run();
     return () => {
       cancelRef.current = true;
     };
@@ -134,10 +134,7 @@ export default function StateStoreBootstrap({
       iconColor = ACCENT;
     }
 
-    const labelColor =
-      r.status === "pending"
-        ? "var(--alc-code-comment)"
-        : "var(--alc-fg-invert)";
+    const labelColor = r.status === "pending" ? "var(--alc-code-comment)" : "var(--alc-fg-invert)";
     const labelWeight = r.status === "pending" ? 400 : 600;
 
     return (
@@ -162,12 +159,8 @@ export default function StateStoreBootstrap({
           >
             {r.id}
           </span>
-          <span
-            style={{ color: "var(--alc-code-comment)" }}
-          >{` (${r.type})`}</span>
-          {r.status === "created" && (
-            <span style={{ color: ACCENT, marginLeft: 6 }}>created</span>
-          )}
+          <span style={{ color: "var(--alc-code-comment)" }}>{` (${r.type})`}</span>
+          {r.status === "created" && <span style={{ color: ACCENT, marginLeft: 6 }}>created</span>}
         </div>
         {r.note && (r.status === "creating" || r.status === "created") && (
           <div
@@ -186,13 +179,7 @@ export default function StateStoreBootstrap({
   };
 
   return (
-    <TermChrome
-      title={title}
-      badge="DEPLOY"
-      badgeColor={ACCENT}
-      maxLines={maxLines}
-      bare={bare}
-    >
+    <TermChrome title={title} badge="DEPLOY" badgeColor={ACCENT} maxLines={maxLines} bare={bare}>
       <Line>
         <span style={{ color: ACCENT }}>$ </span>
         {cmd}

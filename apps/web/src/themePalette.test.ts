@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { converter } from "culori/fn";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
+import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
+import { appAtomRegistry } from "./rpc/atomRegistry";
+
 import {
+  applyThemePalette,
+  canonicalThemePreference,
+  contextChipVariables,
+  getThemeDefinition,
   getThemeColorsForMode,
   getThemeModes,
   getCustomThemes,
@@ -11,6 +18,8 @@ import {
   invalidateCustomThemes,
   installCustomTheme,
   parseThemeFile,
+  parseThemeHalves,
+  publishedThemeDefinitions,
   removeCustomTheme,
   replaceCustomThemeCollection,
   resolveDesktopTheme,
@@ -57,6 +66,17 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("gives non-Latin theme names distinct stable ids", () => {
+    const file = {
+      version: THEME_FILE_VERSION,
+      appearance: "dark",
+      colors: { canvas: "#101820" },
+    };
+    const night = parseThemeFile({ ...file, name: "夜" });
+    expect(parseThemeFile({ ...file, name: "朝" }).id).not.toBe(night.id);
+    expect(parseThemeFile({ ...file, name: " 夜 " }).id).toBe(night.id);
+  });
+
   it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
     const toOklab = converter("oklab");
     const distance = (first: string, second: string) => {
@@ -84,6 +104,21 @@ describe("theme files", () => {
         expect(distance(colors.searchMatchActiveBackground, background)).toBeGreaterThan(0.08);
       }
     }
+  });
+
+  it("derives an imported palette from top-level canvas and accent like a published theme", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Teal",
+      appearance: "dark",
+      canvas: "#0b1a1e",
+      accent: "#f08a2c",
+      colors: { sidebar: "#0f2126" },
+    });
+
+    expect(theme.colors.canvas).toBe(canonical("#0b1a1e"));
+    expect(theme.colors.accent).toBe(canonical("#f08a2c"));
+    expect(theme.colors.sidebar).toBe(canonical("#0f2126"));
   });
 
   it("round-trips custom search colours and fills them in for older theme files", () => {
@@ -256,8 +291,10 @@ describe("theme files", () => {
       variants: {
         dark: { canvas: "#101827", text: "#eef5ff" },
       },
+      css: "[data-chat-header] { border-bottom: 1px solid red; }",
     });
 
+    expect(JSON.parse(serializeThemeFile(theme)).css).toBe(theme.css);
     expect(getThemeModes(theme)).toEqual(["light", "dark"]);
     expect(getThemeColorsForMode(theme, "dark")).toMatchObject({
       canvas: canonical("#101827"),
@@ -539,8 +576,155 @@ describe("theme files", () => {
   });
 });
 
+describe("context chip colors", () => {
+  it.each([
+    ["#ffffff", 5],
+    ["#777777", 4.5],
+  ] as const)(
+    "chooses readable chip lightness on %s when the text is medium gray",
+    (surface, minimum) => {
+      const colors = {
+        ...getStandardThemeColors("light"),
+        canvas: surface,
+        surface,
+        surfaceRaised: surface,
+        messageSurface: surface,
+        text: "#767676",
+        messageForeground: "#767676",
+      };
+      for (const color of Object.values(contextChipVariables(colors))) {
+        expect(contrastRatio(color, surface)).toBeGreaterThanOrEqual(minimum);
+      }
+    },
+  );
+
+  const toOklch = converter("oklch");
+  const toRgb = converter("rgb");
+  // Surfaces stay unrounded, as CSS paints them; the chip is the 8-bit hex the solver returns.
+  const paintedContrastRatio = (chip: string, surface: string, canvas: string) => {
+    const channels = (value: string) => {
+      const rgb = toRgb(value)!;
+      return [rgb.r, rgb.g, rgb.b].map((channel) => Math.min(1, Math.max(0, channel)));
+    };
+    const back = channels(canvas);
+    const alpha = toRgb(surface)!.alpha ?? 1;
+    const painted = channels(surface).map(
+      (channel, index) => back[index]! * (1 - alpha) + channel * alpha,
+    );
+    const luminance = (rgb: number[]) =>
+      rgb
+        .map((channel) =>
+          channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+        )
+        .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index]!, 0);
+    const first = luminance(channels(asHex(chip)));
+    const second = luminance(painted);
+    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  };
+  const palettes = [
+    getStandardThemeColors("light"),
+    getStandardThemeColors("dark"),
+    ...BUILT_IN_THEMES.flatMap((theme) =>
+      getThemeModes(theme).map((mode) => getThemeColorsForMode(theme, mode)!),
+    ),
+  ];
+
+  it("reads at 5:1 on every chip surface of every built-in theme and keeps each hue", () => {
+    for (const colors of palettes) {
+      const variables = contextChipVariables(colors);
+      expect(variables["--context-chip-message"]).toBeUndefined();
+      for (const [kind, accent] of Object.entries(CONTEXT_CHIP_ACCENTS)) {
+        const chip =
+          variables[contextChipColorVariable(kind as keyof typeof CONTEXT_CHIP_ACCENTS)]!;
+        for (const surface of [
+          colors.canvas,
+          colors.surface,
+          colors.surfaceRaised,
+          colors.messageSurface,
+        ]) {
+          expect(paintedContrastRatio(chip, surface, colors.canvas)).toBeGreaterThanOrEqual(5);
+        }
+        const solved = toOklch(chip)!;
+        if ((solved.c ?? 0) > 0.04) {
+          const drift = Math.abs((((solved.h ?? 0) - toOklch(accent)!.h! + 540) % 360) - 180);
+          expect(drift).toBeLessThan(4);
+        }
+      }
+    }
+  });
+
+  it("reads at 5:1 on the standard surfaces as index.css paints them", () => {
+    const painted = {
+      light: ["#fcfcfc", "#ffffff", "#ebebed"],
+      dark: ["#000000", "#0a0a0a", "#111111", "#141414", "#1e1e1e"],
+    } as const;
+    const properties = new Map<string, string>();
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    vi.stubGlobal("document", {
+      documentElement: {
+        dataset: {},
+        style: {
+          setProperty: (name: string, value: string) => properties.set(name, value),
+          removeProperty: (name: string) => properties.delete(name),
+        },
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      for (const appearance of ["light", "dark"] as const) {
+        applyThemePalette("system", appearance);
+        for (const kind of Object.keys(CONTEXT_CHIP_ACCENTS) as Array<
+          keyof typeof CONTEXT_CHIP_ACCENTS
+        >) {
+          for (const surface of painted[appearance]) {
+            expect(
+              contrastRatio(properties.get(contextChipColorVariable(kind))!, surface),
+            ).toBeGreaterThanOrEqual(5);
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
+  });
+
+  it("solves the invalid state's error color to 5:1 on every chip surface", () => {
+    for (const colors of palettes) {
+      const invalid = contextChipVariables(colors)["--context-chip-invalid"];
+      expect(invalid).toBeDefined();
+      for (const surface of [
+        colors.canvas,
+        colors.surface,
+        colors.surfaceRaised,
+        colors.messageSurface,
+      ]) {
+        expect(paintedContrastRatio(invalid!, surface, colors.canvas)).toBeGreaterThanOrEqual(5);
+      }
+    }
+  });
+
+  it("leaves a bubble with opposite-shade text out of the shared solve", () => {
+    const colors = {
+      ...getStandardThemeColors("light"),
+      messageSurface: "#1b4ed8",
+      messageForeground: "#ffffff",
+    };
+    const variables = contextChipVariables(colors);
+    expect(variables["--context-chip-message"]).toBe("#ffffff");
+    for (const kind of Object.keys(CONTEXT_CHIP_ACCENTS) as Array<
+      keyof typeof CONTEXT_CHIP_ACCENTS
+    >) {
+      expect(
+        contrastRatio(variables[contextChipColorVariable(kind)]!, colors.canvas),
+      ).toBeGreaterThanOrEqual(5);
+    }
+    expect(toOklch(variables[contextChipColorVariable("file")])!.c).toBeGreaterThan(0.08);
+  });
+});
+
 describe("stored theme preferences", () => {
-  it("lets a configured half unlock an appearance the base theme lacks", () => {
+  it("lets built-in and published halves unlock an appearance the base theme lacks", () => {
     const lightOnly = parseThemeFile({
       version: THEME_FILE_VERSION,
       id: "paper",
@@ -548,6 +732,17 @@ describe("stored theme preferences", () => {
       appearance: "light",
       colors: { canvas: "#f8fbff" },
     });
+    const [publishedTheme] = publishedThemeDefinitions([
+      {
+        id: "constructor",
+        name: "Constructor",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ]);
+    expect(publishedTheme).toBeDefined();
+    using _environmentThemes = vi.spyOn(appAtomRegistry, "get").mockReturnValue([publishedTheme]);
     vi.stubGlobal("window", {
       localStorage: {
         getItem: (key: string) =>
@@ -561,6 +756,12 @@ describe("stored theme preferences", () => {
       expect(resolveThemeAppearance("paper", true, true, undefined, halves)).toBe("dark");
       expect(resolveThemeAppearance("paper", false, false, "dark", halves)).toBe("dark");
       expect(resolveDesktopTheme("paper", true, undefined, halves)).toBe("system");
+
+      expect(getThemeDefinition("constructor")).toEqual(publishedTheme);
+      expect(canonicalThemePreference("constructor")).toBe("constructor");
+      const publishedHalves = parseThemeHalves(JSON.stringify({ dark: "constructor" }));
+      expect(publishedHalves).toEqual({ dark: "constructor" });
+      expect(resolveThemeAppearance("paper", true, true, undefined, publishedHalves)).toBe("dark");
     } finally {
       vi.unstubAllGlobals();
       invalidateCustomThemes();

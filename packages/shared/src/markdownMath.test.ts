@@ -1,4 +1,8 @@
 import type { Nodes } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import { mathKind } from "./markdownMath.ts";
@@ -124,8 +128,18 @@ describe("chat math parsing", () => {
       "It costs $5 and $10.",
       "Budget $5-$10 per seat, or $20,000-$30,000 a year.",
       "Plans are $5/$10 monthly.",
+      "Pay $5,$10 now.",
       "Run $browser then $deploy on it.",
       "Set $HOME before running.",
+      "Set $HOME,$PATH before running.",
+      "Set $HOME, $PATH before running.",
+      "Set $HOME,$_PATH before running.",
+      "Set $home,$path before running.",
+      "Set $HOME,${PATH} before running.",
+      "Set $HOME,$? before running.",
+      "Set $HOME,$@ before running.",
+      "Set $HOME,$(pwd) before running.",
+      "Pay $1,000,$2,000 now.",
     ]) {
       expect(formulas(prose), prose).toEqual([]);
       expect(text(prose), prose).toBe(prose);
@@ -141,6 +155,17 @@ describe("chat math parsing", () => {
       ]);
       expect(text(source)).toBe(`Price ${price} stays literal. The formula is  and .`);
     }
+  });
+
+  it("reads formulas that end in a comma", () => {
+    for (const boundary of ["", " ", "\n", ".", ",", ";", ":", ")", "]", "}"]) {
+      expect(formulas(`$x,$${boundary}`)).toEqual([["inline", "x,"]]);
+    }
+    expect(formulas("Where $x = 1,$ with $$a,$$ and $$ b,$$.")).toEqual([
+      ["inline", "x = 1,"],
+      ["display", "a,"],
+      ["display", " b,"],
+    ]);
   });
 
   it("leaves code, escapes, links, and citations alone", () => {
@@ -170,6 +195,15 @@ describe("chat math parsing", () => {
 
   it("starts a formula right after an escaped dollar", () => {
     expect(formulas("Pay \\$$x$ now.")).toEqual([["inline", "x"]]);
+  });
+
+  it("starts a formula right after an escaped backslash", () => {
+    const markdown = "Path \\\\\\(x^2\\) and \\\\\\[y\\].";
+    expect(formulas(markdown)).toEqual([
+      ["inline", "x^2"],
+      ["display", "y"],
+    ]);
+    expect(text(markdown)).toBe("Path \\ and \\.");
   });
 
   it.each([
@@ -234,6 +268,63 @@ describe("chat math parsing", () => {
       column: 1,
       offset: source.indexOf("- [ ]"),
     });
+  });
+
+  it.each(["\\( a ", "\\[ a ", "\\[\n"])(
+    "bounds tokenizer work for repeated unclosed %j",
+    (opener) => {
+      let consumed = 0;
+      const parser = unified()
+        .use(remarkParse)
+        .use(remarkGfm)
+        .use(remarkMath)
+        .use(function () {
+          for (const extension of this.data().micromarkExtensions ?? []) {
+            for (const constructs of [extension.text, extension.flow]) {
+              const entries = constructs?.[92];
+              if (!entries || !constructs) continue;
+              constructs[92] = (Array.isArray(entries) ? entries : [entries]).map((construct) => ({
+                ...construct,
+                tokenize(effects, ok, nok) {
+                  return construct.tokenize.call(
+                    this,
+                    {
+                      ...effects,
+                      consume(code) {
+                        consumed++;
+                        effects.consume(code);
+                      },
+                    },
+                    ok,
+                    nok,
+                  );
+                },
+              }));
+            }
+          }
+        });
+      const source = opener.repeat(200);
+      expect(
+        collect(parser.parse(source)).some((node) => /^(inlineMath|math)$/.test(node.type)),
+      ).toBe(false);
+      expect(consumed).toBeGreaterThan(source.length);
+      expect(consumed).toBeLessThan(source.length * 24);
+    },
+  );
+
+  it.each([
+    ["\\( a \\[b\\]", [["display", "b"]]],
+    ["\\[ a \\(b\\)", [["inline", "b"]]],
+    ["\\( a \\( b`code` \\(c\\)", [["inline", "c"]]],
+    ["\\[1\\] \\[x\\]", [["display", "x"]]],
+    ["\\( a\n\n\\(b\\)", [["inline", "b"]]],
+    ["> \\[\n> \\[\n\n\\[\nx\n\\]", [["display", "x"]]],
+    ["\\[\n\\[\nx\n\\]", [["display", "\\[\nx"]]],
+    ["\\(a \\\\\\(b\\)", [["inline", "a \\\\\\(b"]]],
+    ["\\(a \\\\) \\(b\\)", [["inline", "a \\\\) \\(b"]]],
+    ["| a | b |\n| --- | --- |\n| \\(a \\(b | c |\n\n\\(x\\)", [["inline", "x"]]],
+  ])("keeps valid formulas after failed scans in %j", (source, expected) => {
+    expect(formulas(source)).toEqual(expected);
   });
 
   it("shows unfinished formulas as text while a response streams", () => {

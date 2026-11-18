@@ -9,7 +9,8 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { T, useGT } from "gt-react-native";
+import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -19,28 +20,26 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 
 const ROW_BOTTOM_MARGIN = 8;
+const ACTION_ROW_HEIGHT = 32;
 const FULL_SCREEN_GUTTER = 16;
 
 export function htmlRenderRowHeight(frameHeight: number) {
-  return frameHeight + ROW_BOTTOM_MARGIN;
+  return ACTION_ROW_HEIGHT + frameHeight + ROW_BOTTOM_MARGIN;
 }
 
 function useHtmlRenderTheme() {
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
-  return useMemo(
-    () =>
-      mobileHtmlRenderTheme({
-        themeId,
-        appearance: themeAppearance,
-        variables: themeVariables,
-        systemColors: systemColorsActive,
-        platform: Platform.OS,
-      }),
-    [themeId, themeAppearance, themeVariables, systemColorsActive],
-  );
+  return mobileHtmlRenderTheme({
+    themeId,
+    appearance: themeAppearance,
+    variables: themeVariables,
+    systemColors: systemColorsActive,
+    platform: Platform.OS,
+  });
 }
 
 function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
@@ -91,10 +90,8 @@ export function HtmlRenderWebView(props: {
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
-  const source = useMemo(
-    () => ({ uri: props.uri + htmlRenderThemeFragment(initialTheme) }),
-    [props.uri, initialTheme],
-  );
+  const source = { uri: props.uri + htmlRenderThemeFragment(initialTheme) };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts theme changes into the already loaded WebView
   useEffect(() => {
     if (shownTheme.current === null || shownTheme.current === theme) return;
     shownTheme.current = theme;
@@ -131,12 +128,14 @@ export function HtmlRenderWebView(props: {
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
         allowsInlineMediaPlayback
-        automaticallyAdjustContentInsets={!props.nested}
+        contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
         bounces={!props.nested}
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        // Patched Android WebView hands vertical drags to the feed at its edges; horizontal-only overflow leaves them to the feed.
+        decelerationRate={webViewDecelerationRate}
+        // Android's patched WebView always keeps horizontal drags. Only pages
+        // with vertical overflow hold vertical drags until they reach an edge.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
         onShouldStartLoadWithRequest={(request) =>
@@ -182,20 +181,18 @@ export function ThreadHtmlRender(props: {
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
   const height = htmlRenderFrameHeight(props.render, props.frameWidth);
   const fileName = htmlRenderFileName(title);
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId,
-      fileName,
-      mimeType: "text/html",
-      disposition: "inline" as const,
-    }),
-    [attachmentId, fileName],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId,
+    fileName,
+    mimeType: "text/html",
+    disposition: "inline" as const,
+  };
   const asset = useAssetUrlState(props.environmentId, resource);
   const refresh = useRefreshAssetUrl(props.environmentId, resource);
   // Signed URLs are re-minted periodically; following them would reload the page.
@@ -219,39 +216,13 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
-      <View style={{ height }}>
-        {uri !== null && !failed ? (
-          <HtmlRenderWebView
-            key={`${uri}:${attempt}`}
-            uri={uri}
-            title={title}
-            nested
-            onLoadError={handleLoadError}
-          />
-        ) : failed || asset._tag === "Failure" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Reload ${title}`}
-            className="flex-1 items-center justify-center"
-            onPress={() => {
-              retried.current = false;
-              setFailed(false);
-              if (uri === null) void refresh().then((next) => next !== null && setUri(next));
-            }}
-          >
-            <Text className="text-sm text-foreground-muted">Page unavailable</Text>
-          </Pressable>
-        ) : (
-          <View className="flex-1 items-center justify-center">
-            <AppActivityIndicator />
-          </View>
-        )}
+      <View style={{ height: ACTION_ROW_HEIGHT }} className="flex-row items-start justify-end">
         {uri !== null && !failed ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
+            accessibilityLabel={gt("Open {title}", { title })}
             hitSlop={8}
-            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
+            className="h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
             onPress={() =>
               navigation.navigate("ThreadAttachment", {
                 environmentId: String(props.environmentId),
@@ -272,6 +243,36 @@ export function ThreadHtmlRender(props: {
             />
           </Pressable>
         ) : null}
+      </View>
+      <View style={{ height }}>
+        {uri !== null && !failed ? (
+          <HtmlRenderWebView
+            key={`${uri}:${attempt}`}
+            uri={uri}
+            title={title}
+            nested
+            onLoadError={handleLoadError}
+          />
+        ) : failed || asset._tag === "Failure" ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Reload {title}", { title })}
+            className="flex-1 items-center justify-center"
+            onPress={() => {
+              retried.current = false;
+              setFailed(false);
+              if (uri === null) void refresh().then((next) => next !== null && setUri(next));
+            }}
+          >
+            <Text className="text-sm text-foreground-muted">
+              <T>Page unavailable</T>
+            </Text>
+          </Pressable>
+        ) : (
+          <View className="flex-1 items-center justify-center">
+            <AppActivityIndicator />
+          </View>
+        )}
       </View>
     </View>
   );

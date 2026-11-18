@@ -1,4 +1,5 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { inspectPresentation, type DeckSnapshot } from "@betteroffice/pptx";
@@ -10,7 +11,7 @@ export type FontStyle = { readonly bold: boolean; readonly italic: boolean };
 export type DeckFamily = { readonly name: string; readonly styles: readonly FontStyle[] };
 
 /** The scripts the bundled Latin faces may lack, which have a bundled fallback face. */
-export type FallbackScript = "hebrew" | "arabic";
+export type FallbackScript = "hebrew" | "arabic" | "cjk-jp" | "cjk-kr" | "cjk-sc";
 
 /** What a deck's text needs from the fonts, and which slides it hides. */
 export type DeckText = {
@@ -124,57 +125,78 @@ const decodeInspected = Schema.decodeUnknownOption(Inspected);
 const scriptRanges: readonly (readonly [FallbackScript, RegExp])[] = [
   ["hebrew", /[\u0590-\u05FF\uFB1D-\uFB4F]/u],
   ["arabic", /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u],
+  ["cjk-jp", /[\u3040-\u30FF\u31F0-\u31FF\uFF66-\uFF9F]/u],
+  ["cjk-kr", /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/u],
 ];
+
+const hanRange = /[\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/u;
+
+function scripts(text: string): FallbackScript[] {
+  const found = scriptRanges.flatMap((entry) => (entry[1].test(text) ? [entry[0]] : []));
+
+  // The Japanese and Korean faces also draw the Chinese characters their text mixes in.
+  return hanRange.test(text) && !found.some((script) => script.startsWith("cjk-"))
+    ? [...found, "cjk-sc"]
+    : found;
+}
 
 /**
  * Reads the families, styles and scripts a deck's text uses, from its slides, layouts, masters and theme. When the
  * engine's inspection does not decode, the slides' own runs stand in, without theme fonts or hidden flags.
  */
 export function deckText(bytes: Uint8Array, snapshot: DeckSnapshot): DeckText {
-  return Option.match(decodeInspected(inspectPresentation(withoutMedia(bytes))), {
-    onNone: () => fromSnapshot(snapshot),
-    onSome: (inspected) => {
-      const schemes =
-        inspected.themes?.flatMap((theme) =>
-          theme.theme?.fontScheme ? [theme.theme.fontScheme] : [],
-        ) ?? [];
-      const minor = schemes[0]?.minorFont.latin ?? "";
+  return pipe(
+    withoutMedia(bytes),
+    inspectPresentation,
+    decodeInspected,
+    Option.match({
+      onNone: () => fromSnapshot(snapshot),
+      onSome: (inspected) => {
+        const schemes =
+          inspected.themes?.flatMap((theme) =>
+            theme.theme?.fontScheme ? [theme.theme.fontScheme] : [],
+          ) ?? [];
+        const minor = schemes[0]?.minorFont.latin ?? "";
 
-      const drawings = [
-        ...inspected.slides.flatMap((slide) => slide.drawings),
-        ...(inspected.layouts ?? []).flatMap((layout) => layout.drawings),
-        ...(inspected.masters ?? []).flatMap((master) => master.drawings),
-      ];
+        const drawings = [
+          ...inspected.slides.flatMap((slide) => slide.drawings),
+          ...(inspected.layouts ?? []).flatMap((layout) => layout.drawings),
+          ...(inspected.masters ?? []).flatMap((master) => master.drawings),
+        ];
 
-      const defaults = (inspected.masters ?? []).flatMap((master) =>
-        Object.values(master.textStyles ?? {}).flatMap((levels) =>
-          levels.flatMap((level) =>
-            level.defaultRun ? [{ text: "", style: level.defaultRun }] : [],
+        const defaults = (inspected.masters ?? []).flatMap((master) =>
+          Object.values(master.textStyles ?? {}).flatMap((levels) =>
+            levels.flatMap((level) =>
+              level.defaultRun ? [{ text: "", style: level.defaultRun }] : [],
+            ),
           ),
-        ),
-      );
+        );
 
-      return summarize(
-        [...drawings.flatMap(drawingRuns), ...defaults].flatMap((run) => {
-          const family = run.style?.fontFamily;
-          if (!schemes.length || (family && !family.startsWith("+mn") && !family.startsWith("+mj")))
-            return [run];
-          return schemes.map((scheme) => ({
-            ...run,
-            style: {
-              ...run.style,
-              fontFamily: family?.startsWith("+mj")
-                ? scheme.majorFont.latin
-                : scheme.minorFont.latin,
-            },
-          }));
-        }),
-        (family) => (family?.startsWith("+") ? "" : (family ?? "")),
-        minor,
-        inspected.slides.map((slide) => slide.hidden ?? false),
-      );
-    },
-  });
+        return summarize(
+          [...drawings.flatMap(drawingRuns), ...defaults].flatMap((run) => {
+            const family = run.style?.fontFamily;
+            if (
+              !schemes.length ||
+              (family && !family.startsWith("+mn") && !family.startsWith("+mj"))
+            )
+              return [run];
+            return schemes.map((scheme) => ({
+              ...run,
+              style: {
+                ...run.style,
+                fontFamily: family?.startsWith("+mj")
+                  ? scheme.majorFont.latin
+                  : scheme.minorFont.latin,
+              },
+            }));
+          }),
+          (family) => (family?.startsWith("+") ? "" : (family ?? "")),
+          minor,
+          inspected.slides.map((slide) => slide.hidden ?? false),
+        );
+      },
+    }),
+  );
 }
 
 /** A file in the deck's zip package: where its central directory record and its local data sit. */
@@ -387,7 +409,7 @@ function summarize(
           (left, right) => styleRank(left) - styleRank(right),
         ),
       })),
-    scripts: scriptRanges.flatMap((entry) => (entry[1].test(text) ? [entry[0]] : [])),
+    scripts: scripts(text),
     hidden,
   };
 }

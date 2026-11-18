@@ -1,6 +1,6 @@
 import {
+  NavigationContext,
   NavigationRouteContext,
-  useNavigation,
   type ParamListBase,
 } from "@react-navigation/native";
 import type {
@@ -16,7 +16,6 @@ import type { ColorValue } from "react-native";
 
 export {
   nativeHeaderScrollEdgeEffects,
-  nativeTopScrollEdgeEffect,
   type NativeHeaderScrollEdgeEffects,
   type NativeTopScrollEdgeEffect,
 } from "./scrollEdgeEffects";
@@ -37,7 +36,8 @@ export type AppNativeStackNavigationOptions = Omit<
 };
 
 function useNativeStackNavigation(): NativeStackNavigationProp<ParamListBase> | null {
-  return useNavigation<NativeStackNavigationProp<ParamListBase>>();
+  const navigation = use(NavigationContext);
+  return navigation ? (navigation as NativeStackNavigationProp<ParamListBase>) : null;
 }
 
 function normalizeScreenOptions(
@@ -190,7 +190,8 @@ export function NativeStackScreenOptions(props: {
 }) {
   const navigation = useNativeStackNavigation();
   const setOptions = useScreenOptionsWriter();
-  const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
+  const tabActivity = use(NativeWorkspaceTabActivityContext);
+  const tabActive = tabActivity ? tabActivity.active || tabActivity.headerOnly === true : true;
   const lastAppliedOptionsSignatureRef = useRef<string | undefined>(undefined);
   const latestOptionFunctionsRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
   const optionFunctionWrappersRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
@@ -199,6 +200,7 @@ export function NativeStackScreenOptions(props: {
   // phase: a render React discards must not leak its closures into the header.
   // It runs before the tab check so wrappers already installed in an inactive
   // tab's header still call the newest closures.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes stabilized header options to the navigator after commit so discarded renders leave no closures
   useLayoutEffect(() => {
     const normalizedOptions = normalizeScreenOptions(props.options);
     const stableOptions = normalizedOptions
@@ -235,6 +237,7 @@ export function NativeStackScreenOptions(props: {
     );
   }, [setOptions, props.options, props.optionsVersion, tabActive]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the given listeners to navigator events for the screen's lifetime
   useEffect(() => {
     if (!navigation || !props.listeners) {
       return;

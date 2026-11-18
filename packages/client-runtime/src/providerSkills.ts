@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderWorkspaceSnapshotCurrent,
+  isProviderWorkspaceSnapshotPending,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
   type ProviderInstanceId,
   type ServerProvider,
@@ -102,7 +103,7 @@ export function hasCompleteProviderWorkspaceSnapshot(
   cwd: string | null | undefined,
 ): boolean {
   const snapshot = provider && resolveProviderWorkspaceSnapshot(provider, cwd);
-  return Boolean(snapshot && !snapshot.slashCommandsPending);
+  return Boolean(snapshot && !isProviderWorkspaceSnapshotPending(snapshot));
 }
 
 function hasCurrentProviderWorkspaceSnapshot(
@@ -113,7 +114,7 @@ function hasCurrentProviderWorkspaceSnapshot(
   const snapshot = provider && resolveProviderWorkspaceSnapshot(provider, cwd);
   return Boolean(
     snapshot &&
-    !snapshot.slashCommandsPending &&
+    !isProviderWorkspaceSnapshotPending(snapshot) &&
     isProviderWorkspaceSnapshotCurrent(snapshot, nowMs),
   );
 }
@@ -132,11 +133,31 @@ export function resolveProviderSlashCommandsForCwd(
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
 }
 
+/** A project's own provider config can add models that only its workspace snapshot lists. */
+function resolveProviderModelsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+): ServerProvider["models"] {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.models ?? provider.models;
+}
+
+/** Providers keep their identity unless the cwd has its own catalog. */
+export function resolveProvidersForCwd<P extends ServerProvider>(
+  providers: ReadonlyArray<P>,
+  cwd: string | null | undefined,
+): ReadonlyArray<P> {
+  const resolved = providers.map((provider) => {
+    const models = resolveProviderModelsForCwd(provider, cwd);
+    return models === provider.models ? provider : { ...provider, models };
+  });
+  return resolved.every((provider, index) => provider === providers[index]) ? providers : resolved;
+}
+
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 // A cwd that never scans, such as a deleted worktree, would otherwise retry forever.
 const WORKSPACE_SNAPSHOT_MAX_ATTEMPTS = 3;
 
-interface ProviderWorkspaceSnapshotRefreshState {
+export interface ProviderWorkspaceSnapshotRefreshState {
   /**
    * When the last scan was requested. A request inside the TTL is not
    * repeated, so a client clock ahead of the server's cannot loop rescans.
@@ -144,9 +165,11 @@ interface ProviderWorkspaceSnapshotRefreshState {
   readonly requestedAt: number | null;
   /** A failed scan is not retried before this time. */
   readonly retryNotBefore: number | null;
-  /** Scans in a row that ended without a complete snapshot. */
+  /** Failed scans within the current request TTL. */
   readonly failedAttempts: number;
   readonly hadSnapshot: boolean;
+  /** The server published a partial snapshot and is still discovering. */
+  readonly snapshotPending: boolean;
 }
 
 const initialProviderWorkspaceSnapshotRefreshState: ProviderWorkspaceSnapshotRefreshState = {
@@ -154,6 +177,7 @@ const initialProviderWorkspaceSnapshotRefreshState: ProviderWorkspaceSnapshotRef
   retryNotBefore: null,
   failedAttempts: 0,
   hadSnapshot: false,
+  snapshotPending: false,
 };
 
 /**
@@ -172,6 +196,8 @@ function planProviderWorkspaceSnapshotRefresh(
   readonly recheckAt: number | null;
 } {
   const hasSnapshot = hasCompleteProviderWorkspaceSnapshot(provider, cwd);
+  const snapshot = provider && resolveProviderWorkspaceSnapshot(provider, cwd);
+  const pending = Boolean(snapshot && isProviderWorkspaceSnapshotPending(snapshot));
   // Losing a snapshot (the server dropped it) lifts both the TTL and the retry
   // cooldown so the scan happens at once.
   const lost = previous.hadSnapshot && !hasSnapshot;
@@ -183,9 +209,12 @@ function planProviderWorkspaceSnapshotRefresh(
   const state = {
     requestedAt,
     retryNotBefore,
-    // A complete snapshot ends the run of failures.
-    failedAttempts: hasSnapshot ? 0 : previous.failedAttempts,
+    failedAttempts:
+      lost || (requestedAt !== null && now - requestedAt >= PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS)
+        ? 0
+        : previous.failedAttempts,
     hadSnapshot: hasSnapshot,
+    snapshotPending: pending,
   };
   const refresh =
     (requestedAt === null || now - requestedAt >= PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS) &&
@@ -194,8 +223,6 @@ function planProviderWorkspaceSnapshotRefresh(
   if (refresh) {
     return { state: { ...state, requestedAt: now }, refresh: true, recheckAt: null };
   }
-  const pending =
-    (provider && resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommandsPending) === true;
   return { state, refresh: false, recheckAt: pending ? retryNotBefore : null };
 }
 
@@ -208,6 +235,7 @@ function failProviderWorkspaceSnapshotRefresh(
   state: ProviderWorkspaceSnapshotRefreshState,
   requestedAt: number,
   now: number,
+  cooldownMs = WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
 ): ProviderWorkspaceSnapshotRefreshState {
   // A newer request, or a snapshot loss, already superseded this one.
   if (state.requestedAt !== requestedAt) return state;
@@ -216,9 +244,26 @@ function failProviderWorkspaceSnapshotRefresh(
   return {
     ...state,
     requestedAt: null,
-    retryNotBefore: now + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+    retryNotBefore: cooldownMs === 0 ? null : now + cooldownMs,
     failedAttempts,
   };
+}
+
+/**
+ * A scan is in flight, or the server is still discovering, for a cwd without a
+ * complete snapshot, so its skills and commands may still arrive. A failed scan
+ * clears `requestedAt`, and exhausted attempts end it, so this cannot stay true
+ * for a scan that will not finish.
+ */
+export function isProviderWorkspaceSnapshotScanning(
+  state: ProviderWorkspaceSnapshotRefreshState | undefined,
+): boolean {
+  return (
+    state !== undefined &&
+    (state.requestedAt !== null || state.snapshotPending) &&
+    !state.hadSnapshot &&
+    state.failedAttempts < WORKSPACE_SNAPSHOT_MAX_ATTEMPTS
+  );
 }
 
 type WorkspaceSnapshotStatus = "absent" | "pending" | "complete";
@@ -229,7 +274,7 @@ function resolveWorkspaceSnapshotStatus(
 ): WorkspaceSnapshotStatus {
   const snapshot = provider && resolveProviderWorkspaceSnapshot(provider, cwd);
   if (!snapshot) return "absent";
-  return snapshot.slashCommandsPending ? "pending" : "complete";
+  return isProviderWorkspaceSnapshotPending(snapshot) ? "pending" : "complete";
 }
 
 interface ProviderWorkspaceSnapshotRefreshTarget {
@@ -291,24 +336,38 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         // Outlives this build on purpose: a rebuild must not drop the retry.
         // Once nothing subscribes, the retry state dies with the node; writing
         // would recreate and rebuild it, which scans again with no subscriber.
-        const retryLater = () => {
+        const retry = (cooldownMs?: number) => {
           const node = registry.getNodes().get(refreshAtom);
           if (node === undefined || node.canBeRemoved) return;
           registry.set(refreshAtom, (state) =>
             // @effect-diagnostics-next-line globalDate:off
-            failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
+            failProviderWorkspaceSnapshotRefresh(state, now, Date.now(), cooldownMs),
           );
         };
+        const retryLater = () => retry();
         void runAtomCommand(
           registry,
           input.refreshProviders,
           { environmentId, input: { instanceId, cwd } },
           { reportFailure: false },
         ).then((result) => {
+          const refreshedProvider =
+            result._tag === "Success" ? findProvider(result.value.providers) : undefined;
+          const snapshot =
+            refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
+          // A new server timestamp proves progress even when the client clock is ahead.
+          // @effect-diagnostics-next-line globalDate:off
+          const completedAt = Date.now();
           const refreshed =
-            result._tag === "Success" &&
-            hasCompleteProviderWorkspaceSnapshot(findProvider(result.value.providers), cwd);
-          if (!refreshed) retryLater();
+            hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
+            (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
+              snapshot?.checkedAt !==
+                (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
+          if (!refreshed) return retryLater();
+          // A reply is dropped when the provider changed while it was in flight, such as a
+          // SessionStart rescan; ask again at once for the snapshot that change produced.
+          const held = findProvider(registry.get(input.providers(environmentId)));
+          if (!hasCompleteProviderWorkspaceSnapshot(held, cwd)) retry(0);
         }, retryLater);
         return plan.state;
       },
@@ -319,6 +378,8 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
     ).pipe(Atom.withLabel(`provider-workspace-snapshot-refresh:${key}`));
     return refreshAtom;
   });
-  return (target: ProviderWorkspaceSnapshotRefreshTarget): Atom.Atom<unknown> =>
+  return (
+    target: ProviderWorkspaceSnapshotRefreshTarget,
+  ): Atom.Atom<ProviderWorkspaceSnapshotRefreshState> =>
     family({ environmentId: target.environmentId, instanceId: target.instanceId, cwd: target.cwd });
 }

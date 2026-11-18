@@ -4,9 +4,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { workspaceDetailRouter } from "../workspace/workspace-detail-selection";
+import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, createElement, isValidElement, type ReactNode } from "react";
@@ -22,14 +26,14 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
+    repositoryIdentity?: { canonicalKey: string };
   }[],
+  cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
-  cloneResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
-  supportsCloneTracking: false,
   waitForProject: vi.fn(),
   dispatch: vi.fn(),
   alert: vi.fn(),
@@ -48,8 +52,8 @@ function loadRouters() {
   };
 }
 
-vi.mock("../workspace/useSelectWorkspaceDetail", async () => {
-  const { selectWorkspaceDetail } = await import("../workspace/workspace-detail-selection");
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
+  const { selectWorkspaceDetail } = await import("../layout/workspace/workspace-detail-selection");
   return {
     useSelectWorkspaceDetail: () => (detail: Parameters<typeof selectWorkspaceDetail>[0]) =>
       state.dispatch(selectWorkspaceDetail(detail)),
@@ -114,10 +118,7 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: {
-            platform: { os: "linux" },
-            capabilities: { projectCloneTracking: state.supportsCloneTracking },
-          },
+          environment: { platform: { os: "linux" }, capabilities: {} },
           newProjectsRoot: state.newProjectsRoot,
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
@@ -139,7 +140,15 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
+// Only filesystem.browse of `~` answers, with the host's home as its parentPath.
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner:
+    () =>
+    async ({ input }: { input?: { partialPath?: string } }) =>
+      input?.partialPath === "~"
+        ? AsyncResult.success({ parentPath: "/home/tester", entries: [] })
+        : undefined,
+}));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
@@ -148,11 +157,11 @@ vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
-    startProjectClone: () => state.startCloneResult,
-    cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
-      if (state.cloneResult) return state.cloneResult;
+    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneDestinations.push(input.destinationPath);
+      if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
-      return AsyncResult.success({ cwd: input.destinationPath });
+      return AsyncResult.success(undefined);
     },
   },
 }));
@@ -236,7 +245,7 @@ function cloneAction() {
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
-        remoteUrl: "https://example.com/repo.git",
+        remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
       }),
     ),
@@ -280,6 +289,38 @@ describe("clone project permissions", () => {
       expect(state.projects).toEqual([]);
     },
   );
+
+  it.each([
+    [
+      "opens the existing project of that repository instead of cloning into its folder",
+      "example.com/owner/repo",
+      false,
+    ],
+    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
+  ])("%s", async (_name, canonicalKey, clones) => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.cloneDestinations = [];
+    state.startCloneResult = Promise.resolve(
+      AsyncResult.failure(Cause.fail(new Error("Destination is not empty"))),
+    );
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: { canonicalKey },
+      },
+    ];
+    try {
+      await cloneAction()();
+
+      expect(state.cloneDestinations.length > 0).toBe(clones);
+    } finally {
+      state.existingProjects = [];
+      state.startCloneResult = null;
+    }
+  });
 });
 
 function mountProjectFlow(
@@ -494,10 +535,10 @@ describe("add project source environment", () => {
 });
 
 describe("local project navigation", () => {
-  function setup() {
+  function setup(baseDirectory = "/tmp/t3-mobile-audit-fixture") {
     state.navigationState = undefined;
     state.scopes = new Set([AuthOrchestrationOperateScope]);
-    state.baseDirectory = "/tmp/t3-mobile-audit-fixture";
+    state.baseDirectory = baseDirectory;
     state.projects = [];
     state.dispatch.mockReset();
     state.alert.mockReset();
@@ -527,6 +568,28 @@ describe("local project navigation", () => {
       "Project added",
       "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
     );
+  });
+
+  it("opens an existing project typed as a home-relative path instead of creating it", async () => {
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "bike-documents",
+        workspaceRoot: "/home/tester/projects/bike-documents",
+      },
+    ];
+    try {
+      const { created, projected, submit } = setup("~/projects/bike-documents/");
+      state.scopes.add(AuthFilesystemReadScope);
+      created.resolve(AsyncResult.success(undefined));
+      projected.resolve(null);
+      await submit();
+
+      expect(state.projects).toEqual([]);
+    } finally {
+      state.existingProjects = [];
+    }
   });
 
   it("does not replace a reopened flow when the previous submission finishes", async () => {
@@ -561,30 +624,6 @@ describe("local project navigation", () => {
 
     expect(navigation.getState()).toEqual(remaining);
     expect(state.dispatch).not.toHaveBeenCalled();
-  });
-
-  it("does not redirect a reopened flow when an earlier legacy clone finishes", async () => {
-    const { created, projected } = setup();
-    state.scopes.add(AuthSourceControlWriteScope);
-    const cloned = Promise.withResolvers<unknown>();
-    state.cloneResult = cloned.promise;
-    const navigation = mountProjectFlow(false, true, true, "AddProjectDestination");
-    try {
-      const submission = cloneAction()();
-      navigation.back();
-      navigation.push("AddProjectDestination");
-      const remaining = navigation.getState();
-      cloned.resolve(AsyncResult.success({ cwd: "/tmp/t3-mobile-audit-fixture/repo" }));
-      created.resolve(AsyncResult.success(undefined));
-      projected.resolve({ environmentId: "environment", id: "project" });
-      await submission;
-
-      expect(state.projects).toEqual(["/tmp/t3-mobile-audit-fixture/repo"]);
-      expect(navigation.getState()).toEqual(remaining);
-      expect(state.dispatch).not.toHaveBeenCalled();
-    } finally {
-      state.cloneResult = null;
-    }
   });
 
   it("does not redirect a reopened flow when an earlier new project finishes", async () => {
@@ -685,4 +724,104 @@ describe("local project navigation", () => {
       expect(navigation.getState().routes).toEqual([navigation.home]);
     },
   );
+});
+
+describe("local folder path", () => {
+  function findPathInput(
+    node: ReactNode,
+  ): { value: string; onChangeText: (value: string) => void } | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const input = findPathInput(child);
+        if (input) return input;
+      }
+      return null;
+    }
+    if (
+      !isValidElement<{
+        value?: string;
+        onChangeText?: (value: string) => void;
+        onSubmit?: () => void;
+        children?: ReactNode;
+      }>(node)
+    ) {
+      return null;
+    }
+    const { value, onChangeText, onSubmit } = node.props;
+    if (typeof value === "string" && onChangeText && onSubmit) return { value, onChangeText };
+    return findPathInput(node.props.children);
+  }
+
+  function mountLocalFolder() {
+    state.scopes = new Set([AuthOrchestrationOperateScope]);
+    state.baseDirectory = "/work";
+    state.connectionStates = {};
+    state.environments = [
+      { environmentId: "environment", environmentLabel: "Environment" },
+      { environmentId: "another-environment", environmentLabel: "Another environment" },
+    ];
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    const renderedPaths: string[] = [];
+    let input: ReturnType<typeof findPathInput> = null;
+    function LocalFolderObserver(props: { environmentId?: string }) {
+      input = findPathInput(AddProjectLocalFolderScreen(props));
+      if (input) renderedPaths.push(input.value);
+      return null;
+    }
+    return {
+      renderedPaths,
+      get path() {
+        return input?.value;
+      },
+      type: (value: string) => act(() => input!.onChangeText(value)),
+      render: (environmentId?: string) =>
+        act(() => root.render(createElement(LocalFolderObserver, { environmentId }))),
+      [Symbol.asyncDispose]: async () => {
+        await act(() => root.unmount());
+        state.connectionStates = {};
+        state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+      },
+    };
+  }
+
+  it("shows the new host's default path on the first render after the host changes", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/edited");
+    screen.renderedPaths.length = 0;
+
+    await screen.render("another-environment");
+
+    expect(screen.renderedPaths).not.toContain("/work/edited");
+    expect(screen.path).toBe("~/");
+  });
+
+  it("keeps each host's typed path when switching between hosts", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render("environment");
+    await screen.type("/work/a");
+    await screen.render("another-environment");
+    await screen.type("~/b");
+
+    await screen.render("environment");
+    expect(screen.path).toBe("/work/a");
+    await screen.render("another-environment");
+    expect(screen.path).toBe("~/b");
+  });
+
+  it("keeps a typed path when the default host drops out and comes back", async () => {
+    await using screen = mountLocalFolder();
+    await screen.render();
+    expect(screen.path).toBe("~/");
+    await screen.type("~/code/app");
+
+    state.connectionStates = { "another-environment": "offline" };
+    await screen.render();
+    expect(screen.path).toBe("/work/");
+
+    state.connectionStates = {};
+    await screen.render();
+    expect(screen.path).toBe("~/code/app");
+  });
 });

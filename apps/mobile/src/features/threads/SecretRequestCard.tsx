@@ -3,22 +3,35 @@ import {
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestLink,
   secretRequestPrivacyNote,
+  secretRequestReference,
+  secretRequestSources,
   type SecretRequestItem,
+  type SecretRequestReply,
 } from "@t3tools/client-runtime/secret-request";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  SecretProviderId,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { Button } from "../../components/ui/Button";
+import { Chip } from "../../components/ui/Chip";
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -28,9 +41,10 @@ export function SecretRequestCard(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly iconColor: ColorValue;
 }) {
+  const m = useMessages();
   const { item, visibility } = props.projectedItem;
   if (item.type !== "secret_request") return null;
-  const display = secretRequestDisplay(item, visibility);
+  const display = secretRequestDisplay(item, visibility, m);
   if (display.kind === "pending") {
     return (
       <PendingSecretRequestForm
@@ -61,6 +75,8 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
   readonly iconColor: ColorValue;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { item } = props;
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
@@ -68,15 +84,18 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
+  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const sources = secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
+  const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
+  const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [secret, setSecret] = useState("");
+  const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
 
-  const send = async (
-    reply: { readonly type: "save"; readonly secret: string } | { readonly type: "decline" },
-  ) => {
+  const send = async (reply: SecretRequestReply) => {
     const input = secretRequestAnswerInput(item, reply);
     if (input === null || inFlight.current) return;
     inFlight.current = true;
@@ -88,37 +107,111 @@ function PendingSecretRequestForm(props: {
     });
     if (result._tag === "Success") {
       setSecret("");
+      setReference("");
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      setError(secretRequestFailureMessage(squashAtomCommandFailure(result)));
+      setError(secretRequestFailureMessage(squashAtomCommandFailure(result), m));
     }
   };
+  const save = () => {
+    if (source === null) {
+      void send({ type: "save", secret });
+    } else if (secretRequestReference(source, reference) === undefined) {
+      setError(source.invalidReferenceMessage);
+    } else {
+      void send({ type: "reference", source, reference });
+    }
+  };
+  const draft = source === null ? secret : reference;
+  const link = secretRequestLink(item);
 
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
         <Text className="font-t3-bold text-base text-foreground">{item.label}</Text>
         {item.reason.trim() ? (
-          <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
+          <Text className="font-sans text-sm leading-5 text-foreground-muted" selectable>
+            {item.reason}
+          </Text>
         ) : null}
       </View>
-      <TextInput
-        accessibilityLabel={item.label}
-        placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
-        value={secret}
-        onChangeText={setSecret}
-        editable={!submitting}
-        secureTextEntry
-        autoCorrect={false}
-        autoCapitalize="none"
-        autoComplete="off"
-        textContentType="none"
-        importantForAutofill="no"
-        spellCheck={false}
-        returnKeyType="done"
-        onSubmitEditing={() => void send({ type: "save", secret })}
-      />
+      {link !== null ? (
+        <View className="gap-1.5">
+          <Button
+            label={gt("Open {host}", { host: link.host })}
+            tone="secondary"
+            fullWidth
+            onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
+          />
+          {/* A link found in the reason is already shown there. */}
+          {item.url !== undefined ? (
+            <Text selectable className="font-mono text-xs text-foreground-muted">
+              {item.url}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {sources.length > 0 ? (
+        <View className="flex-row flex-wrap gap-2">
+          <Chip
+            label={gt("Value", { $context: "noun, enter the secret value directly" })}
+            size="small"
+            selected={source === null}
+            disabled={submitting}
+            onPress={() => {
+              setSourceId(null);
+              setError(null);
+            }}
+          />
+          {sources.map((candidate) => (
+            <Chip
+              key={candidate.id}
+              label={candidate.label}
+              size="small"
+              selected={candidate.id === source?.id}
+              disabled={submitting}
+              onPress={() => {
+                setSourceId(candidate.id);
+                setError(null);
+              }}
+            />
+          ))}
+        </View>
+      ) : null}
+      {source === null ? (
+        <SecretTextInput
+          accessibilityLabel={item.label}
+          placeholder={item.placeholder ?? m(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
+          value={secret}
+          onChangeText={setSecret}
+          editable={!submitting}
+          onSubmitEditing={(value) => void send({ type: "save", secret: value })}
+        />
+      ) : (
+        <TextInput
+          key={source.id}
+          accessibilityLabel={gt("{label} reference in {source}", {
+            label: item.label,
+            source: source.label,
+          })}
+          placeholder={source.referencePlaceholder}
+          value={reference}
+          onChangeText={(next) => {
+            setReference(next);
+            setError(null);
+          }}
+          editable={!submitting}
+          autoCorrect={false}
+          autoCapitalize="none"
+          autoComplete="off"
+          textContentType="none"
+          importantForAutofill="no"
+          spellCheck={false}
+          returnKeyType="done"
+          onSubmitEditing={save}
+        />
+      )}
       {error !== null ? (
         <Text
           accessibilityRole="alert"
@@ -129,11 +222,11 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        label={gt("Save securely")}
         tone="primary"
         fullWidth
-        disabled={submitting || secret.trim().length === 0}
-        onPress={() => void send({ type: "save", secret })}
+        disabled={submitting || draft.trim().length === 0}
+        onPress={save}
       />
       <View className="flex-row items-center justify-between gap-2">
         <View className="flex-1 flex-row items-center gap-1.5">
@@ -144,11 +237,11 @@ function PendingSecretRequestForm(props: {
             type="monochrome"
           />
           <Text className="flex-1 font-sans text-xs text-foreground-muted">
-            {secretRequestPrivacyNote(item)}
+            {secretRequestPrivacyNote(item, m)}
           </Text>
         </View>
         <Button
-          label="Decline"
+          label={gt("Decline", { $context: "verb, refuses the secret request" })}
           tone="text"
           disabled={submitting}
           onPress={() => void send({ type: "decline" })}

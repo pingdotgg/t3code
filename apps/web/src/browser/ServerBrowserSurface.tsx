@@ -20,8 +20,10 @@ import type {
   PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type Ref,
   useEffect,
@@ -30,12 +32,15 @@ import {
   useRef,
   useState,
 } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
@@ -44,12 +49,12 @@ export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
   readonly history: (delta: -1 | 1) => void;
   readonly reload: (options?: { readonly ignoreCache?: boolean }) => void;
+  readonly stopLoading: () => void;
   readonly viewport: (setting: PreviewViewportSetting) => void;
   readonly canvas: () => HTMLCanvasElement | null;
 }
 
 const RESIZE_THROTTLE_MS = 150;
-const ACCESS_RETRY_MS = 10_000;
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -57,6 +62,9 @@ const PROBE_REUSE_MS = 10_000;
 const INPUT_SENTINEL = "\u200b";
 const BACKSPACE = { key: "Backspace", code: "Backspace", keyCode: 8 } as const;
 const DELETE = { key: "Delete", code: "Delete", keyCode: 46 } as const;
+const COPY = { key: "c", code: "KeyC", keyCode: 67 } as const;
+const CUT = { key: "x", code: "KeyX", keyCode: 88 } as const;
+const CTRL = 2;
 const MAX_UNAUTHORIZED_REFUSALS = 3;
 const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
@@ -95,6 +103,10 @@ const buttonOf = (button: number): PreviewStreamMouseButton =>
 const pressedButtonOf = (buttons: number): PreviewStreamMouseButton =>
   buttons & 1 ? "left" : buttons & 2 ? "right" : buttons & 4 ? "middle" : "none";
 
+// Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
+const historyDeltaOf = (button: number): -1 | 1 | null =>
+  button === 3 ? -1 : button === 4 ? 1 : null;
+
 /** Browsers may refuse a write that arrives after the key press; a toast button is a fresh gesture. */
 async function copyPageText(text: string) {
   try {
@@ -102,9 +114,9 @@ async function copyPageText(text: string) {
   } catch {
     const id = toastManager.add({
       type: "info",
-      title: "The page copied text",
+      title: m(msg("The page copied text")),
       actionProps: {
-        children: "Copy",
+        children: m(msg("Copy", { $context: "verb, copies text to the clipboard" })),
         onClick: () => {
           toastManager.close(id);
           void navigator.clipboard.writeText(text).catch(() => undefined);
@@ -117,9 +129,9 @@ async function copyPageText(text: string) {
 function offerDownload(download: PreviewStreamDownload) {
   const id = toastManager.add({
     type: "info",
-    title: `Downloaded ${download.fileName}`,
+    title: m(msg("Downloaded {fileName}", { fileName: download.fileName })),
     actionProps: {
-      children: "Save",
+      children: m(msg("Save", { $context: "verb, saves a downloaded file" })),
       onClick: () => {
         toastManager.close(id);
         const anchor = document.createElement("a");
@@ -161,7 +173,8 @@ export function ServerBrowserSurface(props: {
     pdfUrl = null,
     ref,
   } = props;
-  const access = usePreviewStreamAccess(environmentId);
+  const gt = useGT();
+  const resolve = useMessages();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -182,13 +195,14 @@ export function ServerBrowserSurface(props: {
     void uploadPreviewStreamFiles(chooser, files).catch((cause: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Could not send the files to the page",
-        description: cause instanceof Error ? cause.message : undefined,
+        title: gt("Could not send the files to the page"),
+        description: thrownErrorMessage(cause, m) ?? undefined,
       }),
     );
   };
   const unauthorizedRef = useRef(0);
   const [accessDenied, setAccessDenied] = useState(false);
+  const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
@@ -303,12 +317,14 @@ export function ServerBrowserSurface(props: {
       history: (delta) => send({ type: "history", delta }),
       reload: (options) =>
         send({ type: "reload", ...(options?.ignoreCache ? { ignoreCache: true } : {}) }),
+      stopLoading: () => send({ type: "stopLoading" }),
       viewport: (setting) => send({ type: "viewport", setting }),
       canvas: () => (!pdfUrl && hasFrameRef.current ? canvasRef.current : null),
     }),
     [pdfUrl, send],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the canvas container's size, sends resizes to the stream and grows the frame cap
   useEffect(() => {
     const element = canvasRef.current?.parentElement;
     if (!element) return;
@@ -354,6 +370,7 @@ export function ServerBrowserSurface(props: {
     };
   }, [followSize]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the preview stream client and paints its frames onto the canvas while visible
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
@@ -458,12 +475,7 @@ export function ServerBrowserSurface(props: {
     visible,
   ]);
 
-  useEffect(() => {
-    if (!visible || accessDenied || access !== null) return;
-    const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
-    return () => clearInterval(timer);
-  }, [access, accessDenied, environmentId, visible]);
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a non-passive wheel listener on the canvas so it can stop the panel scrolling
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -484,6 +496,7 @@ export function ServerBrowserSurface(props: {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [pagePoint, queueWheel]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending input animation frame when the component unmounts
   useEffect(
     () => () => {
       if (inputFrameRef.current !== null) cancelAnimationFrame(inputFrameRef.current);
@@ -493,6 +506,8 @@ export function ServerBrowserSurface(props: {
 
   const handlePointer = (event: PointerEvent<HTMLCanvasElement>) => {
     if (controlRef.current?.controller !== "you") return;
+    // Thumb buttons drive this tab's history in handleMouseUp, never the page.
+    if (historyDeltaOf(event.button) !== null) return;
     const { type, pointerId, clientX, clientY } = event;
     const cancelled = type === "pointercancel";
     const touch = touchRef.current;
@@ -629,15 +644,36 @@ export function ServerBrowserSurface(props: {
     }
   };
 
+  // Chromium runs a thumb button's back/forward on mouseup in this document, which
+  // would move the app's router. Cancel it and send the press to the preview, as
+  // the toolbar does.
+  const handleMouseUp = (event: MouseEvent<HTMLDivElement>) => {
+    const delta = historyDeltaOf(event.button);
+    if (delta === null) return;
+    event.preventDefault();
+    send({ type: "history", delta });
+  };
+
   const resetInput = (textarea: HTMLTextAreaElement) => {
     keySentRef.current = false;
     textarea.value = INPUT_SENTINEL;
     textarea.setSelectionRange(INPUT_SENTINEL.length, INPUT_SENTINEL.length);
   };
 
-  const sendKeyPress = (key: typeof BACKSPACE | typeof DELETE) => {
-    send({ type: "key", action: "down", ...key, modifiers: 0 });
-    send({ type: "key", action: "up", ...key, modifiers: 0 });
+  const sendKeyPress = (
+    key: typeof BACKSPACE | typeof DELETE | typeof COPY | typeof CUT,
+    modifiers = 0,
+  ) => {
+    send({ type: "key", action: "down", ...key, modifiers });
+    send({ type: "key", action: "up", ...key, modifiers });
+  };
+
+  // Edit menu Copy and Cut fire no key, so send the shortcut the server copies on.
+  const handleClipboard = (key: typeof COPY | typeof CUT, event: ClipboardEvent) => {
+    // Keep the sentinel off the clipboard.
+    event.preventDefault();
+    if (controlRef.current?.controller !== "you") return;
+    sendKeyPress(key, CTRL);
   };
 
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -682,6 +718,15 @@ export function ServerBrowserSurface(props: {
       action === "down" &&
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
+    // The key copies or cuts in the page, so stop the browser's own copy or cut repeating it.
+    if (
+      event.ctrlKey !== event.metaKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ["c", "x"].includes(event.key.toLowerCase())
+    ) {
+      event.preventDefault();
+    }
     if (shortcut) return;
     event.preventDefault();
     event.stopPropagation();
@@ -706,6 +751,7 @@ export function ServerBrowserSurface(props: {
     <div
       className={cn("relative flex flex-col overflow-hidden", className)}
       data-server-browser-surface={tabId}
+      onMouseUp={handleMouseUp}
     >
       <div
         className={cn(
@@ -714,7 +760,7 @@ export function ServerBrowserSurface(props: {
         )}
       >
         <span role="status" className="text-xs text-muted-foreground">
-          {previewStreamControlLabel(control)}
+          {previewStreamControlLabel(control, resolve)}
         </span>
         {control?.canOperate ? (
           <Button
@@ -725,7 +771,7 @@ export function ServerBrowserSurface(props: {
               send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
             }
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            {control.controller === "you" ? <T>Release control</T> : <T>Take control</T>}
           </Button>
         ) : null}
       </div>
@@ -734,7 +780,7 @@ export function ServerBrowserSurface(props: {
           <embed
             src={pdfUrl}
             type="application/pdf"
-            title="PDF document"
+            title={gt("PDF document")}
             className="absolute inset-0 z-10 size-full border-0"
           />
         ) : null}
@@ -757,8 +803,8 @@ export function ServerBrowserSurface(props: {
         {/* Pin top-left to avoid focus scrolling; 16px prevents iOS focus zoom. */}
         <textarea
           ref={inputRef}
-          aria-label="Browser page"
-          aria-description="Press Shift+Escape to leave the browser page."
+          aria-label={gt("Browser page")}
+          aria-description={gt("Press Shift+Escape to leave the browser page.")}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -775,9 +821,8 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
             resetInput(event.currentTarget);
           }}
-          // Keep the sentinel off the clipboard.
-          onCopy={(event) => event.preventDefault()}
-          onCut={(event) => event.preventDefault()}
+          onCopy={(event) => handleClipboard(COPY, event)}
+          onCut={(event) => handleClipboard(CUT, event)}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData.getData("text/plain");
@@ -788,10 +833,14 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Choose files for the page"
+            aria-label={gt("Choose files for the page")}
           >
             <p className="text-sm">
-              The page asks for {fileChooser.multiple ? "files" : "a file"}.
+              {fileChooser.multiple ? (
+                <T>The page asks for files.</T>
+              ) : (
+                <T>The page asks for a file.</T>
+              )}
             </p>
             <input
               ref={fileInputRef}
@@ -807,10 +856,10 @@ export function ServerBrowserSurface(props: {
             />
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-                Choose {fileChooser.multiple ? "files" : "file"}
+                {fileChooser.multiple ? <T>Choose files</T> : <T>Choose file</T>}
               </Button>
             </div>
           </div>
@@ -819,14 +868,14 @@ export function ServerBrowserSurface(props: {
           <div
             className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
             role="dialog"
-            aria-label="Browser dialog"
+            aria-label={gt("Browser dialog")}
           >
             <p className="break-words text-sm">{control.dialog.message}</p>
             {control.controller === "you" ? (
               <>
                 {control.dialog.type === "prompt" ? (
                   <Input
-                    aria-label="Dialog response"
+                    aria-label={gt("Dialog response")}
                     value={promptText}
                     onChange={(event) => setPromptText(event.target.value)}
                   />
@@ -837,7 +886,7 @@ export function ServerBrowserSurface(props: {
                     size="sm"
                     onClick={() => send({ type: "dialog", accept: false })}
                   >
-                    Dismiss
+                    <T>Dismiss</T>
                   </Button>
                   <Button
                     size="sm"
@@ -849,12 +898,14 @@ export function ServerBrowserSurface(props: {
                       })
                     }
                   >
-                    Accept
+                    <T>Accept</T>
                   </Button>
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">Take control to respond.</p>
+              <p className="text-xs text-muted-foreground">
+                <T>Take control to respond.</T>
+              </p>
             )}
           </div>
         ) : null}
@@ -862,11 +913,11 @@ export function ServerBrowserSurface(props: {
       {visible && hostSetup ? (
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-4 text-center">
           <p role="alert" className="max-w-sm text-sm text-muted-foreground">
-            {previewStreamHostSetupMessage(hostSetup)}
+            {previewStreamHostSetupMessage(hostSetup, resolve)}
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
           <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-            Try again
+            <T>Try again</T>
           </Button>
         </div>
       ) : null}
@@ -874,7 +925,7 @@ export function ServerBrowserSurface(props: {
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
           <p role="alert" className="text-xs text-muted-foreground">
-            Browser connection was refused.
+            <T>Browser connection was refused.</T>
           </p>
           <Button
             variant="outline"
@@ -885,7 +936,7 @@ export function ServerBrowserSurface(props: {
               refreshPreviewStreamAccess(environmentId);
             }}
           >
-            Reconnect
+            <T>Reconnect</T>
           </Button>
         </div>
       ) : null}

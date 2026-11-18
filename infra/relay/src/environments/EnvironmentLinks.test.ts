@@ -10,9 +10,19 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 describe("EnvironmentLinks", () => {
   it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
     const inserted: Array<Record<string, unknown>> = [];
+    const revoked: Array<{ values: Record<string, unknown>; condition: unknown }> = [];
     const fakeDb = {
       $client: { withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect },
       select: () => ({ from: () => ({ where: () => ({ for: () => Effect.succeed([]) }) }) }),
+      execute: () => Effect.void,
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: (condition: unknown) =>
+            Effect.sync(() => {
+              revoked.push({ values, condition });
+            }),
+        }),
+      }),
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
@@ -43,6 +53,12 @@ describe("EnvironmentLinks", () => {
       const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
       expect(query.sql).toContain("environment_public_key");
       expect(query.params).toEqual(["env-1", "public-key-1"]);
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]?.values.revokedAt).toEqual(inserted[0]?.updatedAt);
+      const priorLinks = new PgDialect().sqlToQuery(revoked[0]?.condition as never);
+      expect(priorLinks.sql).toContain('"user_id" <>');
+      expect(priorLinks.sql).toContain('"revoked_at" is null');
+      expect(priorLinks.params).toEqual(["env-1", "public-key-1", "user-1"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
@@ -69,7 +85,11 @@ describe("EnvironmentLinks", () => {
     readonly moved: boolean;
   }>([
     { when: "a first link", moved: true },
-    { when: "a concurrent first link", raced: tunnelLink, moved: false },
+    {
+      when: "a concurrent first link",
+      raced: { ...tunnelLink, environmentPublicKey: "public-key-0" },
+      moved: true,
+    },
     {
       when: "a replaced key",
       previous: { ...tunnelLink, environmentPublicKey: "public-key-0" },
@@ -126,7 +146,11 @@ describe("EnvironmentLinks", () => {
             };
           },
         }),
+        execute: () => Effect.sync(() => events.push("advisory-lock")),
         update: (table: unknown) => {
+          if (table === relayEnvironmentLinks) {
+            return { set: () => ({ where: () => Effect.sync(() => events.push("revoke")) }) };
+          }
           expect(table).toBe(relayManagedEndpointAllocations);
           return {
             set: (set: Record<string, unknown>) => ({
@@ -178,10 +202,12 @@ describe("EnvironmentLinks", () => {
 
         expect(events).toEqual([
           "begin",
+          "advisory-lock",
           "lock",
           ...(previous === undefined ? ["insert"] : []),
           ...(raced === undefined ? [] : ["lock"]),
           ...(previous === undefined && raced === undefined ? [] : ["link"]),
+          "revoke",
           ...(moved ? ["allocation"] : []),
           "commit",
         ]);
@@ -214,8 +240,7 @@ describe("EnvironmentLinks", () => {
               where: (condition: unknown) => {
                 whereConditions.push(condition);
                 return {
-                  returning: (selection: unknown) => {
-                    expect(selection).toBeDefined();
+                  returning: () => {
                     return Effect.succeed([{ environmentId: "env-1" }]);
                   },
                 };

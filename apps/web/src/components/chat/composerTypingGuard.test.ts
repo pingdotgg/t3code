@@ -19,6 +19,9 @@ describe("composer typing guard", () => {
       });
       state = updateComposerTypingGuard(state, { type });
       expect([...state.held]).toEqual([]);
+      const released = state.held;
+      state = updateComposerTypingGuard(state, { type });
+      expect(state.held).toBe(released);
       state = updateComposerTypingGuard(state, { type: "focus" });
       state = updateComposerTypingGuard(state, { type: "type", now: 2000 });
       state = updateComposerTypingGuard(state, { type: "requests", requestIds: [], now: 2100 });
@@ -37,13 +40,16 @@ describe("composer typing guard", () => {
       requestIds: ["question"],
       now: 0,
     });
+    const held = state.held;
     state = updateComposerTypingGuard(state, { type: "focus" });
     state = updateComposerTypingGuard(state, { type: "type", now: 1000 });
+    expect(state.held).toBe(held);
     state = updateComposerTypingGuard(state, {
       type: "requests",
       requestIds: ["question"],
       now: 1100,
     });
     expect([...state.held]).toEqual([]);
+    expect(state.held).toBe(held);
   });
 });

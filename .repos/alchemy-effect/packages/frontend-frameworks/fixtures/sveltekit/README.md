@@ -32,11 +32,11 @@ without wrangler:
 
 - **User-owned `vite.config.ts`** (`/api/user-config`): the fixture carries a
   real Vite config file, exactly like a normal SvelteKit v3 project — the
-  user registers `sveltekit(...)` themselves with a kit `alias`
-  (`$fixture`), adds their own Vite plugin (a `virtual:fixture-marker`
-  module), and even declares a user adapter whose `adapt()` **throws**. The
-  integration must load the file natively (alias + virtual module observable
-  in live and dev) while replacing the user adapter with the deploy target's
+  user registers `sveltekit(...)` themselves with a kit `version.name`,
+  adds their own Vite plugin (a `virtual:fixture-marker` module), and even
+  declares a user adapter whose `adapt()` **throws**. The integration must
+  load the file natively (version + virtual module observable in live and
+  dev) while replacing the user adapter with the deploy target's
   (a green live build is the proof; a warning is logged).
 
 There is no `svelte.config.js` or `wrangler.json` (kit v3 errors on a

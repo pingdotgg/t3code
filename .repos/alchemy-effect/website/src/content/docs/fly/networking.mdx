@@ -196,14 +196,14 @@ the identity. Changing `app`, `hostname`, or `kind` replaces.
 
 ## Issue a certificate independently
 
-Use `alchemy/ACME` when you want to choose the certificate authority or
+Use `@alchemy.run/acme` when you want to choose the certificate authority or
 issue a wildcard with DNS-01. The account and certificate are independent
 of Fly; this example uploads the result to a Fly App.
 
 ```typescript
-import * as ACME from "alchemy/ACME";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Fly from "alchemy/Fly";
+import * as ACME from "@alchemy.run/acme";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Fly from "@alchemy.run/fly";
 import * as Layer from "effect/Layer";
 
 const providers = Layer.mergeAll(
@@ -227,7 +227,7 @@ const account = yield* ACME.Account("LetsEncrypt", {
 const certificate = yield* ACME.Certificate("Wildcard", {
   account,
   identifiers: ["*.example.com"],
-  solver: Cloudflare.DNS.AcmeSolver(zone),
+  solver: Cloudflare.ACME.ZoneSolver(zone),
 });
 yield* Fly.Certificate("WildcardUpload", {
   app: site,

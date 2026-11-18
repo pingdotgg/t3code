@@ -1,3 +1,6 @@
+import { T, msg, useGT, useMessages } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -23,21 +26,15 @@ import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { ENVIRONMENT_RECONNECT_WARNING_GRACE_MS } from "../ChatView.logic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ServerUpdateAction, serverUpdateStageLabel } from "../ServerUpdateAction";
 import { useAutoBalanceUpdateBanner } from "./useAutoBalanceUpdateBanner";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 import {
-  buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
-  dismissVersionMismatch,
   isServerUpdateFailureDismissed,
-  isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
-  serverUpdateGuidance,
   supportsDesktopAppUpdate,
-  supportsServerUpdateThreadContinuation,
 } from "../../versionSkew";
 
 export type EnvironmentUnavailableState = {
@@ -72,6 +69,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     automaticEnvironment,
     autoUpdateEnvironments,
   } = input;
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
@@ -90,14 +89,18 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   );
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
-    const result = await retryEnvironment(environmentId);
+    // A retry does nothing while the environment is switched off.
+    const result =
+      activeEnvironment?.entry.enabled === false
+        ? await setEnvironmentEnabled({ environmentId, enabled: true })
+        : await retryEnvironment(environmentId);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not reconnect environment",
-          description: error instanceof Error ? error.message : "Failed to reconnect.",
+          title: m(msg("Could not reconnect environment")),
+          description: thrownErrorMessage(error, m) ?? m(msg("Failed to reconnect.")),
         }),
       );
     }
@@ -124,8 +127,8 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not disconnect server",
-            description: error instanceof Error ? error.message : "Failed to disconnect.",
+            title: m(msg("Could not disconnect server")),
+            description: thrownErrorMessage(error, m) ?? m(msg("Failed to disconnect.")),
           }),
         );
       }
@@ -137,28 +140,19 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     handleDisconnectActiveEnvironment,
   );
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
-  const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
-  const versionMismatchDismissKey =
-    versionMismatch && activeThreadEnvironmentId !== null
-      ? buildVersionMismatchDismissalKey(activeThreadEnvironmentId, versionMismatch)
-      : null;
-  const [dismissedVersionMismatchKey, setDismissedVersionMismatchKey] = useState<string | null>(
-    null,
-  );
-  const versionMismatchDismissed =
-    versionMismatchDismissKey === dismissedVersionMismatchKey ||
-    isVersionMismatchDismissed(versionMismatchDismissKey);
-  const showVersionMismatchBanner =
-    versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
-  const versionMismatchServerLabel =
+  const versionMismatch = resolveServerConfigVersionMismatch(serverConfig, messages);
+  const versionMismatchServerName =
     hasMultipleRegisteredEnvironments && activeThreadEnvironmentId !== null
-      ? `${activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId} server`
-      : "server";
+      ? (activeEnvironment?.label ?? serverConfig?.environment.label ?? activeThreadEnvironmentId)
+      : null;
+  const versionMismatchServerLabel =
+    versionMismatchServerName !== null
+      ? gt("{environment} server", { environment: versionMismatchServerName })
+      : gt("server", { $context: "noun, the T3 Code server" });
   const serverUpdateEnvironmentId = activeThreadEnvironmentId;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchInstallation = serverConfig?.environment.capabilities.serverInstallation;
   const versionMismatchDesktopAppUpdate = supportsDesktopAppUpdate(serverConfig);
-  const versionMismatchThreadContinuation = supportsServerUpdateThreadContinuation(serverConfig);
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
@@ -178,34 +172,54 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
-          title="Hide this server's threads. Switch it on again in Connections."
+          title={gt("Hide this server's threads. Switch it on again in Environments.")}
           onClick={() =>
             void handleDisconnectActiveEnvironmentStable(
               activeEnvironmentUnavailableState.environmentId,
             )
           }
         >
-          Disconnect server
+          <T>Disconnect server</T>
         </Button>
       ) : undefined;
     const environmentReconnecting =
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const awaitingApproval = unavailableConnection?.awaitingApproval === true;
     const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
-    if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
+      environmentReconnecting &&
+      !awaitingApproval &&
+      (updateRunning || !reconnectWarningGraceElapsed);
+    const showUnavailableBanner =
+      activeEnvironmentUnavailableState !== null &&
+      unavailableConnection !== null &&
+      !suppressUnavailableBanner;
+    if (showUnavailableBanner) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
+        group: "environment",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-        description: activeEnvironment ? (
+        title: awaitingApproval
+          ? gt("{environment} is waiting to approve this device", {
+              environment: activeEnvironmentUnavailableState.label,
+            })
+          : environmentReconnecting
+            ? gt("{environment} is reconnecting", {
+                environment: activeEnvironmentUnavailableState.label,
+              })
+            : gt("{environment} is offline", {
+                environment: activeEnvironmentUnavailableState.label,
+              }),
+        description: awaitingApproval ? (
+          (unavailableConnection.error ?? undefined)
+        ) : activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -215,7 +229,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                   )
                 }
               >
-                Reconnect
+                {environmentReconnecting ? gt("Retry now") : gt("Reconnect")}
               </Button>
             ) : null}
             {disconnectAction}
@@ -223,54 +237,35 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         ),
       });
     }
+    // An available update is offered by the sidebar's update pill; the composer only shows one
+    // that is running or failed, since either explains what this thread's server is doing.
     if (
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&
-      (serverUpdateState.status === "idle"
-        ? showVersionMismatchBanner
-        : !serverUpdateFailureDismissed)
+      serverUpdateState.status !== "idle" &&
+      !serverUpdateFailureDismissed
     ) {
-      const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";
       items.push({
         id: `server-version:${serverUpdateEnvironmentId}`,
         variant: updateFailed ? "error" : "default",
-        priority: updateInProgress ? "urgent" : "notice",
+        group: "environment",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
         title:
-          updateInProgress || updateFailed ? (
-            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
-          ) : versionMismatch ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="block max-w-full cursor-help truncate rounded-sm text-left"
-                  >
-                    Server update available
-                  </button>
-                }
-              />
-              <TooltipPopup side="top">
-                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
-                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
-              </TooltipPopup>
-            </Tooltip>
-          ) : (
-            "Server update available"
-          ),
+          versionMismatchServerName !== null
+            ? updateFailed
+              ? gt("Could not update {environment} server", {
+                  environment: versionMismatchServerName,
+                })
+              : gt("Updating {environment} server", { environment: versionMismatchServerName })
+            : updateFailed
+              ? gt("Could not update server")
+              : gt("Updating server"),
         description:
           serverUpdateState.status === "failed"
             ? serverUpdateState.message
-            : serverUpdateState.status === "running"
-              ? serverUpdateStageLabel(serverUpdateState.stage)
-              : versionMismatchSelfUpdate !== null &&
-                  (versionMismatchSelfUpdate !== "desktop-managed" ||
-                    !versionMismatchDesktopAppUpdate)
-                ? serverUpdateGuidance(versionMismatchSelfUpdate)
-                : undefined,
-        actions: updateInProgress ? (
+            : serverUpdateStageLabel(serverUpdateState.stage, messages),
+        actions: !updateFailed ? (
           disconnectAction
         ) : !versionMismatch ||
           (versionMismatchSelfUpdate === "desktop-managed" &&
@@ -281,25 +276,20 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             selfUpdate={versionMismatchSelfUpdate}
             installation={versionMismatchInstallation}
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
-            threadContinuation={versionMismatchThreadContinuation}
             targetVersion={versionMismatch.clientVersion}
-            label={updateFailed ? "Retry" : "Update"}
+            label={gt("Retry", { $context: "verb, retries the server update" })}
             variant="ghost"
           />
         ),
-        ...(updateInProgress || (!updateFailed && !versionMismatchDismissKey)
-          ? {}
-          : {
-              dismissLabel: "Dismiss update notice",
+        ...(updateFailed
+          ? {
+              dismissLabel: gt("Dismiss update notice"),
               onDismiss: () => {
-                if (updateFailed) {
-                  dismissServerUpdateFailure(serverUpdateState);
-                  setDismissedServerUpdateState(serverUpdateState);
-                }
-                dismissVersionMismatch(versionMismatchDismissKey);
-                setDismissedVersionMismatchKey(versionMismatchDismissKey);
+                dismissServerUpdateFailure(serverUpdateState);
+                setDismissedServerUpdateState(serverUpdateState);
               },
-            }),
+            }
+          : {}),
       });
     }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
