@@ -1973,9 +1973,16 @@ describe("orchestration v2 provider switching", () => {
       new ClaudeBackgroundWorkBlocksQueryReplacementError(),
       true,
     ],
-  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause, inject]) =>
+    [
+      "background work followed by a lost native session",
+      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      false,
+      true,
+    ],
+  ] as const)("retains missed images after %s", ([, refusalCause, inject, loseSession]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
+      const failResumeOnce = yield* Ref.make(false);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const refuseStarts = yield* Ref.make(0);
@@ -1990,6 +1997,7 @@ describe("orchestration v2 provider switching", () => {
           capturedTurns,
           refuseStarts,
           refusalCause,
+          failResumeOnce,
           nativeThreadGeneration: generation,
           ...(inject === true ? { injectedHistory } : {}),
         }),
@@ -2047,12 +2055,15 @@ describe("orchestration v2 provider switching", () => {
         yield* Ref.set(refuseStarts, 2);
         assert.equal(yield* run(2), "failed");
         assert.equal(yield* run(3), "failed");
+        yield* Ref.set(failResumeOnce, loseSession === true);
         assert.equal(yield* run(4), "completed");
 
         const turns = yield* Ref.get(capturedTurns);
         assert.equal(turns.length, 2);
-        assert.equal(yield* Ref.get(generation), 1);
-        assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+        assert.equal(yield* Ref.get(generation), loseSession === true ? 2 : 1);
+        if (loseSession !== true) {
+          assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+        }
         const delivered = `${turns[1]?.text}${JSON.stringify(yield* Ref.get(injectedHistory))}`;
         assert.include(delivered, "Request 2");
         assert.include(delivered, "Request 3");
