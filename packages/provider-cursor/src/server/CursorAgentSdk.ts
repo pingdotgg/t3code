@@ -598,6 +598,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               : storePlatform.resumeAgent(input.agentId!, input.options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
+      let shellListener: ((event: CursorBackgroundShellEvent) => void) | undefined;
 
       yield* log({
         direction: "incoming",
@@ -647,11 +648,12 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           const onBackgroundShell = sendInput.onBackgroundShell;
           if (onBackgroundShell !== undefined) {
             let delivered = Promise.resolve();
-            listenForBackgroundShells(agent.agentId, (event) => {
+            shellListener = (event) => {
               delivered = delivered
                 .then(() => Effect.runPromiseWith(context)(onBackgroundShell(event)))
                 .catch(() => undefined);
-            });
+            };
+            listenForBackgroundShells(agent.agentId, shellListener);
           }
 
           let callbacksReady = false;
@@ -999,7 +1001,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           Effect.andThen(
             Effect.try({
               try: () => {
-                backgroundShellListeners.delete(agent.agentId);
+                // A resumed session may already listen for this agent.
+                if (backgroundShellListeners.get(agent.agentId) === shellListener) {
+                  backgroundShellListeners.delete(agent.agentId);
+                }
                 agent.close();
               },
               catch: (cause) => runnerError(cause, "agent.close"),

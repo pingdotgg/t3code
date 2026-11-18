@@ -2361,6 +2361,8 @@ describe("CursorAdapterV2", () => {
           Effect.map(listed),
         );
         assert.deepStrictEqual(listed(events).at(-1), { tasks: ["7", "8"], sessionScoped: false });
+        // Idle release keeps the session while a shell runs.
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
 
         // The agent names a shell by the pid Cursor showed it.
         assert.deepStrictEqual(
@@ -2392,6 +2394,9 @@ describe("CursorAdapterV2", () => {
           requestRuntimeRestart: true,
         });
         assert.deepStrictEqual(stopped, ["7"]);
+        // A shell of the stopped run that is reported late is stopped, not kept.
+        yield* report({ ...shell("9"), type: "started", stop: () => stopped.push("9") });
+        assert.deepStrictEqual(stopped, ["7", "9"]);
         yield* report({
           ...shell("7"),
           type: "ended",
@@ -2400,6 +2405,7 @@ describe("CursorAdapterV2", () => {
           outputPath: undefined,
         });
         assert.deepStrictEqual(yield* nextUpdate, [{ tasks: [], sessionScoped: true }]);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
 
         assert.deepStrictEqual(
           wakes.map(({ threadId, providerThreadId, delivery, detail, notification }) => ({

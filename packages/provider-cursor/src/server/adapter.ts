@@ -1108,6 +1108,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             awaited: boolean;
           }
         >();
+        // Runs a Stop ended; a shell they started that is reported only afterwards is stopped too.
+        const stoppedRuns = new Set<ProviderAdapter.ProviderAdapterV2TurnInput["runId"]>();
+        let latestRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | undefined;
         const publishedProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
 
@@ -1168,6 +1171,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         ) {
           const providerThreadId = turnInput.providerThread.id;
           if (shell.type === "started") {
+            if (stoppedRuns.has(turnInput.runId)) return shell.stop();
             backgroundShells.set(shell.id, {
               providerThreadId,
               runId: turnInput.runId,
@@ -2988,6 +2992,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               usage: undefined,
             };
             yield* Ref.set(activeTurn, context);
+            latestRunId = turnInput.runId;
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -3142,6 +3147,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])
               : undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          // closeSession stops every shell, so idle release must wait while any still runs.
+          backgroundTasksEndWithProcess: true,
+          hasPendingBackgroundWork: Effect.sync(() => backgroundShells.size > 0),
+          hasPendingBackgroundWorkForThread: (providerThread) =>
+            Effect.sync(() =>
+              [...backgroundShells.values()].some(
+                (shell) => shell.providerThreadId === providerThread.id,
+              ),
+            ),
           ensureThread: Effect.fn("CursorAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               const opened = yield* openAgent({
@@ -3287,7 +3301,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const matched = [...new Set(taskIds)].filter((taskId) => {
               const shell =
                 backgroundShells.get(taskId) ??
-                [...backgroundShells.values()].find((shell) => String(shell.pid) === taskId);
+                [...backgroundShells.values()].find(
+                  (shell) => shell.pid !== undefined && String(shell.pid) === taskId,
+                );
               if (shell?.providerThreadId !== providerThread.id) return false;
               shell.awaited = awaited;
               return true;
@@ -3305,6 +3321,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               const context = yield* Ref.get(activeTurn);
               // A user Stop ends what the agent left running too; a steer leaves it alone.
               if (turnInput.requestRuntimeRestart === true) {
+                if (latestRunId !== undefined) stoppedRuns.add(latestRunId);
                 yield* stopBackgroundShells(turnInput.providerThread.id);
               }
               if (context === null && turnInput.requestRuntimeRestart === true) return;
