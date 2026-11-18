@@ -998,7 +998,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         }).pipe(
           Effect.andThen(
             Effect.try({
-              try: () => agent.close(),
+              try: () => {
+                backgroundShellListeners.delete(agent.agentId);
+                agent.close();
+              },
               catch: (cause) => runnerError(cause, "agent.close"),
             }),
           ),

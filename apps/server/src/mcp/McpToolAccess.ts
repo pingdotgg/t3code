@@ -406,17 +406,17 @@ const linksUnavailable = new OrchestratorMcpFailure({
   message: "This environment cannot reach linked environments.",
 });
 
+const THREAD_ONLY = new Set<unknown>([
+  McpInvocationContext.hiddenFromOutsideClients,
+  McpInvocationContext.hiddenWithoutBackgroundWait,
+]);
+
 /**
  * Every tool that takes a linked environment runs there the same way: its
  * declaration checks the caller here, and the same call goes to the other
  * environment, which checks the rest. The handler here never sees
  * `environmentId`, so it cannot leak into what it writes.
  */
-const THREAD_ONLY = new Set<unknown>([
-  McpInvocationContext.hiddenFromOutsideClients,
-  McpInvocationContext.hiddenWithoutBackgroundWait,
-]);
-
 const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>,
   declarations: Handlers<Tools>,
