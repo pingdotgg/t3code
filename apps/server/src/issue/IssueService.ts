@@ -38,6 +38,7 @@ import {
   isStandaloneIssueTracker,
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
+  type TrackerIssueDetail,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import { parseUrl } from "@t3tools/shared/url";
 
@@ -164,13 +165,18 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
-     * Standalone links must match the workspace in the issue's canonical URL from the connected tracker.
+     * Standalone links must match the workspace in the issue's canonical URL from the connected
+     * tracker; that read comes back as `issue`, so callers need not read it again.
      */
     readonly resolveUrl: (
       url: string,
       preferredProjectId?: ProjectId,
     ) => Effect.Effect<
-      IssueRef & { readonly host: string; readonly writable: boolean },
+      IssueRef & {
+        readonly host: string;
+        readonly writable: boolean;
+        readonly issue?: IssueDetail;
+      },
       IssueError
     >;
   }
@@ -449,6 +455,20 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const toDetail = (
+    project: SupportedProject & { readonly writable: boolean },
+    issue: TrackerIssueDetail,
+  ): IssueDetail => ({
+    ...issue,
+    tracker: project.tracker,
+    host: project.host,
+    scope: project.scope,
+    projectId: project.project.id,
+    projectTitle: project.project.title,
+    writable: project.writable,
+    capabilities: project.api.capabilities,
+  });
+
   const detail: IssueService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
@@ -461,16 +481,7 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.mapError(toIssueError("detail")),
-            Effect.map((issue): IssueDetail => ({
-              ...issue,
-              tracker: project.tracker,
-              host: project.host,
-              scope: project.scope,
-              projectId: project.project.id,
-              projectTitle: project.project.title,
-              writable: project.writable,
-              capabilities: project.api.capabilities,
-            })),
+            Effect.map((issue) => toDetail(project, issue)),
           ),
       ),
     );
@@ -692,34 +703,39 @@ const make = Effect.gen(function* () {
       if (lender === undefined) {
         return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
       }
-      if (standalone !== null) {
-        // Team keys repeat across workspaces; only the credential's canonical issue URL identifies one.
-        const issue = yield* lender.api
-          .getIssue({
-            cwd: lender.project.workspaceRoot,
-            host: lender.host,
-            scope: link.scope,
-            key: link.key,
-          })
-          .pipe(Effect.mapError(toIssueError("resolveUrl")));
-        const canonicalUrl = parseUrl(issue.url);
-        const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
-        if (canonical === null || canonical.workspace !== standalone.link.workspace) {
-          return yield* new IssueOperationError({
-            operation: "resolveUrl",
-            reason: "not-found",
-            detail: "This issue URL does not belong to the connected workspace.",
-          });
-        }
-      }
-      return {
+      const served = {
+        ...lender,
+        scope: own === undefined ? link.scope : lender.scope,
+        writable: own !== undefined,
+      };
+      const resolved = {
         projectId: lender.project.id,
         tracker: lender.tracker,
         host: lender.host,
-        scope: own === undefined ? link.scope : lender.scope,
+        scope: served.scope,
         key: link.key,
-        writable: own !== undefined,
+        writable: served.writable,
       };
+      if (standalone === null) return resolved;
+      // Team keys repeat across workspaces; only the credential's canonical issue URL identifies one.
+      const issue = yield* lender.api
+        .getIssue({
+          cwd: lender.project.workspaceRoot,
+          host: lender.host,
+          scope: link.scope,
+          key: link.key,
+        })
+        .pipe(Effect.mapError(toIssueError("resolveUrl")));
+      const canonicalUrl = parseUrl(issue.url);
+      const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
+      if (canonical === null || canonical.workspace !== standalone.link.workspace) {
+        return yield* new IssueOperationError({
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This issue URL does not belong to the connected workspace.",
+        });
+      }
+      return { ...resolved, issue: toDetail(served, issue) };
     },
   );
 
