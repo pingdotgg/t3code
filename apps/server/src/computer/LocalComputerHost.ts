@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 
 import type {
   ComputerGrant,
+  ComputerHostAccess,
   ComputerHostConnectInput,
   ComputerHostFrame,
   ComputerHostId,
@@ -60,6 +61,12 @@ const localHostRefusal = (
 };
 
 type Access = Extract<ChildMessage, { kind: "access" }>["access"];
+
+const toHostAccess = (access: Access): ComputerHostAccess => ({
+  computerUse: access.accessibility,
+  accessibility: access.accessibility,
+  screenRecording: access.screenRecording,
+});
 
 /** A forked helper: newline-delimited JSON in and out, and the end of its process. */
 export type HelperChild = {
@@ -172,8 +179,11 @@ const makeSession = Effect.scoped(
       (child) => Effect.sync(() => child.stop()),
     );
     child.onMessage((message) => {
-      if (message.kind === "access") {
-        Deferred.doneUnsafe(access, Effect.succeed(message.access));
+      // The first report is the hello; later ones are the checks each task's start asks for.
+      if (
+        message.kind === "access" &&
+        Deferred.doneUnsafe(access, Effect.succeed(message.access))
+      ) {
         return;
       }
       Queue.offerUnsafe(queue, message);
@@ -263,6 +273,8 @@ const makeSession = Effect.scoped(
           return;
         }
         case "access":
+          yield* computer.hostAccess({ hostId, access: toHostAccess(message.access) });
+          return;
         case "current":
           return;
       }
@@ -285,16 +297,18 @@ const makeSession = Effect.scoped(
       platform: "darwin",
       version: serverBuildVersion,
       controls: [...COMPUTER_CONTROL_KINDS],
-      computerUse: accessReport.accessibility,
-      accessibility: accessReport.accessibility,
-      screenRecording: accessReport.screenRecording,
+      ...toHostAccess(accessReport),
     };
 
     const attached = yield* computer.attachLocalHost({
       ...hello,
       send: (frame) => {
         // A send is synchronous, so the map is written and read without a fiber between.
-        if (frame.kind === "start") starts.set(frame.taskId, frame.requestId);
+        if (frame.kind === "start") {
+          starts.set(frame.taskId, frame.requestId);
+          // A grant made after this host attached reaches the server with the task it was made for.
+          child.send({ id: "access", kind: "access" });
+        }
         const request = toChildRequest(frame);
         if (request !== null) child.send(request);
       },

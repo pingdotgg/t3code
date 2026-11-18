@@ -259,6 +259,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computerHostDecide]: "computer",
   [WS_METHODS.computerHostAuthorize]: "computer",
   [WS_METHODS.computerHostEvent]: "computer",
+  [WS_METHODS.computerHostAccess]: "computer",
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",

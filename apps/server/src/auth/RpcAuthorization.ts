@@ -253,6 +253,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computerHostDecide]: AuthComputerHostScope,
   [WS_METHODS.computerHostAuthorize]: AuthComputerHostScope,
   [WS_METHODS.computerHostEvent]: AuthComputerHostScope,
+  [WS_METHODS.computerHostAccess]: AuthComputerHostScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,

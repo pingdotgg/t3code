@@ -29,6 +29,7 @@ import {
   ComputerHostAuthorizeInput,
   ComputerHostConnectInput,
   ComputerHostDecideInput,
+  ComputerHostAccessInput,
   ComputerHostEventInput,
   ComputerHostFrame,
   ComputerHostRespondInput,
@@ -611,6 +612,7 @@ export const WS_METHODS = {
   computerHostDecide: "computer.hostDecide",
   computerHostAuthorize: "computer.hostAuthorize",
   computerHostEvent: "computer.hostEvent",
+  computerHostAccess: "computer.hostAccess",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2188,6 +2190,11 @@ const WsComputerHostEventRpc = Rpc.make(WS_METHODS.computerHostEvent, {
   error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
 });
 
+const WsComputerHostAccessRpc = Rpc.make(WS_METHODS.computerHostAccess, {
+  payload: ComputerHostAccessInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationGetCommandReceiptsRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getCommandReceipts,
   {
@@ -2846,6 +2853,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsComputerHostDecideRpc,
   WsComputerHostAuthorizeRpc,
   WsComputerHostEventRpc,
+  WsComputerHostAccessRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

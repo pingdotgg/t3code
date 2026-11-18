@@ -404,6 +404,14 @@ export const ComputerAuditTailInput = Schema.Struct({
 });
 export type ComputerAuditTailInput = typeof ComputerAuditTailInput.Type;
 
+/** The macOS grants a host holds, as it last checked them. */
+export const ComputerHostAccess = Schema.Struct({
+  computerUse: Schema.Boolean,
+  accessibility: Schema.Boolean,
+  screenRecording: Schema.Boolean,
+});
+export type ComputerHostAccess = typeof ComputerHostAccess.Type;
+
 export const ComputerHostConnectInput = Schema.Struct({
   /** The name a person sees, such as "JJ's MacBook". */
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
@@ -412,9 +420,7 @@ export const ComputerHostConnectInput = Schema.Struct({
   platform: Schema.String.check(Schema.isMaxLength(40)),
   version: Schema.String.check(Schema.isMaxLength(40)),
   controls: Schema.Array(ComputerControlKind),
-  computerUse: Schema.Boolean,
-  accessibility: Schema.Boolean,
-  screenRecording: Schema.Boolean,
+  ...ComputerHostAccess.fields,
 });
 export type ComputerHostConnectInput = typeof ComputerHostConnectInput.Type;
 
@@ -423,6 +429,13 @@ export const ComputerHostRespondInput = Schema.Struct({
   reply: ComputerHostReply,
 });
 export type ComputerHostRespondInput = typeof ComputerHostRespondInput.Type;
+
+/** A host's grants changed after it connected, such as Accessibility allowed in System Settings. */
+export const ComputerHostAccessInput = Schema.Struct({
+  hostId: ComputerHostId,
+  access: ComputerHostAccess,
+});
+export type ComputerHostAccessInput = typeof ComputerHostAccessInput.Type;
 
 export const ComputerHostEventInput = Schema.Struct({
   hostId: ComputerHostId,

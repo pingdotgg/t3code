@@ -11,6 +11,7 @@ import type {
   ComputerControlKind,
   ComputerDecision,
   ComputerGrant,
+  ComputerHostAccess,
   ComputerHostConnectInput,
   ComputerHostEvent,
   ComputerHostFrame,
@@ -314,6 +315,11 @@ export class ComputerService extends Context.Service<
       readonly hostId: ComputerHostId;
       readonly taskId: ComputerTaskId;
       readonly event: ComputerHostEvent;
+    }) => Effect.Effect<void, ComputerError>;
+    /** The grants a host checked again, so the snapshot never shows the ones it connected with. */
+    readonly hostAccess: (input: {
+      readonly hostId: ComputerHostId;
+      readonly access: ComputerHostAccess;
     }) => Effect.Effect<void, ComputerError>;
     /** An in-process host, for a standalone server that runs the helper itself. */
     readonly attachLocalHost: (
@@ -780,13 +786,6 @@ const make = Effect.gen(function* () {
         return yield* failure("refused", `The text is at most ${MAX_TEXT} characters.`);
       }
       const host = yield* pickHost(input.hostId);
-      if (!host.computerUse) {
-        return yield* failure(
-          "unavailable",
-          `${host.name} cannot read its screen: give the helper Accessibility access in System Settings.`,
-          { hostId: host.id },
-        );
-      }
       if (host.taskId !== null) {
         return yield* failure("busy", `${host.name} is busy with another task; stop it first.`, {
           hostId: host.id,
@@ -1321,6 +1320,35 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(reply, input.reply);
   });
 
+  const hostAccess: ComputerService["Service"]["hostAccess"] = Effect.fn(
+    "ComputerService.hostAccess",
+  )(function* ({ hostId, access }) {
+    const host = (yield* Ref.get(stateRef)).hosts.find((candidate) => candidate.id === hostId);
+    if (host === undefined) {
+      return yield* failure("no_host", "That computer is not connected.", { hostId });
+    }
+    if (
+      host.computerUse === access.computerUse &&
+      host.accessibility === access.accessibility &&
+      host.screenRecording === access.screenRecording
+    ) {
+      return;
+    }
+    yield* mutate(
+      (state) =>
+        [
+          undefined,
+          {
+            ...state,
+            hosts: state.hosts.map((candidate) =>
+              candidate.id === hostId ? { ...candidate, ...access } : candidate,
+            ),
+          },
+        ] as const,
+    );
+    yield* record("host.access", { hostId, ...access });
+  });
+
   const attachLocalHost: ComputerService["Service"]["attachLocalHost"] = Effect.fn(
     "ComputerService.attachLocalHost",
   )(function* (input) {
@@ -1355,6 +1383,7 @@ const make = Effect.gen(function* () {
     hostDecide,
     hostAuthorize,
     hostEvent,
+    hostAccess,
     attachLocalHost,
   });
 });

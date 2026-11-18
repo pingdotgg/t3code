@@ -6,6 +6,7 @@ import {
   ComputerAction,
   ComputerAnswers,
   ComputerGrant,
+  ComputerHostAccess,
   ComputerHostConnectInput,
   ComputerHostEvent,
   ComputerHostFrame,
@@ -1114,7 +1115,8 @@ export type DesktopComputerFrameInput = typeof DesktopComputerFrameInputSchema.T
 
 /**
  * One thing the helper needs its environment to answer while it works: a decision's questions, one action's
- * grant, or a step's progress. `closed` says the helper is gone, so the environment's host stream ends.
+ * grant, or a step's progress. `closed` says the helper is gone, so the environment's host stream ends;
+ * `access` says this Mac's grants changed since it connected.
  */
 export const DesktopComputerCallSchema = Schema.Union([
   Schema.Struct({
@@ -1146,6 +1148,12 @@ export const DesktopComputerCallSchema = Schema.Union([
     callId: Schema.String,
     environmentId: EnvironmentId,
     reason: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("access"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    access: ComputerHostAccess,
   }),
 ]);
 export type DesktopComputerCall = typeof DesktopComputerCallSchema.Type;
