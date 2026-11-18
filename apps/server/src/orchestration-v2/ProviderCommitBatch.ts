@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 const MAX_EVENTS = 64;
 const MAX_BYTES = 1024 * 1024;
 // While another write waits, a shared transaction stops taking jobs after this long.
-const MAX_HOLD_MILLIS = 100;
+const MAX_HOLD_NANOS = 100_000_000n;
 const encodeQueue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const enabled = Config.Boolean("T3CODE_PROVIDER_COMMIT_BATCHING").pipe(
@@ -106,7 +106,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   const queue = yield* Queue.bounded<Job>(MAX_EVENTS);
   const pending = new Set<Job>();
   let closed = false;
-  // Writes released by `barrier` that have not finished; they wait on the writer a batch holds.
+  // Writes in `barrier` that have not finished; they wait on the batch or the writer it holds.
   let waitingWriters = 0;
   const shutdown = Effect.gen(function* () {
     closed = true;
@@ -185,12 +185,12 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
           // A retried transaction runs this again from the first job.
           outcomes.clear();
           taken = 0;
-          const startedAt = yield* Clock.currentTimeMillis;
+          const startedAt = yield* Clock.monotonicTimeNanos;
           for (const job of jobs) {
             if (
               taken > 0 &&
               waitingWriters > 0 &&
-              (yield* Clock.currentTimeMillis) - startedAt >= MAX_HOLD_MILLIS
+              (yield* Clock.monotonicTimeNanos) - startedAt >= MAX_HOLD_NANOS
             )
               return;
             taken++;
@@ -262,13 +262,17 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   ) {
     if (closed) return yield* Effect.interrupt;
     if (!enabled || (yield* CurrentWorker) === (yield* Effect.fiberId)) return yield* effect;
-    for (const job of Array.from(pending)) {
-      if (threadIds === undefined || threadIds.includes(job.threadId)) yield* job.settled;
-    }
-    if (closed) return yield* Effect.interrupt;
     return yield* Effect.uninterruptibleMask((restore) => {
       waitingWriters++;
-      return restore(effect).pipe(
+      return restore(
+        Effect.gen(function* () {
+          for (const job of Array.from(pending)) {
+            if (threadIds === undefined || threadIds.includes(job.threadId)) yield* job.settled;
+          }
+          if (closed) return yield* Effect.interrupt;
+          return yield* effect;
+        }),
+      ).pipe(
         Effect.ensuring(
           Effect.sync(() => {
             waitingWriters--;

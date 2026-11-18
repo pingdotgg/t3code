@@ -81,6 +81,13 @@ const CurrentProviderBatch = Context.Reference<ProviderBatchPublication | undefi
   "t3/orchestration-v2/EventSink/CurrentProviderBatch",
   { defaultValue: () => undefined },
 );
+// Projecting `provider-thread.updated` also rewrites its app thread's row.
+const projectedThreadIds = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+  events.flatMap((event) =>
+    event.type === "provider-thread.updated" && event.payload.appThreadId !== null
+      ? [event.threadId, event.payload.appThreadId]
+      : [event.threadId],
+  );
 
 export interface EventSinkV2Shape {
   /** Items that are not provider snapshots, such as a consumer's own control items, never batch. */
@@ -486,7 +493,7 @@ const layerBase: Layer.Layer<
       const batch = yield* CurrentProviderBatch;
       if (batch !== undefined) batch.eventCount += input.events.length;
       const { committed } = yield* commitThenPublish(
-        input.events.map((event) => event.threadId),
+        projectedThreadIds(input.events),
         Effect.gen(function* () {
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
@@ -541,7 +548,7 @@ const layerBase: Layer.Layer<
         });
 
         return yield* commitThenPublish(
-          [input.threadId, ...input.events.map((event) => event.threadId)],
+          [input.threadId, ...projectedThreadIds(input.events)],
           Effect.gen(function* () {
             const rows = yield* sql<{
               readonly status: string;
@@ -623,7 +630,7 @@ const layerBase: Layer.Layer<
       });
 
       return yield* commitThenPublish(
-        input.events.map((event) => event.threadId),
+        projectedThreadIds(input.events),
         Effect.gen(function* () {
           const rows = yield* sql<{
             readonly active_attempt_id: string | null;
@@ -677,7 +684,7 @@ const layerBase: Layer.Layer<
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) =>
       commitThenPublish(
-        events.map((event) => event.threadId),
+        projectedThreadIds(events),
         Effect.gen(function* () {
           const rows = yield* readStoredPayload;
           if (rows[0]?.payload_json !== expectedJson) {
@@ -778,7 +785,7 @@ const layerBase: Layer.Layer<
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
       const result = yield* commitThenPublish(
-        [input.threadId, ...input.events.map((event) => event.threadId)],
+        [input.threadId, ...projectedThreadIds(input.events)],
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,

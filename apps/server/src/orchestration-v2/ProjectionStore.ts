@@ -850,6 +850,7 @@ export class ProviderBatchProjectionState extends Context.Reference<
   defaultValue: () => undefined,
 }) {}
 
+// Runs per projected event or once per batch; the projection or batch commit span traces it.
 export const writeThreadTouches = Effect.fnUntraced(function* (
   sql: SqlClient.SqlClient,
   touches: ReadonlyMap<ThreadId, string>,

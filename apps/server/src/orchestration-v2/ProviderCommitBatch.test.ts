@@ -404,9 +404,9 @@ it.effect.each([false, true])(
     }),
 );
 
-it.effect.each([false, true])(
-  "runs another stream's control during a busy commit; splits slow backlogs for a waiting write=%s",
-  (writeWaiting) =>
+it.effect.each(["none", "writer", "snapshots"] as const)(
+  "runs another stream's control during a busy commit; splits slow backlogs for a write waiting on %s",
+  (waitingOn) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -441,10 +441,13 @@ it.effect.each([false, true])(
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.await(pulled);
       yield* TestClock.adjust(0);
-      // An unrelated write runs at once and stands in for one waiting on the writer the batch holds.
+      // An unrelated write stands in for one waiting on the writer the batch holds.
       const writerFree = yield* Deferred.make<void>();
       const write = yield* recorder
-        .barrier(writeWaiting ? Deferred.await(writerFree) : Effect.void, ["other-thread"])
+        .barrier(
+          waitingOn === "writer" ? Deferred.await(writerFree) : Effect.void,
+          waitingOn === "snapshots" ? ["single-thread"] : ["other-thread"],
+        )
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(leading);
@@ -453,7 +456,9 @@ it.effect.each([false, true])(
       yield* Fiber.join(write);
       assert.deepEqual(
         yield* Queue.takeAll(recorder.output),
-        writeWaiting ? [[event(-1)], ...backlog.map((raw) => [raw])] : [[event(-1)], backlog],
+        waitingOn === "none"
+          ? [[event(-1)], backlog]
+          : [[event(-1)], ...backlog.map((raw) => [raw])],
       );
     }),
 );

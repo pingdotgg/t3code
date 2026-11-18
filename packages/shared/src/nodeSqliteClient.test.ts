@@ -253,8 +253,14 @@ it.effect("coalesces savepoints with queries and preserves nested rollback", () 
             )
             .pipe(Effect.flip);
           assert.equal(failure, "bad update");
-          yield* sql.withTransaction(Effect.fail("empty update")).pipe(Effect.flip);
+          const sent = messages.mock.calls.length;
+          assert.equal(
+            yield* sql.withTransaction(Effect.fail("empty update")).pipe(Effect.flip),
+            "empty update",
+          );
+          assert.equal(messages.mock.calls.length, sent);
           assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`, [{ value: 1 }]);
+          assert.deepEqual(messages.mock.calls.at(-1)?.[0].savepoints, []);
           yield* sql.withTransaction(
             sql
               .withTransaction(
@@ -265,9 +271,16 @@ it.effect("coalesces savepoints with queries and preserves nested rollback", () 
               .pipe(Effect.flip),
           );
           assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`, [{ value: 1 }]);
+
+          yield* sql.withTransaction(sql`UPDATE counters SET value = 4 WHERE id = 1`);
+          yield* sql`UPDATE counters SET value = 5 WHERE id = 1`;
+          const unsent = yield* sql
+            .withTransaction(sql.unsafe("SELECT ?", [Symbol("uncloneable")]))
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(unsent));
         }),
       );
-      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`, [{ value: 1 }]);
+      assert.deepEqual(yield* sql`SELECT value FROM counters WHERE id = 1`, [{ value: 5 }]);
     }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

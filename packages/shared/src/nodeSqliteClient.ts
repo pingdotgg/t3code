@@ -477,10 +477,12 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
             ...input,
             cached,
             received,
-            savepoints: pendingSavepoints.splice(0),
+            savepoints: [...pendingSavepoints],
           };
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           worker.postMessage(message);
+          // An unsent savepoint must stay queued, or its rollback would target an older sibling's.
+          pendingSavepoints.length = 0;
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.

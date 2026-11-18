@@ -500,16 +500,52 @@ it.effect("commits other threads' writes ahead of a thread's queued provider sna
         .pipe(Effect.forkScoped({ startImmediately: true }));
     const sameThread = yield* writeTo(busyNode, "busy-command");
     const otherThread = yield* writeTo(nodeComparisonEvent(independent!, now), "independent");
+    const childOfBusy = yield* writeTo(
+      {
+        id: EventId.make("unused"),
+        type: "provider-thread.updated",
+        threadId: independent!.id,
+        driver: providerDriver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:busy-child"),
+          driver: providerDriver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: busy!.id,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      "busy-child",
+    );
     yield* TestClock.adjust(0);
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(provider);
     yield* Fiber.join(sameThread);
     yield* Fiber.join(otherThread);
+    yield* Fiber.join(childOfBusy);
     const store = yield* EventStore.EventStoreV2;
     const events = yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect);
     assert.deepEqual(
       events.map((stored) => stored.event.id),
-      ["busy-provider-1", "independent", "busy-provider-2", "busy-provider-3", "busy-command"],
+      [
+        "busy-provider-1",
+        "independent",
+        "busy-provider-2",
+        "busy-provider-3",
+        "busy-command",
+        "busy-child",
+      ],
     );
   }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
 );
