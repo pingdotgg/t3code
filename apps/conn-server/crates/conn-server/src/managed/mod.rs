@@ -21,6 +21,7 @@ pub mod gateway;
 pub mod ingress;
 pub mod notices;
 pub mod provision;
+pub mod task;
 
 use std::sync::{Arc, Mutex};
 
@@ -441,6 +442,59 @@ impl Drop for Handle {
     fn drop(&mut self) {
         let id = self.id;
         self.shared.with(|a| ((), a.unregister(id, Instant::now())));
+    }
+}
+
+/// A task worker's write commits only while its handler is open. The access decision is
+/// made under the authority lock with the time read after acquiring it; the commit itself
+/// runs outside it, so a slow commit never holds up a fence or the runtime thread. The order
+/// is defined: a write accepted at the check is work the server accepted (it stays, as the
+/// contract says), and the call task holds this handler until the commit has ended, so the
+/// fence's `handlers_closed_at`, and its ACK, always come after it.
+impl conn_engine::CommitGate for Handle {
+    fn commit_if_open(&self, commit: &mut dyn FnMut()) -> conn_engine::CommitDecision {
+        use conn_engine::CommitDecision;
+        if *self.closed.borrow() {
+            return CommitDecision::Refused;
+        }
+        let state = {
+            let authority = crate::lock(&self.shared.authority);
+            let now = Instant::now();
+            authority.handler_state(self.id, self.expires, now)
+        };
+        match state {
+            authority::GateState::Open => {
+                commit();
+                CommitDecision::Committed
+            }
+            // A pause is not a refusal: the engine waits, then checks everything again.
+            authority::GateState::Paused => CommitDecision::Paused,
+            authority::GateState::Closed => CommitDecision::Refused,
+        }
+    }
+
+    fn wait_until_open(&self) -> BoxFuture<'static, bool> {
+        let (shared, id, expires) = (self.shared.clone(), self.id, self.expires);
+        let mut closed = self.closed.clone();
+        Box::pin(async move {
+            let mut changes = shared.wait_change();
+            loop {
+                if *closed.borrow() {
+                    return false;
+                }
+                match shared.read(|a| a.handler_state(id, expires, Instant::now())) {
+                    authority::GateState::Open => return true,
+                    authority::GateState::Closed => return false,
+                    authority::GateState::Paused => {}
+                }
+                // A pause ends with a probe or with the lease: within seconds either way.
+                tokio::select! {
+                    _ = closed.wait_for(|c| *c) => return false,
+                    _ = changes.changed() => {}
+                    () = tokio::time::sleep(authority::PROBE_EVERY) => {}
+                }
+            }
+        })
     }
 }
 

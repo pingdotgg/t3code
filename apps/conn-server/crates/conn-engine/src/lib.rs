@@ -25,6 +25,7 @@ mod checkpoint;
 mod clock;
 mod commands;
 mod engine;
+mod guard;
 mod mcp_apps;
 mod thread_locks;
 
@@ -64,6 +65,9 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
     SqliteEngine,
+};
+pub use guard::{
+    CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
 pub use streaming::ResponseStreamingMode;
 
@@ -304,6 +308,26 @@ pub trait Engine: Send + Sync {
         &self,
         command: Command,
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>>;
+
+    /// [`Engine::dispatch`] with an ownership check that runs atomically with the command
+    /// ([`DispatchGuard`]). A replay of an accepted command ID is refused. An engine that
+    /// cannot check refuses every guarded command.
+    fn dispatch_guarded(
+        &self,
+        _command: Command,
+        _guard: DispatchGuard,
+        _commit_gate: Option<std::sync::Arc<dyn CommitGate>>,
+    ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>> {
+        Box::pin(std::future::ready(Err(EngineError::Internal(
+            "this engine cannot check command ownership".into(),
+        ))))
+    }
+
+    /// Whether a thread with this ID was ever deleted, so its ID may carry an earlier
+    /// thread's rows. An engine that cannot tell answers `true`.
+    fn thread_ever_deleted(&self, _thread_id: &str) -> BoxFuture<'_, Result<bool, String>> {
+        Box::pin(std::future::ready(Ok(true)))
+    }
 
     /// The shell stream: projects and thread summaries. Starts with a `snapshot` item (or
     /// replays from `afterSequence`), then `synchronized`, then live updates.

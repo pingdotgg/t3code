@@ -21,6 +21,8 @@ caller's TCP peer, ordered revisions with ACKs, an exact-edge fence of RPC socke
 HTTP reads and preview viewers, and fail-closed loss of authority (probe 1 s, lease 3 s).
 `docs/managed-access.md` has the design, the lab measurements and the open readings. Proven
 against a fake Gateway on loopback; not yet against a lab Gateway. Legacy peer links stay.
+The task worker grant (item 6) rides on it: a fixed allowlist per admitted turn and an
+engine `DispatchGuard` that checks ownership atomically with each command.
 
 ## Orbit Instance facts at startup
 

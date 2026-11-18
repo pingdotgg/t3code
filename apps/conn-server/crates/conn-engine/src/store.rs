@@ -964,6 +964,30 @@ impl Tx<'_> {
         thread(&self.tx, thread_id)
     }
 
+    /// Whether a thread with this ID was ever deleted. Its rows stay under the ID, so a
+    /// thread created again with it would carry them.
+    pub(crate) fn thread_ever_deleted(&self, thread_id: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE thread_id = ?1 AND type = 'thread.deleted')",
+                [thread_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(err)
+    }
+
+    /// Whether `thread_id` was ever used, deleted or not: a row in `threads` or any event.
+    pub(crate) fn thread_id_used(&self, thread_id: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)
+                     OR EXISTS(SELECT 1 FROM events WHERE thread_id = ?1)",
+                [thread_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(err)
+    }
+
     pub(crate) fn entity(
         &self,
         thread_id: &str,

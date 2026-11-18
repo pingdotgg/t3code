@@ -19,7 +19,7 @@ fn failure<E: Serialize>(error: EngineError<E>) -> Failure {
 }
 
 /// Re-encodes a typed engine subscription as the table's JSON item stream.
-fn forward<T: Serialize + Send + 'static, E: Serialize + Send + 'static>(
+pub(crate) fn forward<T: Serialize + Send + 'static, E: Serialize + Send + 'static>(
     mut items: Subscription<T, E>,
 ) -> ItemStream {
     let (tx, rx) = mpsc::channel(16);

@@ -1221,9 +1221,10 @@ fn a_redemption_in_flight_does_not_survive_a_fence() {
         .a
         .take_ticket("t1", "rpc", lab.at(20))
         .expect("reserved");
-    assert!(
-        lab.a.take_ticket("t1", "rpc", lab.at(21)).is_none(),
-        "one redemption at a time"
+    assert_eq!(
+        lab.a.ticket_count(),
+        1,
+        "still in the pool while it is redeemed"
     );
     // The control link drops while the redemption's introspection is out; then it recovers.
     lab.a.set_notice_link(false);
@@ -1251,4 +1252,23 @@ fn a_redemption_in_flight_does_not_survive_a_fence() {
             .is_ok()
     );
     assert_eq!(lab.a.ticket_count(), 0);
+}
+
+#[test]
+fn a_ticket_is_redeemed_once() {
+    let mut lab = Lab::new();
+    lab.open(0, vec![1], 0);
+    let binding = TicketBinding {
+        edge: 1,
+        redeem_by: lab.at(10_000),
+        id: 0,
+    };
+    lab.a
+        .mint_ticket("t1".into(), "tok".into(), "rpc", binding, lab.at(10))
+        .unwrap();
+    assert!(lab.a.take_ticket("t1", "rpc", lab.at(20)).is_some());
+    assert!(
+        lab.a.take_ticket("t1", "rpc", lab.at(21)).is_none(),
+        "one redemption at a time"
+    );
 }

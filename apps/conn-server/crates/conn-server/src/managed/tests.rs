@@ -316,10 +316,20 @@ impl Lab {
         let dir = std::env::temp_dir().join(format!("conn-managed-{}", conn_support::uuid_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
-        config.projects = vec![conn_engine::ProjectConfig {
-            title: "P".into(),
-            workspace_root: "/tmp/p".into(),
-        }];
+        config.projects = vec![
+            conn_engine::ProjectConfig {
+                title: "P".into(),
+                workspace_root: "/tmp/p".into(),
+            },
+            conn_engine::ProjectConfig {
+                title: "Q".into(),
+                workspace_root: "/tmp/q".into(),
+            },
+        ];
+        // A scripted provider, so runs start, wait, ask and end as a real turn would.
+        let fake: Arc<dyn conn_provider::Provider> =
+            Arc::new(conn_engine::fake::FakeProvider::new("claudeAgent"));
+        config.provider_set = Some(conn_provider::ProviderSet::from(vec![fake]));
         let engine: Arc<dyn conn_engine::Engine> =
             Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
         let deps = crate::methods::Deps {

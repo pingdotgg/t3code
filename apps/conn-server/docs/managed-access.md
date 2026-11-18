@@ -113,3 +113,65 @@ in a lab test (the preview needs a browser; the session gate tests cover its gat
 streams in the lab (the lab has no terminal manager), and the NAT-mode proxy's caller
 address. Legacy peer-link, held and device-paired credentials stay as they are on the native
 ingress.
+
+## Task worker grant (item 6)
+
+Orbit's task-copy worker drives one admitted turn over the orchestration RPC with a managed
+token of its own profile: the same Gateway introspection, peer binding and fence as the
+reader, exactly the scopes `orchestration:read` and `orchestration:operate`, and one
+`task_grant` claim fixed at capture (`managed/task.rs`). There is no second credential.
+
+```json
+"task_grant": {
+  "purpose": "task_worker", "task_id": 5873, "copy_id": 3709, "turn_id": "…",
+  "project_id": "project:…", "thread_id": "<admitted thread UUID>",
+  "create": {"command_id": "…", "body": {<the complete create body but type, commandId, threadId>}},
+  "message": {"command_id": "…", "message_id": "…", "text_sha256": "<hex>",
+              "interrupt_command_id": "…", "created_by": "user", "creation_source": "web"},
+  "earlier": [{"thread_id": "…", "message_id": "…", "text_sha256": "<hex>",
+               "run_id": "<recorded run, optional>", "interrupt_command_id": "…",
+               "created_by": "user", "creation_source": "web"}],
+  "questions": [{"thread_id": "<the admitted thread>", "request_id": "…",
+                 "owner_run_id": "…", "cancel_command_id": "…"}]
+}
+```
+
+The worker may call only `orchestration.dispatchCommand`, `orchestration.getThreadProjection`
+and `orchestration.subscribeThread`. Reads need a thread of the admitted project; a
+subscription ends when its thread is deleted or names another project. An earlier turn's
+other thread is cut to its frozen message, the run it started, and that run's nodes and
+requests, with a thread rebuilt from an allowlist (title "Earlier turn", the run's model,
+no branch, worktree, tags or later provider thread, times from that evidence); a
+different body (text, attachments, context, sender), no run, a run that never started
+(still queued or cancelled in the queue), several runs, or another recorded run is
+refused instead. Stops use the same frozen-message check, including the captured attribution; an
+earlier turn's run is stopped only once it started, so the stop never erases the
+evidence that settles it. A commit that meets a pause waits for it, then checks
+everything again in a fresh transaction; only a fence refuses it. A
+thread ID that was ever deleted is never read or written by a worker: the check runs
+after the read (a deletion is never undone), and again once a subscription's cursor is
+set; later deletions arrive as events and end the stream. Worker views carry only the thread's own rows (T3 also lists
+its subagents' provider threads, which belong to the child threads). A settlement view
+has fixed runtime and interaction modes, and no evidence at all is a refusal.
+Refusals are the scope check's `EnvironmentAuthorizationError`. A guarded create never
+takes an ID that was ever used, deleted or not. Each write must match the grant, and the engine checks ownership and the
+project in the command's own transaction (`conn_engine::DispatchGuard`). The commit itself
+passes the worker's managed handler (`conn_engine::CommitGate`) right before it runs: a
+write accepted there is work the server accepted, and the handler stays registered until
+the commit ended, so the fence's ACK always follows it. The check never holds the
+authority lock across the commit. A guarded dispatch runs on its
+own task, so a caller that disconnects mid-commit does not strand its run.
+
+| Command | Allowed when |
+| --- | --- |
+| `thread.create` | The admitted thread and command ID, exactly the frozen body (no other field, `null` counts as absent), and the thread does not exist |
+| `message.dispatch` | The admitted message ID, command ID and text digest; only the fields of a plain message (no model, fresh context, sender or steer); no attachments; `start_immediately`; no active or queued run; the message is new. It starts its own run or is refused |
+| `run.interrupt` | The admitted stop command ID of one message; an active (never a queued) run that message started; the message's stored text has the frozen digest; it started exactly one run; any recorded run ID matches; never `holdQueue` |
+| `runtime-request.respond` | Decision `cancel` only, the stored question's cancel command ID, a request of the admitted thread, still pending, `user_input`, its node owned by the stored run |
+
+A guarded command whose ID already has a receipt is refused: one accept per command, and a
+lost reply is recovered by reading, never by replay. The engine's question flow is unchanged
+(a question still ends the turn on Orbit's side). A worker token is refused on the reader's
+HTTP snapshots and preview. The grant's wire shape is this target's fail-closed reading: the
+item 6 contract fixes what the grant names, not its field names; the Gateway (Orbit 5870 or
+its follow-up) must issue it in this shape or the two must be aligned.

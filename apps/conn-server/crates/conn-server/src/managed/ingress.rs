@@ -97,6 +97,20 @@ pub fn is_reader(claims: &Claims) -> bool {
     scopes == reader && claims.extra.is_empty()
 }
 
+/// Whether the claims are a profile this ingress serves: a reader or a task worker.
+fn admits(claims: &Claims) -> bool {
+    is_reader(claims) || super::task::is_task_worker(claims)
+}
+
+/// Refuses a task worker on a reader-only route.
+fn reader_only(principal: &ManagedPrincipal) -> Result<(), Box<Response>> {
+    if is_reader(&principal.claims) {
+        Ok(())
+    } else {
+        Err(Box::new(admit_failed(&AdmitError::Forbidden)))
+    }
+}
+
 pub fn router(app: AppState, managed: Arc<Managed>) -> Router {
     let table = Arc::new(app.table.restricted(&READER_METHODS));
     let state = IngressState {
@@ -182,7 +196,7 @@ async fn admit_bearer(
     state
         .managed
         .shared
-        .admit(&state.managed.gateway, token, peer(addr), None, is_reader)
+        .admit(&state.managed.gateway, token, peer(addr), None, admits)
         .await
         .map_err(|e| Box::new(admit_failed(&e)))
 }
@@ -312,7 +326,7 @@ async fn admit_upgrade(
             &token,
             peer(addr),
             Some(binding),
-            is_reader,
+            admits,
         )
         .await
         .map_err(|e| Box::new(admit_failed(&e)))
@@ -343,6 +357,15 @@ async fn ws(
     // The socket itself is fenced with the handler: the upgraded connection keeps it.
     let handle = Arc::new(handle);
     conn.slot.attach(handle.clone());
+    // A task worker gets its grant's allowlist, and its writes commit through its handler;
+    // a reader gets the reader table.
+    let table = match super::task::TaskGrant::from_claims(&principal.claims) {
+        Some(grant) => match state.app.engine.clone() {
+            Some(engine) => Arc::new(super::task::table(engine, Arc::new(grant), handle.clone())),
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        None => state.table.clone(),
+    };
     // The handler is registered before the upgrade completes: a fence that lands now closes
     // the socket on its first check.
     let options = SessionOptions {
@@ -352,7 +375,6 @@ async fn ws(
         context,
         gate: Some(SessionGate(handle)),
     };
-    let table = state.table.clone();
     upgrade
         .max_message_size(crate::http::MAX_MESSAGE_BYTES)
         .max_frame_size(crate::http::MAX_MESSAGE_BYTES)
@@ -414,10 +436,13 @@ async fn shell_snapshot(
         Ok(engine) => engine,
         Err(response) => return *response,
     };
-    let (_, handle) = match admit_bearer(&state, &headers, conn.addr).await {
+    let (principal, handle) = match admit_bearer(&state, &headers, conn.addr).await {
         Ok(admitted) => admitted,
         Err(response) => return *response,
     };
+    if let Err(response) = reader_only(&principal) {
+        return *response;
+    }
     guarded(&conn, handle, async move {
         match engine.shell_snapshot().await {
             Ok(snapshot) => Ok(Json(snapshot).into_response()),
@@ -439,10 +464,13 @@ async fn thread_snapshot(
         Ok(engine) => engine,
         Err(response) => return *response,
     };
-    let (_, handle) = match admit_bearer(&state, &headers, conn.addr).await {
+    let (principal, handle) = match admit_bearer(&state, &headers, conn.addr).await {
         Ok(admitted) => admitted,
         Err(response) => return *response,
     };
+    if let Err(response) = reader_only(&principal) {
+        return *response;
+    }
     guarded(&conn, handle, async move {
         match engine.thread_snapshot(thread_id.into()).await {
             Ok(Some(snapshot)) => Ok(Json(snapshot).into_response()),
@@ -475,13 +503,17 @@ async fn preview(
     if !known {
         return refused().await;
     }
-    let (_, handle) = match admit_upgrade(&state, &query, &headers, conn.addr, Route::Media).await {
-        Ok(admitted) => admitted,
-        Err(response) => return *response,
-    };
+    let (principal, handle) =
+        match admit_upgrade(&state, &query, &headers, conn.addr, Route::Media).await {
+            Ok(admitted) => admitted,
+            Err(response) => return *response,
+        };
     // The handler rides the connection from here on, whatever this answers.
     let handle = Arc::new(handle);
     conn.slot.attach(handle.clone());
+    if let Err(response) = reader_only(&principal) {
+        return *response;
+    }
     let Some(preview) = state.app.deps.preview.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };

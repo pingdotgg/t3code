@@ -13,7 +13,7 @@ mod files;
 mod git;
 mod git_message;
 mod mcp_apps;
-mod orchestration;
+pub(crate) mod orchestration;
 mod panels;
 mod preview;
 mod projects;

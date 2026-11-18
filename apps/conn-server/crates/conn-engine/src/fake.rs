@@ -3,6 +3,7 @@
 //! - `stuck`: the turn starts and never confirms a Stop (`InterruptTimeout`), as a Codex turn
 //!   that ignores `turn/interrupt`.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
+//! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
 //! - `fail`: the turn fails.
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
@@ -624,6 +625,14 @@ impl Session for FakeSession {
                     "responseCapability": {"type": "live", "providerSessionId": self.id},
                     "createdAt": now_iso(), "resolvedAt": null,
                 }}))),
+                "question" => started.push(event(json!({"type": "runtime_request.updated",
+                    "threadId": turn.thread_id, "runtimeRequest": {
+                    "id": format!("question:{}", turn.run_id), "nodeId": turn.root,
+                    "providerTurnId": format!("turn:{}", turn.run_id),
+                    "nativeRequestRef": null, "kind": "user_input", "status": "pending",
+                    "responseCapability": {"type": "live", "providerSessionId": self.id},
+                    "createdAt": now_iso(), "resolvedAt": null,
+                }}))),
                 "subagent" => {
                     let child = format!("child:{}", turn.run_id);
                     let now = now_iso();
@@ -880,7 +889,9 @@ impl Session for FakeSession {
                 let mut events = vec![event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
                     "id": input.request_id, "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
-                    "nativeRequestRef": null, "kind": "command", "status": "resolved",
+                    "nativeRequestRef": null,
+                    "kind": if input.request_id.as_str().starts_with("question:") { "user_input" } else { "command" },
+                    "status": "resolved",
                     "responseCapability": {"type": "live", "providerSessionId": self.id},
                     "createdAt": now_iso(), "resolvedAt": now_iso(), "decision": decision,
                 }}))];

@@ -471,10 +471,48 @@ impl Inner {
         self: &Arc<Self>,
         command: Value,
     ) -> Result<(u64, bool), DispatchError> {
+        self.dispatch_value_guarded(command, None, None).await
+    }
+
+    /// [`Self::dispatch_value`] with an ownership check that runs in the command's own
+    /// transaction (`guard.rs`).
+    pub(crate) async fn dispatch_value_guarded(
+        self: &Arc<Self>,
+        command: Value,
+        guard: Option<crate::guard::DispatchGuard>,
+        commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
+    ) -> Result<(u64, bool), DispatchError> {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
-        let result = self.dispatch_claimed(command).await;
+        // A paused commit committed nothing: wait for access, then check everything again
+        // (ownership included) in a fresh transaction.
+        // Only a guarded commit can pause and retry: the ordinary path passes the command by
+        // value, with no copy of its body.
+        if commit_gate.is_none() {
+            let result = self.dispatch_claimed(command, guard, None).await;
+            if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
+                host.release_attachments(claimed).await;
+            }
+            return result;
+        }
+        let result = loop {
+            let result = self
+                .dispatch_claimed(command.clone(), guard.clone(), commit_gate.clone())
+                .await;
+            match (&result, &commit_gate) {
+                (Err(DispatchError::Rejected(message)), Some(gate))
+                    if message == crate::guard::COMMIT_PAUSED =>
+                {
+                    if !gate.wait_until_open().await {
+                        break Err(DispatchError::Rejected(
+                            "The caller's access was revoked.".into(),
+                        ));
+                    }
+                }
+                _ => break result,
+            }
+        };
         if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
             host.release_attachments(claimed).await;
         }
@@ -637,6 +675,8 @@ impl Inner {
     async fn dispatch_claimed(
         self: &Arc<Self>,
         command: Value,
+        guard: Option<crate::guard::DispatchGuard>,
+        commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
     ) -> Result<(u64, bool), DispatchError> {
         let _gate = self
             .lock_thread(command["threadId"].as_str().unwrap_or_default())
@@ -662,9 +702,21 @@ impl Inner {
         let outcome = self
             .db(move |store| {
                 if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
+                    if guard.is_some() {
+                        // A guarded caller never gets a second accept for one command.
+                        return Err(CommandError::Rejected(
+                            "The command was already accepted.".into(),
+                        ));
+                    }
                     return Ok((vec![], seq, true));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
+                if let Some(guard) = &guard
+                    && let Err(error) = crate::guard::check(&tx, guard, &command)
+                {
+                    tx.rollback();
+                    return Err(error);
+                }
                 if let Some(host) = &host
                     && let Some((project, instance)) =
                         dispatch_target(&tx, &command).map_err(CommandError::Store)?
@@ -678,9 +730,40 @@ impl Inner {
                 }
                 match handler(&mut tx, command) {
                     Ok(effects) => {
-                        let seq = tx
-                            .commit(Some((&command_id, &command_type)))
-                            .map_err(CommandError::Store)?;
+                        let seq = match &commit_gate {
+                            None => tx
+                                .commit(Some((&command_id, &command_type)))
+                                .map_err(CommandError::Store)?,
+                            Some(commit_gate) => {
+                                // The access decision and the commit are one step.
+                                let mut pending = Some(tx);
+                                let mut committed = None;
+                                let decision = commit_gate.commit_if_open(&mut || {
+                                    if let Some(tx) = pending.take() {
+                                        committed =
+                                            Some(tx.commit(Some((&command_id, &command_type))));
+                                    }
+                                });
+                                if let Some(tx) = pending.take() {
+                                    tx.rollback();
+                                }
+                                match (decision, committed) {
+                                    (crate::guard::CommitDecision::Committed, Some(result)) => {
+                                        result.map_err(CommandError::Store)?
+                                    }
+                                    (crate::guard::CommitDecision::Paused, _) => {
+                                        return Err(CommandError::Rejected(
+                                            crate::guard::COMMIT_PAUSED.into(),
+                                        ));
+                                    }
+                                    _ => {
+                                        return Err(CommandError::Rejected(
+                                            "The caller's access was revoked.".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        };
                         // Lane slots are taken under the store lock, so a thread's effects
                         // run in the order their commands committed.
                         let reserved = effects
@@ -1071,6 +1154,56 @@ impl Engine for SqliteEngine {
                 ))
             };
             match self.inner.dispatch_value(command.clone()).await {
+                Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
+                    .map_err(|e| EngineError::Internal(e.to_string())),
+                Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),
+                Err(DispatchError::Internal(message)) => Err(EngineError::Internal(message)),
+            }
+        })
+    }
+
+    fn thread_ever_deleted(&self, thread_id: &str) -> BoxFuture<'_, Result<bool, String>> {
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<bool, String> {
+                    let tx = store.tx()?;
+                    let deleted = tx.thread_ever_deleted(&thread_id);
+                    tx.rollback();
+                    deleted
+                })
+                .await
+        })
+    }
+
+    fn dispatch_guarded(
+        &self,
+        command: Command,
+        guard: crate::guard::DispatchGuard,
+        commit_gate: Option<Arc<dyn crate::guard::CommitGate>>,
+    ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>> {
+        Box::pin(async move {
+            let command = to_json(&command);
+            let refusal = |message: String| -> Result<DispatchCommandError, String> {
+                contract_error(dispatch_error_body(
+                    command["commandId"].as_str().unwrap_or(""),
+                    command["type"].as_str().unwrap_or(""),
+                    &message,
+                ))
+            };
+            // The dispatch runs on its own task: once the store committed, its effects start
+            // even if the caller is gone (a dropped socket aborts the caller's task).
+            let inner = self.inner.clone();
+            let detached = command.clone();
+            let outcome = tokio::spawn(async move {
+                inner
+                    .dispatch_value_guarded(detached, Some(guard), commit_gate)
+                    .await
+            })
+            .await
+            .map_err(|e| DispatchError::Internal(format!("guarded dispatch ended: {e}")))
+            .and_then(|outcome| outcome);
+            match outcome {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
                     .map_err(|e| EngineError::Internal(e.to_string())),
                 Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),
