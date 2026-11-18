@@ -23,7 +23,7 @@ const effortCapabilities = {
       id: "effort",
       label: "Effort",
       type: "select" as const,
-      options: ["low", "medium", "high", "xhigh"].map((id) => ({ id, label: id })),
+      options: ["low", "medium", "high", "xhigh", "max"].map((id) => ({ id, label: id })),
     },
   ],
 };
@@ -84,7 +84,7 @@ describe("resolveAutoModelSelection", () => {
       instanceId: "claudeAuto",
       model: "claude-opus-5-5",
       options: [
-        { id: "effort", value: "xhigh" },
+        { id: "effort", value: "max" },
         { id: "auto", value: "high" },
       ],
     });
