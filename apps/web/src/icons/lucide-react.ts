@@ -31,6 +31,7 @@ import { ArrowsInLineVerticalIcon as PhArrowsInLineVertical } from "@phosphor-ic
 import { ArrowsLeftRightIcon as PhArrowsLeftRight } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { ArrowsOutIcon as PhArrowsOut } from "@phosphor-icons/react/dist/csr/ArrowsOut";
 import { ArticleIcon as PhArticle } from "@phosphor-icons/react/dist/csr/Article";
+import { AtIcon as PhAt } from "@phosphor-icons/react/dist/csr/At";
 import { BatteryHighIcon as PhBatteryHigh } from "@phosphor-icons/react/dist/csr/BatteryHigh";
 import { BellSlashIcon as PhBellSlash } from "@phosphor-icons/react/dist/csr/BellSlash";
 import { BookOpenIcon as PhBookOpen } from "@phosphor-icons/react/dist/csr/BookOpen";
@@ -126,6 +127,7 @@ import { LightningIcon as PhLightning } from "@phosphor-icons/react/dist/csr/Lig
 import { LinkIcon as PhLink } from "@phosphor-icons/react/dist/csr/Link";
 import { LinkBreakIcon as PhLinkBreak } from "@phosphor-icons/react/dist/csr/LinkBreak";
 import { LinkSimpleIcon as PhLinkSimple } from "@phosphor-icons/react/dist/csr/LinkSimple";
+import { LinkSimpleBreakIcon as PhLinkSimpleBreak } from "@phosphor-icons/react/dist/csr/LinkSimpleBreak";
 import { ListIcon as PhList } from "@phosphor-icons/react/dist/csr/List";
 import { ListChecksIcon as PhListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { ListMagnifyingGlassIcon as PhListMagnifyingGlass } from "@phosphor-icons/react/dist/csr/ListMagnifyingGlass";
@@ -250,6 +252,7 @@ import {
   ArrowUpDownIcon as LuArrowUpDown,
   ArrowUpLeftIcon as LuArrowUpLeft,
   ArrowUpRightIcon as LuArrowUpRight,
+  AtSignIcon as LuAtSign,
   BatteryIcon as LuBattery,
   BlocksIcon as LuBlocks,
   BookOpenIcon as LuBookOpen,
@@ -354,6 +357,7 @@ import {
   LightbulbIcon as LuLightbulb,
   LinkIcon as LuLink,
   Link2Icon as LuLink2,
+  Link2OffIcon as LuLink2Off,
   ListIcon as LuList,
   ListChecksIcon as LuListChecks,
   ListFilterIcon as LuListFilter,
@@ -538,6 +542,8 @@ export const ArrowUpLeftIcon = connIcon(PhArrowUpLeft, LuArrowUpLeft, "arrow-up-
   ArrowUpLeft = ArrowUpLeftIcon;
 export const ArrowUpRightIcon = connIcon(PhArrowUpRight, LuArrowUpRight, "arrow-up-right"),
   ArrowUpRight = ArrowUpRightIcon;
+export const AtSignIcon = connIcon(PhAt, LuAtSign, "at-sign"),
+  AtSign = AtSignIcon;
 export const BatteryIcon = connIcon(PhBatteryHigh, LuBattery, "battery"),
   Battery = BatteryIcon;
 export const BlocksIcon = connIcon(PhSquaresFour, LuBlocks, "blocks"),
@@ -795,6 +801,8 @@ export const LinkIcon = connIcon(PhLink, LuLink, "link", "bold"),
   Link = LinkIcon;
 export const Link2Icon = connIcon(PhLinkSimple, LuLink2, "link-2", "bold"),
   Link2 = Link2Icon;
+export const Link2OffIcon = connIcon(PhLinkSimpleBreak, LuLink2Off, "link-2-off", "bold"),
+  Link2Off = Link2OffIcon;
 export const ListIcon = connIcon(PhList, LuList, "list", "bold"),
   List = ListIcon;
 export const ListChecksIcon = connIcon(PhListChecks, LuListChecks, "list-checks", "bold"),

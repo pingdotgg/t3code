@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -285,7 +287,9 @@ function failureFromExit<A>(
     failure: {
       error: new ConnectionTransientError({
         reason: "transport",
-        detail: `${target.label} connection failed unexpectedly.`,
+        ...translatableDetail(
+          msg("{host} connection failed unexpectedly.", { host: target.label }),
+        ),
       }),
       attemptSpan: Option.none(),
     },
@@ -323,10 +327,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Conn: the saved name can follow the server's own name while this supervisor runs (see
   // `learnLabel`), so texts read it here instead of from the target fixed at creation.
   let labelledTarget: ConnectionTarget = target;
-  const setupTimeoutDetail = () =>
-    `${labelledTarget.label} did not respond during connection setup.${
-      usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
-    }`;
+  const setupTimeoutDetail = () => {
+    const setupTimeout = msg("{host} did not respond during connection setup.", {
+      host: labelledTarget.label,
+    });
+    return usesRelay
+      ? translatableDetail(setupTimeout, NETWORK_BLOCKING_HINT)
+      : translatableDetail(setupTimeout);
+  };
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -933,7 +941,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (longResume) return true;
           return yield* new ConnectionTransientError({
             reason: "timeout",
-            detail: `${labelledTarget.label} did not respond to a connection health check.`,
+            ...translatableDetail(
+              msg("{host} did not respond to a connection health check.", {
+                host: labelledTarget.label,
+              }),
+            ),
           });
         }
         if (probeEvent._tag === "ProbeCompleted") {
@@ -1045,7 +1057,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: setupTimeoutDetail(),
+            ...setupTimeoutDetail(),
           }),
           attemptSpan: Option.none(),
         },

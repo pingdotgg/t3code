@@ -142,6 +142,8 @@ const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 const DESKTOP_RESIZE_WAIT_MS = 1000;
 // A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
 const REVEAL_VIEWER_WAIT_MS = 1000;
+// A desktop panel's shown report waits on the renderer's layout, which a busy machine can push past a second.
+const REVEAL_DESKTOP_SHOWN_WAIT_MS = 3000;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -2785,11 +2787,17 @@ const make = Effect.gen(function* () {
                 }),
               );
               // Only an explicit show is sure to reach a client; desktop tabs are visible without a viewer.
+              const remainingMs = deadlineMs - performance.now();
               if (reveal === true && tab.viewers.size === 0 && tab.desktop === null)
-                shown = awaitViewer(
-                  tab,
-                  Math.min(REVEAL_VIEWER_WAIT_MS, deadlineMs - performance.now()),
-                );
+                shown = awaitViewer(tab, Math.min(REVEAL_VIEWER_WAIT_MS, remainingMs));
+              // A desktop panel reports the revealed tab shown a few hops after the reveal.
+              else if (reveal === true && !isVisible(tab))
+                shown = runPromise(
+                  desktopChannel.awaitShown(
+                    tab,
+                    Math.max(0, Math.min(REVEAL_DESKTOP_SHOWN_WAIT_MS, remainingMs)),
+                  ),
+                ).then(constVoid);
             }
             await shown;
             return statusWithTitle(tab, request.agentSessionId);

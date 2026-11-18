@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { type CSSProperties, memo } from "react";
 import { cn } from "~/lib/utils";
 
@@ -50,10 +51,11 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
 }) {
   const { additions, deletions, className, layout = "aligned", font = "mono" } = props;
   const fontClassName = font === "mono" ? "font-mono" : "font-sans";
+  const gt = useGT();
   return (
     <span
       role="group"
-      aria-label={`${additions} additions, ${deletions} deletions`}
+      aria-label={gt("{additions} additions, {deletions} deletions", { additions, deletions })}
       className={cn(
         layout === "inline"
           ? "inline-flex items-center gap-1 tabular-nums align-middle"

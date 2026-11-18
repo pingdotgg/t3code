@@ -1,5 +1,7 @@
 import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import Constants from "expo-constants";
+import { appName } from "@t3tools/shared/appName";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { Platform, View } from "react-native";
 
@@ -11,6 +13,7 @@ import { resolveBrandName, resolveMobileStageLabel } from "../lib/mobileBranding
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 const BRAND_MAX_FONT_SCALE = 1.4;
+const WORDMARK_SUFFIX = "Code";
 
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
@@ -25,14 +28,13 @@ export function CompactBrandTitle(
     readonly fit?: boolean;
   } = {},
 ) {
+  const gt = useGT();
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   // A renamed build (the nckrtl fork ships as Conn) shows its own mark and name.
   const brandName = resolveBrandName(Constants.expoConfig?.extra?.brandName);
-  // Callers label the screen as "T3 Code, <tab>"; a renamed build reads its own name.
-  const accessibilityLabel = props.accessibilityLabel ?? "T3 Code, Threads";
-  const brandedAccessibilityLabel = brandName
-    ? accessibilityLabel.replace(/^T3 Code\b/, brandName)
-    : accessibilityLabel;
+  // Callers label the screen as "{appName}, <tab>" through the catalog.
+  const accessibilityLabel =
+    props.accessibilityLabel ?? gt("{appName}, Threads", { appName: appName() });
   const titleOffset = brandTitleOffset();
   const { scale } = useAndroidControlSizing();
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
@@ -47,7 +49,7 @@ export function CompactBrandTitle(
         props.fit && showStage ? (event) => setFullWidth(event.nativeEvent.layout.width) : undefined
       }
       aria-level={1}
-      accessibilityLabel={brandedAccessibilityLabel}
+      accessibilityLabel={accessibilityLabel}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -70,7 +72,7 @@ export function CompactBrandTitle(
         }
         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
       >
-        {brandName ?? "Code"}
+        {brandName ?? WORDMARK_SUFFIX}
       </Text>
       {showStage ? (
         <View

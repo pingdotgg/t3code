@@ -4,9 +4,7 @@ import { UsageRouteScreen } from "../../usage/UsageRouteScreen";
 import { useWorkspacePhoneBar } from "./useWorkspacePhoneBar";
 import { WorkspacePhoneBar } from "./WorkspacePhoneBar";
 
-export function WorkspaceExtraTab(_props: {
-  tab: Exclude<NavigationTab, "threads" | "pullRequests">;
-}) {
+export function WorkspaceExtraTab(_props: { tab: Extract<NavigationTab, "usage"> }) {
   // Conn: iPhones switch tabs from WorkspacePhoneBar, so Usage shows it too.
   const connPhoneBar = useWorkspacePhoneBar();
   return (

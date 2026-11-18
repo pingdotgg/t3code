@@ -24,9 +24,11 @@ export function StandalonePageHeader({
   return (
     <>
       <div className="flex items-baseline justify-between gap-3 text-muted-foreground">
+        {/* conn-brand-check: allow -- the upstream wordmark shows only for the stock name */}
         {APP_BASE_NAME === "T3 Code" ? (
-          <span className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
+          <span className="flex items-baseline gap-1.5" role="img" aria-label={APP_BASE_NAME}>
             <T3Wordmark className="h-3 w-auto shrink-0 text-foreground" aria-hidden />
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product wordmark */}
             <span className="text-lg font-medium tracking-tight">Code</span>
           </span>
         ) : (

@@ -64,6 +64,7 @@
     "@formatjs/intl-displaynames": "6.8.13",
     "@formatjs/intl-getcanonicallocales": "2.5.6",
     "@formatjs/intl-locale": "4.2.13",
+    "@formatjs/intl-pluralrules": "5.4.6",
     "@legendapp/list": "catalog:",
     "@material/material-color-utilities": "0.3.0",
     "@pierre/diffs": "catalog:",

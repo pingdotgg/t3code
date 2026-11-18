@@ -1,4 +1,7 @@
+import { msg } from "gt-react-native";
 import type { ViewStyle } from "react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { MobileThemeVariables } from "../../lib/mobileTheme";
 
 // nckrtl shell: the card already pads its sides, so phone row content adds none.
@@ -27,8 +30,8 @@ export const selectedThreadRowColors = {
   mutedIconTintClassName: "accent-thread-selected-foreground-muted",
 };
 
-export function getThreadListV2NewBranchMenuTitle(_branch: string) {
-  return "New thread on branch";
+export function getThreadListV2NewBranchMenuTitle(_branch: string, resolve: MessageResolver = m) {
+  return resolve(msg("New thread on branch"));
 }
 
 export function getThreadListV2RowAppearance(

@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import {
   WORKSPACE_TAB_LABELS,
   NAVIGATION_TAB_ICONS,
@@ -39,8 +40,10 @@ import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useWorkspacePhoneBar } from "./useWorkspacePhoneBar";
+import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
+const ISSUE_ICON = require("../../../../assets/icons/issue.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
@@ -146,6 +149,8 @@ export function WorkspaceNativeTabs(props: {
   /** The sidebar column draws the tabs itself, so they leave with it. */
   readonly tabsInSidebarColumn?: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
   const primaryTabs = order.slice(0, 4);
@@ -234,7 +239,9 @@ export function WorkspaceNativeTabs(props: {
                 key={slot}
                 screenKey={slot}
                 title=""
-                tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+                tabBarItemAccessibilityLabel={
+                  settings ? gt("Settings") : m(WORKSPACE_TAB_LABELS[tab])
+                }
                 ios={{
                   prewarmRequest: prewarmRequests.get(slot) ?? 0,
                   contentReady: mountedSlots.has(slot),
@@ -242,7 +249,9 @@ export function WorkspaceNativeTabs(props: {
                     ? { type: "sfSymbol", name: "gearshape" }
                     : tab === "pullRequests"
                       ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
-                      : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
+                      : tab === "issues"
+                        ? { type: "templateSource", templateSource: ISSUE_ICON }
+                        : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
                   selectedIcon:
                     !settings && tab === "threads"
                       ? { type: "sfSymbol", name: "text.bubble.fill" }
@@ -297,18 +306,13 @@ export function WorkspaceNativeTabs(props: {
 
 /** The workspace tabs at the foot of the sidebar. */
 export function WorkspaceSidebarTabsFooter() {
-  const workspace = useWorkspaceTabs()!;
-  const { startNewTask } = useAdaptiveWorkspaceLayout();
+  const compose = useWorkspaceCompose();
   const compact = useFloatingWorkspaceTabs();
   return (
     <WorkspaceSidebarTabs
       compact={compact}
       reserveComposeSpace={compact}
-      onNewTask={
-        compact && !workspace.settingsOpen && workspace.state.selectedTab === "threads"
-          ? startNewTask
-          : undefined
-      }
+      onNewTask={compact ? compose?.onPress : undefined}
     />
   );
 }

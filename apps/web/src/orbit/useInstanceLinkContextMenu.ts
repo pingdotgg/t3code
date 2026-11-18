@@ -1,5 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import type { MouseEvent } from "react";
 
 import { canOpenLinksInApp } from "~/browser/browserLinkTarget";
@@ -36,7 +37,12 @@ export function useInstanceLinkContextMenu(
         else if (!isAtomCommandInterrupted(result)) await api.shell.openExternal(target);
       },
       openExternal: (target) => api.shell.openExternal(target),
-      copyLink: (target) => writeTextToClipboard(target, "link"),
+      copyLink: (target) =>
+        writeTextToClipboard(target, {
+          target: "link",
+          unavailableMessage: msg("Clipboard API is unavailable while copying link."),
+          failureMessage: msg("Failed to copy link to the clipboard."),
+        }),
       reportFailure: (operation, cause) => console.error(operation, cause),
     });
   };

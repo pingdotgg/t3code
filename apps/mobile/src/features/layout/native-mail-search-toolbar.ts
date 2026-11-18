@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useWindowDimensions } from "react-native";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
@@ -19,10 +20,11 @@ type NativeMailSearchToolbarInput = Omit<
 export function useCreateNativeMailSearchToolbarItem() {
   const { fontSize } = useScaledTextRole("body");
   const { fontScale } = useWindowDimensions();
+  const resolve = useMessages();
   return (
     input: NativeMailSearchToolbarInput,
   ): HeaderBarButtonMailSearchToolbarItem & { searchFontSize: number } => ({
-    placeholder: "Search",
+    placeholder: resolve(msg("Search")),
     searchFontSize: fontSize * fontScale,
     ...input,
     type: "mailSearchToolbar",

@@ -24,7 +24,7 @@ const presentationOf = (route: { readonly name: string }) =>
 
 const home: Route = { key: "home", name: "Home" };
 const thread: Route = { key: "thread", name: "Thread" };
-const available = { thread: () => true, pullRequest: () => true };
+const available = { thread: () => true, pullRequest: () => true, issue: () => true };
 const names = (routes: readonly { readonly name: string }[]) => routes.map((route) => route.name);
 
 function stack(routes: readonly Route[]) {
