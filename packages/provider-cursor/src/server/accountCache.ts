@@ -35,7 +35,7 @@ export function isCursorCacheFresh(
 }
 
 /** Narrowest read a refresh falls back to after failed reads of wider ranges. */
-export const CURSOR_MIN_FETCH_SPAN_MS = 24 * 60 * 60 * 1000;
+export const CURSOR_MIN_FETCH_SPAN_MS = 60 * 1000;
 
 /**
  * The next range to read, at most `maxSpanMs` wide unless it only tops up a complete cache:
@@ -51,7 +51,8 @@ export function cursorFetchRange(
     return { sinceMs: Math.max(retentionStartMs, nowMs - maxSpanMs), untilMs: nowMs };
   }
   if (cache.untilMs < nowMs || cache.sinceMs <= retentionStartMs) {
-    const sinceMs = cache.untilMs - REFETCH_OVERLAP_MS;
+    // Overlap at most half the span so a narrow read still moves forward.
+    const sinceMs = cache.untilMs - Math.min(REFETCH_OVERLAP_MS, maxSpanMs / 2);
     return { sinceMs, untilMs: Math.min(nowMs, sinceMs + maxSpanMs) };
   }
   return {

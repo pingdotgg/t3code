@@ -2086,13 +2086,13 @@ describe("UsageService", () => {
         { timestampMs: CURSOR_NOW - 40 * HOUR_MS, outputTokens: 7 },
         { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 },
       ];
-      // A large account: a window wider than a day has too many pages for the read deadlines.
+      // A large account: a window wider than half a day has too many pages for the read deadlines.
       const read: CursorAccountReader.CursorAccountReader["Service"]["read"] = (
         credential,
         sinceMs,
         untilMs,
       ) =>
-        untilMs - sinceMs > 24 * HOUR_MS
+        untilMs - sinceMs > 12 * HOUR_MS
           ? Effect.succeed({
               accountKey: cursor.state.accountKey,
               records: [],
