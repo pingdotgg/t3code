@@ -115,14 +115,13 @@ const make = Effect.gen(function* () {
   ) {
     const nowMs = yield* Clock.currentTimeMillis;
     let checkedAccount = false;
+    let span = fetchSpans.get(credentialKey) ?? Number.POSITIVE_INFINITY;
+    // Widen after each success so a span narrowed by earlier failures recovers in a few reads.
+    let widening = true;
+    let widened = false;
     for (;;) {
       const base = caches.get(credentialKey);
-      const range = cursorFetchRange(
-        base,
-        retentionStartMs,
-        nowMs,
-        fetchSpans.get(credentialKey) ?? Number.POSITIVE_INFINITY,
-      );
+      const range = cursorFetchRange(base, retentionStartMs, nowMs, span);
       const result = yield* accountReader.read(credential, range.sinceMs, range.untilMs);
       if (
         !checkedAccount &&
@@ -137,15 +136,19 @@ const make = Effect.gen(function* () {
       }
       checkedAccount = true;
       if (result.missing || result.error !== null || result.accountKey === null) {
+        // A large account's full history can outlast the read deadlines; try a narrower range.
+        span = Math.max(CURSOR_MIN_FETCH_SPAN_MS, (range.untilMs - range.sinceMs) / 2);
+        fetchSpans.set(credentialKey, span);
+        if (widened) {
+          // The span before widening just worked: keep going with it instead of failing.
+          widened = false;
+          widening = false;
+          continue;
+        }
         failures.set(credentialKey, {
           atMs: nowMs,
           error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
         });
-        // A large account's full history can outlast the read deadlines; try a narrower range.
-        fetchSpans.set(
-          credentialKey,
-          Math.max(CURSOR_MIN_FETCH_SPAN_MS, (range.untilMs - range.sinceMs) / 2),
-        );
         yield* schedulePersist;
         return;
       }
@@ -162,6 +165,11 @@ const make = Effect.gen(function* () {
       if (merged.changed) cacheDirty = true;
       yield* schedulePersist;
       if (merged.cache.sinceMs <= retentionStartMs && merged.cache.untilMs >= nowMs) break;
+      widened = widening && Number.isFinite(span);
+      if (widened) {
+        span *= 2;
+        fetchSpans.set(credentialKey, span);
+      }
     }
     fetchSpans.delete(credentialKey);
   }, refreshLock.withPermit);

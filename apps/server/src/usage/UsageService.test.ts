@@ -2108,6 +2108,20 @@ describe("UsageService", () => {
           summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
         }
         assert.strictEqual(totalOutputTokens(summary), 12);
+
+        // Failed reads during an outage narrow the span; it widens back once reads work again.
+        cursor.state.error = "Cursor account usage could not be read.";
+        for (let attempt = 0; attempt < 20; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        cursor.state.error = null;
+        yield* TestClock.adjust("10 hours");
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 10 * HOUR_MS, outputTokens: 3 });
+        const callsBeforeRecovery = cursor.state.calls.length;
+        summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(summary), 15);
+        assert.isBelow(cursor.state.calls.length - callsBeforeRecovery, 20);
       }).pipe(
         Effect.provide(
           layerService({
