@@ -140,10 +140,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
     const configDir = yield* resolveClaudeHomePath(effectiveConfig, processEnv);
+    const login: ClaudeResetCredits.ClaudeLogin = {
+      configDir,
+      explicit: Boolean(effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()),
+    };
     const accountConfigPath = yield* ClaudeResetCredits.claudeAccountConfigPath(
-      effectiveConfig.homePath.trim() || processEnv.CLAUDE_CONFIG_DIR?.trim()
-        ? configDir
-        : undefined,
+      login.explicit ? configDir : undefined,
     );
     const stampIdentity = withInstanceIdentity({
       instanceId,
@@ -287,8 +289,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                ClaudeResetCredits.readClaudeResetCredits(login, version).pipe(
                   Effect.provideService(HttpClient.HttpClient, httpClient),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
@@ -366,7 +369,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           configDir,
           (requestId) =>
             ClaudeResetCredits.consumeClaudeResetCredit({
-              configDir,
+              login,
               accountConfigPath,
               version,
               grantId,
@@ -376,6 +379,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.mapError(

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCreditOption,
@@ -11,6 +14,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess } from "effect/process";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
@@ -191,12 +196,40 @@ const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends S
   );
 });
 
+/** Where Claude Code keeps a login: `explicit` is whether it runs with CLAUDE_CONFIG_DIR set. */
+export interface ClaudeLogin {
+  readonly configDir: string;
+  readonly explicit: boolean;
+}
+
+// Claude Code's macOS Keychain service name; a CLAUDE_CONFIG_DIR login is suffixed with its path's hash.
+export const claudeKeychainService = ({ configDir, explicit }: ClaudeLogin) =>
+  explicit
+    ? `Claude Code-credentials-${NodeCrypto.createHash("sha256").update(configDir).digest("hex").slice(0, 8)}`
+    : "Claude Code-credentials";
+
+const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(Credentials));
+
 const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
-  configDir: string,
+  login: ClaudeLogin,
 ) {
-  if ((yield* HostProcess.Platform) === "darwin") return undefined;
+  if ((yield* HostProcess.Platform) === "darwin") {
+    // `security` is on the item's access list, so this read does not prompt.
+    const result = yield* spawnAndCollect(
+      "security",
+      ChildProcess.make("/usr/bin/security", [
+        "find-generic-password",
+        "-s",
+        claudeKeychainService(login),
+        "-w",
+      ]),
+    );
+    if (result.code !== 0) return undefined;
+    const credentials = yield* decodeCredentials(result.stdout.trim());
+    return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
+  }
   const path = yield* Path.Path;
-  const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
+  const credentials = yield* readJson(Credentials, path.join(login.configDir, ".credentials.json"));
   return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
 });
 
@@ -208,8 +241,8 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
+  function* (login: ClaudeLogin, version: string) {
+    const token = yield* readAccessToken(login);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -258,7 +291,7 @@ const CLAIM_OUTCOMES = {
 
 /** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
-  readonly configDir: string;
+  readonly login: ClaudeLogin;
   readonly accountConfigPath: string;
   readonly version: string;
   readonly grantId: string;
@@ -267,7 +300,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
   }
-  const token = yield* readAccessToken(input.configDir).pipe(
+  const token = yield* readAccessToken(input.login).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
   );
   const config = yield* readJson(Config, input.accountConfigPath).pipe(
