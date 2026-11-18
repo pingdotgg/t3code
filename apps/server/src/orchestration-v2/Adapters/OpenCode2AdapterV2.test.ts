@@ -2294,89 +2294,116 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("marks a shell OpenCode started on its own before T3 runs the wake", () =>
-    Effect.gen(function* () {
-      const shellID = "sh_wake";
-      const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const { runtime, thread } = yield* resumed([
-        ...backgroundLaunch(CHILD),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        childReport("msg_report", "CHILD_OK"),
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.tool.input.started", { ...tool, name: "shell" }),
-        event("session.tool.called", {
-          ...tool,
-          name: "shell",
-          input: { command: "vp test", background: true },
-          executed: false,
-        }),
-        event(
-          "session.tool.success",
-          {
+  it.effect.each([false, true])(
+    "marks a shell OpenCode started on its own before T3 runs the wake, ended first=%s",
+    (endedFirst) =>
+      Effect.gen(function* () {
+        const shellID = "sh_wake";
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
+        const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+        const { runtime, thread } = yield* resumed([
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report", "CHILD_OK"),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.tool.input.started", { ...tool, name: "shell" }),
+          event("session.tool.called", {
             ...tool,
-            content: [{ type: "text", text: "Launched" }],
-            metadata: { shellID },
+            name: "shell",
+            input: { command: "vp test", background: true },
             executed: false,
-          },
-          undefined,
-          2,
-        ),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        // Routed once the held execution ended, so its update proves the launch reached the adapter.
-        event("session.model.selected", {
-          sessionID: SESSION,
-          model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
-        }),
-        out("shell.output", "<any>"),
-        reply("shell.output", {
-          location: { directory: WORK },
-          data: { output: "", cursor: 0, size: 0, truncated: false },
-        }),
-      ]).pipe(
-        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-          offer: (request) =>
-            Effect.sync(() => {
-              offers.push(request);
-            }),
-          take: Effect.never,
-        }),
-      );
-      // One reader: the runtime's event queue hands each event to only one taker.
-      const launchSeen = yield* Deferred.make<void>();
-      const marked = yield* Deferred.make<boolean | undefined>();
-      yield* runtime.events.pipe(
-        Stream.tap((e) =>
-          e.type !== "provider_thread.updated"
-            ? Effect.void
-            : Effect.gen(function* () {
-                const variant =
-                  e.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
-                if (variant === "thinking") yield* Deferred.succeed(launchSeen, undefined);
-                const listed = e.providerThread.pendingBackgroundTasks?.find(
-                  (task) => task.taskId === shellID,
-                );
-                // The first roster that lists the shell must hold the thread already.
-                if (listed !== undefined) yield* Deferred.succeed(marked, listed.awaited);
+          }),
+          event(
+            "session.tool.success",
+            {
+              ...tool,
+              content: [{ type: "text", text: "Launched" }],
+              metadata: { shellID },
+              executed: false,
+            },
+            undefined,
+            2,
+          ),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(endedFirst
+            ? [
+                event("session.inbox.enqueued", {
+                  inboxID: "msg_shell_report",
+                  sessionID: SESSION,
+                  item: {
+                    type: "synthetic",
+                    payload: {
+                      text: `<shell id="${shellID}" state="completed">done</shell>`,
+                      description: "vp test",
+                      metadata: { source: "shell", shellID, state: "completed" },
+                    },
+                    delivery: "steer",
+                  },
+                }),
+              ]
+            : []),
+          // Routed once the held execution ended, so its update proves the launch reached the adapter.
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+          }),
+          out("shell.output", "<any>"),
+          reply("shell.output", {
+            location: { directory: WORK },
+            data: { output: "", cursor: 0, size: 0, truncated: false },
+          }),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) =>
+              Effect.sync(() => {
+                offers.push(request);
               }),
-        ),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(launchSeen);
-      assert.deepEqual(
-        yield* runtime.awaitBackgroundTasks!({
-          providerThread: thread,
-          taskIds: [shellID],
-          awaited: true,
-        }),
-        { matched: [shellID] },
-      );
-      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      assert.isTrue(yield* Deferred.await(marked));
-    }),
+            take: Effect.never,
+          }),
+        );
+        // One reader: the runtime's event queue hands each event to only one taker.
+        const launchSeen = yield* Deferred.make<void>();
+        const marked = yield* Deferred.make<boolean | undefined>();
+        const settled = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.type === "command_execution" &&
+            e.turnItem.status === "completed"
+              ? Deferred.succeed(settled, undefined)
+              : e.type !== "provider_thread.updated"
+                ? Effect.void
+                : Effect.gen(function* () {
+                    const variant =
+                      e.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
+                    if (variant === "thinking") yield* Deferred.succeed(launchSeen, undefined);
+                    const listed = e.providerThread.pendingBackgroundTasks?.find(
+                      (task) => task.taskId === shellID,
+                    );
+                    // The first roster that lists the shell must hold the thread already.
+                    if (listed !== undefined) yield* Deferred.succeed(marked, listed.awaited);
+                  }),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(launchSeen);
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: thread,
+            taskIds: [shellID],
+            awaited: true,
+          }),
+          { matched: endedFirst ? [] : [shellID] },
+        );
+        yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+        if (!endedFirst) return assert.isTrue(yield* Deferred.await(marked));
+        // A shell that ended before the wake ran never holds the thread.
+        yield* Deferred.await(settled);
+        assert.isFalse(yield* Deferred.isDone(marked));
+      }),
   );
 
   it.effect("clears the caller's pending work when a called session's held wake runs", () =>

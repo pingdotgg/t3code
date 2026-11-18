@@ -313,6 +313,8 @@ interface Wake {
   readonly first: string | undefined;
   readonly children: Set<string>;
   readonly awaited: Set<string>;
+  /** Held shell launches whose end report arrived first; the report already cleared their status. */
+  readonly ended: Map<string, "completed" | "failed" | "interrupted">;
 }
 
 interface OpenBlock {
@@ -999,18 +1001,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     >();
 
     // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
-    const wakeLaunchingShell = (state: ThreadState, taskId: string) =>
-      (shellInfo.get(taskId)?.status ?? "running") !== "running"
+    const heldLaunch = (state: ThreadState, taskId: string) =>
+      sessionsOf(state)
+        .flatMap((session) => session.wakes)
+        .find((wake) =>
+          wake.events.some(
+            (event) =>
+              event.type === "session.tool.success" &&
+              stringField(event.data.metadata, "shellID") === taskId,
+          ),
+        );
+    const wakeLaunchingShell = (state: ThreadState, taskId: string) => {
+      const wake = heldLaunch(state, taskId);
+      return wake === undefined ||
+        wake.ended.has(taskId) ||
+        (shellInfo.get(taskId)?.status ?? "running") !== "running"
         ? undefined
-        : sessionsOf(state)
-            .flatMap((session) => session.wakes)
-            .find((wake) =>
-              wake.events.some(
-                (event) =>
-                  event.type === "session.tool.success" &&
-                  stringField(event.data.metadata, "shellID") === taskId,
-              ),
-            );
+        : wake;
+    };
     let replaying: Wake | undefined;
 
     const owesWork = (state: ThreadState) =>
@@ -2862,19 +2870,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             });
             yield* readShellOutput(shellId).pipe(Effect.ignore({ log: true }));
             const known = shellInfo.get(shellId);
+            const ended = replaying?.ended.get(shellId);
             const tracked = shells.get(shellId)!;
-            tracked.running = known === undefined || known.status === "running";
+            tracked.running =
+              ended === undefined && (known === undefined || known.status === "running");
             yield* emitShell(
               shellId,
               tracked.running
                 ? "running"
-                : known?.status === "killed"
-                  ? "interrupted"
-                  : known?.exit === 0
-                    ? "completed"
-                    : "failed",
+                : (ended ??
+                    (known?.status === "killed"
+                      ? "interrupted"
+                      : known?.exit === 0
+                        ? "completed"
+                        : "failed")),
               known?.exit,
             );
+            if (ended !== undefined) shells.delete(shellId);
             yield* syncRosterAncestors(state);
             return;
           }
@@ -3003,6 +3015,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
         awaited: new Set(),
+        ended: new Map(),
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -3113,6 +3126,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             outcome: reportOutcome(stringField(payload.metadata, "state")),
           },
         });
+        if (id !== undefined && shell === undefined) {
+          const outcome = reportOutcome(stringField(payload.metadata, "state"));
+          heldLaunch(state, id)?.ended.set(
+            id,
+            outcome === "failed" ? "failed" : outcome === "cancelled" ? "interrupted" : "completed",
+          );
+        }
         if (id !== undefined && shell?.stopping !== true) {
           if (shell?.running === true && shell.state === state) {
             yield* readShellOutput(id, true).pipe(Effect.ignore({ log: true }));
