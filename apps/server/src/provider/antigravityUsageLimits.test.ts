@@ -57,6 +57,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
     models?: unknown;
+    modelsByHost?: Record<string, unknown>;
     summaryStatus?: number;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
@@ -119,7 +120,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
           ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
               status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
             })
-          : Response.json(options.models ?? { models: {} }),
+          : Response.json(options.modelsByHost?.[url.host] ?? options.models ?? { models: {} }),
       );
     }).pipe(
       Effect.tap(() =>
@@ -443,6 +444,9 @@ describe("Antigravity subscription limits", () => {
       expect(
         requests.filter((request) => request.url.endsWith(":retrieveUserQuotaSummary")),
       ).toHaveLength(4);
+      expect(
+        requests.filter((request) => request.url.endsWith(":fetchAvailableModels")),
+      ).toHaveLength(0);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -589,6 +593,115 @@ describe("Antigravity subscription limits", () => {
       expect(machineB.credentialFingerprint).toBe(machineA.credentialFingerprint);
       expect(otherAccount.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
       expect(JSON.stringify(machineA)).not.toMatch(/google-user-1|someone@example.com/);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("merges Gemini model quotas when summary only returns non-Gemini buckets", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({
+        authMethod: "oauth-personal",
+        summary: {
+          groups: [
+            {
+              displayName: "Claude and GPT models",
+              buckets: [
+                {
+                  bucketId: "3p-weekly",
+                  window: "weekly",
+                  remainingFraction: 0.75,
+                  resetTime: "2026-10-12T19:41:43Z",
+                },
+                {
+                  bucketId: "3p-5h",
+                  window: "5h",
+                  remainingFraction: 0.9,
+                  resetTime: "2026-10-09T16:06:30Z",
+                },
+              ],
+            },
+          ],
+        },
+        modelsByHost: {
+          "daily-cloudcode-pa.googleapis.com": {
+            models: {
+              chat_20706: {
+                modelProvider: "MODEL_PROVIDER_GOOGLE",
+                isInternal: true,
+                quotaInfo: { remainingFraction: 0.1 },
+              },
+              tab_flash_lite_preview: {
+                modelProvider: "MODEL_PROVIDER_GOOGLE",
+                quotaInfo: { remainingFraction: 1 },
+              },
+              "gemini-4-hydrogen-sonar": {
+                modelProvider: "MODEL_PROVIDER_GOOGLE",
+                quotaInfo: { remainingFraction: 0.94, resetTime: "2026-10-09T16:00:00Z" },
+              },
+              "claude-opus-5-5-high": {
+                modelProvider: "MODEL_PROVIDER_ANTHROPIC",
+                quotaInfo: { remainingFraction: 0.5 },
+              },
+              "gpt-oss-120b-medium": {
+                modelProvider: "MODEL_PROVIDER_OPENAI",
+                quotaInfo: { remainingFraction: 0.5 },
+              },
+            },
+          },
+          "cloudcode-pa.googleapis.com": {
+            models: {
+              "gemini-2.5-pro": {
+                modelProvider: "MODEL_PROVIDER_GOOGLE",
+                quotaInfo: { remainingFraction: 1, resetTime: "2026-10-09T17:00:00Z" },
+              },
+            },
+          },
+        },
+      });
+      const limits = yield* probe;
+      expect(
+        requests.filter((request) => request.url.endsWith(":fetchAvailableModels")),
+      ).toHaveLength(2);
+      expect(limits.windows.map((window) => window.id)).toEqual([
+        "3p-5h",
+        "3p-weekly",
+        "gemini-quota",
+      ]);
+      const gemini = limits.windows.find((window) => window.id === "gemini-quota");
+      expect(gemini).toMatchObject({
+        label: "Gemini · Reported quota",
+        kind: "other",
+        resetsAt: "2026-10-09T16:00:00.000Z",
+      });
+      expect(gemini?.usedPercent).toBeCloseTo(6);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("prefers model quotas with reset times over resetless entries at full quota", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summary: { groups: [] },
+        models: {
+          models: {
+            tab_flash_lite_preview: {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 1 },
+            },
+            "gemini-2.5-pro": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 1, resetTime: "2026-10-09T16:00:00Z" },
+            },
+          },
+        },
+      });
+      expect((yield* probe).windows).toEqual([
+        {
+          id: "gemini-quota",
+          label: "Gemini · Reported quota",
+          kind: "other",
+          usedPercent: 0,
+          resetsAt: "2026-10-09T16:00:00.000Z",
+        },
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
