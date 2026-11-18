@@ -2001,7 +2001,10 @@ describe("AcpRegistryAdapterV2", () => {
   );
 
   // regression: #38599 Hermes replies on its own when a background process it started exits
-  it.effect("does not drop Hermes' reply after a background process finishes", () =>
+  it.effect.each([
+    { launch: "hermes acp", commandPath: "hermes", commandArgs: ["acp"] },
+    { launch: "a wrapper", commandPath: "node", commandArgs: ["hermes-acp.mjs"] },
+  ])("does not drop Hermes' reply after a background process finishes ($launch)", (launch) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["process-exit"]);
       const sessionId = "hermes-session";
@@ -2061,7 +2064,7 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         gate,
         true,
-        { source: "local", commandPath: "hermes", commandArgs: ["acp"] },
+        { source: "local", commandPath: launch.commandPath, commandArgs: launch.commandArgs },
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       const foreground = yield* session.until((event) => event.type === "turn.terminal");
