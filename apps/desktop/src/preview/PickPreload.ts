@@ -19,6 +19,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
+import { clampToolbarPosition, type ToolbarPosition } from "./AnnotationToolbarPosition.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import {
   addStrokePoint,
@@ -163,6 +164,7 @@ interface AnnotationSession {
 }
 
 let activeSession: AnnotationSession | null = null;
+let toolbarPosition: ToolbarPosition | null = null;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
 const applyAnnotationTheme = (
@@ -597,9 +599,25 @@ function startAnnotation(
   const toolbar = document.createElement("div");
   toolbar.setAttribute(OVERLAY_ATTRIBUTE, "");
   toolbar.className =
-    "pointer-events-auto fixed top-2.5 left-1/2 flex -translate-x-1/2 gap-0.5 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl";
+    "fixed flex gap-0.5 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl";
   toolbar.style.zIndex = String(CHROME_LAYER_Z_INDEX);
+  toolbar.style.maxWidth = "100vw";
+  toolbar.style.overflowX = "auto";
   root.appendChild(toolbar);
+
+  const toolbarGrip = createButton("⠿", "Drag annotation toolbar (arrow keys to move)");
+  toolbarGrip.setAttribute("aria-label", "Move annotation toolbar");
+  toolbarGrip.className += " h-8 px-2";
+  toolbarGrip.style.pointerEvents = "auto";
+  toolbarGrip.style.cursor = "grab";
+  toolbarGrip.style.touchAction = "none";
+  toolbar.appendChild(toolbarGrip);
+
+  const dock = createButton("↕", "Move annotation toolbar to top or bottom");
+  dock.setAttribute("aria-label", "Move annotation toolbar to top or bottom");
+  dock.className += " h-8 px-2";
+  dock.style.pointerEvents = "auto";
+  toolbar.appendChild(dock);
 
   const editor = document.createElement("div");
   editor.setAttribute(OVERLAY_ATTRIBUTE, "");
@@ -1253,8 +1271,76 @@ function startAnnotation(
       refreshToolButtons();
     });
     toolButtons.set(candidate, button);
+    button.style.pointerEvents = "auto";
     toolbar.appendChild(button);
   }
+
+  const positionToolbar = (position: ToolbarPosition): void => {
+    const rect = toolbar.getBoundingClientRect();
+    toolbarPosition = clampToolbarPosition(
+      position,
+      { width: document.documentElement.clientWidth, height: window.innerHeight },
+      rect,
+    );
+    toolbar.style.left = `${toolbarPosition.left}px`;
+    toolbar.style.top = `${toolbarPosition.top}px`;
+  };
+  let toolbarDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null;
+  toolbarGrip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    const rect = toolbar.getBoundingClientRect();
+    toolbarDrag = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    toolbarGrip.setPointerCapture(event.pointerId);
+    toolbarGrip.style.cursor = "grabbing";
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  toolbarGrip.addEventListener("pointermove", (event) => {
+    if (!toolbarDrag || toolbarDrag.pointerId !== event.pointerId) return;
+    positionToolbar({
+      left: event.clientX - toolbarDrag.offsetX,
+      top: event.clientY - toolbarDrag.offsetY,
+    });
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  const endToolbarDrag = (event: PointerEvent): void => {
+    if (!toolbarDrag || toolbarDrag.pointerId !== event.pointerId) return;
+    toolbarDrag = null;
+    toolbarGrip.style.cursor = "grab";
+    if (toolbarGrip.hasPointerCapture(event.pointerId))
+      toolbarGrip.releasePointerCapture(event.pointerId);
+    event.stopPropagation();
+  };
+  toolbarGrip.addEventListener("pointerup", endToolbarDrag);
+  toolbarGrip.addEventListener("pointercancel", endToolbarDrag);
+  toolbarGrip.addEventListener("keydown", (event) => {
+    const delta = event.shiftKey ? 40 : 10;
+    const offsets: Record<string, ToolbarPosition> = {
+      ArrowLeft: { left: -delta, top: 0 },
+      ArrowRight: { left: delta, top: 0 },
+      ArrowUp: { left: 0, top: -delta },
+      ArrowDown: { left: 0, top: delta },
+    };
+    const offset = offsets[event.key];
+    if (!offset || !toolbarPosition) return;
+    positionToolbar({
+      left: toolbarPosition.left + offset.left,
+      top: toolbarPosition.top + offset.top,
+    });
+    event.preventDefault();
+  });
+  dock.addEventListener("click", () => {
+    const rect = toolbar.getBoundingClientRect();
+    positionToolbar({
+      left: (document.documentElement.clientWidth - rect.width) / 2,
+      top: rect.top < window.innerHeight / 2 ? window.innerHeight - rect.height : 0,
+    });
+  });
 
   const clampEditorPosition = (left: number, top: number): { left: number; top: number } => {
     const margin = 8;
@@ -1395,6 +1481,7 @@ function startAnnotation(
   const repaint = (): void => {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
+    if (toolbarPosition) positionToolbar(toolbarPosition);
   };
   const onScroll = (): void => {
     // A detached element's last rect no longer matches what is on screen once the page scrolls.
@@ -1484,7 +1571,7 @@ function startAnnotation(
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (isAnnotationNode(event.target as Element)) {
+    if (dragStart === null && isAnnotationNode(event.target as Element)) {
       clearHoverOutline();
       return;
     }
@@ -1812,6 +1899,13 @@ function startAnnotation(
     inputLayer.focus({ preventScroll: true });
   }
   document.documentElement.appendChild(host);
+  const toolbarRect = toolbar.getBoundingClientRect();
+  positionToolbar(
+    toolbarPosition ?? {
+      left: (document.documentElement.clientWidth - toolbarRect.width) / 2,
+      top: 10,
+    },
+  );
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
