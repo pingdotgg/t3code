@@ -1049,10 +1049,19 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page><draw:page><text:p>Second</text:p><presentation:notes><draw:page-thumbnail/></presentation:notes></draw:page></office:document>",
+              "<office:document>" +
+              "<draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame>" +
+              "<svg:title>Overview</svg:title>" +
+              "<presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>" +
+              "<draw:page><text:p>Second</text:p><presentation:notes><draw:g><draw:page-thumbnail>" +
+              "<svg:title>Slide preview</svg:title><svg:desc>Thumbnail metadata</svg:desc>" +
+              "</draw:page-thumbnail></draw:g></presentation:notes></draw:page></office:document>",
           },
-          expected: ["## Slide 1\nFirst slide\nNotes:\nSpeaker only\n\n## Slide 2\nSecond"],
-          absent: ["Second\nNotes:"],
+          expected: [
+            "## Slide 1\nFirst slide\nOverview\nNotes:\nSpeaker only\n\n## Slide 2\nSecond",
+          ],
+          occurrences: { text: "\nNotes:", count: 1 },
+          absent: ["Slide preview", "Thumbnail metadata"],
         },
         {
           ext: "ods",

@@ -107,7 +107,10 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       (extension === ".docx" && node.name === "del") ||
-      (odf && node.name === "annotation" && parent.name !== "semantics")
+      (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odp" &&
+        node.name === "page-thumbnail" &&
+        stack.some((ancestor) => ancestor.name === "notes"))
     ) {
       parent.children.pop();
       return;
@@ -563,7 +566,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
               : part,
           );
           if (speakerNotes?.hasText) {
-            yield "Notes:\n";
+            yield "\nNotes:\n";
             yield* paragraphs(speakerNotes);
           }
         }
