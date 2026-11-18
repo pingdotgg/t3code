@@ -37,7 +37,9 @@ import {
   type GitLabTemplateEntry,
 } from "./gitLabIssueJson.ts";
 import {
+  awardReactions,
   decodeAwardEmojiJson,
+  decodeAwardListJson,
   decodeOwnAwardIdJson,
   decodeViewerJson,
   gitLabAwardName,
@@ -523,6 +525,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   number,
                   operation: "getIssue",
                 }),
+                read({
+                  cwd: input.cwd,
+                  host: input.host,
+                  operation: "getIssue",
+                  path: paged(`${path}/award_emoji`, 1),
+                  decode: decodeAwardListJson,
+                }),
               ],
               { concurrency: 4 },
             ),
@@ -537,6 +546,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               closing,
               related,
               awardPage,
+              issueAwards,
             ]) => {
               const closingKeys = new Set(
                 closing.map((link) => `${link.repository}!${link.number}`),
@@ -546,7 +556,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 viewer: viewerLogin,
                 viewerPermissions: VIEWER_PERMISSIONS,
                 states: ISSUE_STATES,
-                reactions: awardPage.reactions,
+                reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
                   reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
