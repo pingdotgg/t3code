@@ -25,6 +25,7 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View } from "react-native";
@@ -83,6 +84,7 @@ import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
+import { composerAttachmentUploadKey } from "../../lib/composerAttachmentUploadQueue";
 import {
   buildModelOptions,
   isModelSelectionUnavailable,
@@ -195,15 +197,15 @@ const COMPOSER_ATTACHMENT_ENTERING =
     : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
 
 const FOLLOW_UP_ACTION_LABEL = {
-  queue: "Queue",
-  steer: "Steer now",
-  restart: "Restart turn",
+  queue: msg("Queue", { $context: "verb, send after the current turn" }),
+  steer: msg("Steer now"),
+  restart: msg("Restart turn"),
 } as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
-  queue: "Run after the current turn",
-  steer: "Interrupt what the agent is doing",
-  restart: "Start the turn over with this message",
+  queue: msg("Run after the current turn"),
+  steer: msg("Interrupt what the agent is doing"),
+  restart: msg("Start the turn over with this message"),
 } as const;
 
 function SendActionButton(props: {
@@ -214,6 +216,8 @@ function SendActionButton(props: {
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
   const { presentation } = props;
+  const gt = useGT();
+  const m = useMessages();
   const button = (
     <ComposerActionButton
       accessibilityLabel={props.accessibilityLabel}
@@ -232,12 +236,12 @@ function SendActionButton(props: {
   );
   return (
     <Menu
-      accessibilityLabel="Choose how to send this message"
+      accessibilityLabel={gt("Choose how to send this message")}
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
         id: action,
-        title: FOLLOW_UP_ACTION_LABEL[action],
-        subtitle: FOLLOW_UP_ACTION_SUBTITLE[action],
+        title: m(FOLLOW_UP_ACTION_LABEL[action]),
+        subtitle: m(FOLLOW_UP_ACTION_SUBTITLE[action]),
         state: action === presentation.action ? ("on" as const) : ("off" as const),
       }))}
       onPressAction={({ nativeEvent }) =>
@@ -250,6 +254,8 @@ function SendActionButton(props: {
 }
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -298,7 +304,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
   const [resumingQueue, setResumingQueue] = useState(false);
@@ -316,6 +321,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     AuthOrchestrationOperateScope,
   );
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const stripAttachments = composerStripAttachments(
+    draftAttachments,
+    (attachment) =>
+      uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)]?.status ===
+      "failed",
+  );
   const attachmentsUploading =
     props.connectionState === "connected" &&
     composerAttachmentsStillUploading({
@@ -369,15 +380,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     codexFeedback: selectedProviderStatus?.driver === "codex",
     freshSession: props.onFreshSession !== undefined && draftContext === undefined,
   });
-  const sendPresentation = resolveComposerSendPresentation({
-    editingQueuedMessage: queuedEdit !== null,
-    running: props.activeThreadBusy && !draftRunsLocally,
-    canSteer: props.canSteerActiveTurn,
-    followUpBehavior: props.followUpBehavior,
-    deliveryDeferred:
-      !draftRunsLocally &&
-      (props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading),
-  });
+  const sendPresentation = resolveComposerSendPresentation(
+    {
+      editingQueuedMessage: queuedEdit !== null,
+      running: props.activeThreadBusy && !draftRunsLocally,
+      canSteer: props.canSteerActiveTurn,
+      followUpBehavior: props.followUpBehavior,
+      deliveryDeferred:
+        !draftRunsLocally &&
+        (props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading),
+    },
+    messages,
+  );
   const sendLabel = sendPresentation.label;
   const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
@@ -388,7 +402,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
     onShowUsageLimits(report);
     if (!report) {
-      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert(
+        gt("Usage limits unavailable"),
+        gt("This provider does not currently report limits."),
+      );
     }
     return report !== null;
   };
@@ -430,7 +447,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
-    label: props.selectedThread.title || "Untitled thread",
+    label: props.selectedThread.title || gt("Untitled thread"),
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     selection: composerMenu.selection,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
@@ -441,6 +458,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
+    messages,
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
@@ -458,18 +476,21 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const hasEditingAttachments =
     (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
     stripAttachments.length > 0;
-  const attachmentBlockReason = composerAttachmentUploadBlockReason({
-    environmentId: props.environmentId,
-    attachments: draftAttachments,
-    connected: props.connectionState === "connected",
-    serverConfig: props.serverConfig,
-    states: uploadStates,
-  });
+  const attachmentBlockReason = composerAttachmentUploadBlockReason(
+    {
+      environmentId: props.environmentId,
+      attachments: draftAttachments,
+      connected: props.connectionState === "connected",
+      serverConfig: props.serverConfig,
+      states: uploadStates,
+    },
+    messages,
+  );
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
-    (queuedEdit?.saving === true ? "Saving…" : null) ??
+    (queuedEdit?.saving === true ? gt("Saving…") : null) ??
     props.sendBlockedReason ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (pendingPastedTextAttachmentCount > 0 ? gt("Attaching pasted text") : null) ??
     attachmentBlockReason;
   const canSend =
     (props.canOperateThread || props.connectionState !== "connected") &&
@@ -684,11 +705,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         disabled={!props.canOperateThread}
         accessibilityLabel={
           compactBeforeSend.keepFullHistory
-            ? `Next send keeps all ${compactTokens} tokens of history`
-            : `Next send compacts ${compactTokens} tokens of history first`
+            ? gt("Next send keeps all {tokens} tokens of history", { tokens: compactTokens })
+            : gt("Next send compacts {tokens} tokens of history first", { tokens: compactTokens })
         }
         accessibilityHint={
-          compactBeforeSend.keepFullHistory ? "Compacts first" : "Keeps the full history"
+          compactBeforeSend.keepFullHistory ? gt("Compacts first") : gt("Keeps the full history")
         }
         onPress={compactBeforeSend.toggleKeepFullHistory}
       />
@@ -756,7 +777,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {modelUnavailable ? (
           <Button
-            label="Model unavailable. Open model settings."
+            label={gt("Model unavailable. Open model settings.")}
             tone="text"
             onPress={openSettings}
           />
@@ -914,8 +935,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         insertPaste();
                       } else {
                         Dialog.alert(
-                          "Pasted text is too large for this message",
-                          "Remove some text or an attachment, then paste again.",
+                          gt("Pasted text is too large for this message"),
+                          gt("Remove some text or an attachment, then paste again."),
                         );
                       }
                       return;
@@ -993,7 +1014,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={gt("Stop agent")}
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
@@ -1002,7 +1023,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Resume thread"
+                    accessibilityLabel={gt("Resume thread")}
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
@@ -1061,7 +1082,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={gt("Stop agent")}
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
@@ -1070,7 +1091,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Resume thread"
+                      accessibilityLabel={gt("Resume thread")}
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
                       onPress={() => void handleResumeQueue()}
@@ -1092,7 +1113,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
         {props.connectionState === "connected" && operateDenied ? (
           <Text className="pt-2 text-xs text-foreground-muted">
-            This connection cannot control this task. You can still edit your draft.
+            <T>This connection cannot control this task. You can still edit your draft.</T>
           </Text>
         ) : null}
       </Animated.View>
