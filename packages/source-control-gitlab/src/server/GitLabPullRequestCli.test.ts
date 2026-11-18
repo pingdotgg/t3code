@@ -2336,6 +2336,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("asks GraphQL for merge request label colours the single REST GET cannot return", () =>
     Effect.gen(function* () {
+      const restLabels = ["bug", ...Array.from({ length: 100 }, (_, index) => `extra-${index}`)];
+      const graphqlNodes = [
+        { title: "bug", color: "#E24329", description: "Something is broken" },
+        ...Array.from({ length: 99 }, (_, index) => ({
+          title: `extra-${index}`,
+          color: "#FFFFFF",
+        })),
+      ];
       mockedExecute.mockImplementation(({ args }) =>
         Effect.succeed(
           output(
@@ -2345,16 +2353,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
                     project: {
                       mergeRequest: {
                         userPermissions: { adminMergeRequest: false },
-                        labels: {
-                          nodes: [
-                            { title: "bug", color: "#E24329", description: "Something is broken" },
-                          ],
-                        },
+                        labels: { nodes: graphqlNodes },
                       },
                     },
                   },
                 })
-              : mergeRequestJson({ labels: ["bug"] }),
+              : mergeRequestJson({ labels: restLabels }),
           ),
         ),
       );
@@ -2376,9 +2380,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(
         mockedExecute.mock.calls.some(([call]) => call.args[1]?.includes("with_labels_details")),
       ).toBe(false);
-      expect(detail.labels).toEqual([
-        { name: "bug", color: "#E24329", description: "Something is broken" },
-      ]);
+      expect(detail.labels).toHaveLength(101);
+      expect(detail.labels[0]).toEqual({
+        name: "bug",
+        color: "#E24329",
+        description: "Something is broken",
+      });
+      expect(detail.labels[1]).toEqual({ name: "extra-0", color: "#FFFFFF", description: null });
+      expect(detail.labels.at(-1)).toEqual({ name: "extra-99", color: null });
     }),
   );
 
