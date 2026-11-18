@@ -64,7 +64,7 @@ describe("KeybindingsSettings.logic", () => {
   it("marks only bindings shadowed by later unconditional or matching conditions", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "sidebar.toggle", key: "mod+b" },
-      { command: "terminal.toggle", key: "meta+b" },
+      { command: "terminal.toggle", key: "meta+b", when: "true" },
       { command: "chat.new", key: "mod+n", when: "terminalFocus" },
       { command: "terminal.new", key: "mod+n", when: "(terminalFocus)" },
       { command: "chat.new", key: "mod+j" },

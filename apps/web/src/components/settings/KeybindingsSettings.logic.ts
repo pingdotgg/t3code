@@ -292,7 +292,8 @@ export function buildKeybindingRows(
   const lastBindingIndices = conflictKeys.map((keys) => {
     const indices = new Map<string, number>();
     for (const [index, binding] of keybindings.entries()) {
-      indices.set(`${keys[index]}:${whenAstToExpression(binding.whenAst)}`, index);
+      const when = whenAstToExpression(binding.whenAst);
+      indices.set(`${keys[index]}:${when === "true" ? "" : when}`, index);
     }
     return indices;
   });

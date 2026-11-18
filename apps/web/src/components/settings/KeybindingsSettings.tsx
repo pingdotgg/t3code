@@ -1263,7 +1263,7 @@ function NewKeybindingCommandSelect({
       >
         {draft.commandDraft ? commandLabel(draft.commandDraft, m) : gt("Command")}
       </ComboboxTrigger>
-      <ComboboxPopup className="w-96">
+      <ComboboxPopup aria-label={gt("Command")} className="w-96">
         <ComboboxSearchInput
           autoFocus
           placeholder={gt("Search", { $context: "search field placeholder" })}
