@@ -80,15 +80,20 @@ export async function createPastedTextComposerAttachment(input: {
 
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
-/** Non-media attachments require chip references; missing references mean lost draft files. */
+/**
+ * Non-media attachments require chip references; missing references mean lost draft files.
+ * A chip cannot retry an upload, so a document whose upload failed joins the strip.
+ */
 export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
+  uploadFailed: (attachment: DraftComposerAttachment) => boolean,
 ): ReadonlyArray<DraftComposerAttachment> {
   return attachments.filter(
     (attachment) =>
       attachment.type === "image" ||
       imageMimeType(attachment) !== null ||
-      videoMimeType(attachment) !== null,
+      videoMimeType(attachment) !== null ||
+      uploadFailed(attachment),
   );
 }
 
