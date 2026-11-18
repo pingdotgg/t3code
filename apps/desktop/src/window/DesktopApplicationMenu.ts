@@ -214,7 +214,7 @@ export const make = Effect.gen(function* () {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
     const newWindowItem: Electron.MenuItemConstructorOptions = {
-      label: "New Window",
+      label: m(msg("New Window", { $context: "menu item that opens another app window" })),
       click: () => {
         runMenuEffect("new-window", openNewWindow());
       },

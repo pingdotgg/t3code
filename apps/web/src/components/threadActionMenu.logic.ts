@@ -228,7 +228,9 @@ export function buildThreadActionMenuItems(
           },
           {
             id: "open-project-in-new-window" as const,
-            label: `Open ${state.projectFilter.label} in New Window`,
+            label: resolve(
+              msg("Open {project} in New Window", { project: state.projectFilter.label }),
+            ),
             icon: "app-window",
           },
         ]

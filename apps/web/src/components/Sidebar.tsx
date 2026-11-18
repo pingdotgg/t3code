@@ -1267,7 +1267,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               // An archived project is not a filter choice, so it cannot scope a window.
               ...(group.archived
                 ? []
-                : [{ id: "open-in-new-window", label: gt("Open in New Window"), icon: "app-window" }]),
+                : [
+                    {
+                      id: "open-in-new-window",
+                      label: gt("Open in New Window"),
+                      icon: "app-window",
+                    },
+                  ]),
               { id: "copy-path", label: gt("Copy path") },
               ...(canPinProject(group)
                 ? [

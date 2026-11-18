@@ -6,6 +6,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
+import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
@@ -27,6 +28,7 @@ it.effect("tells every other app window that client settings changed", () =>
           }),
           Layer.mock(DesktopClientSettings.DesktopClientSettings, { set: () => Effect.void }),
           Layer.mock(DesktopSnapShot.DesktopSnapShot, { configure: () => Effect.void }),
+          Layer.mock(ElectronApp.ElectronApp, { preferredSystemLanguages: Effect.succeed(["en"]) }),
         ),
       ),
     );
