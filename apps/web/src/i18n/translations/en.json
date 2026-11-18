@@ -1649,6 +1649,7 @@
   "e9cf5c708ad52a85": "Available once the thread's worktree is set up.",
   "6b1c0d7732da6648": "Failed to compact context.",
   "bbbce20ad5d6790d": "{count, plural, one {{count} queued} other {{count} queued}}",
+  "2cf01f6dd8dbdcbb": "Conversation messages",
   "2d3ad1215c5d8a52": "This connection cannot change threads.",
   "86860f420c3af36a": "Preparing machine",
   "36232b4aa998700b": "Rewinding conversation",

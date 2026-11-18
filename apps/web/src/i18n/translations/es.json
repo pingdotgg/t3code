@@ -1649,6 +1649,7 @@
   "e9cf5c708ad52a85": "Disponible cuando el worktree del hilo esté configurado.",
   "6b1c0d7732da6648": "No se pudo compactar el contexto.",
   "bbbce20ad5d6790d": "{count, plural, one {{count} en cola} other {{count} en cola}}",
+  "2cf01f6dd8dbdcbb": "Mensajes de la conversación",
   "2d3ad1215c5d8a52": "Esta conexión no puede cambiar hilos.",
   "86860f420c3af36a": "Preparando la máquina",
   "36232b4aa998700b": "Volviendo atrás en la conversación",

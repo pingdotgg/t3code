@@ -3487,7 +3487,7 @@ export default function ChatView(props: ChatViewProps) {
               {...conversationArea}
               ref={messageAreaRef}
               tabIndex={0}
-              aria-label="Conversation messages"
+              aria-label={gt("Conversation messages")}
               onClick={focusMessageArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
