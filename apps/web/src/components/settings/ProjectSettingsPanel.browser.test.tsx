@@ -740,6 +740,33 @@ describe("project settings scope", () => {
     expect(state.delete.mock.calls[0]![0].environmentId).toBe(primaryId);
   });
 
+  it("keeps a newer project selection when a list-row removal finishes", async () => {
+    setup();
+    const removedKey = projectKey();
+    const other = {
+      ...state.projects[0]!,
+      id: ProjectId.make("other-project"),
+      title: "Other project",
+      workspaceRoot: "/work/other",
+      repositoryIdentity: null,
+    };
+    state.projects = [...state.projects, other];
+    const deletion = deferred<AsyncResult.Success<void>>();
+    state.delete.mockImplementationOnce(() => deletion.promise);
+    await using screen = await mountSettings({});
+    await userEvent.click(page.getByRole("button", { name: "More actions for Shared repo" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Remove project…" }));
+    await vi.waitFor(() => expect(state.delete).toHaveBeenCalledOnce());
+    await userEvent.click(page.getByRole("button", { name: /^Other project/ }));
+    const selected = screen.router.state.location.search.project;
+    expect(selected).not.toBe(removedKey);
+    expect(selected).toBeDefined();
+    deletion.resolve(AsyncResult.success(undefined));
+    await vi.waitFor(() => expect(state.delete).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(state.confirm).toHaveBeenCalledOnce());
+    expect(screen.router.state.location.search.project).toBe(selected);
+  });
+
   it("offers only the selected project's checkout environments", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);

@@ -7,6 +7,7 @@ import {
   PinOffIcon,
   Trash2Icon,
 } from "lucide-react";
+import { useGT } from "gt-react";
 import { useState } from "react";
 
 import { useProjectGroupUpdate } from "../../hooks/useProjectGroupUpdate";
@@ -28,6 +29,7 @@ export function ProjectRowMenu({
   machine: string | undefined;
   className?: string;
 }) {
+  const gt = useGT();
   const allMembers = group.memberProjects;
   const members =
     machine === undefined
@@ -72,7 +74,7 @@ export function ProjectRowMenu({
             variant="ghost-muted"
             size="icon-xs"
             disabled={isBusy}
-            aria-label={`More actions for ${group.displayName}`}
+            aria-label={gt("More actions for {project}", { project: group.displayName })}
           />
         }
       >
@@ -85,24 +87,26 @@ export function ProjectRowMenu({
               onClick={() =>
                 void organize(
                   { pinned: !group.pinned },
-                  group.pinned ? "Failed to unpin project" : "Failed to pin project",
+                  group.pinned ? gt("Failed to unpin project") : gt("Failed to pin project"),
                 )
               }
             >
               {group.pinned ? <PinOffIcon /> : <PinIcon />}
-              {group.pinned ? "Unpin" : "Pin"}
+              {group.pinned ? gt("Unpin") : gt("Pin")}
             </MenuItem>
             {isScratch && !group.archived ? null : (
               <MenuItem
                 onClick={() =>
                   void organize(
                     { archived: !group.archived },
-                    group.archived ? "Failed to unarchive project" : "Failed to archive project",
+                    group.archived
+                      ? gt("Failed to unarchive project")
+                      : gt("Failed to archive project"),
                   )
                 }
               >
                 {group.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-                {group.archived ? "Unarchive" : "Archive"}
+                {group.archived ? gt("Unarchive") : gt("Archive")}
               </MenuItem>
             )}
           </>
@@ -112,8 +116,10 @@ export function ProjectRowMenu({
           <MenuItem variant="destructive" onClick={() => void removeMembers(members)}>
             <Trash2Icon />
             {hasOtherMembers
-              ? `Remove from ${members[0]?.environmentLabel ?? "this environment"}…`
-              : "Remove project…"}
+              ? gt("Remove from {environment}…", {
+                  environment: members[0]?.environmentLabel ?? gt("this environment"),
+                })
+              : gt("Remove project…")}
           </MenuItem>
         ) : null}
       </MenuPopup>

@@ -193,7 +193,9 @@ function ProjectsPageScope(props: SettingsScopeMenuProps) {
   if (!value.project) {
     return (
       <p className={sentence}>
-        <span className="shrink-0">Showing projects on</span>
+        <span className="shrink-0">
+          <T>Showing projects on</T>
+        </span>
         <EnvironmentScopeMenu {...props} />
       </p>
     );
@@ -201,7 +203,9 @@ function ProjectsPageScope(props: SettingsScopeMenuProps) {
   return (
     <p className={sentence}>
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">Applies to</span>
+        <span className="shrink-0">
+          <T>Applies to</T>
+        </span>
         <EnvironmentScopeMenu {...props} />
       </span>
       <CheckoutScopeMenu {...props} />
