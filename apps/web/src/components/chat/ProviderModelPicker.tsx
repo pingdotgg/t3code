@@ -26,7 +26,11 @@ import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
-import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import {
+  isProviderInstancePickerVisible,
+  shouldShowInstanceBadge,
+  type ProviderInstanceEntry,
+} from "../../providerInstances";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
@@ -175,9 +179,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
-  const triggerLabel = selectedModel
-    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
-    : triggerTitle;
+  const selectedUnavailable =
+    selectedModel?.isUnavailable || (activeEntry && !isProviderInstancePickerVisible(activeEntry));
+  const triggerLabel = `${selectedModel ? getDisplayModelName(selectedModel) : triggerTitle}${selectedUnavailable ? " (Unavailable)" : ""}`;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -241,14 +245,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: selection.model,
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
-    const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
+    const unavailable =
+      model?.isUnavailable || (entry && !isProviderInstancePickerVisible(entry))
+        ? " (Unavailable)"
+        : "";
     return {
       ...selection,
       entry,
-      label: model
-        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
-        : selection.model,
-      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
+      label: `${model ? getTriggerDisplayModelName(model, entry?.driverKind) : selection.model}${unavailable}`,
+      fullLabel: `${model ? getDisplayModelName(model) : selection.model}${unavailable}`,
     };
   });
   const multipleLabel = selectedEntries
@@ -431,7 +436,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </Tooltip>
           )}
           {props.triggerSuffix}
-          {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
+          {selectedUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
             </Badge>
