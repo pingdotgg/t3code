@@ -30,8 +30,10 @@ const snapshotJson = (input: {
   readonly snapshotSequence: number;
   readonly title?: string;
   readonly itemText?: string;
+  readonly compacted?: boolean;
 }) => ({
   snapshotSequence: input.snapshotSequence,
+  ...(input.compacted === true ? { turnItemsOmitLocalVisible: true } : {}),
   projection: {
     thread: {
       createdBy: "system",
@@ -198,6 +200,7 @@ const harness = Effect.gen(function* () {
     readonly threadId: string;
     readonly snapshotSequence: number;
     readonly title?: string;
+    readonly compacted?: boolean;
     readonly attachments?: ReadonlyArray<{ name: string; bytes: string }>;
     readonly attachmentsSkipped?: boolean;
   }) =>
@@ -408,6 +411,25 @@ describe("fleet bundle import", () => {
       expect(result.imported).toBe(1);
       expect(result.warnings).toHaveLength(1);
       expect(written.flat().length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a compacted snapshot is refused instead of silently losing its omitted items", () =>
+    Effect.gen(function* () {
+      const { importer, written, store, writeBundle } = yield* harness;
+      yield* writeBundle({ threadId: "thread:a", snapshotSequence: 1, compacted: true });
+
+      const result = yield* importer.importBundle({
+        environmentId: ENVIRONMENT,
+        drainId: DRAIN_ID,
+      });
+
+      expect(result.imported).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain("compacted snapshot");
+      expect(written).toHaveLength(0);
+      expect(store.rows.get("thread:a")).toBeUndefined();
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

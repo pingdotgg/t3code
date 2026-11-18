@@ -346,6 +346,15 @@ export const makeFleetBundleImporter = (input: {
                 }),
             ),
           );
+          // A compacted snapshot leads with items omitted (older workers answer
+          // `compactTurnItems=1`); the drain exports full snapshots, so this
+          // marker means the bundle cannot be proven complete. Refuse loudly.
+          if (snapshot.turnItemsOmitLocalVisible === true) {
+            warnings.push(
+              `Bundle ${file} holds a compacted snapshot of ${threadId} (local-visible items omitted); it was not imported.`,
+            );
+            return "skipped" as const;
+          }
           // A bundle may name one thread and carry another's records; every
           // ownership id must agree with the envelope before anything is written.
           const pageItems = (body.pages ?? []).flatMap((page) =>
