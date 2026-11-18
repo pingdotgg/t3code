@@ -77,35 +77,43 @@ const comment = (id: string): IssueComment => ({
 });
 
 describe("createIssueCommentPager", () => {
-  it("starts from the refreshed cursor and never requests an older page during refresh", async () => {
+  it("drops older pages on refresh, including one still loading, and pauses paging until it ends", async () => {
+    // The refreshed detail hands back the same cursor, so only the refresh itself can tell pages apart.
     const detail = Atom.make(
       AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
     );
     const pager = createIssueCommentPager(detail);
     const registry = AtomRegistry.make();
     const unmount = registry.mount(pager.view);
+    const ids = () => registry.get(pager.view).comments.map(({ id }) => id);
     const cursors: string[] = [];
+    const page = AsyncResult.success<IssueCommentsPage>({
+      comments: [comment("older"), comment("newest")],
+      nextCursor: "second-page",
+    });
     const read = async (cursor: string) => {
       cursors.push(cursor);
-      return AsyncResult.success<IssueCommentsPage>({
-        comments: [comment("older"), comment("newest")],
-        nextCursor: "second-page",
-      });
+      return page;
     };
     try {
       await pager.loadOlder(registry, read);
-      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["older", "newest"]);
-      const { promise, resolve } = Promise.withResolvers<void>();
-      const refresh = pager.refresh(registry, () => promise);
-      await pager.loadOlder(registry, read);
-      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["newest"]);
-      expect(registry.get(pager.view).canLoadOlder).toBe(false);
+      expect(ids()).toEqual(["older", "newest"]);
 
-      resolve();
+      const pending = Promise.withResolvers<typeof page>();
+      const inFlight = pager.loadOlder(registry, () => pending.promise);
+      const refreshed = Promise.withResolvers<void>();
+      const refresh = pager.refresh(registry, () => refreshed.promise);
+      pending.resolve(page);
+      await inFlight;
+      expect(ids()).toEqual(["newest"]);
+
+      await pager.loadOlder(registry, read);
+      expect(registry.get(pager.view).canLoadOlder).toBe(false);
+      refreshed.resolve();
       await refresh;
       await pager.loadOlder(registry, read);
       expect(cursors).toEqual(["first-page", "first-page"]);
-      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["older", "newest"]);
+      expect(ids()).toEqual(["older", "newest"]);
     } finally {
       unmount();
       registry.dispose();
