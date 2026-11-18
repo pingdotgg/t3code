@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -44,6 +45,7 @@ function PullRequestHostVideo({
   repository: string | undefined;
   host: string | undefined;
 }) {
+  const gt = useGT();
   const resource: AssetResource = {
     _tag: SOURCE_CONTROL_MEDIA_ASSET,
     cwd,
@@ -59,7 +61,7 @@ function PullRequestHostVideo({
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
       originalUrl={url}
-      label="Pull request video"
+      label={gt("Pull request video")}
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
       onRetry={refreshAssetUrl}
@@ -82,6 +84,7 @@ function PullRequestBodySegmentView({
   lineBreaks: boolean;
   onTaskListChange: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }) {
+  const gt = useGT();
   const context = useContext(PullRequestMarkdownContext);
   const repository = context?.repository ?? undefined;
   const host = context?.host ?? undefined;
@@ -164,7 +167,7 @@ function PullRequestBodySegmentView({
         key={`${segment.id}:${segment.url}`}
         src={segment.url}
         originalUrl={segment.url}
-        label="Pull request video"
+        label={gt("Pull request video")}
         className="w-full"
         videoClassName="rounded-lg border border-border/60"
       />
@@ -180,7 +183,10 @@ function PullRequestBodySegmentView({
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
-        Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+        <T>
+          Open attachment on{" "}
+          <Var>{hostMedia?.definition.label ?? new URL(segment.url).hostname}</Var>
+        </T>
       </span>
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
     </a>
