@@ -107,6 +107,9 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+// The 3 + 7 second ticket budget leaves 5 seconds of the supervisor's setup deadline.
+const RELAY_SOCKET_RETRY_TIMEOUT_MS = 7_000;
+const RELAY_TICKET_TIMEOUT_LIMIT = 3;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
 // A loopback or LAN host answers well inside this, so a dead one frees its attempt sooner.
@@ -166,6 +169,14 @@ export const make = Effect.gen(function* () {
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
+  >();
+  const relayTicketTimeouts = new Map<
+    EnvironmentId,
+    {
+      readonly accessToken: string;
+      readonly identity: ClientCapabilities.CloudSessionIdentity;
+      readonly count: number;
+    }
   >();
   const pendingTokens = new Map<
     EnvironmentId,
@@ -581,9 +592,18 @@ export const make = Effect.gen(function* () {
     });
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
+      const cachedToken = selected.token;
+      let cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
+      if (
+        endpoint === undefined &&
+        Result.isFailure(cachedSocket) &&
+        cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError"
+      ) {
+        cachedSocket = yield* openSocket(selected, RELAY_SOCKET_RETRY_TIMEOUT_MS);
+      }
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
+        if (endpoint === undefined) relayTicketTimeouts.delete(input.expectedEnvironmentId);
         return cachedSocket.success;
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
@@ -595,14 +615,38 @@ export const make = Effect.gen(function* () {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       yield* assertSession(selected.identity);
+      if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
+        const previous = relayTicketTimeouts.get(input.expectedEnvironmentId);
+        const count =
+          previous?.accessToken === cachedToken.accessToken &&
+          previous.identity === selected.identity
+            ? previous.count + 1
+            : 1;
+        if (count < RELAY_TICKET_TIMEOUT_LIMIT) {
+          relayTicketTimeouts.set(input.expectedEnvironmentId, {
+            accessToken: cachedToken.accessToken,
+            identity: selected.identity,
+            count,
+          });
+          // A slow ticket response does not establish a credential or network failure.
+          return yield* new ConnectionTransientError({
+            reason: "timeout",
+            detail: `${cachedToken.label} did not respond during connection setup.`,
+          });
+        }
+      }
+      if (endpoint === undefined) relayTicketTimeouts.delete(input.expectedEnvironmentId);
       selected = yield* getDpopToken({
         ...input,
-        rejectedAccessToken: selected.token.accessToken,
+        rejectedAccessToken: cachedToken.accessToken,
       });
     }
     const socket = yield* openSocket(selected);
     if (Result.isFailure(socket)) {
-      if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
+      if (
+        (endpoint === undefined && socket.failure._tag !== "RemoteEnvironmentAuthTimeoutError") ||
+        socket.failure._tag === "ConnectionBlockedError"
+      ) {
         yield* tokenLock.withPermits(1)(
           removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
         );
@@ -610,6 +654,7 @@ export const make = Effect.gen(function* () {
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);
+    if (endpoint === undefined) relayTicketTimeouts.delete(input.expectedEnvironmentId);
     return socket.success;
   });
 
