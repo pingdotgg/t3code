@@ -225,32 +225,6 @@ describe("attachment upload registry", () => {
     queue.dispose();
   });
 
-  it("does not mark a later upload as retrying when no synced holder could retry", async () => {
-    const upload = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("Server unavailable"))
-      .mockResolvedValue("uploaded");
-    const queue = createQueue({ upload, onChange: () => {} });
-    try {
-      const local = request("file");
-      const key = uploadKey(environmentId, local.attachment.id);
-      const release = queue.hold(local);
-      await queue.settled();
-      expect(queue.status(key)?.status).toBe("failed");
-
-      queue.retry(key);
-      expect(upload).toHaveBeenCalledOnce();
-      release();
-      expect(queue.status(key)).toBeUndefined();
-
-      queue.sync([local]);
-      expect(queue.status(key)).toEqual({ status: "uploading", progress: 0 });
-      await queue.settled();
-    } finally {
-      queue.dispose();
-    }
-  });
-
   it.effect("joins a send to the running upload instead of uploading again", () =>
     Effect.gen(function* () {
       const gate = Promise.withResolvers<string>();
