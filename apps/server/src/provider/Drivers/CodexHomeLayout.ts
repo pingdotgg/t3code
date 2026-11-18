@@ -127,9 +127,14 @@ export class CodexShadowHomeSqliteConflictError extends Schema.TaggedError<Codex
     entryName: Schema.String,
     /** Set when the shadow's own databases cannot be combined with this shared one on Windows. */
     sharedEntryName: Schema.optional(Schema.String),
+    /** Set when an explicit `CODEX_SQLITE_HOME` holds the database as a link on Windows. */
+    sqliteHomePath: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.sqliteHomePath !== undefined) {
+      return `CODEX_SQLITE_HOME points at '${this.sqliteHomePath}', where '${this.entryName}' is a link to a database kept elsewhere. On Windows Codex would give it a WAL of its own, apart from the one other Codex processes use for that database. Stop every Codex process using that directory. Then point CODEX_SQLITE_HOME at the directory that holds the database, or unset it to use the shared home '${this.sharedHomePath}', and retry. T3 did not change any SQLite files.`;
+    }
     if (this.sharedEntryName !== undefined) {
       return `Codex shadow home '${this.effectiveHomePath}' has its own SQLite database '${this.entryName}', while '${this.sharedEntryName}' belongs to the shared home '${this.sharedHomePath}'. On Windows Codex cannot use both without splitting a database from its WAL. Stop every Codex process using either home and back up both. Then either move the shadow's .sqlite files, with their -wal and -shm files, into the shared home to keep them, or move them out of the shadow home, and retry. T3 did not change any SQLite files.`;
     }
@@ -245,11 +250,48 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
 ) {
   const effectiveHomePath = layout.effectiveHomePath;
   if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
-  const override = environment.CODEX_SQLITE_HOME?.trim();
-  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
-
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const override = environment.CODEX_SQLITE_HOME?.trim();
+  if (override) {
+    const launchEnvironment = { ...environment, CODEX_SQLITE_HOME: override };
+    // Codex expands `~` itself. A relative home resolves against each session's directory, which
+    // is unknown here, and the shared home is where every other Codex opens these databases.
+    const sqliteHomePath = expandHomePath(override, yield* HostProcess.HomeDirectory);
+    if (
+      !(yield* HostProcess.isWindows) ||
+      !path.isAbsolute(sqliteHomePath) ||
+      path.resolve(sqliteHomePath) === layout.sharedHomePath
+    ) {
+      return launchEnvironment;
+    }
+    // Naming a directory outright, the shadow included, must not reach a database through a link.
+    for (const entryName of yield* readHomeEntries(
+      fileSystem,
+      layout,
+      effectiveHomePath,
+      sqliteHomePath,
+    )) {
+      if (!SQLITE_DATABASE_ENTRY_NAME.test(entryName)) continue;
+      const state = yield* readLinkState({
+        fileSystem,
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+        linkPath: path.join(sqliteHomePath, entryName),
+      });
+      if (state._tag === "Symlink") {
+        return yield* new CodexShadowHomeSqliteConflictError({
+          sharedHomePath: layout.sharedHomePath,
+          effectiveHomePath,
+          entryName,
+          sqliteHomePath,
+        });
+      }
+    }
+    return launchEnvironment;
+  }
+
   const regularDatabases = new Set<string>();
   const linkedDatabases: Array<string> = [];
   const sidecarsWithData: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
