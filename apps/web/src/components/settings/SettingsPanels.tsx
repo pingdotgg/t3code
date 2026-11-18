@@ -1024,7 +1024,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.paneTabsWorkingGroup !== DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup ? (
               <SettingResetButton
-                label="working tab group"
+                ariaLabel={gt("Reset working tab group to default")}
                 onClick={() =>
                   updateSettings({
                     paneTabsWorkingGroup: DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup,
@@ -1054,7 +1054,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.paneTabsFollowInbox !== DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox ? (
               <SettingResetButton
-                label="tabs follow the inbox"
+                ariaLabel={gt("Reset tabs follow the inbox to default")}
                 onClick={() =>
                   updateSettings({
                     paneTabsFollowInbox: DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox,
