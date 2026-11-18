@@ -99,3 +99,10 @@
 - Fix 2 (`AutoFailoverService`): a thread not on Auto that hits a usage limit now fails over through Auto at the level its model implies (Fable/Sol/Astra high; Sonnet/Haiku/Flash/OpenCode/Luna low; else medium). Delegated threads not on Auto are left alone: their parent chose the model.
 - Setup repo: `fallbackModelSelection` (Grok) is cleared by `apply-auto-settings.py`; the health check warns while it is set.
 - Numbers: AutoFailoverService 8/8; ProviderTurnStartService 65/69, the same 4 failures as before the change (Windows-only git/startup tests); server typecheck 0 errors.
+
+## 2026-11-18: Auto High runs Opus 5.5 at Extra High, not Fable
+
+- What: `AUTO_CANDIDATES.high` now starts with `claude-opus-5-5` at the `xhigh` effort level ("Extra High", one step above High), and Fable 5.2 is gone from the high chain. The Antigravity Opus, Codex Sol/Astra/Luna, Grok and Gemini fallbacks keep their `high` effort. `impliedAutoLevel` (the failover path for hand-picked threads) no longer reads Fable as a high model, since Fable now only sits in the medium chain.
+- Why: Tomáš's Claude accounts have no Fable access yet, so Auto High routed to a model that was never usable there and fell through to Opus at plain High. He asked for Auto High to mean Opus at a higher effort.
+- Numbers: autoModel 14/14, AutoFailoverService 8/8, claudeModelOptions 7/7. Effort levels the catalog offers for Opus 5.5: low, medium, high, xhigh, max, ultracode, ultrathink; `max` is one step above `xhigh` if he wants the ceiling.
+- Next: ship on the PC fork build, then hub and hub2.

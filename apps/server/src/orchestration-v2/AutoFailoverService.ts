@@ -109,7 +109,7 @@ export function autoFailoverPlan(input: {
 
 /** The Auto level whose orchestrator is closest to a hand-picked model. */
 function impliedAutoLevel(model: string): "low" | "medium" | "high" {
-  if (/fable|gpt-6\.1-sol|astra/i.test(model)) return "high";
+  if (/gpt-6\.1-sol|astra/i.test(model)) return "high";
   if (/sonnet|haiku|flash|opencode\/|luna/i.test(model)) return "low";
   return "medium";
 }
