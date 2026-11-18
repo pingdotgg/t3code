@@ -4,6 +4,7 @@ import {
   CodexSettings,
   isProviderDriverKind,
   ProviderDriverKind,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry, type ProviderIcon } from "@t3tools/provider-core/client";
@@ -61,6 +62,18 @@ export const providerClients = makeProviderClientRegistry([
 
 export function getProviderClient(driver: string | null | undefined) {
   return isProviderDriverKind(driver) ? providerClients.get(driver) : undefined;
+}
+
+export function unavailableModelReason(
+  provider: Pick<ServerProvider, "models"> | null | undefined,
+  slug: string,
+): string | null {
+  const model = provider?.models.find(
+    (entry) => entry.slug === slug || entry.aliases?.includes(slug),
+  );
+  return model?.isUnavailable
+    ? `${model.name} is temporarily unavailable. Choose another model or try again later.`
+    : null;
 }
 
 export function resolveModelShortName(

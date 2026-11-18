@@ -2,6 +2,7 @@ import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Cause from "effect/Cause";
 import * as Stream from "effect/Stream";
@@ -15,9 +16,14 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { InferenceProxy } from "./InferenceProxy.ts";
-import { inferenceTarget, isRetryableInferenceStatus } from "./routes.ts";
+import { inferenceRetryDelayMs, inferenceTarget, isRetryableInferenceStatus } from "./routes.ts";
 
 const MAX_REPLAY_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const decodeErrorJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const isProviderError = Schema.is(
+  Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
+);
 const MAX_CATALOG_BODY_BYTES = 1024 * 1024;
 const MAX_CATALOG_UNION_BYTES = 8 * 1024 * 1024;
 const MAX_CATALOG_MODELS = 4096;
@@ -142,7 +148,7 @@ const handler = Effect.gen(function* () {
       ? grantDenied()
       : HttpServerResponse.jsonUnsafe(health, { headers: { "cache-control": "no-store" } });
   }
-  const canReplay = yield* host.hasFallback(key, targetPath.environmentId, targetPath.driver);
+  const canReplay = yield* host.hasRoutePool(key, targetPath.environmentId, targetPath.driver);
   const declaredLength = request.headers["content-length"];
   const length = Number(declaredLength);
   const buffered =
@@ -173,7 +179,17 @@ const handler = Effect.gen(function* () {
     targetPath.path === "/v1/models",
   );
   if (candidates === null) return grantDenied();
-  if (!candidates.length) return HttpServerResponse.empty({ status: 503 });
+  if (!candidates.length)
+    return HttpServerResponse.jsonUnsafe(
+      {
+        type: "error",
+        error: {
+          type: "server_error",
+          message: `No inference host is currently available${model ? ` for model ${model}` : ""}. Check Inference accounts or choose another model.`,
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
   const eligible = model
     ? candidates.filter((candidate) => candidate.models.includes(model))
     : candidates.slice(0, 1);
@@ -307,7 +323,7 @@ const handler = Effect.gen(function* () {
     break;
   }
   if (!result) return HttpServerResponse.empty({ status: 502 });
-  return HttpServerResponse.stream(result.stream, {
+  const responseOptions = {
     status: result.status,
     contentType: result.headers["content-type"] ?? "application/json",
     headers: {
@@ -320,7 +336,39 @@ const handler = Effect.gen(function* () {
         ? { "retry-after-ms": result.headers["retry-after-ms"] }
         : {}),
     },
-  });
+  };
+  if (
+    targetPath.driver === "codex" &&
+    result.status === 503 &&
+    result.headers["content-type"]?.startsWith("application/json")
+  ) {
+    const delay = inferenceRetryDelayMs(
+      result.headers["retry-after"],
+      result.headers["retry-after-ms"],
+      yield* Clock.currentTimeMillis,
+    );
+    if (delay !== undefined && delay > 0) {
+      const buffered = yield* replayBody(result.stream, MAX_ERROR_BODY_BYTES);
+      const decoded = buffered.body && decodeErrorJson(new TextDecoder().decode(buffered.body));
+      if (decoded && Option.isSome(decoded) && isProviderError(decoded.value)) {
+        const payload = decoded.value;
+        const seconds = Math.ceil(delay / 1000);
+        // Codex displays the error message but omits Retry-After from retry notifications.
+        return HttpServerResponse.jsonUnsafe(
+          {
+            ...payload,
+            error: {
+              ...payload.error,
+              message: `${payload.error.message} Retry after ${seconds} ${seconds === 1 ? "second" : "seconds"}.`,
+            },
+          },
+          responseOptions,
+        );
+      }
+      return HttpServerResponse.stream(buffered.stream, responseOptions);
+    }
+  }
+  return HttpServerResponse.stream(result.stream, responseOptions);
 }).pipe(
   Effect.orElseSucceed(() => HttpServerResponse.empty({ status: 502 })),
   Effect.withTracerEnabled(false),

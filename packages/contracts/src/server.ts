@@ -83,6 +83,7 @@ export const ServerProviderModel = Schema.Struct({
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   badge: Schema.optional(Schema.Literal("new")),
   isCustom: Schema.Boolean,
+  isUnavailable: Schema.optional(Schema.Boolean),
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
   // False when the provider can run this model in sessions but not for

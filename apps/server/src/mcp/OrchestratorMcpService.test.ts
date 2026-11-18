@@ -2893,6 +2893,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ...codex,
             models: [
               { slug: "claude-opus-4-1", isLegacy: true },
+              { slug: "claude-opus-cooling-down", isUnavailable: true },
               ...Array.from({ length: 9 }, (_, index) => ({ slug: `claude-opus-5-${index + 1}` })),
             ].map((model) => ({ ...model, name: model.slug, isCustom: false, capabilities: null })),
             version: "2.1.302",
@@ -2941,6 +2942,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(updateRequired.code, "model_unavailable");
         assert.include(updateRequired.message, "v2.1.302");
         assert.include(updateRequired.message, "2.1.321");
+
+        const coolingDown = yield* refuse("claude-opus-cooling-down");
+        assert.equal(coolingDown.code, "model_unavailable");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

@@ -59,7 +59,7 @@ import { DraftId, hydrateImagesFromPersisted, useComposerDraftStore } from "../c
 import { derivePhase } from "../session-logic";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
-  getAntigravitySendBlockReason,
+  getProviderModelSendBlockReason,
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -745,7 +745,7 @@ describe("resolveComposerProviderSelection", () => {
 
     expect(selection.selectedProviderEntry?.instanceId).toBe(signedOutEntry.instanceId);
     expect(
-      getAntigravitySendBlockReason(selection.selectedProviderEntry?.snapshot, "gemini-pro"),
+      getProviderModelSendBlockReason(selection.selectedProviderEntry?.snapshot, "gemini-pro"),
     ).toBe("Sign in to Antigravity in provider settings before sending.");
   });
 
@@ -755,10 +755,10 @@ describe("resolveComposerProviderSelection", () => {
       models: catalogModels,
     }).snapshot;
 
-    expect(getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog")).toBe(
+    expect(getProviderModelSendBlockReason(provider, "saved-model-not-in-current-catalog")).toBe(
       "That Antigravity model is no longer available. Choose another model.",
     );
-    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBeNull();
+    expect(getProviderModelSendBlockReason(provider, "gemini-pro")).toBeNull();
   });
 
   it("allows a saved native model to retry after a provider error without changing it", () => {
@@ -768,7 +768,7 @@ describe("resolveComposerProviderSelection", () => {
     }).snapshot;
 
     expect(
-      getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog"),
+      getProviderModelSendBlockReason(provider, "saved-model-not-in-current-catalog"),
     ).toBeNull();
   });
 

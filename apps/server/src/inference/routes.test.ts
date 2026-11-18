@@ -95,6 +95,7 @@ describe("inference routes", () => {
       }),
     );
     expect(codex.config.launchArgs).toContain(baseUrl + "/v1");
+    expect(codex.config.launchArgs).toContain("request_max_retries=0");
     expect(codex.config.customModels).toEqual(["gpt-fixture"]);
     expect(codex.config.launchArgs).not.toContain("private");
     expect(codex.environment).toContainEqual({

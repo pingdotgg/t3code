@@ -42,11 +42,14 @@ export function isRuntimeModelDefaultAlias(
 export function keepsUnavailableModelOptions(
   provider: ProviderDriverKind,
   model: string | null | undefined,
+  models: ReadonlyArray<ServerProviderModel>,
+  hostedModelCatalog = false,
 ): boolean {
   return (
     provider !== "antigravity" &&
     !isRuntimeModelDefaultAlias(provider, model) &&
-    hasRuntimeModelCatalog(provider)
+    (hasRuntimeModelCatalog(provider) || hostedModelCatalog) &&
+    resolveSelectableModel(provider, model, models) === null
   );
 }
 
@@ -123,11 +126,13 @@ export function getDefaultServerModel(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,
 ): string {
-  const models = getProviderModels(providers, provider);
+  const catalog = getProviderModels(providers, provider);
+  const models = catalog.filter((model) => !model.isUnavailable);
   return (
     models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     models.find((model) => !model.isCustom)?.slug ??
     models[0]?.slug ??
+    catalog[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[provider] ??
     DEFAULT_MODEL
   );

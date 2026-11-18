@@ -15,6 +15,7 @@ import {
   NO_PROVIDER_MODEL_SELECTION,
   type ProviderInstanceEntry,
   deriveComposerProviderInstanceEntries,
+  usesHostedModelCatalog,
 } from "../../providerInstances";
 import { type UnifiedSettings } from "@t3tools/contracts/settings";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
@@ -86,8 +87,14 @@ export function useComposerProviderModel(
     settings,
   });
   const selectedProviderModels = selection.selectedProviderEntry?.models ?? NO_PROVIDER_MODELS;
+  const hostedModelCatalog = usesHostedModelCatalog(
+    selectedInstanceId,
+    selectedProvider,
+    settings.providerInstances[selectedInstanceId]?.config,
+  );
   const composerProviderState = getComposerProviderState({
     provider: selectedProvider,
+    hostedModelCatalog,
     model: modelState.selectedModel,
     models: selectedProviderModels,
     promptInjectionState,
@@ -100,6 +107,7 @@ export function useComposerProviderModel(
     selectedInstanceId,
     selectedProvider,
     selectedProviderModels,
+    hostedModelCatalog,
     composerModelOptions: modelState.modelOptions,
     selectedModel: modelState.selectedModel,
     composerProviderState,

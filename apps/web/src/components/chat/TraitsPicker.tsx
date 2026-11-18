@@ -20,7 +20,6 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-  normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo } from "react";
 import { GaugeIcon } from "lucide-react";
@@ -119,11 +118,15 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   planModeEnabled: boolean,
+  hostedModelCatalog = false,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
-  const modelIsUnavailable =
-    keepsUnavailableModelOptions(provider, model) &&
-    !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
+  const modelIsUnavailable = keepsUnavailableModelOptions(
+    provider,
+    model,
+    models,
+    hostedModelCatalog,
+  );
   const descriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
         planModeEnabled
@@ -191,6 +194,7 @@ function getSelectedTraits(
 
 export function getTraitsSectionVisibility(input: {
   provider: ProviderDriverKind;
+  hostedModelCatalog?: boolean;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
   promptUltrathink?: PromptUltrathink | undefined;
@@ -206,6 +210,7 @@ export function getTraitsSectionVisibility(input: {
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     input.planModeEnabled,
+    input.hostedModelCatalog,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -284,6 +289,7 @@ export function getReasoningTraitStep(input: {
 
 export interface TraitsMenuContentProps {
   provider: ProviderDriverKind;
+  hostedModelCatalog?: boolean;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
@@ -302,6 +308,7 @@ export type TraitsSelectionInput = TraitsMenuContentProps & TraitsPersistence;
 /** The model's traits with their shown values, and writers that persist a change. */
 export function useTraitsSelection({
   provider,
+  hostedModelCatalog = false,
   instanceId,
   models,
   model,
@@ -335,6 +342,7 @@ export function useTraitsSelection({
   };
   const selected = getTraitsSectionVisibility({
     provider,
+    hostedModelCatalog,
     models,
     model,
     promptUltrathink,

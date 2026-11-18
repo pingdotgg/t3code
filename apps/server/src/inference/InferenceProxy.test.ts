@@ -1171,6 +1171,34 @@ it.effect(
             expect(activeCodexConfig).toMatchObject({
               customModels: expect.arrayContaining(["gpt-local-new"]),
             });
+            const astra = "gpt-local-new";
+            catalog = initialCatalog;
+            poolCooldowns = [
+              {
+                scope: "model",
+                model_key: astra,
+                retry_at: DateTime.formatIso(
+                  DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + 320_000),
+                ),
+              },
+            ];
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
+            expect(activeCodexConfig).toMatchObject({
+              customModels: expect.arrayContaining([astra]),
+            });
+            expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
+              unavailableModels: [astra],
+            });
+            expect(yield* proxy.routeCandidates(local.key, hostId, "codex", astra)).toEqual([]);
+            poolCooldowns = undefined;
+            catalog = [...initialCatalog, { id: astra, owned_by: "openai" }];
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
+            expect(yield* proxy.routeCandidates(local.key, hostId, "codex", astra)).toHaveLength(1);
+            catalog = initialCatalog;
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
+            expect(activeCodexConfig).toMatchObject({
+              customModels: expect.not.arrayContaining([astra]),
+            });
             const piId = ProviderInstanceId.make("pi");
             yield* proxy.connect({
               ...connect,
@@ -1453,7 +1481,7 @@ it.effect(
             ).toHaveLength(2);
             peerId = hostId;
             yield* proxy.connect({ ...connect, grant: issued });
-            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* proxy.hasRoutePool(issued.key, hostId, "codex")).toBe(true);
             expect(yield* fs.readFileString(config.settingsPath)).not.toContain(issued.key);
             const setCodexConfigEnabled = (enabled: boolean) =>
               settings.reviseProviderInstance(ProviderInstanceId.make("codex"), (instance) => {
@@ -1469,7 +1497,7 @@ it.effect(
                 });
               });
             yield* setCodexConfigEnabled(false);
-            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(false);
+            expect(yield* proxy.hasRoutePool(issued.key, hostId, "codex")).toBe(false);
             expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toBeNull();
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
             expect((yield* proxy.status).routes.map((route) => route.instanceId)).not.toContain(
@@ -1482,7 +1510,7 @@ it.effect(
                 [inferenceProject]: { providerInstances: { [codexId]: { enabled: true } } },
               },
             });
-            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* proxy.hasRoutePool(issued.key, hostId, "codex")).toBe(true);
             expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toHaveLength(1);
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).not.toBeNull();
             expect((yield* proxy.status).routes.map((route) => route.instanceId)).toContain(
@@ -1512,13 +1540,13 @@ it.effect(
             const resumed = (yield* settings.getSettings).providerInstances[codexId]!;
             expect(resumed.enabled).toBe(false);
             expect(resumed.config).toMatchObject({ inferenceEnabled: true });
-            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* proxy.hasRoutePool(issued.key, hostId, "codex")).toBe(true);
             yield* settings.updateSettings({
               projectSettingsOverrides: { [inferenceProject]: null },
             });
             yield* setCodexConfigEnabled(true);
             yield* proxy.connect({ ...connect, grant: issued });
-            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* proxy.hasRoutePool(issued.key, hostId, "codex")).toBe(true);
             expect(
               (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
                 ?.config,
@@ -1540,6 +1568,9 @@ it.effect(
                 (candidate) => candidate.hostId,
               ),
             ).toEqual([EnvironmentId.make("other-host")]);
+            const fallbackHealth = yield* proxy.health(issued.key, hostId, "codex");
+            expect(fallbackHealth?.models).toContain("codex-auto-review");
+            expect(fallbackHealth?.unavailableModels ?? []).not.toContain("codex-auto-review");
             yield* proxy.recordRouteOutcome({
               driver: "codex",
               hostId,
@@ -1632,7 +1663,25 @@ it.effect(
             ).toHaveLength(2);
             const reissued = { ...issued, key: "reissued-primary-key" };
             yield* proxy.connect({ ...connect, grant: reissued });
-            expect(yield* proxy.hasFallback(reissued.key, hostId, "codex")).toBe(false);
+            expect(yield* proxy.hasRoutePool(reissued.key, hostId, "codex")).toBe(true);
+            expect(
+              yield* proxy.routeCandidates(reissued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(1);
+            yield* proxy.recordRouteOutcome({
+              driver: "codex",
+              hostId,
+              model: "codex-auto-review",
+              status: 503,
+              retryAfter: "320",
+            });
+            yield* TestClock.adjust("319 seconds");
+            expect(
+              yield* proxy.routeCandidates(reissued.key, hostId, "codex", "codex-auto-review"),
+            ).toEqual([]);
+            yield* TestClock.adjust("1 second");
+            expect(
+              yield* proxy.routeCandidates(reissued.key, hostId, "codex", "codex-auto-review"),
+            ).toHaveLength(1);
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
             peerId = EnvironmentId.make("other-host");
             yield* proxy.connect({

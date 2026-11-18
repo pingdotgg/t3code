@@ -46,7 +46,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       selectedFill={false}
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.slug)}
-      disabled={Boolean(props.disabledReason)}
+      disabled={props.unavailable || Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer",
         props.disabledReason &&

@@ -12,7 +12,6 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-  normalizeModelSlug,
   withImplicitFastModeDefault,
 } from "@t3tools/shared/model";
 
@@ -26,6 +25,7 @@ import {
 
 type ComposerProviderStateInput = {
   provider: ProviderDriverKind;
+  hostedModelCatalog?: boolean;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
@@ -46,6 +46,7 @@ type ComposerProviderState = {
 
 type ComposerTraitsTarget = {
   provider: ProviderDriverKind;
+  hostedModelCatalog?: boolean;
   instanceId: ProviderInstanceId;
   threadRef?: ScopedThreadRef | undefined;
   draftId?: DraftId | undefined;
@@ -86,20 +87,16 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     promptInjectionState = "none",
     planModeEnabled,
   } = input;
-  if (keepsUnavailableModelOptions(provider, model)) {
-    const normalizedModel = normalizeModelSlug(model, provider);
-    const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
-    if (!modelIsInCatalog) {
-      const preservedOptions = modelOptions?.filter(
-        (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
-      );
-      return {
-        provider,
-        promptEffort: null,
-        modelOptionsForDispatch:
-          preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
-      };
-    }
+  if (keepsUnavailableModelOptions(provider, model, models, input.hostedModelCatalog)) {
+    const preservedOptions = modelOptions?.filter(
+      (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+    );
+    return {
+      provider,
+      promptEffort: null,
+      modelOptionsForDispatch:
+        preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
+    };
   }
   const { caps, selections } = resolveComposerOptionSelections(
     models,
