@@ -93,6 +93,15 @@ describe("inline code that names a file", () => {
     expect(rewrite("See `src/math.ts:2` and `./README.md`.")).toBe(
       "See [src/math.ts:2](<src/math.ts:2>) and [./README.md](<./README.md>).",
     );
+    for (const path of [
+      "src/數學.ts:2",
+      "數學/math.ts:2",
+      "數學.ts:2",
+      "src/數學.ts:2-4",
+      "docker/Dockerfile",
+    ]) {
+      expect(rewrite(`See \`${path}\`.`), path).toBe(`See [${path}](<${path}>).`);
+    }
   });
 
   it("keeps commands, identifiers and URLs as code", () => {

@@ -1,3 +1,7 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK's spawn hook returns a Node child process.
+import * as NodeChildProcess from "node:child_process";
+
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -18,6 +22,9 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AUTO_LEVEL_MODELS } from "@t3tools/shared/autoModel";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SpawnWorker from "../process/SpawnWorker.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
@@ -27,6 +34,7 @@ import {
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
+  type SpawnOptions as ClaudeSpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -178,11 +186,16 @@ function formatClaudeSubscriptionAuthLabel(subscriptionType: string): string {
   return `Claude ${subscriptionLabel} Subscription`;
 }
 
+function hasApiKey(apiKeySource: string | undefined): boolean {
+  return Boolean(apiKeySource) && apiKeySource !== "none";
+}
+
 function claudeAuthMetadata(input: {
   readonly subscriptionType: string | undefined;
   readonly authMethod: string | undefined;
+  readonly apiKeySource: string | undefined;
 }): { readonly type: string; readonly label: string } | undefined {
-  if (normalizeClaudeAuthMethod(input.authMethod) === "apiKey") {
+  if (normalizeClaudeAuthMethod(input.authMethod) === "apiKey" || hasApiKey(input.apiKeySource)) {
     return {
       type: "apiKey",
       label: "Claude API Key",
@@ -217,8 +230,7 @@ function claudeAuthStatus(
   }
   if (capabilities.tokenSource !== "none") return "authenticated";
   // API keys can authenticate with tokenSource: none; also check key and account fields.
-  const hasApiKey = Boolean(capabilities.apiKeySource) && capabilities.apiKeySource !== "none";
-  return hasApiKey || capabilities.email || capabilities.subscriptionType
+  return hasApiKey(capabilities.apiKeySource) || capabilities.email || capabilities.subscriptionType
     ? "authenticated"
     : "unauthenticated";
 }
@@ -234,14 +246,49 @@ const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/**
+ * The SDK's own spawn stats the executable and hands libuv the workspace as cwd, so a mount
+ * that stops answering freezes the server. `env` enters the cwd and finds the CLI in the child.
+ * A shell would not do: dash drops the exported Bash functions a launcher may call.
+ */
+export function spawnClaudeProbeThroughEnv({
+  command,
+  args,
+  cwd,
+  env,
+  signal,
+}: ClaudeSpawnOptions) {
+  const launch = envTrampoline(command, args, cwd) ?? { command, args, cwd };
+  return NodeChildProcess.spawn(launch.command, launch.args, {
+    ...("cwd" in launch ? { cwd: launch.cwd } : {}),
+    env,
+    signal,
+    // The probe ignores stderr.
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+}
+
+/** Windows runs CreateProcess on the calling thread, so the probe launches from a launcher thread. */
+function spawnClaudeProbeOffThread({ command, args, cwd, env, signal }: ClaudeSpawnOptions) {
+  const child = SpawnWorker.spawnPiped(command, args, { cwd, env, signal, windowsHide: true });
+  // The probe ignores stderr; drain it so a full pipe cannot stall the CLI.
+  child.stderr.resume();
+  return child;
+}
+
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly spawnVia: "env" | "launcher-thread" | undefined;
 }): ClaudeQueryOptions {
   return {
+    ...(input.spawnVia === "env" ? { spawnClaudeCodeProcess: spawnClaudeProbeThroughEnv } : {}),
+    ...(input.spawnVia === "launcher-thread"
+      ? { spawnClaudeCodeProcess: spawnClaudeProbeOffThread }
+      : {}),
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
@@ -471,6 +518,13 @@ const probeClaudeCapabilities = (
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
         })
       : 0;
+    const platform = yield* HostProcess.Platform;
+    const spawnVia =
+      platform === "win32"
+        ? "launcher-thread"
+        : platform === "linux" && (yield* Effect.promise(supportsEnvChdir))
+          ? "env"
+          : undefined;
     return yield* Effect.tryPromise({
       try: async () => {
         const q = claudeQuery({
@@ -484,6 +538,7 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
+            spawnVia,
           }),
         });
         const init = await q.initializationResult();
@@ -492,7 +547,9 @@ const probeClaudeCapabilities = (
       catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "initialize", cause }),
     });
   }).pipe(
-    Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.timeout(
+      resolveProviderProbeTimeoutMs("claude", CAPABILITIES_PROBE_TIMEOUT_MS, environment),
+    ),
     Effect.flatMap(({ q, init, graceMs }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
@@ -659,7 +716,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ["--version"],
     providerProbeEnvironment(resolvedEnvironment),
     cwd,
-  ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
+  ).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("claude", CLAUDE_VERSION_CHECK_TIMEOUT_MS, resolvedEnvironment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -764,7 +826,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         auth: { status: "unknown" },
         message: probeFailure
           ? Cause.isTimeoutError(probeFailure)
-            ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+            ? `Timed out after ${resolveProviderProbeTimeoutMs("claude", CAPABILITIES_PROBE_TIMEOUT_MS, resolvedEnvironment) / 1_000}s while checking Claude account status.`
             : "Claude Agent CLI failed while checking account status."
           : "Could not verify Claude authentication status from initialization result.",
       },
@@ -776,6 +838,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
     resolvedEnvironment.ANTHROPIC_BASE_URL;
   const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
+  const endpoint = customApiEndpoint ? URL.parse(baseUrl?.trim() ?? "")?.origin : undefined;
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     const path = yield* Path.Path;
     const configDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
@@ -804,10 +867,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   // A proxy's ANTHROPIC_AUTH_TOKEN reads as an API key; the endpoint is what the token is for.
   const authMetadata =
     apiProviderAuthMetadata(capabilities.apiProvider) ??
-    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
+    (customApiEndpoint
+      ? { type: "customEndpoint", label: "Custom API endpoint", ...(endpoint ? { endpoint } : {}) }
+      : undefined) ??
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
+      apiKeySource: capabilities.apiKeySource,
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
   const usageLimits = !capabilities.usage

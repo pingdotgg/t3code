@@ -117,6 +117,8 @@ export function AssistantCitationCommentEditor({
         <Button
           variant="outline"
           size="xs"
+          // Escape cancels; keep Tab from the comment on Save so Enter cannot discard a new citation.
+          tabIndex={-1}
           onPointerDown={(event) => event.preventDefault()}
           onClick={onCancel}
         >

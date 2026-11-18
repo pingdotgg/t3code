@@ -8,11 +8,13 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { autoLevelSelection } from "@t3tools/shared/autoModel";
 import {
   announcedRun,
   isDetailBehindShell,
 } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import {
+  canResumeThread,
   deriveProviderSubagentStatus,
   deriveProviderExtensionStatuses,
   deriveResumableRunId,
@@ -318,14 +320,17 @@ export function useThreadComposerState(input: {
   const selectedDraft = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection =
+    selectedDraft.modelSelection ?? autoLevelSelection(selectedThread?.modelSelection) ?? null;
   const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+  const nowMinuteMs = useNowMinuteMs();
   const pendingHandoff = resolvePendingHandoff(
     selectedThreadProjection?.projection,
     isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
       ? null
       : modelSelection,
     serverConfig?.providers ?? [],
+    nowMinuteMs,
   );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   // Plan mode is not offered to users; every send runs in build mode.
@@ -401,6 +406,9 @@ export function useThreadComposerState(input: {
   const resumableRunId = selectedThreadProjection
     ? deriveResumableRunId(selectedThreadProjection.projection, selectedThreadRuntime)
     : null;
+  const canResume = selectedThreadProjection
+    ? canResumeThread(selectedThreadProjection.projection, resumableRunId, queueHeld)
+    : queueHeld;
 
   const runlessWorkStartedAt = selectedThreadProjection
     ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
@@ -443,7 +451,6 @@ export function useThreadComposerState(input: {
           now,
         })
       : null;
-  const nowMinuteMs = useNowMinuteMs();
   const compactTokens =
     selectedDraft.freshContext === true
       ? null
@@ -488,6 +495,14 @@ export function useThreadComposerState(input: {
       Dialog.alert(
         "Too many attachments",
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      );
+      return;
+    }
+    // A queued message stays in its thread, so saving `/side` would send it to main.
+    if (parseSideChatCommand(text)) {
+      Dialog.alert(
+        "Queued message not updated",
+        "A queued message can't move to a side chat. Remove /side or /btw to save it.",
       );
       return;
     }
@@ -828,7 +843,7 @@ export function useThreadComposerState(input: {
           context: draft.context,
           attachments: [],
         });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(threadKey, attachments, { restore: true });
         if (freshContext) setFreshSessionPending(threadKey, true);
         setThreadComposerError(
           threadKey,
@@ -919,6 +934,7 @@ export function useThreadComposerState(input: {
     canSteerActiveTurn,
     queueHeld,
     resumableRunId,
+    canResume,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,

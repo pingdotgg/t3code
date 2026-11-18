@@ -50,6 +50,7 @@ const TERMINAL_RUN_STATUSES = new Set<OrchestratorMcpThreadRun["status"]>([
   "rolled_back",
 ]);
 const READ_PAGE_LIMIT = 100;
+const READ_ITEM_MAX_CHARS = 20_000;
 const TITLE_MAX_CHARS = 80;
 
 export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
@@ -215,11 +216,12 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
+  flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { quietLogs: flags.json });
+  const minimumLogLevel = flags.json ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -247,10 +249,11 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     return yield* run(makeThreadTools(session, origin));
   }).pipe(
     Effect.scoped,
+    Effect.provideService(References.MinimumLogLevel, minimumLogLevel),
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
   );
@@ -394,6 +397,7 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
         threadId,
         view,
         limit: READ_PAGE_LIMIT,
+        maxCharsPerItem: READ_ITEM_MAX_CHARS,
         runLimit: 1,
         ...(afterPosition === undefined ? {} : { afterPosition }),
       },
@@ -439,6 +443,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
           threadId,
           view: "messages",
           limit: READ_PAGE_LIMIT,
+          maxCharsPerItem: READ_ITEM_MAX_CHARS,
           runLimit: 1,
           ...(afterPosition < 0 ? {} : { afterPosition }),
         },
@@ -473,7 +478,13 @@ const readFullText = Effect.fn("cli.thread.readFullText")(function* (
   while (nextTextOffset !== null) {
     const page = yield* tools.call(
       "t3_thread_read",
-      { threadId, itemId: item.itemId, textOffset: nextTextOffset, runLimit: 1 },
+      {
+        threadId,
+        itemId: item.itemId,
+        textOffset: nextTextOffset,
+        runLimit: 1,
+        maxCharsPerItem: READ_ITEM_MAX_CHARS,
+      },
       OrchestratorMcpThreadReadResult,
     );
     const chunk = page.items.find((candidate) => candidate.itemId === item.itemId);

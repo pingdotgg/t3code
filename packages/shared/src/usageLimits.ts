@@ -14,10 +14,13 @@ import {
   type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+
+import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -32,6 +35,10 @@ export function exhaustedUsageWindow(
   const exhausted = windows.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
+      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
+      (model === undefined ||
+        window.providerIds === undefined ||
+        window.providerIds.includes(model.split("/")[0] ?? "")) &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
@@ -248,6 +255,20 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
+// Source ids are environment-local, so only a remote endpoint names the same hub across environments.
+function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
+  // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
+  const endpoint = source.endpoint;
+  const host = endpoint?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?(?:\/|$)/)?.[1];
+  const local =
+    !host ||
+    isLocalLoopbackHost(host) ||
+    isWildcardHost(host) ||
+    // Each machine resolves these to itself too; shared host classification leaves them out.
+    /\.localhost\.*$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
+  return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
+}
+
 export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
@@ -374,8 +395,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const resolved = resolveKey(account);
+        // A resolved account already has an identity; its public key must stay distinct from others'.
+        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
+        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        merge(resolved ?? key, {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -539,6 +563,25 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
+const CODEX_PLAN_CAPACITY: Record<string, number> = {
+  "ChatGPT Plus Subscription": 1,
+  "ChatGPT Pro 100 Subscription": 5,
+  "ChatGPT Pro 200 Subscription": 20,
+};
+// Claude's published plan multipliers describe the session allowance only.
+const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
+
+function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
+  if (!account.plan) return undefined;
+  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+    return CODEX_PLAN_CAPACITY[account.plan];
+  }
+  if (account.driver === "claudeAgent" && kind === "session") {
+    return CLAUDE_SESSION_CAPACITY[account.plan];
+  }
+  return undefined;
+}
+
 // Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
@@ -607,15 +650,28 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    // One unknown plan makes the pool incomparable by plan, so every member then counts once.
+    const capacities = members.map((m) => planCapacity(m.account, first.kind));
+    const weights = capacities.every((capacity) => capacity !== undefined)
+      ? capacities
+      : members.map(() => 1);
+    const weightOf = new Map(members.map((m, index) => [m, weights[index]!]));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * weightOf.get(m)!, 0) / totalWeight;
     // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: weightOf.get(m)! }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -625,7 +681,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.refillPercent / members.length),
+                restoresPercent: Math.round(
+                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
+                ),
               },
             ];
       })
@@ -764,6 +822,87 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt <= now) return "resets now";
   if (resetsAt - now < MINUTE) return "Resets momentarily";
   return `resets in ${formatDuration(resetsAt - now)}`;
+}
+
+export interface ResetCreditSuggestion {
+  readonly recommendation: "recommended" | "wait" | "save" | "hold" | "expiring_soon";
+  readonly actionLabel: string;
+  readonly reason: string;
+}
+
+export function suggestResetCredit(
+  account: LimitAccount,
+  window: ServerProviderUsageWindow,
+  poolMembers: ReadonlyArray<{
+    readonly account: LimitAccount;
+    readonly window?: ServerProviderUsageWindow | null;
+  }>,
+  now: number,
+): ResetCreditSuggestion | null {
+  const credits = account.limits.resetCredits;
+  if (!credits || credits.availableCount <= 0) return null;
+
+  const remaining = remainingPercent(window);
+  const resetsAt = resetMillis(window);
+  const resetsInMs = resetsAt !== null ? resetsAt - now : null;
+
+  // 1. Expiring soon: credit expires within 24 hours
+  const optionExpiries = (credits.options ?? [])
+    .filter((opt) => opt.availableCount > 0 && opt.expiresAt)
+    .map((opt) => Date.parse(opt.expiresAt!))
+    .filter(Number.isFinite);
+  const nextExpires = credits.nextExpiresAt ? Date.parse(credits.nextExpiresAt) : null;
+  if (nextExpires && Number.isFinite(nextExpires)) {
+    optionExpiries.push(nextExpires);
+  }
+  const soonestExpiry = optionExpiries.length > 0 ? Math.min(...optionExpiries) : null;
+  if (soonestExpiry !== null) {
+    const timeUntilExpiry = soonestExpiry - now;
+    if (timeUntilExpiry > 0 && timeUntilExpiry <= 24 * 3600 * 1000) {
+      return {
+        recommendation: "expiring_soon",
+        actionLabel: "Use before expiry",
+        reason: `Banked reset credit expires in ${formatDuration(timeUntilExpiry)}. Use it before it expires.`,
+      };
+    }
+  }
+
+  // 2. Natural reset is imminent (within 45 minutes)
+  if (resetsInMs !== null && resetsInMs > 0 && resetsInMs <= 45 * 60 * 1000) {
+    return {
+      recommendation: "wait",
+      actionLabel: "Wait for natural reset",
+      reason: `Window resets naturally in ${formatDuration(resetsInMs)}. Save your banked credit.`,
+    };
+  }
+
+  // 3. This account still has plenty of quota (> 20% remaining)
+  if (remaining > 20) {
+    return {
+      recommendation: "save",
+      actionLabel: "Save for later",
+      reason: `${remaining}% quota remaining. Reset only when depleted.`,
+    };
+  }
+
+  // 4. Other account in the same pool has plenty of quota (> 25% remaining)
+  const otherMembers = poolMembers.filter((m) => m.account.key !== account.key && m.window);
+  const otherMaxRemaining =
+    otherMembers.length > 0 ? Math.max(...otherMembers.map((m) => remainingPercent(m.window!))) : 0;
+  if (otherMaxRemaining > 25) {
+    return {
+      recommendation: "hold",
+      actionLabel: "Hold off (other account active)",
+      reason: `Auto mode has another account with ${otherMaxRemaining}% quota left. Save credit until both are depleted.`,
+    };
+  }
+
+  // 5. Recommended: Account is depleted and next reset is far away (or not soon)
+  return {
+    recommendation: "recommended",
+    actionLabel: "Recommended to use now",
+    reason: `Quota depleted and next natural reset is ${resetsInMs !== null && resetsInMs > 0 ? `in ${formatDuration(resetsInMs)}` : "hours away"}. Good time to reset.`,
+  };
 }
 
 export const USAGE_LIMITS_COMMAND = {

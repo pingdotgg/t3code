@@ -52,3 +52,50 @@
 - Why: Tomáš wants Auto in every thread, including threads that run on his PC's own T3 server, which has none of the hub's settings.
 - Numbers: 1 new server test, 3 new picker tests; server and web typecheck clean (6 min and 62 s on the hub).
 - Next: Tomáš builds the fork desktop app on his PC; Auto there routes only to the providers logged in on that PC.
+
+## 2026-11-14: Auto routes to the Auto instances again; fork synced with upstream for hub2
+
+- What: Auto prefers instances named "Auto…" (the ones launched with `auto-mode.md`) when accounts tie. The fork merged upstream main (653 commits, no conflicts) and runs on hub2 from `~/projects/t3code-auto`.
+- Why: since every Claude provider lists the Auto levels (#6), the old "lists an Auto model" check matched every Claude instance. Plain `claudeAgent` shares account A's usage with `claudeAuto` and comes first in the registry, so Auto sent turns to it and the orchestrator never got the routing prompt. hub2 ran upstream nightly (DB schema 89); the fork stopped at 85, so it could not run there.
+- Numbers: autoModel 12/12 (the same-account case failed before the fix), ClaudeProvider + ProviderRegistry 80/80, web Auto tests 7/7; typecheck of contracts, shared, server and web clean (21 s server on hub2). Fork build 59 s on hub2.
+- Next: link hub and deploy the same branch there; rebuild the desktop app on the PC.
+
+## 2026-11-14: Auto threads stop showing a false "Context handoff pending"
+
+- What: the shared pending-handoff check (web and mobile) resolves an Auto selection the way the server does, keeping the thread's current model while it fits, before deciding a handoff is coming.
+- Why: in the real hub2 UI, every Auto thread showed "Context handoff pending: Sonnet 5.5 (AB) → Auto Low (CL)" after each turn, while the server log showed the next message stay on `claudeAutoB` (sticky).
+- Numbers: handoff + contextWindow tests 39/39 (the new case failed before); client-runtime, web and mobile typecheck clean. Deployed on hub2 as a web-only build (51 s), no restart.
+- Next: link hub and run the same checks there; rebuild the PC desktop app.
+
+## 2026-11-14: Threads routed by Auto stay on Auto
+
+- What: the model Auto picks carries an `auto` option with its level. The server treats it as Auto on the next command (sticky while under 90%), and web and mobile show the thread's composer as "Auto Low · now Sonnet 5.5 (B)" instead of "Sonnet 5.5 Low".
+- Why: Tomáš saw "Sonnet 5.5 Low" in a thread started on Auto Low. The server stored only the concrete model, so Auto showed only where a local draft remembered it, and clients without the fork's composer sent the concrete model, ending Auto for that thread.
+- Numbers: autoModel 12/12, handoff + contextWindow 39/39 (a recursion the stamp caused was caught by the handoff test); shared, client-runtime, web, mobile and server typecheck clean. Checked in a clean incognito browser on a scratch copy of hub2's data: a thread started on Auto Low over the CLI shows Auto Low in the composer.
+- Deploy: service now runs from `~/.t3/fork-current` (a symlink to the deploy checkout), so a new build goes into a fresh checkout and the restart flips the link.
+- Next: hub (link it first) and a fork build of the PC desktop app; the stock app still shows the concrete model.
+
+## 2026-11-14: Auto fails over to the next subscription the moment one hits its limit
+
+- What: `AutoFailoverService` watches failed runs. When a run on an Auto thread fails with a usage limit (`usage_limit` class: Claude 429 / 5-hour / weekly, Codex `usageLimitExceeded`, Antigravity `RESOURCE_EXHAUSTED`) or no capacity (`UNAVAILABLE`, Claude 529), it benches that provider instance (`AutoCooldown`, until the reported reset, else 30 min; 5 min for no capacity) and sends the thread back through Auto with "Continue where you left off". Auto routing (`resolveAutoModelSelection`) skips benched instances, the sticky current one included. At most 6 failovers per thread per hour.
+- Why: Auto routed only when a message was sent. A limit hit mid-work left the thread failed, and the upstream recovery worker resumed it on the same account hours later, at reset. Tomáš wants Auto to chain across all subscriptions as soon as one runs out. The PC's own DB showed 28 failed runs in two days, most of them limit errors (429, quota, capacity) that should have moved on.
+- Numbers: autoModel 13/13 (new blocked case), AutoFailoverService 6/6; server typecheck clean.
+- Limits: the bench is in memory, so a server restart forgets it (the usage report takes over). A failure whose session error differs from the run's error item has no error class and is not failed over.
+- Next: build the PC desktop app from `tomas/pc-nightly`; deploy to hub/hub2.
+
+## 2026-11-15: Auto failover review fixes, and a way back to the better model
+
+- What: (1) Auto's sticky rule now gives way when a better candidate for the level has room again. Before, a thread that failed over to a weaker model (say Grok) stayed there for good while that account was under 90% used, even after Claude reset. (2) Failover follows the `autoResumeLimitedThreads` setting: off means the failed instance is still benched (the next message the user sends routes around it), but T3 sends nothing on its own. (3) Failover skips a provider's own subagent threads, which cannot receive messages.
+- Why: review of `d25e0609c7` before it went on the PC. The failover sends turns by itself, so a mistake there spends every subscription. The one-way downgrade contradicted the Auto skill, which says a provider re-enters the chain when its window resets.
+- Checked and left alone: the domain event stream starts at the latest sequence, so a server restart does not replay old failed runs into failovers. A failover and the upstream reset-resume cannot both fire: the resume needs the thread's latest run to be the failed one. The return to a better model needs that account under 90%, so a thread does not hop back onto an account about to run out.
+- Numbers: autoModel 14/14, AutoFailoverService 7/7, server typecheck 0 errors.
+- Cost: moving back up is one more provider handoff (a thread summary). It happens once per reset, on the next message.
+- Next: build the PC desktop app from `tomas/pc-nightly` and install it.
+
+## 2026-11-15: Resume works on every provider; limited hand-picked threads move to Auto
+
+- What happened (PC, thread "Port Hub T3 App Improvements to PC"): Claude hit its 5-hour limit. The thread was not on Auto (it started on the Auto instance before Auto existed, with a plain Opus model), so no failover ran. The composer was switched to Grok and Resume pressed. Grok has no native resume, so each Resume failed at once with "Native resume is unavailable". The one "continue" that reached Grok ran a few tool calls, then hit Grok's free limit, which T3 cannot see in usage windows. Every later "continue" went to Grok again and failed. Result: about ten turns with no answer.
+- Fix 1 (`ProviderTurnStartService`): Resume on a provider without native resume now starts an ordinary turn with "Continue where you left off." (plus the handoff context when the provider changed) instead of failing. Upstream's test "refuses unsupported resume" was rewritten to the new behavior.
+- Fix 2 (`AutoFailoverService`): a thread not on Auto that hits a usage limit now fails over through Auto at the level its model implies (Fable/Sol/Astra high; Sonnet/Haiku/Flash/OpenCode/Luna low; else medium). Delegated threads not on Auto are left alone: their parent chose the model.
+- Setup repo: `fallbackModelSelection` (Grok) is cleared by `apply-auto-settings.py`; the health check warns while it is set.
+- Numbers: AutoFailoverService 8/8; ProviderTurnStartService 65/69, the same 4 failures as before the change (Windows-only git/startup tests); server typecheck 0 errors.

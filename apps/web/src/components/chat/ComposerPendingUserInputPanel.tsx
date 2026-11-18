@@ -159,7 +159,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       }
       if (
         target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
+        target.closest(
+          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+        )
       ) {
         return;
       }
@@ -262,6 +264,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
+              lineBreaks
               className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}

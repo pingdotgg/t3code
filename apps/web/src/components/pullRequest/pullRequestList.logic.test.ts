@@ -163,21 +163,23 @@ describe("ranking what a search found", () => {
   const row = (overrides: Partial<PullRequestListEntry> & { number?: number }) =>
     entry({ number: 1, ...overrides });
 
-  it("puts the pull request whose title says it above one that merely mentions it", () => {
-    const titled = row({
-      number: 1,
-      title: "Add the welcome wizard",
-      updatedAt: "2026-07-01T00:00:00Z",
-    });
-    const mentioned = row({
-      number: 2,
-      title: "Unrelated work",
-      updatedAt: "2026-08-01T00:00:00Z",
-    });
-    expect(
-      rankPullRequestMatches([mentioned, titled], "welcome wizard").map((entry) => entry.number),
-    ).toEqual([1, 2]);
-  });
+  it.each([
+    ["welcome wizard", "Add the welcome wizard"],
+    ["24", "Upgrade Node to 24"],
+  ])(
+    "puts the pull request whose title says %j above one that merely mentions it",
+    (query, title) => {
+      const titled = row({ number: 1, title, updatedAt: "2026-07-01T00:00:00Z" });
+      const mentioned = row({
+        number: 2,
+        title: "Unrelated work",
+        updatedAt: "2026-08-01T00:00:00Z",
+      });
+      expect(
+        rankPullRequestMatches([mentioned, titled], query).map((entry) => entry.number),
+      ).toEqual([1, 2]);
+    },
+  );
 
   it("keeps loaded partial-word matches the host's whole-word search missed, after its answer", () => {
     const bilal = { login: "bilal", name: null, avatarUrl: null };

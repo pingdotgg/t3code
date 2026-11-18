@@ -2,7 +2,6 @@ import {
   isProviderAvailable,
   type ModelSelection,
   type ProviderDriverKind,
-  type ProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -14,6 +13,8 @@ import { exhaustedUsageWindow } from "./usageLimits.ts";
  * live usage limits. The level (`low` | `medium` | `high`) rides in the `effort` option.
  */
 const AUTO_MODEL_SLUG = "auto";
+/** Stamped on the model Auto picks, holding the level, so the thread stays on Auto. */
+const AUTO_OPTION_ID = "auto";
 const AUTO_LEVELS = ["low", "medium", "high"] as const;
 type AutoLevel = (typeof AUTO_LEVELS)[number];
 const DEFAULT_LEVEL: AutoLevel = "medium";
@@ -120,28 +121,38 @@ export const AUTO_LEVEL_MODELS: ReadonlyArray<{ readonly slug: string; readonly 
     name: `Auto ${level[0]!.toUpperCase()}${level.slice(1)}`,
   }));
 
+function stampedLevel(selection: ModelSelection | null | undefined): AutoLevel | undefined {
+  const value = selection?.options?.find((option) => option.id === AUTO_OPTION_ID)?.value;
+  return AUTO_LEVELS.find((level) => level === value);
+}
+
 export function isAutoModelSelection(selection: ModelSelection | null | undefined): boolean {
-  return isAutoModelSlug(selection?.model);
+  return isAutoModelSlug(selection?.model) || stampedLevel(selection) !== undefined;
+}
+
+/** The Auto level a routed thread runs at, or undefined for a thread not on Auto. */
+export function routedAutoLevel(selection: ModelSelection | null | undefined) {
+  return stampedLevel(selection);
+}
+
+/** A routed thread's model as the Auto level it came from, for pickers; others unchanged. */
+export function autoLevelSelection<T extends ModelSelection | null | undefined>(
+  selection: T,
+): T | ModelSelection {
+  const level = stampedLevel(selection);
+  return selection && level
+    ? { instanceId: selection.instanceId, model: `${AUTO_MODEL_SLUG}-${level}` }
+    : selection;
 }
 
 function autoLevelOf(selection: ModelSelection): AutoLevel {
+  const stamped = stampedLevel(selection);
+  if (stamped) return stamped;
   const fixed = AUTO_LEVELS.find((level) => selection.model === `${AUTO_MODEL_SLUG}-${level}`);
   if (fixed) return fixed;
   const value = selection.options?.find((option) => option.id === "effort")?.value;
   return AUTO_LEVELS.find((level) => level === value) ?? DEFAULT_LEVEL;
 }
-
-/** The `effort` descriptor an `auto` custom model declares, so pickers show Low/Medium/High. */
-export const AUTO_LEVEL_DESCRIPTOR: ProviderOptionDescriptor = {
-  id: "effort",
-  label: "Auto level",
-  type: "select",
-  options: [
-    { id: "low", label: "Low", description: "Sonnet orchestrates; cheaper models do more" },
-    { id: "medium", label: "Medium", description: "Opus orchestrates", isDefault: true },
-    { id: "high", label: "High", description: "Fable orchestrates" },
-  ],
-};
 
 /** Accounts whose 5-hour use differs by less than this many points count as equally far along. */
 const SESSION_BAND_PERCENT = 10;
@@ -188,11 +199,11 @@ function peakUsedPercent(provider: ServerProvider): number {
 }
 
 /**
- * Instances that list the plain `auto` model carry the Auto-mode prompt, so they win ties. Every
- * Claude provider lists the level rows, so those do not count.
+ * Instances named "Auto…" carry the Auto-mode prompt (their launch args), so they win ties. Every
+ * Claude provider lists the Auto levels, so listing them says nothing about the prompt.
  */
 function isAutoAware(provider: ServerProvider): boolean {
-  return provider.models.some((model) => model.slug === AUTO_MODEL_SLUG);
+  return /^auto\b/i.test(provider.displayName ?? "");
 }
 
 function usable(provider: ServerProvider, model: string, now: number): boolean {
@@ -217,12 +228,15 @@ function effortOptions(provider: ServerProvider, candidate: AutoCandidate) {
     : undefined;
 }
 
-function toSelection(provider: ServerProvider, candidate: AutoCandidate): ModelSelection {
-  const options = effortOptions(provider, candidate);
+function toSelection(
+  provider: ServerProvider,
+  candidate: AutoCandidate,
+  level: AutoLevel,
+): ModelSelection {
   return {
     instanceId: provider.instanceId,
     model: candidate.model,
-    ...(options ? { options } : {}),
+    options: [...(effortOptions(provider, candidate) ?? []), { id: AUTO_OPTION_ID, value: level }],
   };
 }
 
@@ -234,32 +248,52 @@ interface AutoResolution {
 }
 
 /**
- * Keeps the thread's model while it fits this level and is under 90% used (no account hop, no
- * lost prompt cache); otherwise the first usable candidate on the best instance (see
- * `compareInstances`). Null when nothing is usable.
+ * Keeps the thread's model while it fits this level, is under 90% used and no better candidate
+ * has room (no account hop, no lost prompt cache); otherwise the first usable candidate on the
+ * best instance (see `compareInstances`). Null when nothing is usable.
  */
 export function resolveAutoModelSelection(input: {
   readonly selection: ModelSelection;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly now: number;
   readonly current?: ModelSelection | null;
+  /**
+   * Instances (and models) that just failed with a usage limit or no capacity, which the usage
+   * report may not show yet. Auto skips them, the thread's current model included.
+   */
+  readonly blocked?: (instanceId: string, model: string) => boolean;
 }): AutoResolution | null {
   const level = autoLevelOf(input.selection);
   const candidates = AUTO_CANDIDATES[level];
+  const open = (provider: ServerProvider, model: string) =>
+    usable(provider, model, input.now) && !input.blocked?.(provider.instanceId, model);
 
   const current = input.current;
-  if (current && !isAutoModelSelection(current)) {
+  if (current && !isAutoModelSlug(current.model)) {
     const provider = input.providers.find((entry) => entry.instanceId === current.instanceId);
-    const candidate = candidates.find(
+    const rank = candidates.findIndex(
       (entry) => entry.driver === provider?.driver && entry.model === current.model,
     );
+    const candidate = candidates[rank];
+    // A thread that fell back to a weaker model returns once a better one has room again.
+    const betterHasRoom = candidates
+      .slice(0, Math.max(rank, 0))
+      .some((better) =>
+        input.providers.some(
+          (entry) =>
+            entry.driver === (better.driver as ProviderDriverKind) &&
+            open(entry, better.model) &&
+            hasRoom(entry),
+        ),
+      );
     if (
       provider &&
       candidate &&
-      usable(provider, candidate.model, input.now) &&
-      peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT
+      open(provider, candidate.model) &&
+      hasRoom(provider) &&
+      !betterHasRoom
     ) {
-      return { selection: toSelection(provider, candidate), level, sticky: true };
+      return { selection: toSelection(provider, candidate, level), level, sticky: true };
     }
   }
 
@@ -268,12 +302,14 @@ export function resolveAutoModelSelection(input: {
       .filter(
         (provider) =>
           provider.driver === (candidate.driver as ProviderDriverKind) &&
-          usable(provider, candidate.model, input.now),
+          open(provider, candidate.model),
       )
       // A copy: `filter` already returned a new array, and Hermes has no `toSorted`.
       .sort(compareInstances);
     const provider = instances[0];
-    if (provider) return { selection: toSelection(provider, candidate), level, sticky: false };
+    if (provider) {
+      return { selection: toSelection(provider, candidate, level), level, sticky: false };
+    }
   }
   return null;
 }

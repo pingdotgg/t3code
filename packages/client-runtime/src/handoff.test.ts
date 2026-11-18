@@ -87,6 +87,8 @@ const projection = {
   visibleTurnItems: [{ item: { type: "user_message" } }],
 } as unknown as OrchestrationV2ThreadProjection;
 
+const now = Date.parse("2026-11-14T12:00:00.000Z");
+
 describe("pending context handoff", () => {
   it("removes the preview while the handoff starts", () => {
     const selection = { instanceId: to, model: "destination" };
@@ -105,10 +107,10 @@ describe("pending context handoff", () => {
       ],
     };
 
-    expect(resolvePendingHandoff(projection, selection, providers)).not.toBeNull();
-    expect(resolvePendingHandoff(starting, selection, providers)).toBeNull();
+    expect(resolvePendingHandoff(projection, selection, providers, now)).not.toBeNull();
+    expect(resolvePendingHandoff(starting, selection, providers, now)).toBeNull();
     expect(
-      resolvePendingHandoff(starting, { instanceId: from, model: "source" }, providers),
+      resolvePendingHandoff(starting, { instanceId: from, model: "source" }, providers, now),
     ).toEqual({
       from: [selection],
       to: { instanceId: from, model: "source" },
@@ -133,7 +135,7 @@ describe("pending context handoff", () => {
         ],
       };
 
-      expect(resolvePendingHandoff(unstarted, selection, [])).toEqual({
+      expect(resolvePendingHandoff(unstarted, selection, [], now)).toEqual({
         from: [{ instanceId: from, model: "source" }],
         to: selection,
       });
@@ -141,27 +143,58 @@ describe("pending context handoff", () => {
   );
 
   it("appears on selection, updates the destination, and disappears on returning", () => {
-    expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [])).toEqual({
+    expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [], now)).toEqual({
       from: [{ instanceId: from, model: "source" }],
       to: { instanceId: to, model: "first" },
     });
     expect(
-      resolvePendingHandoff(projection, { instanceId: to, model: "second" }, [])?.to.model,
+      resolvePendingHandoff(projection, { instanceId: to, model: "second" }, [], now)?.to.model,
     ).toBe("second");
-    expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
-    expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+    expect(
+      resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [], now),
+    ).toBeNull();
+    expect(
+      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [], now),
+    ).toBeNull();
   });
   it("stays hidden while the thread's timeline is empty", () => {
     const empty = { ...projection, visibleTurnItems: [] };
-    expect(resolvePendingHandoff(empty, { instanceId: to, model: "first" }, [])).toBeNull();
+    expect(resolvePendingHandoff(empty, { instanceId: to, model: "first" }, [], now)).toBeNull();
     // Paging can leave a window of only tool rows after the prompt.
     const toolRowsOnly = {
       ...projection,
       visibleTurnItems: [{ item: { type: "command_execution" } }],
     } as unknown as OrchestrationV2ThreadProjection;
     expect(
-      resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [])?.to.model,
+      resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [], now)?.to.model,
     ).toBe("first");
+  });
+  it("previews an Auto selection as the model Auto keeps, not as a handoff", () => {
+    const autoB = ProviderInstanceId.make("claudeAutoB");
+    const onAutoB = {
+      ...projection,
+      runs: [{ ...projection.runs[0]!, ...run("source", 1, autoB, "claude-sonnet-5-5") }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const claude = (instanceId: ProviderInstanceId, usedPercent: number) =>
+      ({
+        instanceId,
+        driver: "claudeAgent",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [{ slug: "claude-sonnet-5-5", capabilities: { optionDescriptors: [] } }],
+        usageLimits: { windows: [{ kind: "session", usedPercent }] },
+      }) as unknown as ServerProvider;
+    const autoLow = { instanceId: to, model: "auto-low" };
+
+    expect(
+      resolvePendingHandoff(onAutoB, autoLow, [claude(to, 0), claude(autoB, 20)], now),
+    ).toBeNull();
+    // Past 90% Auto moves the thread to the other account, so the handoff is real.
+    expect(
+      resolvePendingHandoff(onAutoB, autoLow, [claude(to, 0), claude(autoB, 95)], now)?.to,
+    ).toMatchObject({ instanceId: to, model: "claude-sonnet-5-5" });
   });
   it("resumes compatible account overlays without showing a handoff", () => {
     const providers = [from, to].map((instanceId) => ({
@@ -170,7 +203,7 @@ describe("pending context handoff", () => {
       continuation: { groupKey: "shared" },
     })) as unknown as ServerProvider[];
     expect(
-      resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
+      resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers, now),
     ).toBeNull();
   });
 });
