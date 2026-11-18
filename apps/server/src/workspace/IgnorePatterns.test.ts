@@ -32,6 +32,9 @@ describe("parseIgnoreFile", () => {
     expect(decide("link-[0-9]", "link-7")).toBe("ignored");
     expect(decide("link-[!0-9]", "link-7")).toBeUndefined();
     expect(decide("link-?", "link-/")).toBeUndefined();
+    expect(decide("link-?", "link-ø")).toBeUndefined();
+    expect(decide("link-??", "link-ø")).toBe("ignored");
+    expect(decide("link-ø", "link-ø")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "!bang")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "#hash")).toBe("ignored");
     expect(decide("\\!bang\n\\#hash\nstar\\*", "starx")).toBeUndefined();
