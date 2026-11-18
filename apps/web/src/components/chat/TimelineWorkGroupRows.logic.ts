@@ -17,10 +17,10 @@ export function formatWorkingTimer(startIso: string, endIso: string): string | n
 export function formatWorkingDuration(elapsedMs: number): string {
   const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   if (elapsedSeconds < 60) {
-    return `${elapsedSeconds}s`;
+    return m(msg("{seconds}s", { seconds: elapsedSeconds }));
   }
 
-  return formatDuration(elapsedSeconds * 1_000);
+  return formatDuration(elapsedSeconds * 1_000, m);
 }
 
 export function formatWorkingTimerNow(
