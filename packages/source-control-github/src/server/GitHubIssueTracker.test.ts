@@ -187,10 +187,6 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
                             pageInfo: { hasNextPage: false, endCursor: null },
                             nodes: [{ name: "needs repro", color: "ffffff" }],
                           },
-                          assignees: {
-                            pageInfo: { hasNextPage: false, endCursor: null },
-                            nodes: [],
-                          },
                           closedByPullRequestsReferences: {
                             pageInfo: { hasNextPage: false, endCursor: null },
                             nodes: [
@@ -564,6 +560,9 @@ Redact secrets before uploading.`);
           labelsCursor: "labels-next",
           assigneesCursor: null,
           closingPullRequestsCursor: "links-next",
+          withLabels: true,
+          withAssignees: false,
+          withClosingPullRequests: true,
         },
       ]);
       expect(issue).toMatchObject({

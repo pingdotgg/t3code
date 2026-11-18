@@ -274,22 +274,28 @@ export const make = Effect.gen(function* () {
             labelsCursor,
             assigneesCursor,
             closingPullRequestsCursor,
+            withLabels: labelsCursor !== null,
+            withAssignees: assigneesCursor !== null,
+            withClosingPullRequests: closingPullRequestsCursor !== null,
           })
           .pipe(graphql(input.host, "getIssue"));
         const next = page.repository?.issue;
         if (next == null) return yield* notFound("getIssue");
-        if (labels?.pageInfo.hasNextPage) {
-          labels = next.labels;
-          if (next.labels === null) {
+        if (labelsCursor !== null) {
+          if (next.labels == null) {
             return yield* invalid("getIssue", "GitHub did not return complete issue labels.");
           }
+          labels = next.labels;
           moreLabels.push(
             ...(next.labels.nodes ?? []).flatMap((node) =>
               node === null ? [] : [{ name: node.name, color: node.color }],
             ),
           );
         }
-        if (assignees.pageInfo.hasNextPage) {
+        if (assigneesCursor !== null) {
+          if (next.assignees === undefined) {
+            return yield* invalid("getIssue", "GitHub did not return complete issue assignees.");
+          }
           assignees = next.assignees;
           moreAssignees.push(
             ...(next.assignees.nodes ?? []).flatMap((node) =>
@@ -299,14 +305,14 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
-        if (closing?.pageInfo.hasNextPage) {
-          closing = next.closedByPullRequestsReferences;
-          if (closing === null) {
+        if (closingPullRequestsCursor !== null) {
+          if (next.closedByPullRequestsReferences == null) {
             return yield* invalid(
               "getIssue",
               "GitHub did not return complete linked pull requests.",
             );
           }
+          closing = next.closedByPullRequestsReferences;
           allClosing.push(...(closing.nodes ?? []));
         }
       }

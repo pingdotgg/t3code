@@ -368,10 +368,13 @@ query IssueCollections(
   $labelsCursor: String
   $assigneesCursor: String
   $closingPullRequestsCursor: String
+  $withLabels: Boolean!
+  $withAssignees: Boolean!
+  $withClosingPullRequests: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      labels(first: 100, after: $labelsCursor) {
+      labels(first: 100, after: $labelsCursor) @include(if: $withLabels) {
         pageInfo {
           hasNextPage
           endCursor
@@ -381,7 +384,7 @@ query IssueCollections(
           color
         }
       }
-      assignees(first: 100, after: $assigneesCursor) {
+      assignees(first: 100, after: $assigneesCursor) @include(if: $withAssignees) {
         pageInfo {
           hasNextPage
           endCursor
@@ -396,7 +399,7 @@ query IssueCollections(
         first: 100
         after: $closingPullRequestsCursor
         includeClosedPrs: true
-      ) {
+      ) @include(if: $withClosingPullRequests) {
         pageInfo {
           hasNextPage
           endCursor

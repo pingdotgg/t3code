@@ -1,18 +1,11 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NetService from "@t3tools/shared/Net";
 import { expect } from "e2e";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { APP_DIR, T3_HOME } from "../e2e.config.ts";
-import { run, ScenarioError } from "./shell.ts";
-import { prepareHome, start } from "./start-app.ts";
-import { makeState, runPromise, test, WEB } from "./t3.ts";
+import { T3_HOME } from "../e2e.config.ts";
+import { run } from "./shell.ts";
+import { startSecondServer } from "./second-server.ts";
+import { environmentId, makeState, runPromise, test, WEB } from "./t3.ts";
 
 const HOST = "github.scenario.invalid";
 const SCOPE = "scenario/demo";
@@ -100,68 +93,20 @@ globalThis.fetch = async (input, init) => {
 };
 `;
 
-function startFixtureServer(webOrigin: string) {
-  const ready = Promise.withResolvers<{ origin: string; token: string }>();
-  const server = Effect.runFork(
-    Effect.gen(function* () {
-      yield* prepareHome(HOME);
-      const port = yield* (yield* NetService.NetService).reserveLoopbackPort();
-      const origin = `http://127.0.0.1:${port}`;
-      const token = yield* Deferred.make<string>();
-      const path = yield* Path.Path;
-      const searchPath = (yield* HostProcess.Environment).PATH ?? "";
-      const node = yield* HostProcess.ExecutablePath;
-      const child = yield* start({
-        cwd: APP_DIR,
-        command: node,
-        args: [
-          `--import=data:text/javascript;base64,${Buffer.from(upstream).toString("base64")}`,
-          "apps/server/src/bin.ts",
-          "serve",
-          "--host",
-          "127.0.0.1",
-          "--port",
-          String(port),
-          "--base-dir",
-          HOME,
-          "--dev-url",
-          webOrigin,
-        ],
-        env: {
-          PATH: `${path.join(HOME, "bin")}:${searchPath}`,
-          HOME,
-          GH_HOST: HOST,
-          GH_ENTERPRISE_TOKEN: "scenario-only-token",
-          T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
-        },
-        onLine: (line) => {
-          const value = /^Token:\s*(\S+)/.exec(line)?.[1];
-          return value === undefined
-            ? Effect.void
-            : Deferred.succeed(token, value).pipe(Effect.asVoid);
-        },
-      });
-      const exited = child.exitCode.pipe(
-        Effect.flatMap(
-          (code) => new ScenarioError({ message: `Fixture server exited (${code}).` }),
-        ),
-      );
-      ready.resolve({ origin, token: yield* Effect.raceFirst(Deferred.await(token), exited) });
-      return yield* exited;
-    }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NetService.layer])),
-  );
-  void Effect.runPromise(Fiber.join(server)).catch(ready.reject);
-  return { ready: ready.promise, stop: () => Effect.runPromise(Fiber.interrupt(server)) };
-}
-
 test(
   "A closing pull request remains visible after its timeline reference ages out",
   WEB,
   async ({ t3, app, browser, screen }) => {
     const workspace = await t3.project("Release");
-    const server = startFixtureServer(app.baseUrl ?? "");
+    const server = startSecondServer(app.baseUrl ?? "", {
+      home: HOME,
+      nodeArgs: [
+        `--import=data:text/javascript;base64,${Buffer.from(upstream).toString("base64")}`,
+      ],
+      env: { HOME, GH_HOST: HOST, GH_ENTERPRISE_TOKEN: "scenario-only-token" },
+    });
     try {
-      const { origin, token } = await server.ready;
+      const { host: origin, token } = await server.ready;
       const repository = await runPromise(
         Effect.map(Path.Path, (path) => path.join(HOME, "release")),
       );
@@ -174,21 +119,13 @@ test(
       const added = await runPromise(makeState(HOME).cli(["project", "add", repository]));
       const projectId = /Added project (\S+) /.exec(added.stdout)?.[1];
       if (!projectId) throw new Error("The fixture project was not added.");
-      const { environmentId } = await runPromise(
-        HttpClient.get(`${origin}/.well-known/t3/environment`).pipe(
-          Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.flatMap(
-            HttpClientResponse.schemaBodyJson(Schema.Struct({ environmentId: Schema.String })),
-          ),
-          Effect.provide(FetchHttpClient.layer),
-        ),
-      );
+      const environment = await runPromise(environmentId(origin));
       const link = new URLSearchParams({
         key: "42",
         tracker: "github",
         scope: SCOPE,
         selectedHost: HOST,
-        selectedEnvironmentId: environmentId,
+        selectedEnvironmentId: environment,
         selectedProjectId: projectId,
       });
 

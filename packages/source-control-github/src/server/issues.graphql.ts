@@ -982,11 +982,11 @@ export declare namespace IssueViewer {
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
 export const IssueCollectionsRepositoryIssueIssue = Schema.Struct({
   /** A list of labels associated with the object. */
-  labels: Schema.NullOr(IssueLabelsLabelConnection),
+  labels: Schema.optionalKey(Schema.NullOr(IssueLabelsLabelConnection)),
   /** A list of Users assigned to this object. */
-  assignees: IssueAssigneesUserConnection,
+  assignees: Schema.optionalKey(IssueAssigneesUserConnection),
   /** List of open pull requests referenced from this issue */
-  closedByPullRequestsReferences: Schema.NullOr(PullRequestConnection)
+  closedByPullRequestsReferences: Schema.optionalKey(Schema.NullOr(PullRequestConnection))
 })
 export interface IssueCollectionsRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueCollectionsRepositoryIssueIssue.fields> {}
 
@@ -1006,10 +1006,13 @@ export const IssueCollections = GraphQL.query("IssueCollections", {
       { name: "number", body: "Int!" },
       { name: "labelsCursor", body: "String" },
       { name: "assigneesCursor", body: "String" },
-      { name: "closingPullRequestsCursor", body: "String" }
+      { name: "closingPullRequestsCursor", body: "String" },
+      { name: "withLabels", body: "Boolean!" },
+      { name: "withAssignees", body: "Boolean!" },
+      { name: "withClosingPullRequests", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){labels(first:100 after:$", "labelsCursor", "){pageInfo{hasNextPage endCursor}nodes{name color}}assignees(first:100 after:$", "assigneesCursor", "){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}closedByPullRequestsReferences(first:100 after:$", "closingPullRequestsCursor", " includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){labels(first:100 after:$", "labelsCursor", ")@include(if:$", "withLabels", "){pageInfo{hasNextPage endCursor}nodes{name color}}assignees(first:100 after:$", "assigneesCursor", ")@include(if:$", "withAssignees", "){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}closedByPullRequestsReferences(first:100 after:$", "closingPullRequestsCursor", " includeClosedPrs:true)@include(if:$", "withClosingPullRequests", "){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}}}"] }
     ],
     fragments: []
   },
@@ -1019,7 +1022,10 @@ export const IssueCollections = GraphQL.query("IssueCollections", {
     number: Shared.Int,
     labelsCursor: Schema.optional(Schema.NullOr(Schema.String)),
     assigneesCursor: Schema.optional(Schema.NullOr(Schema.String)),
-    closingPullRequestsCursor: Schema.optional(Schema.NullOr(Schema.String))
+    closingPullRequestsCursor: Schema.optional(Schema.NullOr(Schema.String)),
+    withLabels: Schema.Boolean,
+    withAssignees: Schema.Boolean,
+    withClosingPullRequests: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
