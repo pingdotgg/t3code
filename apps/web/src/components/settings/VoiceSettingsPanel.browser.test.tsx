@@ -335,6 +335,7 @@ it("tests the selected model after download and preserves its transcript across 
           freezesEditor: false,
           start: async () => {
             input.commitDraft(transcript, { start: transcript.length, end: transcript.length });
+            return true;
           },
           submitAfterDictation: () => {},
           stop: async () => {},

@@ -16,7 +16,7 @@ function shouldFinishDictationOnRelease(mode: "auto" | "hold" | "toggle", elapse
 type SpeechActions = {
   available: boolean;
   state: VoiceInputState;
-  start(): Promise<void>;
+  start(): Promise<unknown>;
   stop(): Promise<void>;
   cancel(): void;
 };
@@ -105,7 +105,7 @@ export function useDictationShortcut(input: ShortcutInput) {
     modifiers: string[];
     startedAt: number;
     mode: typeof mode;
-    starting: Promise<void>;
+    starting: Promise<unknown>;
   } | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the window keyboard listeners and dictation target registry entry

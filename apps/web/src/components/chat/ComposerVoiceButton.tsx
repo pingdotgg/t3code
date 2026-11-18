@@ -1,29 +1,35 @@
-import { useAtomValue } from "@effect/atom-react";
-import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
-import { Volume2Icon } from "lucide-react";
+import type { ResolvedKeybindingsConfig, ScopedThreadRef, VoiceMode } from "@t3tools/contracts";
+import { AudioLinesIcon, Volume2Icon } from "lucide-react";
 import type { PointerEvent } from "react";
 
 import { shortcutLabelForCommand } from "../../keybindings";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { setVoiceThread, voiceThreadAtom } from "../../speech/voiceReplies";
+import { changeVoiceMode } from "../../speech/voiceReplies";
+import { nextButtonVoiceMode } from "../../speech/voiceReplies.logic";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const keepFocus = (event: PointerEvent) => event.preventDefault();
 
-/** Turns on reading this thread's replies aloud, or turns voice off. */
+const LABELS: Record<VoiceMode, string> = {
+  off: "Turn on one-way voice",
+  oneWay: "Turn on two-way voice",
+  twoWay: "Turn voice off",
+};
+
+/** Steps this thread's voice from off to one-way, two-way, and off again. */
 export function ComposerVoiceButton(props: {
   thread: ScopedThreadRef;
+  mode: VoiceMode;
   keybindings: ResolvedKeybindingsConfig;
   disabled: boolean;
 }) {
-  const voiceThread = useAtomValue(voiceThreadAtom);
-  const on = voiceThread?.threadId === props.thread.threadId;
-  const label = on ? "Stop reading replies aloud" : "Read replies aloud";
+  const label = LABELS[props.mode];
   const shortcutLabel = shortcutLabelForCommand(
     props.keybindings,
-    on ? "voice.off" : "voice.cycle",
+    props.mode === "twoWay" ? "voice.off" : "voice.cycle",
   );
+  const Icon = props.mode === "twoWay" ? AudioLinesIcon : Volume2Icon;
 
   return (
     <Tooltip>
@@ -32,15 +38,17 @@ export function ComposerVoiceButton(props: {
           <Button
             type="button"
             size="icon-sm"
-            variant={on ? "secondary" : "ghost"}
+            variant={props.mode === "off" ? "ghost" : "secondary"}
             aria-label={label}
-            aria-pressed={on}
+            aria-pressed={props.mode !== "off"}
             disabled={props.disabled}
             onPointerDown={keepFocus}
-            onClick={() => void setVoiceThread(appAtomRegistry, on ? null : props.thread)}
+            onClick={() =>
+              void changeVoiceMode(appAtomRegistry, props.thread, nextButtonVoiceMode(props.mode))
+            }
             className="shrink-0"
           >
-            <Volume2Icon />
+            <Icon />
           </Button>
         }
       />

@@ -1097,7 +1097,11 @@ export function useComposerSend(input: ComposerSendInput) {
     const voiceThread = appAtomRegistry.get(voiceThreadAtom);
     const spokenReply = voiceThread?.threadId === threadIdForSend;
     if (spokenReply && voiceThread.environmentId !== environmentId)
-      void setVoiceThread(appAtomRegistry, { environmentId, threadId: threadIdForSend });
+      void setVoiceThread(
+        appAtomRegistry,
+        { environmentId, threadId: threadIdForSend },
+        voiceThread.mode,
+      );
     const outgoingMessageText = markSpokenReply(
       formatOutgoingPrompt({
         provider: ctxSelectedProvider,

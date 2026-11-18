@@ -2,7 +2,12 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
-import { latestReply, markSpokenReply } from "./voiceReplies.logic";
+import {
+  latestReply,
+  markSpokenReply,
+  nextButtonVoiceMode,
+  nextShortcutVoiceMode,
+} from "./voiceReplies.logic";
 
 type Run = OrchestrationV2ThreadProjection["runs"][number];
 type Item = OrchestrationV2ThreadProjection["turnItems"][number];
@@ -67,4 +72,16 @@ it("marks typed messages for spoken replies only while voice is on", () => {
   expect(markSpokenReply("Check the build", false)).toBe("Check the build");
   expect(markSpokenReply("/compact", true)).toBe("/compact");
   expect(markSpokenReply("🎙  spoken words", true)).toBe("🎙  spoken words");
+});
+
+it("steps the voice button from off to one-way, two-way, and off again", () => {
+  expect(nextButtonVoiceMode("off")).toBe("oneWay");
+  expect(nextButtonVoiceMode("oneWay")).toBe("twoWay");
+  expect(nextButtonVoiceMode("twoWay")).toBe("off");
+});
+
+it("turns voice on one-way by shortcut, then switches between one-way and two-way", () => {
+  expect(nextShortcutVoiceMode("off")).toBe("oneWay");
+  expect(nextShortcutVoiceMode("oneWay")).toBe("twoWay");
+  expect(nextShortcutVoiceMode("twoWay")).toBe("oneWay");
 });

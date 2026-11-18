@@ -1,4 +1,4 @@
-import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, RunId, VoiceMode } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 /** Marks a typed message whose reply is read aloud, as Pi's voice mode does. */
@@ -6,6 +6,25 @@ export function markSpokenReply(text: string, voiceOn: boolean): string {
   if (!voiceOn || text.trimStart().startsWith("/") || /^(🔊|🎙)/u.test(text)) return text;
   return `🔊  ${text}`;
 }
+
+/** The voice button steps off, one-way, two-way, then off again. */
+export function nextButtonVoiceMode(mode: VoiceMode): VoiceMode {
+  return mode === "off" ? "oneWay" : mode === "oneWay" ? "twoWay" : "off";
+}
+
+/** The voice shortcut turns voice on one-way, then switches between one-way and two-way. */
+export function nextShortcutVoiceMode(mode: VoiceMode): VoiceMode {
+  return mode === "oneWay" ? "twoWay" : "oneWay";
+}
+
+export const VOICE_MODE_NOTICES: Record<VoiceMode, { title: string; description?: string }> = {
+  off: { title: "Voice off" },
+  oneWay: { title: "One-way voice on", description: "Replies in this thread are read aloud." },
+  twoWay: {
+    title: "Two-way voice on",
+    description: "Speak, and what you say is sent when you pause. Replies are read aloud.",
+  },
+};
 
 interface Reply {
   readonly runId: RunId;

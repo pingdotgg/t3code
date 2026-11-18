@@ -8,6 +8,7 @@ import {
   type EnvironmentId,
   type RunId,
   type ScopedThreadRef,
+  type VoiceMode,
   type VoiceState,
 } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
@@ -19,27 +20,38 @@ import { readPreparedConnection } from "../state/session";
 import { environmentThreadDetails } from "../state/threads";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { toSpeakableSentences } from "./speakable";
-import { latestReply } from "./voiceReplies.logic";
+import { latestReply, VOICE_MODE_NOTICES } from "./voiceReplies.logic";
 
-/** The thread whose replies are read aloud: the newest one-way voice of any environment. */
-export const voiceThreadAtom = Atom.make((get): (ScopedThreadRef & { setAt: string }) | null => {
-  let owner: (ScopedThreadRef & { setAt: string }) | null = null;
-  for (const environmentId of get(environmentSummaries.environmentIdsAtom)) {
-    const voice = get(serverEnvironment.configValueAtom(environmentId))?.settings.voice;
-    if (voice?.mode !== "oneWay" || voice.threadId === null) continue;
-    if (owner === null || voice.setAt > owner.setAt)
-      owner = { environmentId, threadId: voice.threadId, setAt: voice.setAt };
-  }
-  return owner;
-}).pipe(Atom.withLabel("web-voice-thread"));
+export type ActiveVoiceMode = Exclude<VoiceMode, "off">;
+
+/** The thread that has voice: the newest voice turned on in any environment. */
+export const voiceThreadAtom = Atom.make(
+  (get): (ScopedThreadRef & { mode: ActiveVoiceMode; setAt: string }) | null => {
+    let owner: (ScopedThreadRef & { mode: ActiveVoiceMode; setAt: string }) | null = null;
+    for (const environmentId of get(environmentSummaries.environmentIdsAtom)) {
+      const voice = get(serverEnvironment.configValueAtom(environmentId))?.settings.voice;
+      if (voice === undefined || voice.mode === "off" || voice.threadId === null) continue;
+      if (owner === null || voice.setAt > owner.setAt)
+        owner = { environmentId, threadId: voice.threadId, mode: voice.mode, setAt: voice.setAt };
+    }
+    return owner;
+  },
+).pipe(Atom.withLabel("web-voice-thread"));
+
+/** Whether a reply is being read aloud, so two-way voice stops listening meanwhile. */
+export const voiceSpeakingAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-voice-speaking"),
+);
 
 /**
- * Gives voice to `thread`, or turns it off everywhere for `null`; resolves whether it saved and
- * reports a failure.
+ * Gives voice in `mode` to `thread`, or turns it off everywhere for `null`; resolves whether it
+ * saved and reports a failure.
  */
 export async function setVoiceThread(
   registry: AtomRegistry.AtomRegistry,
   thread: ScopedThreadRef | null,
+  mode: ActiveVoiceMode = "oneWay",
 ): Promise<boolean> {
   const setAt = new Date().toISOString();
   const results = await Promise.all(
@@ -48,7 +60,7 @@ export async function setVoiceThread(
         .voice;
       const voice: VoiceState | null =
         thread?.environmentId === environmentId
-          ? { mode: "oneWay", threadId: thread.threadId, setAt }
+          ? { mode, threadId: thread.threadId, setAt }
           : current !== undefined && current.mode !== "off"
             ? VOICE_OFF
             : null;
@@ -64,6 +76,26 @@ export async function setVoiceThread(
   const saved = results.every((result) => result === undefined || result._tag === "Success");
   if (!saved) toastManager.add({ type: "error", title: "Voice mode could not be saved" });
   return saved;
+}
+
+/** Sets `thread`'s voice to `mode` and says so. */
+export async function changeVoiceMode(
+  registry: AtomRegistry.AtomRegistry,
+  thread: ScopedThreadRef,
+  mode: VoiceMode,
+): Promise<void> {
+  const saved = await (mode === "off"
+    ? setVoiceThread(registry, null)
+    : setVoiceThread(registry, thread, mode));
+  if (saved) toastManager.add({ type: "info", ...VOICE_MODE_NOTICES[mode] });
+}
+
+/** `thread`'s voice mode. */
+export function threadVoiceMode(
+  voiceThread: { threadId: string; mode: ActiveVoiceMode } | null,
+  thread: ScopedThreadRef,
+): VoiceMode {
+  return voiceThread?.threadId === thread.threadId ? voiceThread.mode : "off";
 }
 
 function reportVoiceFailure(error: unknown) {
@@ -141,11 +173,15 @@ export function startVoiceReplies(registry: AtomRegistry.AtomRegistry): () => vo
           return;
         lastRunId = reply.runId;
         queue = queue
-          .then(() =>
-            controller.signal.aborted
-              ? undefined
-              : readAloud(thread.environmentId, reply.text, controller.signal),
-          )
+          .then(async () => {
+            if (controller.signal.aborted) return;
+            registry.set(voiceSpeakingAtom, true);
+            try {
+              await readAloud(thread.environmentId, reply.text, controller.signal);
+            } finally {
+              registry.set(voiceSpeakingAtom, false);
+            }
+          })
           .catch(reportVoiceFailure);
       },
       { immediate: true },

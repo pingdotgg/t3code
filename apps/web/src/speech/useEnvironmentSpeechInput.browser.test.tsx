@@ -625,7 +625,7 @@ it.each(["cancel", "failed restart"] as const)(
     const response = Deferred.makeUnsafe<{ models: EnvironmentSpeechModel[] }>();
     vi.mocked(getEnvironmentSpeechModels).mockReturnValueOnce(Deferred.await(response));
     await using _screen = await render(<Probe showWizard />);
-    let firstStart!: Promise<void>;
+    let firstStart!: Promise<boolean>;
     await act(() => {
       firstStart = mocks.voice.start();
     });

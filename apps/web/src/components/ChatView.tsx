@@ -390,7 +390,8 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { setVoiceThread, voiceThreadAtom } from "../speech/voiceReplies";
+import { changeVoiceMode, threadVoiceMode, voiceThreadAtom } from "../speech/voiceReplies";
+import { nextShortcutVoiceMode } from "../speech/voiceReplies.logic";
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2952,22 +2953,13 @@ export default function ChatView(props: ChatViewProps) {
       },
       "voice.cycle": ({ event }) => {
         if (event.repeat) return;
-        void setVoiceThread(appAtomRegistry, routeThreadRef).then(
-          (saved) =>
-            saved &&
-            toastManager.add({
-              type: "info",
-              title: "Voice on",
-              description: "Replies in this thread are read aloud.",
-            }),
-        );
+        const mode = threadVoiceMode(appAtomRegistry.get(voiceThreadAtom), routeThreadRef);
+        void changeVoiceMode(appAtomRegistry, routeThreadRef, nextShortcutVoiceMode(mode));
       },
       "voice.off": ({ event }) => {
         if (appAtomRegistry.get(voiceThreadAtom) === null) return false;
         if (event.repeat) return;
-        void setVoiceThread(appAtomRegistry, null).then(
-          (saved) => saved && toastManager.add({ type: "info", title: "Voice off" }),
-        );
+        void changeVoiceMode(appAtomRegistry, routeThreadRef, "off");
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
@@ -3965,6 +3957,7 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 activeThreadModelSelection={activeThread?.modelSelection}
                                 activeProjectId={activeProject?.id ?? null}
+                                projectName={activeProject?.title}
                                 compactThreadUnavailable={compactThreadUnavailable}
                                 compactDisabled={compactDisabled}
                                 resolvedTheme={resolvedTheme}

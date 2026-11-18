@@ -386,24 +386,24 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     },
   );
 
-  const start = useStableCallback(async () => {
-    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
+  const start = useStableCallback(async (): Promise<boolean> => {
+    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return false;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
-      return;
+      return false;
     }
-    if (!session || voiceInputBlocksSubmission(session.state)) return;
+    if (!session || voiceInputBlocksSubmission(session.state)) return false;
     const request = ++startRequestRef.current;
     const owner = latestRef.current.input.ownerKey;
     if (onDevice) {
       await session.start(createTarget());
-      return;
+      return true;
     }
-    if (!prepared) return;
+    if (!prepared) return false;
     if (cloudProvider) {
       await session.start(createTarget());
-      return;
+      return true;
     }
     setSetup(INITIAL_SETUP);
     const stillCurrent = () =>
@@ -439,13 +439,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }
         return null;
       });
-      if (!stillCurrent() || !latestStatus) return;
+      if (!stillCurrent() || !latestStatus) return false;
       await handleStatus(latestStatus);
       if (!latestStatus.supported || latestStatus.state === "missing-model" || !stillCurrent())
-        return;
+        return false;
     }
 
     await session.start(createTarget(), (latestStatus) => void handleStatus(latestStatus));
+    return true;
   });
 
   const downloadSetupModel = useStableCallback(async () => {
