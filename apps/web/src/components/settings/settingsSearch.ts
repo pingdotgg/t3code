@@ -803,6 +803,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "request-rules",
+    title: msg("Request rules"),
+    to: "/settings/threads",
+    searchTerms: [
+      "rewrite remove replace add system prompt reminders tool descriptions regex forwarder request rules claude",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
