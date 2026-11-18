@@ -66,6 +66,31 @@ const CACHED_SHELL_SUMMARY: EnvironmentShellSummary = {
 };
 
 describe("mobile workspace projection", () => {
+  it.each([true, false])(
+    "reports a Focus pause only without active environments (%s)",
+    (active) => {
+      const paused = { ...environment("connected"), pausedByFocus: true };
+      const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, paused)];
+      if (active) {
+        environments.push(
+          projectWorkspaceEnvironment(
+            EnvironmentId.make("environment-2"),
+            environment("connected"),
+          ),
+        );
+      }
+      const state = projectWorkspaceState({
+        isReady: true,
+        networkStatus: "online",
+        environments,
+        shellSummary: EMPTY_SHELL_SUMMARY,
+        hasSyncingConnectedEnvironment: false,
+      });
+      expect(state.isPausedByFocus).toBe(!active);
+      expect(state.hasReadyEnvironment).toBe(active);
+    },
+  );
+
   it("reports offline before stale connected presentations", () => {
     const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("connected"))];
     const state = projectWorkspaceState({

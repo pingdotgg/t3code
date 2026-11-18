@@ -18,6 +18,7 @@ export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3to
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
   readonly hasConnections: boolean;
+  readonly isPausedByFocus: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
@@ -83,6 +84,9 @@ export function projectWorkspaceConnectionState(input: {
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
+    isPausedByFocus:
+      activeEnvironments.length === 0 &&
+      input.environments.some((environment) => environment.isPausedByFocus),
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
       activeEnvironments.some((environment) => environment.connectionState === "connected"),

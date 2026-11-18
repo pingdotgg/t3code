@@ -128,6 +128,9 @@ export function ConnectionEnvironmentRow(props: {
         <Pressable
           className="min-w-0 flex-1 gap-0.5 active:opacity-70"
           accessibilityRole="button"
+          accessibilityHint={
+            props.environment.isPausedByFocus ? (statusLabel ?? undefined) : undefined
+          }
           accessibilityLabel={toggleLabel}
           onPress={props.onToggle}
         >
@@ -193,6 +196,9 @@ export function ConnectionEnvironmentRow(props: {
         </Pressable>
 
         <ThemedSwitch
+          accessibilityHint={
+            props.environment.isPausedByFocus ? (statusLabel ?? undefined) : undefined
+          }
           accessibilityLabel={gt("Enable {environment}", {
             environment: props.environment.environmentLabel,
           })}
