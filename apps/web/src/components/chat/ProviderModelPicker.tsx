@@ -18,7 +18,6 @@ import {
   useState,
 } from "react";
 import { Badge } from "../ui/badge";
-import { Kbd } from "../ui/kbd";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -463,11 +462,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                         {activeInstanceLabel}
                       </span>
                     </div>
-                    {props.triggerDetail || shortcutLabel ? (
-                      <div className="flex min-w-0 items-center justify-between gap-4">
-                        <span className="min-w-0 truncate">{props.triggerDetail}</span>
-                        {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
-                      </div>
+                    {props.triggerDetail ? (
+                      <span className="min-w-0 truncate">{props.triggerDetail}</span>
                     ) : null}
                   </ThreadHoverCard>
                 </ThreadHoverCardPopup>
