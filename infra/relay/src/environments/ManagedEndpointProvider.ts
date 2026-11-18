@@ -19,6 +19,7 @@ import type {
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
+import { isManagedTunnelOriginHost } from "@t3tools/shared/hostClassification";
 
 import * as RelayConfiguration from "../Config.ts";
 import {
@@ -378,10 +379,9 @@ function normalizeHostname(hostname: string): string {
     .replace(/^\[(.*)\]$/u, "$1");
 }
 
-function isLoopbackOrigin(origin: RelayManagedEndpointOrigin): boolean {
-  const hostname = normalizeHostname(origin.localHttpHost);
+function isAllowedOrigin(origin: RelayManagedEndpointOrigin): boolean {
   return (
-    (hostname === "127.0.0.1" || hostname === "::1" || hostname === "localhost") &&
+    isManagedTunnelOriginHost(origin.localHttpHost) &&
     Number.isInteger(origin.localHttpPort) &&
     origin.localHttpPort > 0 &&
     origin.localHttpPort <= 65_535
@@ -723,7 +723,7 @@ const make = Effect.gen(function* () {
       readonly origin: RelayManagedEndpointOrigin;
       readonly endpoint: RelayManagedEndpoint;
     }) {
-      if (!isLoopbackOrigin(input.origin)) {
+      if (!isAllowedOrigin(input.origin)) {
         return yield* new ManagedEndpointOriginNotAllowed({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1193,7 +1193,7 @@ const make = Effect.gen(function* () {
         "relay.managed_endpoint.origin_host": input.origin.localHttpHost,
         "relay.managed_endpoint.origin_port": input.origin.localHttpPort,
       });
-      if (!isLoopbackOrigin(input.origin)) {
+      if (!isAllowedOrigin(input.origin)) {
         return yield* new ManagedEndpointOriginNotAllowed({
           userId: input.userId,
           environmentId: input.environmentId,
