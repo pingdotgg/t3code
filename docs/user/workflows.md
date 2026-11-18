@@ -79,6 +79,13 @@ server that started it.
 Workflows can keep state between runs, such as a switch or a cursor. `t3 workflow store list`
 shows it, and `t3 workflow store set <key> '<json>'` changes it.
 
+## Issues and pull requests
+
+A workflow can start for each new issue or pull request of a project, and can read, comment on and
+change them. It uses the tracker and git host the project is already connected to under Settings,
+Source control & issues, so there is no webhook to set up. Only issues and pull requests opened
+after the workflow was first loaded start a run.
+
 ## Webhooks
 
 `t3 workflow hooks` prints a URL path for each webhook a workflow listens on. Add your server's

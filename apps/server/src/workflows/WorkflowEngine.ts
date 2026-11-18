@@ -35,6 +35,7 @@ import {
 } from "./workflow.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
+import { type Issue, type PullRequest, unavailable, WorkflowForge } from "./WorkflowForge.ts";
 import {
   HOOK_PREFIX,
   WorkflowInputError,
@@ -45,6 +46,8 @@ import {
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const SWEEP_EVERY = Duration.seconds(15);
+const LOOK_EVERY = Duration.minutes(1);
+const LOOK_AT_MOST = 100;
 const DEFAULT_SIGNAL_TTL = Duration.days(7);
 const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
@@ -60,6 +63,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const store = yield* WorkflowStore.WorkflowStore;
   const keyValues = yield* KeyValues;
   const link = yield* EngineLink;
+  const forge = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
   const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
   const random = yield* SecureRandom.SecureRandom;
@@ -203,6 +207,64 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
   });
 
+  // Trackers and hosts count requests, and nothing here is in that much of a hurry.
+  const lookedAt = new Map<string, number>();
+  /**
+   * Start a run for each issue or pull request opened since the trigger last looked. The first
+   * look only notes the time, so a workflow never starts on everything that was already there.
+   */
+  const fireOpened = Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    for (const definition of latestDefinitions) {
+      for (const trigger of definition.triggers) {
+        if (trigger.kind !== "issues" && trigger.kind !== "pullRequests") continue;
+        const id = `${definition.name}/${trigger.id}`;
+        const since = yield* store.triggerNext(id);
+        if (since === undefined) {
+          yield* store.triggerSet(id, DateTime.formatIso(now));
+          continue;
+        }
+        const last = lookedAt.get(id);
+        const at = DateTime.toEpochMillis(now);
+        if (last !== undefined && at - last < Duration.toMillis(LOOK_EVERY)) continue;
+        lookedAt.set(id, at);
+        const found =
+          trigger.kind === "issues"
+            ? forge.issues.list({
+                project: trigger.project,
+                sort: "created",
+                limit: LOOK_AT_MOST,
+                labels: trigger.labels,
+                query: trigger.query,
+              })
+            : forge.pullRequests.list({
+                project: trigger.project,
+                limit: LOOK_AT_MOST,
+                query: trigger.query,
+              });
+        yield* found.pipe(
+          Effect.flatMap(
+            Effect.fnUntraced(function* (entries: ReadonlyArray<Issue | PullRequest>) {
+              const fresh = entries
+                .filter((entry) => entry.createdAt > since)
+                .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+              for (const entry of fresh) {
+                // The key is the address, so an issue seen twice is still one run.
+                yield* start(definition.name, entry, {
+                  idempotencyKey: `trigger:${id}:${entry.url}`,
+                });
+                yield* store.triggerSet(id, entry.createdAt);
+              }
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("A workflow could not look for new work", { trigger: id, error }),
+          ),
+        );
+      }
+    }
+  });
+
   const hooks = yield* Effect.forEach(
     latestDefinitions.flatMap((definition) =>
       definition.triggers.flatMap((trigger) =>
@@ -300,7 +362,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           reason: row.detail ?? undefined,
         }),
       ),
-      Effect.provideContext(forStep(keyValues, link, row.run_id, END_STEP)),
+      Effect.provideContext(forStep(keyValues, link, forge, row.run_id, END_STEP)),
       Effect.matchCauseEffect({
         onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
         onFailure: (cause) =>
@@ -318,6 +380,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
     yield* store.mailExpire;
     yield* fireSchedules;
+    yield* fireOpened;
     for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
@@ -351,6 +414,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const triggerText = (trigger: WorkflowDefinition["triggers"][number]) => {
     if (trigger.kind === "webhook") return `webhook ${trigger.name}`;
+    if (trigger.kind !== "schedule") {
+      return `new ${trigger.kind === "issues" ? "issues" : "pull requests"} in ${trigger.project}`;
+    }
     if (trigger.schedule.type === "interval") {
       return `every ${Duration.format(Duration.millis(trigger.schedule.everyMs))}`;
     }

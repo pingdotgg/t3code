@@ -15,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
+import { cancel, issues, runs, signal, signalAll, start, store } from "./stepServices.ts";
 import { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0099 from "../persistence/Migrations/099_Workflows.ts";
@@ -26,6 +26,7 @@ import Migration0103 from "../persistence/Migrations/103_WorkflowStore.ts";
 import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
 import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
+import { Issue, unavailable, WorkflowForge } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
 import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";
@@ -407,6 +408,72 @@ const triggered = [
   ),
 ];
 
+const PROJECT = "/home/me/app";
+const triage = workflow(
+  "triage",
+  {
+    version: 1,
+    payload: Issue,
+    returns: Schema.String,
+    triggers: [issues.opened({ project: PROJECT, labels: ["bug"] })],
+  },
+  Effect.fn(function* (issue) {
+    yield* step(
+      "thank",
+      { returns: Schema.Void },
+      issues.comment(issue, `Looking at ${issue.title}.`),
+    );
+    return issue.displayKey;
+  }),
+);
+const decodeIssue = Schema.decodeSync(Issue);
+const issueAt = (key: string, createdAt: string) =>
+  decodeIssue({
+    projectId: "project-1",
+    projectTitle: "app",
+    tracker: "github",
+    host: "github.com",
+    scope: "me/app",
+    key,
+    displayKey: `#${key}`,
+    title: `Issue ${key}`,
+    url: `https://github.com/me/app/issues/${key}`,
+    author: null,
+    state: { name: "open", category: "open" },
+    createdAt,
+    updatedAt: createdAt,
+    closedAt: null,
+    assignees: [],
+    labels: [],
+    commentCount: 0,
+  });
+/** A tracker that lists what the test put in it and remembers what was said. */
+const fakeForge = () => {
+  const open: Array<Issue> = [];
+  const asked: Array<Parameters<WorkflowForge["Service"]["issues"]["list"]>[0]> = [];
+  const comments: Array<string> = [];
+  return {
+    open,
+    asked,
+    comments,
+    service: WorkflowForge.of({
+      ...unavailable,
+      issues: {
+        ...unavailable.issues,
+        list: (query) =>
+          Effect.sync(() => {
+            asked.push(query);
+            return open;
+          }),
+        comment: (issue, body) =>
+          Effect.sync(
+            () => void comments.push(`${"key" in issue ? issue.key : issue.url}: ${body}`),
+          ),
+      },
+    }),
+  };
+};
+
 const harness = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -433,7 +500,9 @@ const harness = Effect.gen(function* () {
   const failures = yield* Ref.make(0);
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
+  const forge = fakeForge();
   const engine = WorkflowEngine.layer([
+    triage,
     ...definitions(counts, failures),
     fix,
     ...triggered,
@@ -442,6 +511,7 @@ const harness = Effect.gen(function* () {
     ...control,
   ]).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
+    Layer.provide(Layer.succeed(WorkflowForge, forge.service)),
     Layer.provide(database),
     Layer.provide(NodeCrypto.layer),
   );
@@ -452,7 +522,7 @@ const harness = Effect.gen(function* () {
       Effect.scoped(Effect.provide(use, engine)),
       Effect.forever(TestClock.adjust("1 second")),
     );
-  return { counts, failures, boot, agents };
+  return { counts, failures, boot, agents, forge };
 });
 
 /** The review workflow sleeps first, which is waiting too; this is its wait for a verdict. */
@@ -1154,6 +1224,39 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("an issue opened after the workflow loaded starts one run, which can comment on it", () =>
+  Effect.gen(function* () {
+    const { boot, forge } = yield* harness;
+    const triaged = (workflows: Workflows.Workflows["Service"]) =>
+      Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "triage"));
+    forge.open.push(issueAt("1", "1969-12-31T23:00:00.000Z"));
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // The first look only notes the time: what was there already starts nothing.
+        yield* workflows.sweep;
+        yield* TestClock.adjust("2 minutes");
+        forge.open.push(issueAt("2", "1970-01-01T00:01:00.000Z"));
+        yield* workflows.sweep;
+        yield* TestClock.adjust("2 minutes");
+        yield* workflows.sweep;
+        const [run, ...others] = yield* triaged(workflows);
+        assert.deepStrictEqual(others, []);
+        const done = yield* workflows.waitFor(run!.runId, status("completed"));
+        assert.equal(done.result, "#2");
+        assert.deepStrictEqual(forge.comments, ["2: Looking at Issue 2."]);
+        assert.deepStrictEqual(forge.asked.at(-1), {
+          project: PROJECT,
+          sort: "created",
+          limit: 100,
+          labels: ["bug"],
+          query: undefined,
+        });
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>

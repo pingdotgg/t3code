@@ -9,7 +9,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { issuesOpened, pullRequestsOpened } from "./triggers.ts";
 import type { WorkflowDefinition } from "./workflow.ts";
+import { WorkflowForge, type IssueAddress, type PullRequestAddress } from "./WorkflowForge.ts";
 import type { WorkflowError, WorkflowInputError } from "./Workflows.ts";
 import type { RunParent, SignalAddress, WorkflowRunStatus } from "./WorkflowStore.ts";
 
@@ -85,7 +87,7 @@ export class Runs extends Context.Service<
   { readonly start: StartRun; readonly cancel: CancelRun; readonly list: ListRuns }
 >()("t3/workflows/stepServices/Runs") {}
 
-export type InStep = KeyValues | Signals | Runs;
+export type InStep = KeyValues | Signals | Runs | WorkflowForge;
 
 /**
  * What a step needs of the engine, which exists only once the engine does, while the workflows
@@ -118,12 +120,14 @@ const engineOf = (link: EngineLink["Service"]) =>
 export const forStep = (
   keyValues: KeyValues["Service"],
   link: EngineLink["Service"],
+  forge: WorkflowForge["Service"],
   runId: string,
   name: string,
 ): Context.Context<InStep> => {
   const owner = `${runId}/${name}`;
   let sent = 0;
   return Context.make(KeyValues, keyValues).pipe(
+    Context.add(WorkflowForge, forge),
     Context.add(
       Signals,
       Signals.of({
@@ -346,3 +350,44 @@ export const runs = (filter?: {
       keyPrefix: filter?.keyPrefix,
     }),
   );
+
+const forge = <A, E>(use: (forge: WorkflowForge["Service"]) => Effect.Effect<A, E>) =>
+  Effect.flatMap(WorkflowForge, use);
+
+/**
+ * The project's issues, in whichever tracker it uses. `opened` is a trigger; the rest are for
+ * inside `step` or `onEnd`. An issue is named by what a trigger or `list` gave, or by
+ * `{ project, url }`.
+ */
+export const issues = {
+  opened: issuesOpened,
+  list: (query: Parameters<WorkflowForge["Service"]["issues"]["list"]>[0]) =>
+    forge((all) => all.issues.list(query)),
+  read: (issue: IssueAddress) => forge((all) => all.issues.read(issue)),
+  comment: (issue: IssueAddress, body: string) => forge((all) => all.issues.comment(issue, body)),
+  /** Move the issue to one of its `states`, as `read` lists them. */
+  setState: (issue: IssueAddress, state: string) =>
+    forge((all) => all.issues.setState(issue, state)),
+  create: (input: Parameters<WorkflowForge["Service"]["issues"]["create"]>[0]) =>
+    forge((all) => all.issues.create(input)),
+};
+
+/**
+ * The project's pull requests on its git host. `opened` is a trigger; the rest are for inside
+ * `step` or `onEnd`. A pull request is named by what a trigger or `list` gave, or by
+ * `{ project, url }`.
+ */
+export const pullRequests = {
+  opened: pullRequestsOpened,
+  list: (query: Parameters<WorkflowForge["Service"]["pullRequests"]["list"]>[0]) =>
+    forge((all) => all.pullRequests.list(query)),
+  read: (pullRequest: PullRequestAddress) => forge((all) => all.pullRequests.read(pullRequest)),
+  comment: (pullRequest: PullRequestAddress, body: string) =>
+    forge((all) => all.pullRequests.comment(pullRequest, body)),
+  /** `merge`, `close`, `ready`, `update-branch` and the host's other actions on a pull request. */
+  act: (
+    pullRequest: PullRequestAddress,
+    action: Parameters<WorkflowForge["Service"]["pullRequests"]["act"]>[1],
+    options?: Parameters<WorkflowForge["Service"]["pullRequests"]["act"]>[2],
+  ) => forge((all) => all.pullRequests.act(pullRequest, action, options)),
+};

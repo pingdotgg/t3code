@@ -14,8 +14,9 @@ import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } fro
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
 import { EngineLink, forStep, type InStep, KeyValues, Runs } from "./stepServices.ts";
-import type { ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
+import type { OpenedTrigger, ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
+import { unavailable, WorkflowForge } from "./WorkflowForge.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 /** A step that could not be completed. Its run is paused until someone resumes it. */
@@ -338,7 +339,7 @@ export interface WorkflowDefinition<P = never, A = unknown> {
   readonly returns: Schema.Codec<unknown, unknown>;
   /** How long a paused run rests before it is resumed by itself, per pause in a row. */
   readonly resumeAfter: ReadonlyArray<Duration.Input>;
-  readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger>;
+  readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger | OpenedTrigger>;
   /** Fails with the reason as text: by here nothing reads the error but a person. */
   readonly onEnd:
     | ((payload: never, end: RunEnd) => Effect.Effect<void, string, InStep>)
@@ -481,6 +482,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
       const store = yield* WorkflowStore.WorkflowStore;
       const keyValues = yield* KeyValues;
       const link = yield* EngineLink;
+      const forge = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
       yield* Activity.make({
         name: "run/begin",
         execute: store.runStarted({
@@ -528,7 +530,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             workflow: definition.name,
             store,
             names: new Set(),
-            forStep: (name) => forStep(keyValues, link, runId, name),
+            forStep: (name) => forStep(keyValues, link, forge, runId, name),
           }),
         ),
       );
