@@ -239,7 +239,13 @@ function grounderToSave(values: ComputerGrounderConfig): ComputerGrounderConfig 
   return { kind: values.kind, baseUrl, model, apiKey: values.apiKey };
 }
 
-function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function GrounderForm({
+  environmentId,
+  shared,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly shared: boolean;
+}) {
   const saved = useEnvironmentSettings(environmentId, (settings) => settings.computerGrounder);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [draft, setDraft] = useState<Partial<ComputerGrounderConfig> | null>(null);
@@ -291,6 +297,7 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
           agent answers in <code className="font-mono">computer_use</code>. It sees control labels
           and up to 1,500 characters of visible text, and never writes text: only the text a task
           was started with is ever typed.
+          {shared ? " It applies to all your devices, and clearing it clears it everywhere." : null}
         </p>
         <div className="grid gap-1.5">
           <Label htmlFor="computer-grounder-provider">Provider</Label>
@@ -300,6 +307,11 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
               setDraft((previous) => ({
                 ...previous,
                 kind: provider === "jev" ? "jev" : "openai-compatible",
+                // A stored key belongs to its provider's host and must not follow to another.
+                apiKey:
+                  saved !== null && (saved.kind === "jev") === (provider === "jev")
+                    ? saved.apiKey
+                    : "",
               }))
             }
           >
@@ -400,7 +412,7 @@ function GrounderSection() {
       <SettingsSection id="computer-use-grounder" title="Decision endpoint">
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
           Select one environment above to set the endpoint that answers a click computer use cannot
-          settle.
+          settle. It applies to all your devices.
         </p>
       </SettingsSection>
     );
@@ -415,7 +427,12 @@ function GrounderSection() {
       </SettingsSection>
     );
   }
-  return <GrounderForm environmentId={environment.environmentId} />;
+  return (
+    <GrounderForm
+      environmentId={environment.environmentId}
+      shared={environment.serverConfig.environment.capabilities.computerGrounderSync === true}
+    />
+  );
 }
 
 /** One audit line: the event, then the few fields a person needs to read it. */

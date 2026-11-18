@@ -62,6 +62,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.serverUpdateAgentGateway,
       WS_METHODS.serverRevealAgentGatewayToken,
       WS_METHODS.serverRotateAgentGatewayToken,
+      WS_METHODS.serverRevealComputerGrounderKey,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
     }

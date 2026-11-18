@@ -12,6 +12,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ThreadLaunchInput,
   EnvironmentId,
+  SecretProviderId,
   WS_METHODS,
   mergeAgentLibraries,
   agentSkillDigest,
@@ -34,10 +35,13 @@ import {
   completeAgentLibraryPatch,
   createAgentLibrarySyncGate,
   planAgentLibrarySync,
+  planComputerGrounderSync,
+  runComputerGrounderSync,
   syncAgentLibraryBeforeUse,
   withAgentSkillBodies,
   type AgentLibraryPatch,
   type AgentLibrarySource,
+  type ComputerGrounderSource,
 } from "./agentLibrary.ts";
 
 it.effect(
@@ -422,6 +426,85 @@ it("sends a patch an older server keeps dropping once per change of its library"
   expect(pass(true)).not.toContain("old");
   old = dropped;
   expect(pass(true)).toContain("old");
+});
+
+it("shares the newest decision endpoint save, a clear included, with every device", async () => {
+  const jev = { kind: "jev" as const, baseUrl: "", model: "", apiKey: "\u2022\u2022\u2022" };
+  const source = (
+    id: string,
+    computerGrounder: ComputerGrounderSource["computerGrounder"],
+    computerGrounderSetAt: string,
+    { sync = true, live = true } = {},
+  ): ComputerGrounderSource => ({
+    environmentId: EnvironmentId.make(id),
+    computerGrounder,
+    computerGrounderSetAt,
+    capabilities: sync ? { computerGrounderSync: true } : {},
+    live,
+  });
+  const sources = [
+    source("studio", jev, "2026-11-02"),
+    source("macbook", null, "2026-11-01"),
+    source("devbox", null, ""),
+    source("offline", null, "", { live: false }),
+    source("older", null, "", { sync: false }),
+  ];
+  const plan = planComputerGrounderSync(sources);
+  // A stored key is redacted for clients, so it is read from the device that saved it.
+  expect(plan).toEqual({
+    computerGrounder: jev,
+    computerGrounderSetAt: "2026-11-02",
+    keyFrom: "studio",
+    targets: [{ environmentId: "macbook" }, { environmentId: "devbox" }],
+  });
+  const sent: Array<[string, unknown]> = [];
+  const accepted = await runComputerGrounderSync(plan, {
+    revealKey: async () => "jev_key",
+    replicate: async (environmentId, patch) => {
+      sent.push([environmentId, patch]);
+      return true;
+    },
+  });
+  expect(accepted).toBe(true);
+  expect(sent).toEqual(
+    ["macbook", "devbox"].map((id) => [
+      id,
+      {
+        computerGrounder: { ...jev, apiKey: "jev_key" },
+        computerGrounderSetAt: "2026-11-02",
+      },
+    ]),
+  );
+
+  const cleared = planComputerGrounderSync([
+    source("studio", jev, "2026-11-02"),
+    source("macbook", null, "2026-11-03"),
+  ]);
+  expect(cleared).toEqual({
+    computerGrounder: null,
+    computerGrounderSetAt: "2026-11-03",
+    targets: [{ environmentId: "studio" }],
+  });
+  // Saves from before sharing carry no time; a configured one wins, and a key reference copies.
+  const reference = { provider: SecretProviderId.make("op"), reference: "op://Private/Jev" };
+  expect(
+    planComputerGrounderSync([
+      source("devbox", null, ""),
+      source("studio", { ...jev, apiKey: reference }, ""),
+    ]),
+  ).toEqual({
+    computerGrounder: { ...jev, apiKey: reference },
+    computerGrounderSetAt: "",
+    targets: [{ environmentId: "devbox" }],
+  });
+  // A key only an unreachable device holds waits for it.
+  expect(
+    planComputerGrounderSync([
+      source("studio", jev, "2026-11-02", { live: false }),
+      source("macbook", null, "2026-11-01"),
+    ]).targets,
+  ).toEqual([]);
+  expect(planComputerGrounderSync(sources.slice(0, 1)).targets).toEqual([]);
 });
 
 it("turns a whole-library patch into per-item operations that apply over newer saves", () => {

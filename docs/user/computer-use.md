@@ -53,6 +53,11 @@ OpenAI-compatible or System One endpoint of your own. That endpoint sees
 control labels and up to 1,500 characters of visible text, never the text a
 task types.
 
+The decision endpoint and its key are shared: set it on one device and every
+connected environment uses it. The latest save wins, and clearing it on one
+device clears it everywhere. An environment whose server predates this keeps
+its own setting until it is updated.
+
 ### Skip approvals
 
 Turn off **Ask before consequential actions** to let steps run without a tap.

@@ -93,6 +93,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetSettings]: "server",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverGetAgentSkills]: "server",
+  [WS_METHODS.serverRevealComputerGrounderKey]: "server",
   [WS_METHODS.serverMutateAgentLibrary]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",
   [WS_METHODS.serverPrepareAcpRegistryAgent]: "server",

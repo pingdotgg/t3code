@@ -12,10 +12,15 @@ import {
   agentLibrarySources,
   loadAgentSkills,
   missingAgentSkills,
+  computerGrounderSources,
   createAgentLibrarySyncGate,
+  createComputerGrounderSyncGate,
   planAgentLibrarySync,
+  planComputerGrounderSync,
   runAgentLibrarySync,
+  runComputerGrounderSync,
   type AgentLibrarySyncIo,
+  type ComputerGrounderSyncIo,
 } from "@t3tools/client-runtime/operations/agentLibrary";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { serverEnvironment } from "../state/server";
@@ -30,6 +35,23 @@ function useAgentLibraryIo(label: string): AgentLibrarySyncIo {
     fetchSkills: async (environmentId, skillIds) => {
       const result = await getSkills({ environmentId, input: { skillIds } });
       return result._tag === "Success" ? result.value.agentSkills : [];
+    },
+    replicate: async (environmentId, patch) =>
+      (await replicate({ environmentId, input: { patch, replicateProfiles: true } }))._tag ===
+      "Success",
+  };
+}
+
+function useComputerGrounderIo(): ComputerGrounderSyncIo {
+  const reveal = useAtomCommand(
+    serverEnvironment.revealComputerGrounderKey,
+    "decision endpoint sync: read key",
+  );
+  const replicate = useAtomCommand(serverEnvironment.updateSettings, "decision endpoint sync");
+  return {
+    revealKey: async (environmentId) => {
+      const result = await reveal({ environmentId, input: {} });
+      return result._tag === "Success" ? result.value.apiKey : undefined;
     },
     replicate: async (environmentId, patch) =>
       (await replicate({ environmentId, input: { patch, replicateProfiles: true } }))._tag ===
@@ -135,6 +157,8 @@ export function AgentLibrarySync() {
   const { environments } = useEnvironments();
   const io = useAgentLibraryIo("agent library sync");
   const gate = useRef(createAgentLibrarySyncGate());
+  const grounderIo = useComputerGrounderIo();
+  const grounderGate = useRef(createComputerGrounderSyncGate());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replicates the merged agent library to connected servers when their streamed settings change
   useEffect(() => {
     const sources = agentLibrarySources(environments);
@@ -146,5 +170,15 @@ export function AgentLibrarySync() {
       () => batch.settle(false),
     );
   }, [environments, io]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replicates the latest decision endpoint save to connected servers when their streamed settings change
+  useEffect(() => {
+    const plan = planComputerGrounderSync(computerGrounderSources(environments));
+    const batch = grounderGate.current.take(plan);
+    if (batch.targets.length === 0) return;
+    void runComputerGrounderSync({ ...plan, targets: batch.targets }, grounderIo).then(
+      (accepted) => batch.settle(accepted),
+      () => batch.settle(false),
+    );
+  }, [environments, grounderIo]);
   return null;
 }

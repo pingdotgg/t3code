@@ -116,6 +116,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   agentLibraryMutations: Schema.optionalKey(Schema.Boolean),
   /** `server.mutateAgentLibrary` applies every write and no longer needs `baseRevision`. */
   agentLibraryLastWriteWins: Schema.optionalKey(Schema.Boolean),
+  /** Shares `computerGrounder` across devices and serves `server.revealComputerGrounderKey`. */
+  computerGrounderSync: Schema.optionalKey(Schema.Boolean),
   /** First-turn bootstrap retains the selected agent profile. Missing means update before sending agent drafts. */
   agentThreadBootstrap: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
