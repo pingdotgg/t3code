@@ -72,6 +72,9 @@ Vouched contributors in [.github/VOUCHED.td](.github/VOUCHED.td) can also open a
 feature PR without a request. Everything else on the list above is still closed: UI overhauls, new
 providers, architecture overhauls, source control, auth, and platforms.
 
+You can have 3 of these feature PRs open. A fourth is closed. Get one merged or closed, then open it
+again. Bug fix PRs do not count.
+
 <a id="one-problem"></a>
 
 ### One problem per PR
@@ -114,7 +117,7 @@ A PR that conflicts with its base branch gets a `needs-rebase` label. If it stil
 days with no activity, it is closed.
 
 Vouched contributors in [.github/VOUCHED.td](.github/VOUCHED.td) are exempt from this rule and from
-the open PR limit.
+the open PR limit. The [feature PR limit](#vouched-features) still applies to them.
 
 ## Bans
 

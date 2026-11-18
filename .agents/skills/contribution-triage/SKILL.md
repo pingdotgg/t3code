@@ -78,7 +78,11 @@ scope and behavioral claims; leave the full correctness, security, and performan
   Under [vouched features](../../../CONTRIBUTING.md#vouched-features), a small, focused feature is
   eligible when the author has a `github:<login>` entry in the trusted `VOUCHED.td`; `-github:`
   lines denounce. This only lifts the bug-fix rule for plain features. The rest of the not-interested
-  list and every other rule still apply, and it grants no review bypass. Judge a
+  list and every other rule still apply, and it grants no review bypass. The author can have 3 such
+  feature PRs open. Count the author's other open PRs that were last opened or reopened before this one (lower PR
+  number breaks a tie) and are features
+  under this exception; bug fixes and maintainer-requested PRs do not count. With 3 or more,
+  closure is warranted for this PR, and the remedy is to get one merged or closed first. Judge a
   claimed bug fix by purpose, impact, and necessary changes, without numeric cutoffs. A setting that
   adds a workflow or changes a default is a feature.
   Check whether an alleged fix intentionally changes product behavior or overlooks an existing workflow.
@@ -133,7 +137,7 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   permission error, means the variable cannot be read; then report the closure as incomplete. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
   and give a concrete remedy. Missing contributor evidence can warrant closure; explain what must be
-  established. The remedy for an ineligible feature is an Ideas discussion, not an agent's product decision.
+  established. The remedy for a feature outside the vouched exception is an Ideas discussion, not an agent's product decision.
   Close for multiple problems only when the independence of those changes is supported. Closing a PR
   does not require a configured Macroscope label.
 - **Needs explanation or maintainer decision.** Name the unresolved question and who can resolve it.
