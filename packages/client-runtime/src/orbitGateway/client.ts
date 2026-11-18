@@ -70,6 +70,11 @@ export interface OrbitGatewayNode {
   readonly name: string;
   readonly wireguardIp: string;
   readonly profile: OrbitGatewayProfile | null;
+  /**
+   * The private Reverb channel that announces this Node's profile changes, or null while it is
+   * unbound or the Gateway predates profile events. Its key rotates within 15 minutes.
+   */
+  readonly profileChannel?: string | null;
 }
 
 /** A workspace as the profile settings store it: the same shape as the desktop's workspace store. */
@@ -1097,7 +1102,13 @@ function node(value: unknown, path: string): OrbitGatewayNode {
     wireguardIp: gatewayText(data.wireguard_ip) ?? "",
     profile:
       data.profile === null || data.profile === undefined ? null : profile(data.profile, path),
+    profileChannel: isConnProfileChannel(data.profile_channel) ? data.profile_channel : null,
   };
+}
+
+/** A channel name of the form the Gateway issues: `private-conn-profile.{key}`. */
+function isConnProfileChannel(value: unknown): value is string {
+  return typeof value === "string" && /^private-conn-profile\.[0-9a-f]{32}$/.test(value);
 }
 
 function settings(value: unknown, path: string): OrbitGatewaySettings {

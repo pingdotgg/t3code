@@ -79,25 +79,31 @@ export type ProfileSyncOutcome = "adopted" | "seeded" | "pulled" | "pushed" | "m
 
 export type ProfileSyncResult =
   | { readonly kind: "unbound" }
-  | { readonly kind: "idle" }
+  /** No section is readable on the device yet; `version` is the one it counts as applied. */
+  | { readonly kind: "idle"; readonly version: number }
   /** The Gateway predates profile sections: nothing was read or written. */
   | { readonly kind: "unsupported" }
+  /** The caller's scope changed (see `run`), so processing stopped. */
+  | { readonly kind: "superseded" }
   | {
       readonly kind: "synced";
       readonly outcomes: Readonly<Partial<Record<ProfileSectionName, ProfileSyncOutcome>>>;
       /** Who changed what, from the latest read or write of this run; null when none happened. */
       readonly sections: Readonly<Record<string, OrbitGatewaySectionMeta>> | null;
+      /** The document version this run counts as applied (see `settledVersion`). */
+      readonly version: number;
     };
 
 /** Attempts at a PATCH before giving up on a run, when other devices keep writing in between. */
 const MAX_ATTEMPTS = 3;
 /** How long an old Gateway is left alone before the next probe. */
 const UNSUPPORTED_RETRY_MS = 10 * 60_000;
+const SUPERSEDED: ProfileSyncResult = { kind: "superseded" };
 /**
  * How long a value a Gateway refused (422) waits before a rebasing channel sends it again: the
  * background probe's cadence, so an upgraded Gateway takes it without a local edit.
  */
-const REJECTED_RETRY_MS = 30_000;
+export const PROFILE_REJECTED_RETRY_MS = 30_000;
 
 /** A Gateway reply that does not show what a rebasing channel needs to retire its intents. */
 function unconfirmed(name: string, why: string): Error {
@@ -141,7 +147,7 @@ export function createProfileSync(ports: ProfileSyncPorts) {
   let unsupportedUntil = 0;
   /**
    * A local value the Gateway refused (validation), so the same value is not sent again. A
-   * rebasing channel sends it again after `REJECTED_RETRY_MS`, and its runs fail until then.
+   * rebasing channel sends it again after `PROFILE_REJECTED_RETRY_MS`, and its runs fail until then.
    */
   const rejected = new Map<
     ProfileSectionName,
@@ -150,7 +156,7 @@ export function createProfileSync(ports: ProfileSyncPorts) {
   const isRejected = (channel: ProfileSyncChannel, local: JsonObject): boolean => {
     const entry = rejected.get(channel.name);
     if (entry === undefined || !jsonEqual(entry.local, local)) return false;
-    return channel.rebases !== true || now() - entry.at < REJECTED_RETRY_MS;
+    return channel.rebases !== true || now() - entry.at < PROFILE_REJECTED_RETRY_MS;
   };
 
   const load = (profileId: number): ProfileSyncState => {
@@ -160,7 +166,10 @@ export function createProfileSync(ports: ProfileSyncPorts) {
     return { ...emptyProfileSyncState(profileId), ignored: saved?.ignored ?? {} };
   };
 
-  async function runOnce(me: OrbitGatewayNode): Promise<ProfileSyncResult> {
+  async function runOnce(
+    me: OrbitGatewayNode,
+    isCurrent: () => boolean,
+  ): Promise<ProfileSyncResult> {
     const profile = me.profile;
     if (profile === null) return { kind: "unbound" };
     if (now() < unsupportedUntil) return { kind: "unsupported" };
@@ -175,6 +184,21 @@ export function createProfileSync(ports: ProfileSyncPorts) {
       state = { profileId: profile.id, profileVersion, sections, ignored };
       ports.saveState(state);
     };
+    /**
+     * The document version covers every section. It counts as read only when each section this
+     * device follows, readable now or not, holds the version `document` names; otherwise the next
+     * run reads the profile again rather than skip a change it never applied.
+     */
+    const settledVersion = (document: OrbitGatewaySettings | null): number =>
+      document === null
+        ? state.profileVersion
+        : document.sections === null ||
+            channels.every(
+              ({ name }) =>
+                remoteSection(document, name).version === (sections[name]?.version ?? 0),
+            )
+          ? document.version
+          : state.profileVersion;
     const read = (channel: ProfileSyncChannel): JsonObject | null =>
       channel.readLocal(sections[channel.name]?.base ?? null);
     const outcomes: Partial<Record<ProfileSectionName, ProfileSyncOutcome>> = {};
@@ -185,7 +209,7 @@ export function createProfileSync(ports: ProfileSyncPorts) {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const readable = channels.filter((channel) => read(channel) !== null);
-      if (readable.length === 0) return { kind: "idle" };
+      if (readable.length === 0) return { kind: "idle", version: state.profileVersion };
 
       const mustFetch =
         attempt > 1 ||
@@ -195,7 +219,13 @@ export function createProfileSync(ports: ProfileSyncPorts) {
         );
       let remote: OrbitGatewaySettings | null = null;
       if (mustFetch) {
-        remote = await ports.client.settings(profile.id);
+        try {
+          remote = await ports.client.settings(profile.id);
+        } catch (error) {
+          if (!isCurrent()) return SUPERSEDED;
+          throw error;
+        }
+        if (!isCurrent()) return SUPERSEDED;
         if (remote.sections === null) {
           unsupportedUntil = now() + UNSUPPORTED_RETRY_MS;
           return { kind: "unsupported" };
@@ -345,11 +375,11 @@ export function createProfileSync(ports: ProfileSyncPorts) {
       }
 
       if (pushes.length === 0) {
-        commit(remote?.version ?? state.profileVersion);
+        commit(settledVersion(remote));
         if (heldBack !== null) throw heldBack;
-        return { kind: "synced", outcomes, sections: meta };
+        return { kind: "synced", outcomes, sections: meta, version: state.profileVersion };
       }
-      commit(remote?.version ?? state.profileVersion);
+      commit(settledVersion(remote));
 
       const patch: Record<string, OrbitGatewaySectionPatch> = {};
       for (const push of pushes) {
@@ -359,6 +389,7 @@ export function createProfileSync(ports: ProfileSyncPorts) {
       try {
         saved = await ports.client.patchSections(profile.id, patch);
       } catch (error) {
+        if (!isCurrent()) return SUPERSEDED;
         if (isOrbitGatewayError(error)) {
           if (error.status === 404 || error.status === 405) {
             unsupportedUntil = now() + UNSUPPORTED_RETRY_MS;
@@ -376,6 +407,8 @@ export function createProfileSync(ports: ProfileSyncPorts) {
         }
         throw error;
       }
+      // The write landed; the next run in the new scope reads it back if it still applies.
+      if (!isCurrent()) return SUPERSEDED;
 
       // A rebasing channel retires intents only against what the Gateway says it now holds.
       for (const push of pushes) {
@@ -419,8 +452,8 @@ export function createProfileSync(ports: ProfileSyncPorts) {
         outcomes[name] =
           push.kind === "seed" ? "seeded" : push.kind === "merge" ? "merged" : "pushed";
       }
-      commit(saved.version);
-      return { kind: "synced", outcomes, sections: meta };
+      commit(settledVersion(saved));
+      return { kind: "synced", outcomes, sections: meta, version: state.profileVersion };
     }
     throw conflict;
   }
@@ -456,11 +489,35 @@ export function createProfileSync(ports: ProfileSyncPorts) {
    * flight waits for it and then reads the state it saved, so it sends only what is still dirty.
    */
   let lastRun: Promise<unknown> = Promise.resolve();
-  function run(me: OrbitGatewayNode): Promise<ProfileSyncResult> {
-    const result = lastRun.then(() => runOnce(me));
+  function run(
+    me: OrbitGatewayNode,
+    isCurrent: () => boolean = () => true,
+  ): Promise<ProfileSyncResult> {
+    const result = lastRun.then(() => (isCurrent() ? runOnce(me, isCurrent) : SUPERSEDED));
     lastRun = result.catch(() => undefined);
     return result;
   }
 
-  return { run, beginNonUserChange };
+  /**
+   * Whether this device holds a section value the profile has not seen, the way a run decides
+   * what to send. A change the engine just applied from the profile is not one.
+   */
+  function hasLocalChanges(): boolean {
+    if (now() < unsupportedUntil) return false;
+    const saved = ports.loadState();
+    return ports.channels().some((channel) => {
+      // A rebasing channel's unconfirmed intents still need a run.
+      if (channel.hasPending?.() === true) return true;
+      const section = saved?.sections[channel.name];
+      const local = channel.readLocal(section?.base ?? null);
+      if (local === null) return false;
+      const mark = saved?.ignored[channel.name];
+      if (mark !== undefined && jsonEqual(local, mark)) return false;
+      // A value the Gateway refused stays unsent until the device changes it.
+      if (isRejected(channel, local)) return false;
+      return section === undefined || !jsonEqual(local, section.base ?? undefined);
+    });
+  }
+
+  return { run, beginNonUserChange, hasLocalChanges };
 }

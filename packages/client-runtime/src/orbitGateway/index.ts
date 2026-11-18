@@ -4,6 +4,8 @@ export * from "./environmentProvider.ts";
 export * from "./profileDocument.ts";
 export * from "./sectionMerge.ts";
 export * from "./profileSync.ts";
+export * from "./profileReconcile.ts";
+export * from "./profileLive.ts";
 export * from "./threadStart.ts";
 export * from "./threadTurn.ts";
 export * from "./orbitSetupStages.ts";

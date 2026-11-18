@@ -197,6 +197,7 @@ function makeDevice(
     appearance: (initial.appearance ?? { schema: 1, mode: "system", contrast: 100 }) as JsonObject,
     state: (initial.state ?? null) as ProfileSyncState | null,
     writes: [] as string[],
+    unreadable: false,
   };
   const channels: ProfileSyncChannel[] = [
     {
@@ -215,7 +216,7 @@ function makeDevice(
     },
     {
       name: "appearance",
-      readLocal: () => ({ ...memory.appearance }),
+      readLocal: () => (memory.unreadable ? null : { ...memory.appearance }),
       applyRemote: (value) => {
         memory.appearance = {
           schema: 1,
@@ -357,6 +358,69 @@ describe("profile sync engine", () => {
     expect(fake.gateway.patches).toHaveLength(patches);
   });
 
+  it("reports a local edit as a change, but not a value it just applied from the profile", async () => {
+    const fake = fakeGateway();
+    const mac = makeDevice(fake);
+    expect(mac.engine.hasLocalChanges()).toBe(true);
+    await mac.sync();
+    expect(mac.engine.hasLocalChanges()).toBe(false);
+    const appearance = fake.gateway.sections.get("appearance")!;
+    fake.gateway.sections.set("appearance", {
+      version: appearance.version + 1,
+      value: { schema: 1, mode: "dark", contrast: 100 },
+      updatedBy: "phone",
+    });
+    fake.gateway.version += 1;
+    await mac.sync();
+    expect(mac.memory.appearance).toMatchObject({ mode: "dark" });
+    expect(mac.engine.hasLocalChanges()).toBe(false);
+    mac.memory.settings.size = 18;
+    expect(mac.engine.hasLocalChanges()).toBe(true);
+  });
+
+  it("still pulls another section that changed while its own PATCH was in flight", async () => {
+    const fake = fakeGateway();
+    const mac = makeDevice(fake);
+    await mac.sync();
+    const staleMe = fake.me();
+    // Another device writes the appearance after the mac read /me.
+    const appearance = fake.gateway.sections.get("appearance")!;
+    fake.gateway.sections.set("appearance", {
+      version: appearance.version + 1,
+      value: { schema: 1, mode: "dark", contrast: 100 },
+      updatedBy: "phone",
+    });
+    fake.gateway.version += 1;
+    mac.memory.settings.size = 18;
+    await mac.engine.run(staleMe);
+    expect(fake.gateway.patches.at(-1)).toHaveProperty(["devices.desktop"]);
+    await mac.sync();
+    expect(mac.memory.appearance).toMatchObject({ mode: "dark" });
+  });
+
+  it("pulls a change to a section that was unreadable while the profile was read", async () => {
+    const fake = fakeGateway();
+    const mac = makeDevice(fake);
+    await mac.sync();
+    const appearance = fake.gateway.sections.get("appearance")!;
+    fake.gateway.sections.set("appearance", {
+      version: appearance.version + 1,
+      value: { schema: 1, mode: "dark", contrast: 100 },
+      updatedBy: "phone",
+    });
+    fake.gateway.version += 1;
+    // The theme is still loading: appearance reads as null while the desktop settings change.
+    mac.memory.unreadable = true;
+    mac.memory.settings.size = 18;
+    // The run does not count the new document version as applied, so a caller reads again.
+    const partial = await mac.sync();
+    expect(partial).toMatchObject({ kind: "synced" });
+    expect(partial.kind === "synced" && partial.version).toBeLessThan(fake.gateway.version);
+    mac.memory.unreadable = false;
+    await mac.sync();
+    expect(mac.memory.appearance).toMatchObject({ mode: "dark" });
+  });
+
   it("lets the device in front of the user win when both edit the same key", async () => {
     const fake = fakeGateway();
     const mac = makeDevice(fake, { settings: { font: "Inter", size: 15 } });
@@ -434,6 +498,25 @@ describe("profile sync engine", () => {
     expect(fake.gateway.sections.has("appearance")).toBe(true);
   });
 
+  it("ignores a failed PATCH from a superseded scope", async () => {
+    const fake = fakeGateway();
+    const mac = makeDevice(fake);
+    const patch = fake.client.patchSections;
+    let current = true;
+    fake.client.patchSections = async (id, sections) => {
+      current = false;
+      fake.gateway.patchStatus = 404;
+      return patch(id, sections);
+    };
+
+    expect(await mac.engine.run(fake.me(), () => current)).toEqual({ kind: "superseded" });
+
+    fake.client.patchSections = patch;
+    fake.gateway.patchStatus = null;
+    expect(await mac.sync()).toMatchObject({ kind: "synced" });
+    expect(fake.gateway.sections.has("appearance")).toBe(true);
+  });
+
   it("gives up after three conflicting attempts", async () => {
     const fake = fakeGateway();
     const mac = makeDevice(fake);
@@ -455,6 +538,7 @@ describe("profile sync engine", () => {
     fake.gateway.patchStatus = 422;
     await expect(mac.sync()).rejects.toMatchObject({ status: 422 });
     const attempts = fake.gateway.patches.length;
+    expect(mac.engine.hasLocalChanges()).toBe(false);
     await mac.sync();
     expect(fake.gateway.patches).toHaveLength(attempts);
     fake.gateway.patchStatus = null;
@@ -526,6 +610,29 @@ describe("overlapping runs", () => {
     await Promise.all([mac.engine.run(me), mac.engine.run(me), mac.engine.run(me)]);
     expect(overlapped).toBe(false);
     expect(fake.gateway.patches).toHaveLength(1);
+  });
+
+  it("applies nothing it read after the caller's profile scope changed", async () => {
+    const fake = fakeGateway();
+    await makeDevice(fake, { settings: { font: "Menlo", size: 12 } }).sync();
+    const mac = makeDevice(fake, { settings: { font: "Inter", size: 15 } });
+    let current = true;
+    const settings = fake.client.settings;
+    fake.client.settings = async () => {
+      const read = await settings();
+      // The user switches provider or profile while this read is in flight.
+      current = false;
+      return read;
+    };
+    fake.gateway.caller = "device";
+    expect(await mac.engine.run(fake.me(), () => current)).toEqual({ kind: "superseded" });
+    expect(mac.memory.settings).toEqual({ font: "Inter", size: 15 });
+    expect(mac.memory.writes).toEqual([]);
+    expect(mac.memory.state).toBeNull();
+    // A run queued behind it for the old scope does not even read.
+    const gets = fake.gateway.gets;
+    expect(await mac.engine.run(fake.me(), () => false)).toEqual({ kind: "superseded" });
+    expect(fake.gateway.gets).toBe(gets);
   });
 });
 

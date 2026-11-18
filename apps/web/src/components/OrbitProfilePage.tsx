@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   desktopOrbitGatewayClient,
+  orbitProfileRebinding,
   syncOrbitProfileNow,
   useOrbitProfileSyncStatus,
 } from "~/orbit/OrbitProfileSync";
@@ -91,7 +92,10 @@ export function OrbitProfilePage() {
     if (!gateway) return;
     setBusy(true);
     try {
-      await switchOrbitProfile({ client: gateway, sync: syncOrbitProfileNow }, choice);
+      await switchOrbitProfile(
+        { client: gateway, sync: syncOrbitProfileNow, rebinding: orbitProfileRebinding },
+        choice,
+      );
       setCreating(false);
       setNewName("");
       await load();

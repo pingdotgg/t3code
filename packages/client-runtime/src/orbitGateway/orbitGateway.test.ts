@@ -115,6 +115,7 @@ describe("createOrbitGatewayClient", () => {
             settings_version: 2,
             updated_at: "2026-10-10T00:00:00+00:00",
           },
+          profile_channel: "private-conn-profile.9f2c4e1ab07d4c3e8a5b6f0d1e2c3b4a",
         },
       }),
     );
@@ -123,7 +124,17 @@ describe("createOrbitGatewayClient", () => {
       name: "nick",
       wireguardIp: "10.44.0.6",
       profile: { id: 1, name: "Nick", settingsVersion: 2, updatedAt: "2026-10-10T00:00:00+00:00" },
+      profileChannel: "private-conn-profile.9f2c4e1ab07d4c3e8a5b6f0d1e2c3b4a",
     });
+    // A channel of any other form is not followed.
+    for (const profileChannel of [null, undefined, "private-orbit", "private-conn-profile.ABC"]) {
+      const other = createOrbitGatewayClient(
+        respond(200, {
+          data: { id: 8, name: "nick", profile: null, profile_channel: profileChannel },
+        }),
+      );
+      await expect(other.me()).resolves.toMatchObject({ profileChannel: null });
+    }
   });
 
   it("sends the read version with a workspace replace and only the keys the Gateway accepts", async () => {

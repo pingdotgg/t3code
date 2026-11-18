@@ -30,6 +30,9 @@ function fakeSwitch() {
     sync: async () => {
       log.push("sync");
     },
+    rebinding: (phase: "before" | "after") => {
+      log.push(phase);
+    },
   };
   return { log, ports };
 }
@@ -38,14 +41,29 @@ describe("switchOrbitProfile", () => {
   it("sends unsent edits to the old profile before binding, then syncs the new one", async () => {
     const { log, ports } = fakeSwitch();
     const node = await switchOrbitProfile(ports, { id: 2 });
-    expect(log).toEqual(["sync", "bind 2", "sync"]);
+    expect(log).toEqual(["sync", "before", "bind 2", "after", "sync"]);
     expect(node.profile?.id).toBe(2);
   });
 
   it("creates a new profile by name and binds this device to it", async () => {
     const { log, ports } = fakeSwitch();
     await switchOrbitProfile(ports, { name: "Work" });
-    expect(log).toEqual(["sync", "create Work", "bind 9", "sync"]);
+    expect(log).toEqual(["sync", "create Work", "before", "bind 9", "after", "sync"]);
+  });
+
+  it("follows the old profile again when the bind fails", async () => {
+    const { log, ports } = fakeSwitch();
+    const failing = {
+      ...ports,
+      client: {
+        ...ports.client,
+        bindProfile: async (): Promise<OrbitGatewayNode> => {
+          throw new Error("bind denied");
+        },
+      },
+    };
+    await expect(switchOrbitProfile(failing, { id: 2 })).rejects.toThrow("bind denied");
+    expect(log).toEqual(["sync", "before", "after", "sync"]);
   });
 
   it("does not bind when the profile cannot be created", async () => {

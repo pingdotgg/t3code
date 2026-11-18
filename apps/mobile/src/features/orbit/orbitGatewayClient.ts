@@ -50,6 +50,7 @@ export function createMobileGatewayTransport(
 }
 
 /** The Gateway knows the phone by its WireGuard address, so the calls carry no credentials. */
-export const orbitGatewayClient = createOrbitGatewayClient(
-  createMobileGatewayTransport((input, init) => fetch(input, init)),
+export const orbitGatewayTransport = createMobileGatewayTransport((input, init) =>
+  fetch(input, init),
 );
+export const orbitGatewayClient = createOrbitGatewayClient(orbitGatewayTransport);

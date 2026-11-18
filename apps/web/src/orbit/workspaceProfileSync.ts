@@ -106,11 +106,26 @@ export async function syncWorkspaceProfile(
   if (!dirty && !remoteChanged) return { kind: "unchanged", profileName };
   if (!dirty) {
     const remote = await ports.client.settings(profileId);
+    const edited = ports.readLocal();
+    if (!sameWorkspaces(edited, local) && !sameWorkspaces(edited, remote.workspaces)) {
+      // The user edited during the read: send that edit against the base it started from, so
+      // the version conflict merges it with the newer profile instead of overwriting it.
+      const saved = await replace(ports, profileId, state.version, state.base, edited);
+      return { kind: saved.merged ? "merged" : "pushed", profileName };
+    }
     adopt(ports, profileId, remote.version, remote.workspaces);
     return { kind: "pulled", profileName };
   }
   const saved = await replace(ports, profileId, state.version, state.base, local);
   return { kind: saved.merged ? "merged" : "pushed", profileName };
+}
+
+/** Whether the device's workspaces differ from what it last synced (or it never synced). */
+export function hasWorkspaceChanges(
+  ports: Pick<WorkspaceProfileSyncPorts, "readLocal" | "loadState">,
+): boolean {
+  const state = ports.loadState();
+  return state === null || !sameWorkspaces(ports.readLocal(), state.base);
 }
 
 function adopt(
@@ -123,7 +138,10 @@ function adopt(
   ports.saveState({ profileId, version, base: workspaces });
 }
 
-/** Sends `local`; on a version conflict merges it with the profile's newer list and tries again. */
+/**
+ * Sends `local`; on a version conflict merges it with the profile's newer list and tries again.
+ * An edit the user makes during any request is merged on top, never overwritten by the answer.
+ */
 async function replace(
   ports: WorkspaceProfileSyncPorts,
   profileId: number,
@@ -135,19 +153,48 @@ async function replace(
   let sendBase = base;
   let candidate = local;
   let merged = false;
-  for (let attempt = 1; ; attempt += 1) {
+  /** The device list `candidate` already contains. */
+  let sent = local;
+  /** Version conflicts so far; an edit during a write is sent again without counting. */
+  let conflicts = 0;
+  for (;;) {
+    const now = ports.readLocal();
+    if (!sameWorkspaces(now, sent)) {
+      candidate = mergeWorkspaces(sent, now, candidate);
+      sent = now;
+    }
+    // After a conflict read: nothing left to send when the merge equals the profile's list.
+    if (conflicts > 0 && sameWorkspaces(candidate, sendBase)) {
+      adopt(ports, profileId, sendVersion, sendBase);
+      return { merged };
+    }
     try {
       const saved = await ports.client.replaceWorkspaces(profileId, sendVersion, candidate);
+      const after = ports.readLocal();
+      if (!sameWorkspaces(after, sent)) {
+        // Edited while the write was in flight: keep that edit on top of what landed and send
+        // it in this run, so a profile switch waiting on the run does not leave it behind. The
+        // run ends once a write lands with no newer edit.
+        const edited = mergeWorkspaces(sent, after, saved.workspaces);
+        ports.writeLocal(edited);
+        ports.saveState({ profileId, version: saved.version, base: saved.workspaces });
+        candidate = edited;
+        sent = ports.readLocal();
+        sendBase = saved.workspaces;
+        sendVersion = saved.version;
+        continue;
+      }
       adopt(ports, profileId, saved.version, saved.workspaces);
       return { merged };
     } catch (error) {
       if (
         !isOrbitGatewayError(error) ||
         error.code !== SETTINGS_VERSION_CONFLICT ||
-        attempt >= MAX_REPLACE_ATTEMPTS
+        conflicts + 1 >= MAX_REPLACE_ATTEMPTS
       ) {
         throw error;
       }
+      conflicts += 1;
       const remote = await ports.client.settings(profileId);
       candidate = mergeWorkspaces(sendBase, candidate, remote.workspaces);
       sendBase = remote.workspaces;
