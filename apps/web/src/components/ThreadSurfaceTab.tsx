@@ -11,6 +11,8 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
+  type EnvironmentId,
+  type IssueTrackerKind,
   type PreviewAnnotationPayload,
   type ProjectId,
   type ScopedThreadRef,
@@ -107,6 +109,8 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
+import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import { IssueDetailGhost } from "./issue/IssueDetailGhost";
 import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
@@ -136,6 +140,9 @@ const PullRequestDetailPanel = lazy(() =>
   import("./pullRequest/PullRequestDetailPanel").then((module) => ({
     default: module.PullRequestDetailPanel,
   })),
+);
+const IssueDetailPanel = lazy(() =>
+  import("./issue/IssueDetailPanel").then((module) => ({ default: module.IssueDetailPanel })),
 );
 
 const EMPTY_PENDING: ReadonlySet<string> = new Set();
@@ -829,6 +836,43 @@ function ThreadSurfaceContent({
           />
         </Suspense>
       );
+    case "issue":
+      if (!context.serverConfig) return <PullRequestDetailGhost />;
+      if (context.serverConfig.environment.capabilities.issues !== true) {
+        return (
+          <PullRequestsUnavailableState
+            title={gt("Issues unavailable")}
+            error={gt("Update this environment's T3 Code server to browse issues.")}
+          />
+        );
+      }
+      return (
+        <Suspense fallback={<IssueDetailGhost />}>
+          <IssueDetailPanel
+            key={surface.id}
+            environmentId={
+              (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
+            }
+            reference={{
+              projectId: surface.projectId as ProjectId,
+              tracker: surface.tracker as IssueTrackerKind,
+              ...(surface.host ? { host: surface.host } : {}),
+              scope: surface.scope,
+              key: surface.key,
+            }}
+            threadRef={context.threadless ? null : threadRef}
+            onSelectPullRequest={(reference) =>
+              useRightPanelStore.getState().openPullRequest(threadRef, {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+                ...(reference.host ? { host: reference.host } : {}),
+              })
+            }
+          />
+        </Suspense>
+      );
+
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "device":

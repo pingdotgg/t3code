@@ -528,6 +528,8 @@ function openLayoutDragSurface(threadRef: ScopedThreadRef, surface: LayoutDragSu
       return panels.openTerminal(threadRef, surface.resourceId);
     case "pull-request":
       return panels.openPullRequest(threadRef, surface);
+    case "issue":
+      return panels.openIssue(threadRef, surface);
     case "side-chat":
       return panels.openSideChat(threadRef, surface.threadId);
   }
