@@ -35,6 +35,8 @@ export function ComposerInlineControl(props: {
   readonly labelEllipsizeMode?: ComponentProps<typeof Text>["ellipsizeMode"];
   readonly suffix?: ReactNode;
   readonly suffixWidth?: number;
+  /** A short suffix keeps its width while the label truncates. */
+  readonly suffixFixed?: boolean;
   /** Show only the icon and chevron; the label still names the control for accessibility. */
   readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
@@ -104,7 +106,10 @@ export function ComposerInlineControl(props: {
         )}
         {!props.iconOnly && props.suffix ? (
           <View
-            className={cn("min-w-0", props.suffixWidth === undefined ? "shrink" : "shrink-0")}
+            className={cn(
+              "min-w-0",
+              props.suffixFixed || props.suffixWidth !== undefined ? "shrink-0" : "shrink",
+            )}
             style={{ width: props.suffixWidth }}
           >
             {props.suffix}

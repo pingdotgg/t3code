@@ -1,4 +1,6 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { useState } from "react";
+import { View } from "react-native";
 import { useGT, useMessages } from "gt-react-native";
 import {
   buildTraitsTriggerDisplay,
@@ -20,6 +22,10 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
+  /** Effort abbreviation instead of the full traits, for a row shared with the editor. */
+  readonly compact?: boolean;
+  /** Width the control may fill; falls back to the effort abbreviation plus speed when the full traits overflow it. */
+  readonly fitWidth?: number;
   readonly onPress: () => void;
 }) {
   const gt = useGT();
@@ -29,7 +35,7 @@ export function ComposerModelControl(props: {
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
-  const summary = props.provider
+  const traits = props.provider
     ? buildTraitsTriggerDisplay(
         {
           descriptors,
@@ -39,8 +45,12 @@ export function ComposerModelControl(props: {
           reportedModelSelection: props.reportedSelection,
         },
         m,
-      ).label
-    : "";
+      )
+    : null;
+  const summary = traits?.label ?? "";
+  const [fullWidth, setFullWidth] = useState(0);
+  const overflows = props.fitWidth !== undefined && fullWidth > 0 && fullWidth > props.fitWidth + 1;
+  const compact = props.compact === true || overflows;
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? gt("Choose model");
   const providerNameLabel = badge
@@ -52,70 +62,91 @@ export function ComposerModelControl(props: {
       })
     : null;
   const shortLabel = props.modelOption?.shortName ?? label;
+  const visibleSummary = props.compact
+    ? (traits?.compactEffortLabel ?? "")
+    : overflows
+      ? [traits?.compactEffortLabel, traits?.speedLabel].filter(Boolean).join(" ")
+      : summary;
+  const renderControl = (full: boolean) => {
+    const controlSummary = full ? summary : visibleSummary;
+    const suffixLabel = providerNameLabel
+      ? [shortLabel, controlSummary].filter(Boolean).join(" · ")
+      : controlSummary;
+    return (
+      <ComposerInlineControl
+        accessibilityLabel={[
+          gt("Model and reasoning settings"),
+          label,
+          badge?.showBadge ? badge.displayName : null,
+          summary,
+        ]
+          .filter(Boolean)
+          .join(", ")}
+        size={props.size}
+        disabled={props.disabled}
+        emphasized
+        renderIcon={(size) =>
+          badge?.showBadge ? (
+            <ProviderInstanceIcon
+              iconUrl={props.modelOption?.providerIconUrl}
+              provider={props.modelOption?.providerDriver}
+              displayName={badge.displayName}
+              accentColor={badge.accentColor}
+              showBadge
+              surfaceColor={props.surfaceColor}
+              size={size}
+            />
+          ) : (
+            <ProviderIcon
+              iconUrl={props.modelOption?.providerIconUrl}
+              provider={props.modelOption?.providerDriver}
+              size={size}
+            />
+          )
+        }
+        label={providerNameLabel ?? shortLabel}
+        labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
+        iconOnly={props.iconOnly}
+        suffixWidth={providerNameLabel ? 96 : undefined}
+        // Only short abbreviations keep their width; an unrecognized effort name truncates.
+        suffixFixed={!full && compact && (traits?.compactEffortLabel?.length ?? 0) <= 4}
+        suffix={
+          suffixLabel ? (
+            <Text
+              className={
+                props.size === "large"
+                  ? "text-sm text-foreground-muted"
+                  : "text-xs text-foreground-muted"
+              }
+              numberOfLines={1}
+            >
+              {suffixLabel}
+            </Text>
+          ) : undefined
+        }
+        maxWidth={full ? 10_000 : "100%"}
+        onPress={props.onPress}
+      />
+    );
+  };
+  if (props.fitWidth === undefined) return renderControl(false);
   return (
-    <ComposerInlineControl
-      accessibilityLabel={[
-        gt("Model and reasoning settings"),
-        label,
-        badge?.showBadge ? badge.displayName : null,
-        summary,
-      ]
-        .filter(Boolean)
-        .join(", ")}
-      size={props.size}
-      disabled={props.disabled}
-      emphasized
-      renderIcon={(size) =>
-        badge?.showBadge ? (
-          <ProviderInstanceIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            displayName={badge.displayName}
-            accentColor={badge.accentColor}
-            showBadge
-            surfaceColor={props.surfaceColor}
-            size={size}
-          />
-        ) : (
-          <ProviderIcon
-            iconUrl={props.modelOption?.providerIconUrl}
-            provider={props.modelOption?.providerDriver}
-            size={size}
-          />
-        )
-      }
-      label={providerNameLabel ?? shortLabel}
-      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
-      iconOnly={props.iconOnly}
-      suffixWidth={providerNameLabel ? 96 : undefined}
-      suffix={
-        providerNameLabel ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {shortLabel}
-            {summary ? ` · ${summary}` : ""}
-          </Text>
-        ) : summary ? (
-          <Text
-            className={
-              props.size === "large"
-                ? "text-sm text-foreground-muted"
-                : "text-xs text-foreground-muted"
-            }
-            numberOfLines={1}
-          >
-            {summary}
-          </Text>
-        ) : undefined
-      }
-      maxWidth="100%"
-      onPress={props.onPress}
-    />
+    <>
+      {/* Unconstrained copy measures whether the full labels fit. */}
+      <View
+        pointerEvents="none"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{ position: "absolute", left: 0, top: 0, width: 10_000, opacity: 0 }}
+      >
+        <View
+          className="self-start"
+          onLayout={(event) => setFullWidth(event.nativeEvent.layout.width)}
+        >
+          {renderControl(true)}
+        </View>
+      </View>
+      {renderControl(false)}
+    </>
   );
 }

@@ -193,6 +193,9 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
+// Android types in the expanded editor, so the unfocused row only previews the draft.
+const ANDROID_PREVIEW_EDITOR_MIN_WIDTH = "25%";
+
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
     ? FadeIn.duration(160)
@@ -465,12 +468,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const [compactRowWidth, setCompactRowWidth] = useState(0);
+  const [modelToolbarWidth, setModelToolbarWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   // Animate only while typing; a thread switch or restored draft lands in place.
   const compactEditor = useCompactComposerEditor(
     bodyText,
     draftMessage,
     Platform.OS === "ios" && isFocused,
+    Platform.OS === "android" && isExpanded,
   );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
@@ -679,8 +684,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </>
   ) : null;
 
+  const fitsModelToolbar = Platform.OS === "android" && compactEditor.isExpanded;
+  if (!fitsModelToolbar && modelToolbarWidth > 0) {
+    setModelToolbarWidth(0);
+  }
   const modelControl = (
-    <View className="min-w-0 shrink">
+    <View
+      className={fitsModelToolbar ? "min-w-0 flex-1 flex-row justify-end" : "min-w-0 shrink"}
+      onLayout={
+        fitsModelToolbar
+          ? (event) => setModelToolbarWidth(event.nativeEvent.layout.width)
+          : undefined
+      }
+    >
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -689,7 +705,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
+        iconOnly={Platform.OS !== "android" && !compactEditor.isExpanded}
+        compact={Platform.OS === "android" && !isExpanded}
+        fitWidth={fitsModelToolbar && modelToolbarWidth > 0 ? modelToolbarWidth : undefined}
         onPress={openSettings}
       />
     </View>
@@ -826,10 +844,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onLayout={compactEditor.onEditorLayout}
                 style={[
                   {
-                    minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
-                        ? 0
-                        : INLINE_EDITOR_MIN_WIDTH,
+                    minWidth: compactEditor.isExpanded
+                      ? 0
+                      : Platform.OS === "android"
+                        ? ANDROID_PREVIEW_EDITOR_MIN_WIDTH
+                        : stripAttachments.length > 0
+                          ? 0
+                          : INLINE_EDITOR_MIN_WIDTH,
                   },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
@@ -1003,7 +1024,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               >
                 <Animated.View
                   key={compactEditor.isExpanded ? "expanded" : "compact"}
-                  className="min-w-0 shrink flex-row items-center"
+                  className={
+                    fitsModelToolbar
+                      ? "min-w-0 flex-1 flex-row items-center"
+                      : "min-w-0 shrink flex-row items-center"
+                  }
                   entering={compactEditor.toolbarControlsEntering}
                 >
                   {compactControl}
