@@ -298,14 +298,20 @@ function ProjectBindings({
   const [pending, setPending] = useState<string | null>(null);
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
+  const boundScope = (member: (typeof projects)[number]["members"][number]) => {
+    const binding = connections.get(member.environmentId)?.bindings[member.id];
+    return binding?.tracker === tracker.tracker ? binding.scope : UNBOUND;
+  };
+
   const change = async (project: (typeof projects)[number], scope: string) => {
     setPending(project.key);
     await Promise.all(
       project.members
-        .filter(
-          (member) =>
-            scope === UNBOUND ||
-            usableOn(member.environmentId)?.scopes.some((candidate) => candidate.key === scope),
+        .filter((member) =>
+          // Clearing leaves a copy bound to another tracker alone.
+          scope === UNBOUND
+            ? boundScope(member) !== UNBOUND
+            : usableOn(member.environmentId)?.scopes.some((candidate) => candidate.key === scope),
         )
         .map((member) =>
           bind({
@@ -327,11 +333,10 @@ function ProjectBindings({
         description={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}
       />
       {projects.map((project) => {
-        const bound = project.members
-          .map((member) => connections.get(member.environmentId)?.bindings[member.id])
-          .find((binding) => binding?.tracker === tracker.tracker);
-        // A project bound to another tracker keeps that binding; this picker shows it unbound.
-        const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+        // Another tracker's binding, or copies that disagree (a partly failed save), read as
+        // unbound, so picking the scope again completes the binding everywhere.
+        const scopes = project.members.map(boundScope);
+        const value = scopes.every((scope) => scope === scopes[0]) ? scopes[0]! : UNBOUND;
         return (
           <SettingsRow
             key={project.key}
