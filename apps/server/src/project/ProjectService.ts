@@ -4,6 +4,7 @@ import {
   ProjectId,
   type Project,
   type ProjectCreatePayload,
+  type ProjectSettingsOverrides,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
   type ThreadId,
@@ -109,6 +110,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-threads",
       "delete-thread",
       "dispatch-project-command",
+      "update-project-settings",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -414,6 +416,40 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Folded settings resolve these only from projectSettingsOverrides, never from the project row.
+  const storeFoldedProjectDefaults = Effect.fn("ProjectService.storeFoldedProjectDefaults")(
+    function* (input: ProjectUpdateInput) {
+      const changes = {
+        defaultModelSelection: input.defaultModelSelection,
+        defaultThreadEnvMode: input.defaultThreadEnvMode,
+        defaultAutoPull: input.autoPull,
+        defaultProjectScripts: input.scripts,
+      } satisfies Partial<Record<keyof ProjectSettingsOverrides, unknown>>;
+      if (Object.values(changes).every((value) => value === undefined)) return;
+      const settingsError = (cause: unknown) =>
+        new ProjectOperationError({
+          operation: "update-project-settings",
+          projectId: input.projectId,
+          cause,
+        });
+      const current = yield* serverSettings.getSettings.pipe(Effect.mapError(settingsError));
+      if (!current.projectSettingsFolded) return;
+      const entry: Record<string, unknown> = {
+        ...current.projectSettingsOverrides[input.projectId],
+      };
+      for (const [key, value] of Object.entries(changes)) {
+        // A null project default means inherit, so it removes the override.
+        if (value === null) delete entry[key];
+        else if (value !== undefined) entry[key] = value;
+      }
+      yield* serverSettings
+        .updateSettings({
+          projectSettingsOverrides: { [input.projectId]: entry as ProjectSettingsOverrides },
+        })
+        .pipe(Effect.mapError(settingsError));
+    },
+  );
+
   const update: ProjectService["Service"]["update"] = Effect.fn("ProjectService.update")(
     function* (input) {
       const existing = yield* readRow(input.projectId);
@@ -450,6 +486,7 @@ export const make = Effect.gen(function* () {
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
+      yield* storeFoldedProjectDefaults(input);
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
