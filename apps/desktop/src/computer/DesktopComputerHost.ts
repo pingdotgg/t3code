@@ -7,6 +7,7 @@ import {
   type ComputerHostFrame,
   type ComputerHostReply,
   type ComputerGrant,
+  type ComputerHostAccess,
   type ComputerAnswers,
   type ComputerObservation,
   type ComputerAction,
@@ -27,6 +28,7 @@ import * as Electron from "electron";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { createComputerOverlay } from "./ComputerOverlay.ts";
 import {
+  type ComputerAccess,
   type ComputerHostProcess,
   startComputerHostProcess,
   type ComputerHostTask,
@@ -52,6 +54,14 @@ const OTHER_ENVIRONMENT = "This computer is busy with a task another environment
 /** The local stop: it ends the task on this Mac without asking the environment, so it works offline. */
 const STOP_SHORTCUT = "CommandOrControl+Shift+Escape";
 const STOPPED_HERE = "You stopped it on this computer.";
+const NO_ACCESSIBILITY =
+  "This computer cannot read its screen: allow Ada in System Settings › Privacy & Security › Accessibility.";
+
+const toHostAccess = (access: ComputerAccess): ComputerHostAccess => ({
+  computerUse: access.accessibility,
+  accessibility: access.accessibility,
+  screenRecording: access.screenRecording,
+});
 
 /**
  * The computer use host this desktop offers to one environment at a time. It owns the helper child, the
@@ -92,6 +102,8 @@ const make = Effect.gen(function* () {
   const overlay = createComputerOverlay();
   let running: ActiveTask | null = null;
   let callCounter = 0;
+  /** The grants the environments last heard, so a grant made after connecting reaches them. */
+  let reported: ComputerHostAccess | null = null;
 
   const failCalls = (environmentId: EnvironmentId | null, message: string) => {
     for (const [callId, call] of pending) {
@@ -125,6 +137,7 @@ const make = Effect.gen(function* () {
     helper?.close();
     helper = null;
     running = null;
+    reported = null;
   };
 
   const ensureHelper = (): ComputerHostProcess => {
@@ -180,6 +193,31 @@ const make = Effect.gen(function* () {
       });
       void PubSub.publishUnsafe(calls, request);
     });
+
+  /** Reads the grants again and tells every hosted environment when they changed since it last heard. */
+  const refreshAccess = async (host: ComputerHostProcess): Promise<ComputerHostAccess | null> => {
+    const access = await host.access().then(toHostAccess, () => null);
+    if (access === null || helper !== host) return access;
+    const changed =
+      reported !== null &&
+      (reported.accessibility !== access.accessibility ||
+        reported.screenRecording !== access.screenRecording);
+    reported = access;
+    if (!changed) return access;
+    for (const environmentId of hosted) {
+      void ask<void>(
+        (callId) => ({ type: "access", callId, environmentId, access }),
+        () => undefined,
+      );
+    }
+    return access;
+  };
+
+  // Grants are made in System Settings, so coming back to the app is when one may have changed.
+  const onWindowFocus = () => {
+    if (helper !== null && hosted.size > 0) void refreshAccess(helper);
+  };
+  Electron.app.on("browser-window-focus", onWindowFocus);
 
   /**
    * Ends the task on this Mac first, so it works with the network down, then tells the environment:
@@ -284,7 +322,7 @@ const make = Effect.gen(function* () {
     }
     const host = ensureHelper();
     const access = yield* Effect.tryPromise({
-      try: () => host.access(),
+      try: () => host.access().then(toHostAccess),
       catch: () => "unavailable" as const,
     }).pipe(
       Effect.catch(() =>
@@ -302,6 +340,7 @@ const make = Effect.gen(function* () {
         retry: "wait" as const,
       };
     }
+    reported = access;
     return {
       ok: true as const,
       hello: {
@@ -310,9 +349,7 @@ const make = Effect.gen(function* () {
         platform: environment.platform,
         version: environment.appVersion,
         controls: [...COMPUTER_CONTROL_KINDS],
-        computerUse: access.accessibility,
-        accessibility: access.accessibility,
-        screenRecording: access.screenRecording,
+        ...access,
       },
     };
   });
@@ -331,16 +368,18 @@ const make = Effect.gen(function* () {
     return host.control({ requestId: frame.requestId, control: frame.control });
   };
 
-  const start = (
+  const start = async (
     environmentId: EnvironmentId,
     frame: Extract<ComputerHostFrame, { kind: "start" }>,
   ): Promise<ComputerHostReply> => {
     const host = helper;
-    if (host === null) {
-      return Promise.resolve({ requestId: frame.requestId, ok: false, error: NO_HELPER });
-    }
+    if (host === null) return { requestId: frame.requestId, ok: false, error: NO_HELPER };
     if (running !== null && running.environmentId !== environmentId) {
-      return Promise.resolve({ requestId: frame.requestId, ok: false, error: OTHER_ENVIRONMENT });
+      return { requestId: frame.requestId, ok: false, error: OTHER_ENVIRONMENT };
+    }
+    const access = await refreshAccess(host);
+    if (access !== null && !access.accessibility) {
+      return { requestId: frame.requestId, ok: false, error: NO_ACCESSIBILITY };
     }
     const task: ComputerHostTask = {
       environmentId,
@@ -352,18 +391,17 @@ const make = Effect.gen(function* () {
       ...(frame.act === undefined ? {} : { act: frame.act }),
       ask: taskAsk({ environmentId, taskId: frame.taskId }),
     };
-    return host.start(task).then((started): ComputerHostReply => {
-      if (started.ok) {
-        running = { environmentId, taskId: frame.taskId };
-        holdStopShortcut();
-        return { requestId: frame.requestId, ok: true };
-      }
-      return {
-        requestId: frame.requestId,
-        ok: false,
-        error: started.busy ? "This computer is busy with another task." : started.error,
-      };
-    });
+    const started = await host.start(task);
+    if (started.ok) {
+      running = { environmentId, taskId: frame.taskId };
+      holdStopShortcut();
+      return { requestId: frame.requestId, ok: true };
+    }
+    return {
+      requestId: frame.requestId,
+      ok: false,
+      error: started.busy ? "This computer is busy with another task." : started.error,
+    };
   };
 
   const frame = Effect.fn("DesktopComputerHost.frame")(function* (
@@ -389,6 +427,10 @@ const make = Effect.gen(function* () {
       case "look": {
         const host = helper;
         if (host === null) return { requestId: next.requestId, ok: false, error: NO_HELPER };
+        const access = yield* Effect.promise(() => refreshAccess(host));
+        if (access !== null && !access.accessibility) {
+          return { requestId: next.requestId, ok: false, error: NO_ACCESSIBILITY };
+        }
         return yield* Effect.promise(() =>
           host.look({
             requestId: next.requestId,
@@ -426,7 +468,12 @@ const make = Effect.gen(function* () {
       call.settle(received);
     });
 
-  yield* Effect.addFinalizer(() => Effect.sync(dropHelper));
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      Electron.app.off("browser-window-focus", onWindowFocus);
+      dropHelper();
+    }),
+  );
 
   return DesktopComputerHost.of({
     prepare,

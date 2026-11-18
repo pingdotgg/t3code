@@ -34,12 +34,14 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const GROUNDER_KINDS: ReadonlyArray<{
-  readonly kind: ComputerGrounderKind;
+  readonly kind: Extract<ComputerGrounderKind, "openai-compatible" | "systemone">;
   readonly label: string;
 }> = [
   { kind: "openai-compatible", label: "OpenAI-compatible" },
   { kind: "systemone", label: "System One" },
 ];
+
+const JEV_KEYS_URL = "https://console.typesafe.ai/keys";
 
 const stepLimit = `${COMPUTER_LIMITS.maxSteps} steps`;
 const workingLimit = formatDuration(COMPUTER_LIMITS.timeoutMs);
@@ -221,7 +223,20 @@ function ComputersSection() {
 }
 
 function emptyGrounder(): ComputerGrounderConfig {
-  return { kind: "openai-compatible", baseUrl: "", model: "", apiKey: "" };
+  return { kind: "jev", baseUrl: "", model: "", apiKey: "" };
+}
+
+/** The Jev preset stores only its key; a custom endpoint needs its own URL and model. */
+function grounderToSave(values: ComputerGrounderConfig): ComputerGrounderConfig | null {
+  if (values.kind === "jev") {
+    // Without a key the agent plans each step, so there is nothing to store.
+    if (typeof values.apiKey === "string" && values.apiKey.length === 0) return null;
+    return { kind: "jev", baseUrl: "", model: "", apiKey: values.apiKey };
+  }
+  const baseUrl = values.baseUrl.trim();
+  const model = values.model.trim();
+  if (baseUrl.length === 0 || model.length === 0) return null;
+  return { kind: values.kind, baseUrl, model, apiKey: values.apiKey };
 }
 
 function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -232,15 +247,13 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
   const [message, setMessage] = useState<string | null>(null);
   const values: ComputerGrounderConfig =
     draft === null ? (saved ?? emptyGrounder()) : { ...(saved ?? emptyGrounder()), ...draft };
+  const jev = values.kind === "jev";
 
   const save = async () => {
     if (saving) return;
     setSaving(true);
     setMessage(null);
-    const patch: ServerSettingsPatch = {
-      computerGrounder:
-        values.baseUrl.trim().length === 0 || values.model.trim().length === 0 ? null : values,
-    };
+    const patch: ServerSettingsPatch = { computerGrounder: grounderToSave(values) };
     await updateSettings(patch, {
       onSaved: () => {
         setDraft(null);
@@ -250,6 +263,19 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
     });
     setSaving(false);
   };
+
+  const apiKeyField = (
+    <div className="grid gap-1.5">
+      <Label htmlFor="computer-grounder-key">API key</Label>
+      <SecretInput
+        id="computer-grounder-key"
+        size="sm"
+        configured={typeof values.apiKey === "string" && values.apiKey.length > 0}
+        value={typeof values.apiKey === "string" ? values.apiKey : ""}
+        onCommit={(apiKey) => setDraft((previous) => ({ ...previous, apiKey }))}
+      />
+    </div>
+  );
 
   return (
     <SettingsSection id="computer-use-grounder" title="Decision endpoint">
@@ -261,68 +287,99 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
         }}
       >
         <p className="text-xs text-muted-foreground">
-          Optional. When set, this endpoint answers a click the policy cannot settle. Empty, the
+          Optional. A decision endpoint answers a click the policy cannot settle; without one the
           agent answers in <code className="font-mono">computer_use</code>. It sees control labels
           and up to 1,500 characters of visible text, and never writes text: only the text a task
           was started with is ever typed.
         </p>
         <div className="grid gap-1.5">
-          <Label htmlFor="computer-grounder-kind">Kind</Label>
+          <Label htmlFor="computer-grounder-provider">Provider</Label>
           <Select
-            value={values.kind}
-            onValueChange={(kind) =>
-              setDraft((previous) => ({ ...previous, kind: kind as ComputerGrounderKind }))
+            value={jev ? "jev" : "custom"}
+            onValueChange={(provider) =>
+              setDraft((previous) => ({
+                ...previous,
+                kind: provider === "jev" ? "jev" : "openai-compatible",
+              }))
             }
           >
-            <SelectTrigger id="computer-grounder-kind" size="sm">
+            <SelectTrigger id="computer-grounder-provider" size="sm">
               <SelectValue />
             </SelectTrigger>
             <SelectPopup>
-              {GROUNDER_KINDS.map((option) => (
-                <SelectItem key={option.kind} value={option.kind}>
-                  {option.label}
-                </SelectItem>
-              ))}
+              <SelectItem value="jev">Jev (TypeSafe)</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
             </SelectPopup>
           </Select>
         </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="computer-grounder-url">Base URL</Label>
-          <Input
-            id="computer-grounder-url"
-            size="sm"
-            type="url"
-            placeholder="http://localhost:11434/v1"
-            spellCheck={false}
-            value={values.baseUrl}
-            onChange={(event) =>
-              setDraft((previous) => ({ ...previous, baseUrl: event.target.value }))
-            }
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="computer-grounder-model">Model</Label>
-          <Input
-            id="computer-grounder-model"
-            size="sm"
-            spellCheck={false}
-            placeholder="qwen3-vl:8b"
-            value={values.model}
-            onChange={(event) =>
-              setDraft((previous) => ({ ...previous, model: event.target.value }))
-            }
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="computer-grounder-key">API key</Label>
-          <SecretInput
-            id="computer-grounder-key"
-            size="sm"
-            configured={typeof values.apiKey === "string" && values.apiKey.length > 0}
-            value={typeof values.apiKey === "string" ? values.apiKey : ""}
-            onCommit={(apiKey) => setDraft((previous) => ({ ...previous, apiKey }))}
-          />
-        </div>
+        {jev ? (
+          <>
+            {apiKeyField}
+            <p className="text-xs text-muted-foreground">
+              Jev is TypeSafe's System One model. Get a key from the{" "}
+              <a
+                href={JEV_KEYS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                TypeSafe console
+              </a>
+              ; without one the agent plans each step.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="grid gap-1.5">
+              <Label htmlFor="computer-grounder-kind">Kind</Label>
+              <Select
+                value={values.kind}
+                onValueChange={(kind) =>
+                  setDraft((previous) => ({ ...previous, kind: kind as ComputerGrounderKind }))
+                }
+              >
+                <SelectTrigger id="computer-grounder-kind" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  {GROUNDER_KINDS.map((option) => (
+                    <SelectItem key={option.kind} value={option.kind}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="computer-grounder-url">Base URL</Label>
+              <Input
+                id="computer-grounder-url"
+                size="sm"
+                type="url"
+                placeholder="http://localhost:11434/v1"
+                spellCheck={false}
+                value={values.baseUrl}
+                onChange={(event) =>
+                  setDraft((previous) => ({ ...previous, baseUrl: event.target.value }))
+                }
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="computer-grounder-model">Model</Label>
+              <Input
+                id="computer-grounder-model"
+                size="sm"
+                spellCheck={false}
+                placeholder="qwen3-vl:8b"
+                value={values.model}
+                onChange={(event) =>
+                  setDraft((previous) => ({ ...previous, model: event.target.value }))
+                }
+              />
+            </div>
+            {apiKeyField}
+          </>
+        )}
         <div className="flex items-center justify-end gap-2">
           {message === null ? null : (
             <span className="text-xs text-muted-foreground">{message}</span>

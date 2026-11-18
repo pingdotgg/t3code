@@ -1128,7 +1128,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "computer-use-grounder",
     scope: "environment",
     searchTerms: [
-      "grounder decide judge model endpoint openai compatible system one base url key llm click",
+      "grounder decide judge model endpoint jev typesafe system one openai compatible base url key llm click",
     ],
     environmentOnly: true,
   },

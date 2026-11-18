@@ -329,6 +329,7 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
       Effect.die("a scripted computer asks nothing"),
     ),
     hostEvent: Effect.fn("ComputerService.hostEvent")(() => Effect.void),
+    hostAccess: Effect.fn("ComputerService.hostAccess")(() => Effect.void),
     attachLocalHost: Effect.fn("ComputerService.attachLocalHost")(() =>
       Effect.die("a scripted computer attaches nothing"),
     ),

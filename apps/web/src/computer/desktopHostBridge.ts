@@ -319,6 +319,14 @@ const answerCall = Effect.fn("web.computerHost.answerCall")(function* (
   switch (call.type) {
     case "closed":
       break;
+    case "access":
+      yield* registry
+        .run(
+          call.environmentId,
+          request(WS_METHODS.computerHostAccess, { hostId, access: call.access }),
+        )
+        .pipe(Effect.ignore);
+      break;
     case "event":
       yield* registry
         .run(

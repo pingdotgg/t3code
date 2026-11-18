@@ -455,6 +455,27 @@ it.effect("a second task on a busy host is refused", () =>
   }).pipe(Effect.provide(layerTest())),
 );
 
+it.effect("a grant made after the host connected reaches the host and its status", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost({
+      computerUse: false,
+      accessibility: false,
+      screenRecording: false,
+    });
+    // The host checks its own grants when it starts a task, so a stale report never refuses one.
+    yield* startUse();
+    yield* service.hostAccess({
+      hostId: host.hostId,
+      access: { computerUse: true, accessibility: true, screenRecording: false },
+    });
+    const [view] = (yield* service.status).hosts;
+    assert.isTrue(view?.computerUse);
+    assert.isTrue(view?.accessibility);
+    assert.isFalse(view?.screenRecording);
+  }).pipe(Effect.provide(layerTest())),
+);
+
 it.effect("snapshots keep the running task and only the ten latest ended ones", () =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;

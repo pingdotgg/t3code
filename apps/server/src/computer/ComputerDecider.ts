@@ -8,6 +8,7 @@ import type {
   ComputerQuestions,
   SettingsSecretValue,
 } from "@t3tools/contracts";
+import { resolveComputerGrounder } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -247,7 +248,7 @@ const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   const readConfig = Effect.fnUntraced(function* () {
     const current = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    return current?.computerGrounder ?? null;
+    return resolveComputerGrounder(current?.computerGrounder ?? null);
   });
 
   /** One request to the configured endpoint; the decoded JSON body, or why it did not answer. */
