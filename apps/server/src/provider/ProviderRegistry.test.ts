@@ -999,6 +999,93 @@ it.layer(
       }),
     );
 
+    it.effect("lists Codex skills when plugin reconcile outlasts the discovery budget", () =>
+      Effect.gen(function* () {
+        const accountRequested = yield* Deferred.make<void>();
+        const reconcileRequested = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const scope = yield* Effect.scope;
+            const output = yield* Queue.unbounded<Uint8Array>();
+            const send = (message: unknown) =>
+              Queue.offer(output, encoder.encode(`${JSON.stringify(message)}\n`));
+            const results: Record<string, unknown> = {
+              initialize: {
+                userAgent: "codex_cli_rs/0.170.0",
+                codexHome: "/nonexistent-codex-home",
+                platformFamily: "unix",
+                platformOs: "linux",
+              },
+              "account/read": { account: { type: "apiKey" }, requiresOpenaiAuth: false },
+              "config/read": { config: {}, origins: {} },
+              "skills/list": {
+                data: [
+                  {
+                    cwd: "/",
+                    errors: [],
+                    skills: [
+                      {
+                        name: "local",
+                        path: "/local/SKILL.md",
+                        enabled: true,
+                        description: "",
+                        scope: "user",
+                      },
+                    ],
+                  },
+                ],
+              },
+              "model/list": { data: [] },
+            };
+            const answer = (line: string) => {
+              const { id, method } = JSON.parse(line) as { id?: number; method?: string };
+              if (id === undefined || method === undefined) return Effect.void;
+              // Never answered: the read after it must still get part of the budget.
+              if (method === "plugin/reconcile") {
+                return Deferred.succeed(reconcileRequested, undefined);
+              }
+              if (method !== "account/read") {
+                return send({ id, result: results[method] ?? {} });
+              }
+              return Deferred.succeed(accountRequested, undefined).pipe(
+                Effect.andThen(Effect.sleep("16 seconds")),
+                Effect.andThen(send({ id, result: results[method] })),
+                Effect.forkIn(scope),
+              );
+            };
+            const decoder = new TextDecoder();
+            let buffered = "";
+            return ChildProcessSpawner.makeHandle({
+              ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              stdin: Sink.forEach((chunk: Uint8Array) => {
+                buffered += decoder.decode(chunk, { stream: true });
+                const lines = buffered.split("\n");
+                buffered = lines.pop() ?? "";
+                return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
+              }),
+              stdout: Stream.fromQueue(output),
+            });
+          }),
+        );
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(accountRequested);
+        yield* TestClock.adjust("16 seconds");
+        yield* Deferred.await(reconcileRequested);
+        yield* TestClock.adjust("3 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.deepStrictEqual(
+          status.skills.map((skill) => skill.name),
+          ["local"],
+        );
+      }),
+    );
+
     it.effect("does not run --version when the Codex executable cannot start", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
