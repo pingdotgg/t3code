@@ -1813,7 +1813,13 @@ export function PullRequestDetailPanel({
               <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground @max-[30rem]/pr-header:hidden">
                 <span
                   className="inline-flex items-baseline gap-1 tabular-nums @max-[34rem]/pr-header:hidden"
-                  aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
+                  aria-label={gt(
+                    "{count, plural, one {{formattedCount} changed file} other {{formattedCount} changed files}}",
+                    {
+                      count: detail.changedFiles,
+                      formattedCount: detail.changedFiles.toLocaleString(),
+                    },
+                  )}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />
                   {detail.changedFiles.toLocaleString()}
