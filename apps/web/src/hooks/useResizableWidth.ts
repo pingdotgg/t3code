@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect } from "react";
 
 import { useLocalStorage, writeLocalStorageValue } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
@@ -43,30 +43,14 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   // Panels that share a key follow each other's drags, in this tab and in others.
   const [storedWidth] = useLocalStorage(storageKey, null, StoredWidthSchema);
-  // Resizing remains usable for this session when browser storage is unavailable.
-  const [unsaved, setUnsaved] = useState<{
-    readonly storageKey: string;
-    readonly storedWidth: number | null;
-    readonly width: number;
-  } | null>(null);
-  if (unsaved?.storageKey === storageKey && unsaved.storedWidth !== storedWidth) {
-    setUnsaved(null);
-  }
-  const clampedWidth = clamp(
-    unsaved?.storageKey === storageKey && unsaved.storedWidth === storedWidth
-      ? unsaved.width
-      : (storedWidth ?? defaultWidth),
-  );
+  const clampedWidth = clamp(storedWidth ?? defaultWidth);
   const restoreWidth = useStableCallback((host: HTMLElement | null) => {
     host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${clampedWidth}px`);
   });
   const currentStorageKey = useStableCallback(() => storageKey);
 
-  const commitWidth = useStableCallback((nextStorageKey: string, nextWidth: number) => {
-    const saved = writeLocalStorageValue(nextStorageKey, nextWidth, null, StoredWidthSchema);
-    if (nextStorageKey !== storageKey) return;
-    setUnsaved(saved ? null : { storageKey: nextStorageKey, storedWidth, width: nextWidth });
-  });
+  const commitWidth = (nextStorageKey: string, nextWidth: number) =>
+    writeLocalStorageValue(nextStorageKey, nextWidth, null, StoredWidthSchema);
 
   const drag = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
