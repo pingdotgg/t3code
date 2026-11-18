@@ -300,7 +300,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             message: prompt.message,
             ...(prompt.detail === undefined ? {} : { detail: prompt.detail }),
           },
-          previewHostWindow(requester),
+          platform === "win32" ? undefined : previewHostWindow(requester),
         )
         .pipe(
           Effect.map(({ response }): boolean | undefined => response === 0),
