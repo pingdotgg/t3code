@@ -64,7 +64,7 @@ interface Options {
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
   /** Names Chrome in the browser's own user agent, which is all a service worker ever sends. */
-  readonly chrome?: { readonly version: string; readonly platform: NodeJS.Platform };
+  readonly chrome: { readonly version: string; readonly platform: NodeJS.Platform };
   /** Closes the shared browser once it has held no context for this long. */
   readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -86,8 +86,8 @@ const UA_SYSTEMS: Partial<Record<NodeJS.Platform, string>> = {
 const chromeToken = (major: string) => `Chrome/${major}.0.0.0`;
 
 const chromeUserAgent = (chrome: Options["chrome"]) => {
-  const major = chrome && /^\d+/.exec(chrome.version)?.[0];
-  const system = chrome && UA_SYSTEMS[chrome.platform];
+  const major = /^\d+/.exec(chrome.version)?.[0];
+  const system = UA_SYSTEMS[chrome.platform];
   return major && system
     ? `Mozilla/5.0 (${system}) AppleWebKit/537.36 (KHTML, like Gecko) ${chromeToken(major)} Safari/537.36`
     : null;
@@ -149,7 +149,7 @@ export class ServerBrowserContexts {
   private async launchOptions() {
     const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
-    // A page's override never reaches its service worker, so sites saw two browsers in one session.
+    // A page's override never reaches its workers, so the browser itself must name Chrome.
     const userAgent = chromeUserAgent(this.options.chrome);
     return {
       executable,
