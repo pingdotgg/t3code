@@ -46,6 +46,13 @@ describe("snapshot deadline diagnostics", () => {
   const stalledSnapshot = async (options: {
     readonly stalled?: "metrics";
     readonly page?: Partial<Record<keyof Page, unknown>>;
+    readonly large?: boolean | Promise<boolean>;
+    readonly sizeReadIn?: (contextId: number | undefined) => void;
+    readonly screenshot?: () => Promise<{ readonly data: string }>;
+    /** Runs once everything the snapshot started without waiting has been asked for. */
+    readonly started?: () => void;
+    /** Runs after the clock has advanced, while it is still faked. */
+    readonly advanced?: () => Promise<void>;
     readonly advanceMs: number;
   }) => {
     vi.useFakeTimers();
@@ -67,9 +74,16 @@ describe("snapshot deadline diagnostics", () => {
         ...options.page,
       } as unknown as Page;
       const cdp = {
-        send: async (method: string) => {
+        send: async (
+          method: string,
+          params?: { readonly contextId?: number; readonly expression?: string },
+        ) => {
           if (options.stalled === "metrics") return never();
-          if (method === "Page.captureScreenshot") return { data: "" };
+          if (method === "Page.captureScreenshot") return options.screenshot?.() ?? { data: "" };
+          if (params?.expression === ServerBrowserPage.LARGE_PAGE_SCRIPT) {
+            options.sizeReadIn?.(params.contextId);
+            return { result: { value: (await options.large) ?? false } };
+          }
           if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
           if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
           if (method === "Runtime.evaluate") return { result: { value: [] } };
@@ -84,7 +98,12 @@ describe("snapshot deadline diagnostics", () => {
         networkEntries: [],
         actionTimeline: [],
       }).catch((error: unknown) => error);
+      if (options.started) {
+        await vi.advanceTimersByTimeAsync(0);
+        options.started();
+      }
       await vi.advanceTimersByTimeAsync(options.advanceMs);
+      await options.advanced?.();
       return await captured;
     } finally {
       vi.useRealTimers();
@@ -111,6 +130,50 @@ describe("snapshot deadline diagnostics", () => {
     expect((captured as ServerBrowserPage.ServerBrowserOperationError).detail).toMatchObject({
       pendingStages: expect.arrayContaining(["accessibility tree"]),
     });
+  });
+
+  it("finishes a large page's screenshot before building its tree", async () => {
+    const png = Buffer.concat([Buffer.alloc(16), Buffer.from([0, 0, 5, 0, 0, 0, 3, 32])]);
+    const screenshot = Promise.withResolvers<{ readonly data: string }>();
+    const ariaSnapshot = vi.fn(async () => "- table");
+    const sizeReadIn = vi.fn();
+    const captured = await stalledSnapshot({
+      large: true,
+      sizeReadIn,
+      page: { ariaSnapshot },
+      screenshot: () => screenshot.promise,
+      // Building the tree holds the page's main thread, so a screenshot still pending would starve.
+      started: () => {
+        expect(ariaSnapshot).not.toHaveBeenCalled();
+        screenshot.resolve({ data: png.toString("base64") });
+      },
+      advanceMs: 0,
+    });
+    expect(captured).toMatchObject({
+      accessibilityTree: "- table",
+      screenshot: { width: 1280, height: 800 },
+    });
+    // The isolated world, which page script cannot reach.
+    expect(sizeReadIn).toHaveBeenCalledWith(1);
+  });
+
+  it("starts no tree when the page's size is known only after the deadline", async () => {
+    const large = Promise.withResolvers<boolean>();
+    const ariaSnapshot = vi.fn(async () => "");
+    const captured = await stalledSnapshot({
+      large: large.promise,
+      page: { ariaSnapshot },
+      advanceMs: 10_000,
+      advanced: async () => {
+        large.resolve(false);
+        await vi.advanceTimersByTimeAsync(0);
+      },
+    });
+    expect(captured).toMatchObject({
+      detail: { timeoutMs: 10_000, pendingStages: ["page state"] },
+    });
+    // The deadline rejects either way; this is what the check before the tree adds.
+    expect(ariaSnapshot).not.toHaveBeenCalled();
   });
 
   it("omits a timed-out stage after it succeeds on retry", async () => {
