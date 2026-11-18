@@ -268,6 +268,8 @@ export function canMarkThreadUnread(
     status === "ready" &&
     thread.lastVisitedAt !== undefined &&
     thread.latestRun?.completedAt != null &&
+    thread.latestRun.status !== "cancelled" &&
+    thread.latestRun.status !== "interrupted" &&
     !threadHasUnseenCompletion(thread)
   );
 }
