@@ -2,7 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { EnvironmentId } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useRef, useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppBar } from "../../components/ui/AppBar";
@@ -76,12 +76,30 @@ export function LocalPreviewScreen(props: {
   };
   const back = () => void webView.current?.goBack();
   const canGoBack = page?.canGoBack ?? false;
+  // Like Safari, full screen on iOS lays the bar over the page, which scrolls under it.
+  const overlay = Platform.OS === "ios" && !onMaximize;
+  const [barHeight, setBarHeight] = useState(0);
+  const pageColor = failed || unsupported !== null ? null : page?.pageColor || null;
+  const browserBar = (
+    <BrowserBar
+      url={current}
+      editable
+      canGoBack={canGoBack}
+      onClose={props.onClose}
+      onBack={back}
+      onReload={retry}
+      onSubmit={open}
+      compact={bar.compact && !failed}
+      onExpand={bar.expand}
+      pageColor={pageColor}
+    />
+  );
 
   return (
     // Full screen spans the Duo's rail, so it insets its own sides; the pane is inset already.
     <SafeAreaView
       edges={onMaximize ? [] : ["left", "right"]}
-      style={{ flex: 1, backgroundColor: themeVariables["--color-sheet-solid"] }}
+      style={{ flex: 1, backgroundColor: pageColor ?? themeVariables["--color-sheet-solid"] }}
     >
       {onMaximize ? (
         <>
@@ -106,18 +124,8 @@ export function LocalPreviewScreen(props: {
           />
           <View style={{ height: barOverlap }} />
         </>
-      ) : (
-        <BrowserBar
-          url={current}
-          editable
-          canGoBack={canGoBack}
-          onClose={props.onClose}
-          onBack={back}
-          onReload={retry}
-          onSubmit={open}
-          compact={bar.compact && !failed}
-          onExpand={bar.expand}
-        />
+      ) : overlay ? null : (
+        browserBar
       )}
       <View className="flex-1">
         <TunnelWebView
@@ -126,6 +134,7 @@ export function LocalPreviewScreen(props: {
           className="flex-1"
           environmentId={environmentId}
           url={initialUrl}
+          topInset={overlay ? barHeight : 0}
           onNavigationChange={(next) => {
             if (next.loading) setFailed(false);
             setPage(next);
@@ -184,6 +193,14 @@ export function LocalPreviewScreen(props: {
                 </AppText>
               ) : null}
             </View>
+          </View>
+        ) : null}
+        {overlay ? (
+          <View
+            className="absolute inset-x-0 top-0"
+            onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}
+          >
+            {browserBar}
           </View>
         ) : null}
       </View>
