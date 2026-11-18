@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import { expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as Socket from "effect/socket/Socket";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -110,4 +113,97 @@ it.live("closes a tab's relay connection when the desktop detaches the tab", () 
       ),
     ),
   ),
+);
+
+it.effect(
+  "a desktop without fds attaches its tabs over a socket, and loses them when it drops",
+  () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* Effect.gen(function* () {
+        const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+        const key = { threadId: "thread-1", tabId: "tab-1" };
+        const connect = Effect.gen(function* () {
+          const frames = yield* Queue.unbounded<string, Cause.Done>();
+          const commands = yield* Queue.unbounded<string>();
+          const socket = Socket.make({
+            reader: Effect.succeed({
+              pull: Queue.take(frames).pipe(
+                Effect.map((frame) => [frame] as const),
+                Effect.mapError(
+                  () =>
+                    new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+                ),
+              ),
+              upgrade: () => Effect.void,
+            }),
+            writer: Effect.succeed({
+              write: (chunk) =>
+                typeof chunk === "string"
+                  ? Effect.asVoid(Queue.offer(commands, chunk))
+                  : Effect.void,
+              writeAll: () => Effect.void,
+            }),
+          });
+          const served = yield* channel.serve(socket).pipe(Effect.forkChild);
+          const send = (event: object) => Queue.offer(frames, JSON.stringify(event));
+          return { frames, commands, served, send };
+        });
+        expect(channel.available).toBe(true);
+
+        const first = yield* connect;
+        yield* first.send({ type: "attached", ...key });
+        expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+        // An idle socket still carries the ping a desktop tells a dead connection by.
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Queue.take(first.commands)).toBe("ping");
+        const turn = { type: "turn", threadId: key.threadId, active: true };
+        yield* channel.turn(key.threadId, true);
+        expect(JSON.parse(yield* Queue.take(first.commands))).toEqual(turn);
+        // The desktop redials before the first socket's close is seen, while an endpoint is open.
+        const second = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* channel.endpoint(key);
+            const detached = yield* channel.detached.pipe(Stream.runHead, Effect.forkChild);
+            const replacement = yield* connect;
+            yield* Fiber.join(detached);
+            expect(yield* channel.isAttached(key)).toBe(false);
+            yield* replacement.send({ type: "attached", ...key });
+            expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+            return replacement;
+          }),
+        );
+        // Neither the old endpoint's release nor the first socket's late close reaches the new tab.
+        yield* Queue.end(first.frames);
+        yield* Fiber.join(first.served);
+        expect(yield* channel.isAttached(key)).toBe(true);
+        yield* channel.pointer(key, { phase: "move", x: 1, y: 2 });
+        // A desktop that redialed forgot the running turn, so it hears of it again first.
+        expect(JSON.parse(yield* Queue.take(second.commands))).toEqual(turn);
+        expect(JSON.parse(yield* Queue.take(second.commands))).toEqual({
+          type: "pointer",
+          ...key,
+          phase: "move",
+          x: 1,
+          y: 2,
+        });
+        expect(yield* Queue.size(first.commands)).toBe(0);
+
+        yield* Queue.end(second.frames);
+        yield* Fiber.join(second.served);
+        expect(yield* channel.isAttached(key)).toBe(false);
+      }).pipe(
+        Effect.provide(
+          DesktopBrowserChannel.layer.pipe(
+            Layer.provide(ServerConfig.layer({ ...config, desktopBrowserSocket: true })),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    ),
 );

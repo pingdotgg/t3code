@@ -30,6 +30,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
+  // wsl.exe drops the browser fds, so that desktop dials DESKTOP_BROWSER_CHANNEL_PATH instead.
+  desktopBrowserSocket: Schema.optionalKey(Schema.Boolean),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 

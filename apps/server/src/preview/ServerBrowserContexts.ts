@@ -302,7 +302,7 @@ export class ServerBrowserContexts {
 
   async connectDesktopPage(endpoint: string) {
     const { chromium } = loadPlaywright();
-    // Only a same-machine desktop backend gets the browser channel, so uploads can pass file paths.
+    // Uploads pass file paths: the desktop shares this filesystem, or translates them (WSL).
     const browser = await chromium.connectOverCDP(endpoint, { isLocal: true, timeout: 15_000 });
     const page = browser.contexts().flatMap((context) => context.pages())[0];
     if (!page) {
