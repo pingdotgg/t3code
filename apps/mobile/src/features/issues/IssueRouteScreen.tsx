@@ -675,38 +675,38 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
               </View>
             )}
           </NativeScrollView>
-          {showComposer ? (
-            <KeyboardStickyView
-              // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.
-              enabled={deviceType !== "duo-unfolded" || composerFocused}
-              pointerEvents="box-none"
-              style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
-              offset={{ closed: 0, opened: composerBottomInset }}
-            >
-              <View
-                pointerEvents="box-none"
-                style={{
-                  position: "absolute",
-                  bottom: controlInsets.bottom,
-                  left: controlInsets.left,
-                  right: controlInsets.right,
-                }}
-              >
-                <IssueCommentComposer
-                  ownerKey={`issue-comment:${issueParamsKey(params)}`}
-                  label={issue?.displayKey ?? params.issueKey}
-                  blocked={commentBlocked}
-                  posting={busy === "comment"}
-                  bottomInset={composerBottomInset}
-                  contentMaxWidth={contentMaxWidth}
-                  onSubmit={submitComment}
-                  onHeightChange={setComposerHeight}
-                  onFocusChange={setComposerFocused}
-                />
-              </View>
-            </KeyboardStickyView>
-          ) : null}
         </ScreenContent>
+        {showComposer ? (
+          <KeyboardStickyView
+            // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.
+            enabled={deviceType !== "duo-unfolded" || composerFocused}
+            pointerEvents="box-none"
+            style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
+            offset={{ closed: 0, opened: composerBottomInset }}
+          >
+            <View
+              pointerEvents="box-none"
+              style={{
+                position: "absolute",
+                bottom: controlInsets.bottom,
+                left: controlInsets.left,
+                right: controlInsets.right,
+              }}
+            >
+              <IssueCommentComposer
+                ownerKey={`issue-comment:${issueParamsKey(params)}`}
+                label={issue?.displayKey ?? params.issueKey}
+                blocked={commentBlocked}
+                posting={busy === "comment"}
+                bottomInset={composerBottomInset}
+                contentMaxWidth={contentMaxWidth}
+                onSubmit={submitComment}
+                onHeightChange={setComposerHeight}
+                onFocusChange={setComposerFocused}
+              />
+            </View>
+          </KeyboardStickyView>
+        ) : null}
       </View>
     </PullRequestMarkdownRepository>
   );
