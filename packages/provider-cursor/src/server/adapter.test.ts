@@ -2221,7 +2221,7 @@ describe("CursorAdapterV2", () => {
   );
 
   it.effect(
-    "lists background shells, holds for awaited ones, stops them on Stop and wakes when one exits",
+    "lists background shells, holds for awaited ones, stops them on Stop or rollback and wakes when one exits",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -2397,6 +2397,26 @@ describe("CursorAdapterV2", () => {
         });
         assert.deepStrictEqual(yield* nextUpdate, [{ tasks: ["7 awaited"], sessionScoped: true }]);
 
+        // Rolling back stops what the discarded runs left running, so it cannot wake the thread.
+        yield* runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("cursor-background-checkpoint"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
+        });
+        assert.deepStrictEqual(stopped, ["7"]);
+        yield* report({
+          ...shell("7"),
+          type: "ended",
+          stopped: true,
+          exitCode: undefined,
+          outputPath: undefined,
+        });
+        assert.deepStrictEqual(yield* nextUpdate, [{ tasks: [], sessionScoped: true }]);
+
         const terminal = events.find((event) => event.type === "turn.terminal");
         assert.ok(terminal?.type === "turn.terminal");
         yield* runtime.interruptTurn({
@@ -2408,14 +2428,6 @@ describe("CursorAdapterV2", () => {
         // A shell of the stopped run that is reported late is stopped, not kept.
         yield* report({ ...shell("9"), type: "started", stop: () => stopped.push("9") });
         assert.deepStrictEqual(stopped, ["7", "9"]);
-        yield* report({
-          ...shell("7"),
-          type: "ended",
-          stopped: true,
-          exitCode: undefined,
-          outputPath: undefined,
-        });
-        assert.deepStrictEqual(yield* nextUpdate, [{ tasks: [], sessionScoped: true }]);
         assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
 
         assert.deepStrictEqual(

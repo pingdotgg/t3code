@@ -1138,7 +1138,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           ),
         });
 
-        const emitProviderThread = Effect.fnUntraced(function* (
+        const emitProviderThread = Effect.fn("CursorAdapterV2.emitProviderThread")(function* (
           providerThread: OrchestrationV2ProviderThread,
           sessionScoped = false,
         ) {
@@ -1152,20 +1152,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           });
         });
 
-        const publishBackgroundShells = Effect.fnUntraced(function* (
-          providerThreadId: OrchestrationV2ProviderThread["id"],
-        ) {
-          const published = yield* Ref.get(publishedProviderThread);
-          if (published?.id !== providerThreadId) return;
-          const turn = yield* Ref.get(activeTurn);
-          // No run reads this stream between turns, so the session stores the snapshot itself.
-          yield* emitProviderThread(
-            { ...published, updatedAt: yield* DateTime.now },
-            turn === null || turn.finalized,
-          );
-        });
+        const publishBackgroundShells = Effect.fn("CursorAdapterV2.publishBackgroundShells")(
+          function* (providerThreadId: OrchestrationV2ProviderThread["id"]) {
+            const published = yield* Ref.get(publishedProviderThread);
+            if (published?.id !== providerThreadId) return;
+            const turn = yield* Ref.get(activeTurn);
+            // No run reads this stream between turns, so the session stores the snapshot itself.
+            yield* emitProviderThread(
+              { ...published, updatedAt: yield* DateTime.now },
+              turn === null || turn.finalized,
+            );
+          },
+        );
 
-        const onBackgroundShell = Effect.fnUntraced(function* (
+        const onBackgroundShell = Effect.fn("CursorAdapterV2.onBackgroundShell")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           shell: CursorAgentSdk.CursorBackgroundShellEvent,
         ) {
@@ -3468,6 +3468,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   }),
                   Ref.set(interruptedPrompt, null),
                   Ref.set(resumedAgent, null),
+                  // A shell the discarded runs left running must not wake the rewound thread.
+                  stopBackgroundShells(rollbackInput.providerThread.id),
                 ]);
               const now = yield* DateTime.now;
               if (target.type === "provider_turn") {
