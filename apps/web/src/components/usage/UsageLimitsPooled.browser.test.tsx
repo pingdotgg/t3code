@@ -162,7 +162,7 @@ describe("UsageLimitsPooled reset credits", () => {
               usedPercent: 100,
               resetsAt: "2026-10-26T16:00:00.000Z",
             },
-            { id: "fable", kind: "weekly" as const, label: "Fable", usedPercent: 20 },
+            { id: "fable", kind: "weekly" as const, label: "Fable", usedPercent: 99.6 },
           ],
         },
       };
@@ -181,7 +181,7 @@ describe("UsageLimitsPooled reset credits", () => {
         />,
       );
       await expect
-        .element(screen.getByRole("img", { name: /^Fable: 80% left/ }))
+        .element(screen.getByRole("img", { name: /^Fable: 0% left/ }))
         .toBeInTheDocument();
       const spent = {
         ...exhausted,

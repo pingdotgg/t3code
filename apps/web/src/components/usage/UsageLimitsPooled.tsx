@@ -164,8 +164,7 @@ function accountRow(
   );
   const session = cells.find((cell) => cell?.kind === "session");
   const weekly = cells.find((cell) => cell?.kind === "weekly");
-  const out =
-    session && weekly && cells.every((cell) => cell === null || remainingPercent(cell) === 0);
+  const out = session && weekly && cells.every((cell) => cell === null || cell.usedPercent >= 100);
   const clocks = cells.flatMap((cell) => (cell ? [cell.resetsAt] : []));
   const cutoff = Math.max(now, Date.parse(account.limits.checkedAt));
   const backAt =
