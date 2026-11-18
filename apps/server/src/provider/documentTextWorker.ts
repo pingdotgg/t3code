@@ -105,7 +105,10 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
-    if (extension === ".docx" && node.name === "del") {
+    if (
+      (extension === ".docx" && node.name === "del") ||
+      (odf && node.name === "annotation" && parent.name !== "semantics")
+    ) {
       parent.children.pop();
       return;
     }
@@ -451,7 +454,13 @@ function* rtf(source: string): Generator<string, void> {
             "object",
             "fldinst",
             "header",
+            "headerf",
+            "headerl",
+            "headerr",
             "footer",
+            "footerf",
+            "footerl",
+            "footerr",
           ].includes(control)
         )
           state.skip = true;
