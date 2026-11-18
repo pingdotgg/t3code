@@ -654,7 +654,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
 
 const MAX_TOOL_GROUP_SOURCE_ICONS = 4;
 
-/** Logos of the sources a tool group's summary names, in the summary's order. */
+/** Distinct logos of the sources a tool group's summary names, in the summary's order. */
 export function toolGroupSourceIcons(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ReadonlyArray<ToolActivityIcon> {
@@ -670,9 +670,12 @@ export function toolGroupSourceIcons(
     }
     icons.set(source.name, icons.get(source.name) ?? source.icon ?? entry.toolIcon);
   }
-  return [...icons.values()]
-    .filter((icon): icon is ToolActivityIcon => icon !== undefined)
-    .slice(0, MAX_TOOL_GROUP_SOURCE_ICONS);
+  // Clients key each logo by its JSON, so two sources sharing one logo must show it once.
+  const distinct = new Map<string, ToolActivityIcon>();
+  for (const icon of icons.values()) {
+    if (icon !== undefined) distinct.set(JSON.stringify(icon), icon);
+  }
+  return [...distinct.values()].slice(0, MAX_TOOL_GROUP_SOURCE_ICONS);
 }
 
 export function toolGroupSummaryKind(

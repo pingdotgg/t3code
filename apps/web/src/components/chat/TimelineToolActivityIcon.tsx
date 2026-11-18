@@ -193,11 +193,11 @@ function ToolActivityImageIcon(props: {
         />
       ) : null}
       {displayedSrc ? (
+        // Opaque and isolated, so in a stack each tile and its ring fully cover the one beneath.
         <span
           className={cn(
             props.className,
-            "inline-block overflow-hidden rounded-xs bg-background",
-            props.muted && "dark:opacity-70",
+            "isolate inline-block overflow-hidden rounded-xs bg-background",
           )}
         >
           <img
@@ -206,7 +206,10 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={cn("block size-full object-contain", props.muted && "light:brightness-70")}
+            className={cn(
+              "block size-full object-contain",
+              props.muted && "light:brightness-70 dark:opacity-70",
+            )}
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>

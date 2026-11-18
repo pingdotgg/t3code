@@ -246,6 +246,17 @@ describe("toolGroupSourceIcons", () => {
         tool("gmail-work", {
           toolSource: { key: "mcp:gmail-work", name: "gmail", kind: "integration" },
         }),
+        tool("exa-plugin", {
+          toolSource: { key: "mcp:exa", name: "Exa", kind: "integration", icon: logo("exa") },
+        }),
+        tool("exa-connector", {
+          toolSource: {
+            key: "mcp:claude.ai Exa",
+            name: "claude.ai Exa",
+            kind: "integration",
+            icon: logo("exa"),
+          },
+        }),
         tool("ref", {
           toolSource: { key: "mcp:ref", name: "Ref", kind: "integration" },
           toolIcon: logo("ref"),
@@ -268,6 +279,6 @@ describe("toolGroupSourceIcons", () => {
         }),
         tool("command", { itemType: "command_execution" }),
       ]),
-    ).toEqual([logo("sentry"), logo("gmail"), logo("ref")]);
+    ).toEqual([logo("sentry"), logo("gmail"), logo("exa"), logo("ref")]);
   });
 });
