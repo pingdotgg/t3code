@@ -31,5 +31,19 @@
   "79b768229c9ef672": "Manutenção",
   "54b188d65247e42f": "Labs",
   "f41ea186c275b56e": "Sobre",
-  "2a546119bf3879ee": "Arquivados"
+  "2a546119bf3879ee": "Arquivados",
+  "293bd924184b08ca": "Claude Code {characters}",
+  "4194608b645b92a1": "T3 Code {characters}",
+  "69b2019886b609df": "Suas regras {characters}",
+  "1c05ebd16bfb0f31": "{count} retidos",
+  "7c285c89cb35f9f8": "{count} bloqueados",
+  "3098c20a7dc58f99": "{count} com falha",
+  "a05b4c5224df3b61": "Adicionado pelo Claude Code",
+  "abebb65f244c538d": "Adicionado pelo T3 Code",
+  "89f424ca6b83c4ed": "Alterado pelas suas regras",
+  "82e9982a935e34d5": "Retido pelas suas configurações",
+  "4dccb48528cb04d2": "Bloqueado",
+  "88cdf1e79cbe5474": "O que chegou ao agente",
+  "18d144bcd97f0371": "Ocultar",
+  "902890ab306f0338": "Ver"
 }

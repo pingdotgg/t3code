@@ -31,6 +31,7 @@ import {
   ThreadHandoffRow,
   ThreadModelSwitchDivider,
 } from "./thread-handoff-row";
+import { ThreadAgentAdditionsPanel } from "./thread-agent-additions";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -2048,6 +2049,40 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "activity-group" && entry.additions !== undefined) {
+    const panelId = `agent-additions:${entry.id}`;
+    return (
+      <ThreadAgentAdditionsPanel
+        summary={entry.additions}
+        expanded={props.expandedWorkRows[panelId] ?? false}
+        viewing={props.expandedWorkRows}
+        iconColor={iconSubtleColor}
+        onToggle={() => props.onToggleWorkRow(panelId, entry.id)}
+        onToggleView={(activity) => props.onToggleWorkRow(activity.id, entry.id)}
+        renderDetail={(activity) => (
+          <ThreadWorkLog
+            activities={[activity]}
+            environmentId={props.environmentId}
+            workspaceRoot={props.workspaceRoot}
+            anchorKey={entry.id}
+            copiedRowId={props.copiedRowId}
+            expandedRows={props.expandedWorkRows}
+            rowSizing={props.workRowSizing}
+            scrollPositions={props.workGroupScrollPositions}
+            iconSubtleColor={iconSubtleColor}
+            edgeFadeColor={props.screenColor}
+            themeAppearance={props.themeAppearance}
+            onCopyRow={props.onCopyWorkRow}
+            onToggleRow={props.onToggleWorkRow}
+            renderImage={props.renderViewedImage}
+            renderReasoning={props.renderReasoning}
+            onPressPreview={props.onPressPreview}
+          />
+        )}
+      />
+    );
+  }
+
   if (entry.type === "activity-group" && isContextHandoffActivityGroup(entry)) {
     return (
       <ThreadHandoffRow
@@ -4009,7 +4044,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         if (entry.activities[0]?.projectedItem.item.type === "subagent") {
           return undefined;
         }
-        if (isContextCompactionActivityGroup(entry) || isContextHandoffActivityGroup(entry)) {
+        if (
+          entry.additions !== undefined ||
+          isContextCompactionActivityGroup(entry) ||
+          isContextHandoffActivityGroup(entry)
+        ) {
           return undefined;
         }
         if (

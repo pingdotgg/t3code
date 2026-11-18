@@ -69,6 +69,12 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
+import {
+  isAgentAddition,
+  summarizeAgentAdditions,
+  type AgentAddition,
+  type AgentAdditionsSummary,
+} from "@t3tools/client-runtime/work-log/agent-additions";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   isDisplayedRealtimeVoiceLine,
@@ -245,6 +251,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly activities: ReadonlyArray<ThreadFeedActivity>;
+      /** Set when every activity is an agent addition; the group renders as one panel. */
+      readonly additions?: AgentAdditionsSummary<AgentAdditionActivity>;
     }
   | {
       readonly type: "work-toggle";
@@ -292,6 +300,23 @@ type ThreadFeedEntryContent =
       /** Shown instead of "Thinking" while the provider has not started a turn. */
       readonly providerStartingLabel?: string;
     };
+
+export interface AgentAdditionActivity {
+  readonly item: AgentAddition;
+  readonly activity: ThreadFeedActivity;
+}
+
+function agentAdditionsOf(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+): AgentAdditionsSummary<AgentAdditionActivity> | undefined {
+  const rows: AgentAdditionActivity[] = [];
+  for (const activity of activities) {
+    const item = activity.projectedItem.item;
+    if (!isAgentAddition(item)) return undefined;
+    rows.push({ item, activity });
+  }
+  return summarizeAgentAdditions(rows);
+}
 
 export interface ThreadFeedLatestRun {
   readonly runId: RunId;
@@ -956,12 +981,14 @@ function groupAdjacentActivities(
     ) {
       grouped.push(cached);
     } else {
+      const additions = agentAdditionsOf(openGroupActivities);
       const group: ThreadFeedActivityGroup = {
         type: "activity-group",
         id: firstActivityEntry.id,
         createdAt: firstActivityEntry.createdAt,
         runId: firstActivityEntry.runId,
         activities: openGroupActivities,
+        ...(additions === undefined ? {} : { additions }),
       };
       activityGroupsCache.set(firstActivityEntry.activity, group);
       grouped.push(group);
@@ -1002,12 +1029,20 @@ function groupAdjacentActivities(
     }
 
     const sameRun = openGroupActivities[0]?.runId === entry.runId;
+    // Adjacent agent additions share one group, whatever their run.
+    const isAddition = isAgentAddition(entry.activity.projectedItem.item);
+    const openIsAddition =
+      firstActivityEntry !== null &&
+      isAgentAddition(firstActivityEntry.activity.projectedItem.item);
     const isStandaloneActivity =
       entry.activity.workEntry.questionAnswer !== undefined ||
       entry.activity.projectedItem.item.type === "compaction" ||
       entry.activity.projectedItem.item.type === "handoff" ||
-      entry.activity.projectedItem.item.type === "notification";
-    if (
+      (entry.activity.projectedItem.item.type === "notification" && !isAddition);
+    if (isAddition) {
+      if (!openIsAddition) flushGroup();
+    } else if (
+      openIsAddition ||
       isStandaloneActivity ||
       entry.activity.prominent ||
       (entry.activity.projectedItem.item.type === "subagent") !==
@@ -2080,6 +2115,7 @@ function appendPresentedFeedEntry(
     return;
   }
   if (
+    entry.additions !== undefined ||
     isContextCompactionActivityGroup(entry) ||
     isContextHandoffActivityGroup(entry) ||
     isUserInputActivityGroup(entry) ||
