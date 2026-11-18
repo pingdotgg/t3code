@@ -29,12 +29,11 @@ export class VoiceOutputController<Audio = Uint8Array> {
   private playbackRate = 1;
 
   private readonly player: SpeechAudioPlayer<Audio>;
+  private readonly resolve: MFunctionType;
 
-  constructor(
-    player: SpeechAudioPlayer<Audio>,
-    private readonly resolve: MFunctionType = mFallback,
-  ) {
+  constructor(player: SpeechAudioPlayer<Audio>, resolve: MFunctionType = mFallback) {
     this.player = player;
+    this.resolve = resolve;
   }
 
   readonly getSnapshot = () => this.snapshot;

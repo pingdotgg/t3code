@@ -13,7 +13,10 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { SettingsSpeechRouteScreen } from "./SettingsSpeechRouteScreen";
 import { SpeechOutputSettings } from "./SpeechOutputSettings";
 
-vi.mock("gt-react-native", () => ({ useGT: () => (text: string) => text }));
+vi.mock("gt-react-native", async (importOriginal) => {
+  const gt = await importOriginal<typeof import("gt-react-native")>();
+  return { ...gt, useGT: () => gt.mFallback };
+});
 vi.mock("../../state/entities", () => ({ useQuietThreadShell: () => null }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ presentation: null }),

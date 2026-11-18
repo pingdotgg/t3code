@@ -356,7 +356,7 @@ const SETTINGS_SCREENS = {
   SettingsSpeech: createNativeStackScreen({
     screen: SettingsSpeechRouteScreen,
     linking: "settings/speech",
-    options: settingsPage("Speech"),
+    options: settingsPage(),
   }),
   SettingsVoiceModels: createNativeStackScreen({
     screen: SettingsVoiceModelsRouteScreen,
