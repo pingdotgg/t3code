@@ -5,6 +5,7 @@ import type { MouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useServerConfigs } from "~/state/entities";
 import { useLinkedIssueDetail } from "~/state/issues";
 
 import {
@@ -33,7 +34,8 @@ function LinkedIssueRow({
   onOpen: (() => void) | undefined;
 }) {
   const gt = useGT();
-  const detail = useLinkedIssueDetail(threadRef.environmentId, link);
+  const configs = useServerConfigs();
+  const detail = useLinkedIssueDetail(threadRef.environmentId, link, "linked-items");
   const trackerPresentation = issueTrackerPresentation(link.tracker);
   const state = detail === null ? null : issueStatePresentation(detail.state);
   const Icon = state?.Icon ?? IssueGlyph.issue;
@@ -46,6 +48,7 @@ function LinkedIssueRow({
     onClick: (event: MouseEvent<HTMLElement>) => {
       event.stopPropagation();
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      if (configs.get(threadRef.environmentId)?.environment.capabilities.issues !== true) return;
       event.preventDefault();
       useRightPanelStore.getState().openIssue(threadRef, link);
       onOpen?.();

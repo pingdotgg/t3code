@@ -1143,8 +1143,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const IssueIcon = issueStatus?.Icon ?? IssueGlyph.issue;
   const issueLabel =
     issueCount === 1 && firstIssue
-      ? `Issue ${firstIssue.displayKey}: ${firstIssue.title}${issueStatus ? `, ${issueStatus.label}` : ""}`
-      : `${issueCount} linked issues`;
+      ? issueStatus
+        ? gt("Issue {key}: {title}, {state}", {
+            key: firstIssue.displayKey,
+            title: firstIssue.title,
+            state: issueStatus.label,
+          })
+        : gt("Issue {key}: {title}", { key: firstIssue.displayKey, title: firstIssue.title })
+      : gt("{count, plural, one {{count} linked issue} other {{count} linked issues}}", {
+          count: issueCount,
+        });
   const issueBadge = firstIssue ? (
     <Tooltip>
       <TooltipTrigger

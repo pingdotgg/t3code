@@ -21,7 +21,7 @@ export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntim
 export function useLinkedIssueDetail(
   environmentId: EnvironmentId,
   link: ThreadIssueLink | undefined,
-  mountScope?: "sidebar",
+  mountScope?: "sidebar" | "linked-items",
 ) {
   const configs = useServerConfigs();
   const input = link && {

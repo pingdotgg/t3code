@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import type { ComposerAttachmentUploadState } from "./composerAttachmentUploadQueue";
 
 const files = new Map<
   string,
@@ -333,15 +334,25 @@ describe("composerStripAttachments", () => {
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
     expect(
-      composerStripAttachments([doc, image, video] as never, () => false).map((a) => a.id),
+      composerStripAttachments([doc, image, video] as never, () => ({
+        status: "uploading",
+        progress: 0.5,
+      })).map((a) => a.id),
     ).toEqual(["img-1", "vid-1"]);
   });
 
-  it("shows a document whose upload failed, so it can be retried", async () => {
+  it("shows a document whose upload failed until its retry finishes", async () => {
     const { composerStripAttachments } = await import("./composerImages");
-    expect(
-      composerStripAttachments([doc, image] as never, (a) => a.id === "doc-1").map((a) => a.id),
-    ).toEqual(["doc-1", "img-1"]);
+    const strip = (upload: ComposerAttachmentUploadState) =>
+      composerStripAttachments([doc, image] as never, (a) =>
+        a.id === "doc-1" ? upload : undefined,
+      ).map((a) => a.id);
+    expect(strip({ status: "failed", reason: "Service unavailable" })).toEqual(["doc-1", "img-1"]);
+    expect(strip({ status: "uploading", progress: 0.4, retrying: true })).toEqual([
+      "doc-1",
+      "img-1",
+    ]);
+    expect(strip({ status: "ready" })).toEqual(["img-1"]);
   });
 
   it("keeps oversized document-picked images visible while sending them as files", async () => {
@@ -356,7 +367,7 @@ describe("composerStripAttachments", () => {
       sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
     };
 
-    expect(composerStripAttachments([oversizedImage], () => false)).toEqual([oversizedImage]);
+    expect(composerStripAttachments([oversizedImage], () => undefined)).toEqual([oversizedImage]);
     expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });
