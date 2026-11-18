@@ -310,6 +310,26 @@ describe("question answer paths", () => {
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
+      "tracked deletion",
+      String.raw`{\rtf1\ansi The fee is {\deleted\revauthdel1\revdttmdel1 $500}{\revised\revauth1 $700}.}`,
+      "The fee is $700.",
+    ],
+    [
+      "tracked deletion end",
+      String.raw`{\rtf1\ansi{\header Header\plain Plain}A\deleted B\deleted0 C\deleted D\plain E}`,
+      "ACE",
+    ],
+    [
+      "tracked deletion fallback",
+      String.raw`{\rtf1\ansi A{\deleted\uc1\u945\deleted0 B}\deleted\u946?\deleted0 C}`,
+      "AC",
+    ],
+    [
+      "tracked deletion table",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\deleted\cell\deleted0 B\cell\deleted\row\deleted0 C\cell}`,
+      "A\tB\t\nC",
+    ],
+    [
       "document breaks",
       String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
       "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
