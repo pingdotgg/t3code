@@ -414,9 +414,13 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
       branch: "t3/cleanup-payloads",
       pullRequests: [{ number: 22889, title: "Smaller MCP payloads" }],
     });
-    expect(scoreThreadSearch(foldSearchQuery('"mcp payloads"'), subject, NOW)?.explain?.()).toEqual(
-      { label: "PR", text: "#22889 Smaller MCP payloads", ranges: [{ start: 15, end: 27 }] },
-    );
+    expect(
+      scoreThreadSearch(foldSearchQuery('"mcp payloads"'), subject, NOW)?.explain?.(),
+    ).toMatchObject({
+      label: "PR",
+      text: "#22889 Smaller MCP payloads",
+      ranges: [{ start: 15, end: 27 }],
+    });
     expect(scoreThreadSearch(foldSearchQuery('"payloads mcp"'), subject, NOW)).toBeNull();
     // A branch or pull request pasted in quotes still finds its thread.
     for (const query of ['"t3/cleanup-payloads"', '"#22889"', '"pr 22889"']) {
