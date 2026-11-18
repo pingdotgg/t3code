@@ -28,7 +28,7 @@ function priorDayKey(dayKey: string, daysAgo: number): string {
 }
 
 export function summarizeTodayUsage(
-  buckets: readonly UsageBucket[],
+  buckets: ReadonlyArray<{ readonly day: string; readonly costUsd: UsageBucket["costUsd"] }>,
   now: Date,
   timeZone: string,
 ): UsageTodaySummary | null {

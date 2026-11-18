@@ -293,6 +293,45 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("keeps a failed source account until another environment reports usable limits", () => {
+    const native = provider({
+      driver: claude,
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const failed = {
+      id: "failed",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: {
+        checkedAt: "2026-09-04T11:30:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" as const, message: "Request failed." },
+      },
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [] } },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts: [failed] }] },
+        },
+      ],
+    ]);
+    const options = { includeUnavailable: true };
+    expect(collectLimitAccounts(input, options).map((account) => account.limits)).toEqual([
+      native.usageLimits,
+    ]);
+    input.delete(EnvironmentId.make("env-a"));
+    expect(collectLimitAccounts(input, options).map((account) => account.limits)).toEqual([
+      failed.usageLimits,
+    ]);
+  });
+
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
     const snapshot = (label: string | undefined, checkedAt: string, usedPercent: number) =>
       provider({

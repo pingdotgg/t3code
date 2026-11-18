@@ -1,3 +1,4 @@
+import { makeWindow } from "@t3tools/shared/usageFormat";
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
@@ -237,7 +238,7 @@ describe("QuickUsagePopover", () => {
       ],
     };
     const usage = {
-      shown: { window: { timeZone: "UTC" }, merged },
+      shown: { window: makeWindow(8, new Date("2026-10-25T16:30:00.000Z")), merged },
       merged,
       selectedEnvironments: [
         {
@@ -268,6 +269,21 @@ describe("QuickUsagePopover", () => {
     await expect.element(viewMore).toBeVisible();
     await userEvent.click(viewMore);
     expect(onOpenFull).toHaveBeenCalledOnce();
+  });
+
+  it("waits for today’s spending when the previous day is still cached", async () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-25T16:30:00.000Z"));
+    const previousWindow = makeWindow(8, new Date("2026-10-24T16:30:00.000Z"));
+    const merged = { daily: [{ day: previousWindow.untilDay, costUsd: 20 }] };
+    await using screen = await render(
+      view(envPresentations([]), undefined, {
+        shown: { window: previousWindow, merged },
+        isPending: true,
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await expect.element(page.getByText("Loading today’s spending…")).toBeVisible();
+    await expect.element(page.getByText("Spent today", { exact: true })).not.toBeInTheDocument();
   });
 
   it("keeps unsupported accounts distinct from failed limit probes", async () => {
@@ -313,7 +329,10 @@ describe("QuickUsagePopover", () => {
     await expect.element(page.getByText("Remote could not read limits.")).toBeVisible();
   });
 
-  it("shows refresh progress while refreshing connected provider limits", async () => {
+  it("shows refresh progress and refreshes spending for the day the limit check finishes", async () => {
+    const previousDay = new Date("2026-10-24T16:30:00.000Z");
+    const nextDay = new Date("2026-10-25T16:30:00.000Z");
+    using now = vi.spyOn(Date, "now").mockReturnValue(previousDay.getTime());
     const presentations = envPresentations([provider("codex", { session: 22, weekly: 42 })]);
     let finishRefresh: (() => void) | undefined;
     const element = view(presentations);
@@ -334,9 +353,10 @@ describe("QuickUsagePopover", () => {
       input: {},
     });
 
+    now.mockReturnValue(nextDay.getTime());
     finishRefresh?.();
     await expect.element(refreshButton).not.toBeDisabled();
-    expect(refreshUsageMock.action).toHaveBeenCalledTimes(1);
+    expect(refreshUsageMock.action).toHaveBeenCalledExactlyOnceWith(makeWindow(8, nextDay));
   });
 
   it("reports ordinary provider refresh failures and still refreshes usage", async () => {

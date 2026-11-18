@@ -293,7 +293,10 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
-export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+export function collectLimitAccounts(
+  presentations: LimitPresentations,
+  { includeUnavailable = false }: { readonly includeUnavailable?: boolean } = {},
+): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -329,7 +332,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accounts.set(key, next);
       return;
     }
-    const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    const nextUsable = limitsNotice(next.limits) === null;
+    const previousUsable = limitsNotice(previous.limits) === null;
+    const fresher =
+      nextUsable === previousUsable
+        ? Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt)
+        : nextUsable;
     const environments = [
       ...previous.environments,
       ...next.environments.filter(
@@ -377,7 +385,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
+      if (
+        !provider.usageLimits ||
+        (!includeUnavailable && limitsNotice(provider.usageLimits) !== null)
+      )
+        continue;
       merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
@@ -399,7 +411,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
+        if (!includeUnavailable && limitsNotice(account.usageLimits) !== null) continue;
         const resolved = resolveKey(account);
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);

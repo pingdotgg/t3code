@@ -5,21 +5,15 @@ import { formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
 import { collectLimitAccounts, remainingPercent } from "@t3tools/shared/usageLimits";
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { summarizeTodayUsage } from "@t3tools/shared/usageToday";
-import type {
-  EnvironmentId,
-  ProviderDriverKind,
-  ServerProvider,
-  UsageBucket,
-  UsageProviderKind,
-} from "@t3tools/contracts";
-import { isProviderAvailable } from "@t3tools/contracts";
-import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runtime/state/presentation";
-import { useRef, useState, type ReactNode } from "react";
+import type { ProviderDriverKind, ServerProvider, UsageProviderKind } from "@t3tools/contracts";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { useGT, useMessages } from "gt-react";
 import { InfoIcon } from "lucide-react";
 
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -47,106 +41,42 @@ type DriverLimits = {
   }>;
 };
 
-type DriverAccount = DriverLimits["accounts"][number];
-
-type DriverGroup = {
-  readonly driver: ProviderDriverKind;
-  readonly kind: UsageProviderKind;
-  readonly accounts: Map<string, DriverAccount>;
-};
-
 function selectedDriverLimits(
-  presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
+  accounts: ReturnType<typeof collectLimitAccounts>,
   gt: ReturnType<typeof useGT>,
   m: ReturnType<typeof useMessages>,
-): Map<ProviderDriverKind, DriverLimits> {
-  const byDriver = new Map<ProviderDriverKind, DriverGroup>();
-  const addAccount = (
-    driver: ProviderDriverKind,
-    kind: UsageProviderKind,
-    account: DriverAccount,
-  ) => {
-    const group = byDriver.get(driver) ?? {
-      driver,
-      kind,
-      accounts: new Map<string, DriverAccount>(),
-    };
-    const previous = group.accounts.get(account.key);
-    if (
-      previous === undefined ||
-      Date.parse(account.checkedAt) > Date.parse(previous.checkedAt) ||
-      (previous.windows.length === 0 && account.windows.length > 0)
-    ) {
-      group.accounts.set(account.key, account);
-    }
-    byDriver.set(driver, group);
-  };
-
-  for (const account of collectLimitAccounts(presentations)) {
-    const kind = (Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[]).find(
-      (candidate) => PROVIDER_PRESENTATION[candidate].driverKind === account.driver,
-    );
-    if (kind === undefined) continue;
-    addAccount(account.driver, kind, {
-      key: account.key,
-      label:
-        account.email?.trim() ||
-        account.displayName?.trim() ||
-        account.sourceLabel ||
-        gt("Account"),
-      windows: [...account.limits.windows],
-      notice: null,
-      noticeDetails: null,
-      checkedAt: account.limits.checkedAt,
-      accentColor: account.accentColor,
-    });
-  }
-
-  for (const [environmentId, presentation] of presentations) {
-    for (const provider of presentation.serverConfig?.providers ?? []) {
-      const limits = provider.usageLimits;
-      if (
-        !provider.enabled ||
-        !provider.installed ||
-        !isProviderAvailable(provider) ||
-        limits === undefined
-      ) {
-        continue;
-      }
-      const kind = (Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[]).find(
-        (candidate) => PROVIDER_PRESENTATION[candidate].driverKind === provider.driver,
-      );
-      if (kind === undefined) continue;
-      const notice = limitsNotice(limits, m);
-      if (notice === null) continue;
-      const accountIdentity =
-        provider.auth.email?.trim().toLowerCase() || `${environmentId}:${provider.instanceId}`;
-      addAccount(provider.driver, kind, {
-        key: [accountIdentity, provider.auth.workspaceId ?? ""].join(":"),
-        label:
-          provider.auth.email?.trim() ||
-          provider.displayName?.trim() ||
-          presentation.entry.target.label,
-        windows: [],
-        notice:
-          limits.unavailable?.reason === "probeFailed"
-            ? gt("Could not load subscription limits. Refresh to try again.")
-            : notice,
-        noticeDetails:
-          limits.unavailable?.reason === "probeFailed"
-            ? (limits.unavailable.message ?? null)
-            : null,
-        checkedAt: limits.checkedAt,
-        accentColor: provider.accentColor,
-      });
-    }
-  }
-  return new Map(
-    [...byDriver].map(([driver, group]) => [
-      driver,
-      { ...group, accounts: [...group.accounts.values()] },
-    ]),
-  );
+): DriverLimits[] {
+  return PROVIDER_ORDER.flatMap((kind) => {
+    const driver = PROVIDER_PRESENTATION[kind].driverKind;
+    const providerAccounts = accounts.filter((account) => account.driver === driver);
+    if (providerAccounts.length === 0) return [];
+    return [
+      {
+        driver,
+        kind,
+        accounts: providerAccounts.map((account) => {
+          const notice = limitsNotice(account.limits, m);
+          const probeFailed = account.limits.unavailable?.reason === "probeFailed";
+          return {
+            key: account.key,
+            label:
+              account.email?.trim() ||
+              account.displayName?.trim() ||
+              account.sourceLabel ||
+              account.environments[0]?.label ||
+              gt("Account"),
+            windows: notice === null ? account.limits.windows : [],
+            notice: probeFailed
+              ? gt("Could not load subscription limits. Refresh to try again.")
+              : notice,
+            noticeDetails: probeFailed ? (account.limits.unavailable?.message ?? null) : null,
+            checkedAt: account.limits.checkedAt,
+            accentColor: account.accentColor,
+          };
+        }),
+      },
+    ];
+  });
 }
 
 export function QuickUsagePopover({
@@ -158,6 +88,7 @@ export function QuickUsagePopover({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -180,37 +111,28 @@ export function QuickUsagePopover({
     };
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A clock subscription keeps the day and reset countdowns current while open.
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
+
   const todayWindow = makeWindow(8, new Date(now));
   const usage = useUsage(todayWindow);
-  const merged = usage.shown?.merged ?? usage.merged;
-  const buckets: UsageBucket[] = merged.daily.map((day) => ({
-    day: day.day as UsageBucket["day"],
-    provider: "codex" as const,
-    model: "aggregate",
-    totals: {
-      uncachedInputTokens: 0,
-      cachedInputTokens: 0,
-      cacheCreationTokens: 0,
-      outputTokens: 0,
-      reasoningTokens: 0,
-    },
-    costUsd: day.costUsd,
-    cacheSavingsUsd: 0,
-    costSource: "modelPriced" as const,
-    records: 0,
-    unpricedRecords: 0,
-    sessions: 0,
-  }));
-  const todaySummary = summarizeTodayUsage(
-    buckets,
-    new Date(now),
-    usage.shown?.window.timeZone ?? todayWindow.timeZone,
-  );
+  const shown = usage.shown;
+  const showingToday =
+    shown?.window.untilDay === todayWindow.untilDay &&
+    shown.window.timeZone === todayWindow.timeZone;
+  const todaySummary = showingToday
+    ? summarizeTodayUsage(shown.merged.daily, new Date(now), todayWindow.timeZone)
+    : null;
 
-  const byDriver = selectedDriverLimits(presentations, gt, m);
-  const providers = PROVIDER_ORDER.map((kind) =>
-    byDriver.get(PROVIDER_PRESENTATION[kind].driverKind),
-  ).filter((entry): entry is DriverLimits => entry !== undefined);
+  const providers = selectedDriverLimits(
+    collectLimitAccounts(presentations, { includeUnavailable: true }),
+    gt,
+    m,
+  );
 
   let best: DriverLimits | undefined;
   let bestRemaining = Number.POSITIVE_INFINITY;
@@ -241,10 +163,7 @@ export function QuickUsagePopover({
     latestCheckedAt === null || !Number.isFinite(Date.parse(latestCheckedAt))
       ? null
       : gt("updated {time}", {
-          time: new Date(latestCheckedAt).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
+          time: formatShortTimestamp(latestCheckedAt, timestampFormat),
         });
 
   const refresh = () => {
@@ -269,7 +188,8 @@ export function QuickUsagePopover({
       ),
     )
       .then(async (result) => {
-        setNow(Date.now());
+        const refreshedAt = Date.now();
+        setNow(refreshedAt);
         if (!AsyncResult.isSuccess(result)) {
           console.error("[quick-usage] Provider limit refresh failed", result.cause);
           toastManager.add({
@@ -295,7 +215,7 @@ export function QuickUsagePopover({
             });
           }
         }
-        await usage.refresh(todayWindow);
+        await usage.refresh(makeWindow(8, new Date(refreshedAt)));
       })
       .catch((error: unknown) => {
         console.error("[quick-usage] Refresh failed", error);
@@ -421,7 +341,11 @@ export function QuickUsagePopover({
             </>
           )}
 
-          {todaySummary ? (
+          {!showingToday && usage.isPending ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {gt("Loading today’s spending…")}
+            </p>
+          ) : todaySummary ? (
             <div className="flex items-center justify-between gap-3 rounded-lg bg-foreground/5 px-3 py-2">
               <div className="min-w-0 text-xs tabular-nums">
                 <p className="font-medium text-foreground">{gt("Spent today")}</p>
