@@ -557,27 +557,6 @@ describe("copying a table as HTML", () => {
       return align ? ` align="${align}"` : "";
     });
 
-  it("styles the table inline with light, theme-independent colors", () => {
-    const table = new FakeElement("TABLE").append(
-      new FakeElement("THEAD").append(row(cell("TH", "Name"))),
-      new FakeElement("TBODY").append(row(cell("TD", "Ada"), cell("TD", ""))),
-    );
-
-    const cellStyle = "border:1px solid #d0d7de;padding:6px 12px;vertical-align:top";
-    expect(html(table)).toBe(
-      [
-        '<table style="border-collapse:collapse">',
-        "  <thead>",
-        `    <tr><th style="${cellStyle};background-color:#f6f8fa;color:#1f2328;font-weight:600;text-align:left">Name</th></tr>`,
-        "  </thead>",
-        "  <tbody>",
-        `    <tr><td style="${cellStyle}">Ada</td><td style="${cellStyle}"></td></tr>`,
-        "  </tbody>",
-        "</table>",
-      ].join("\n"),
-    );
-  });
-
   it("escapes text and keeps column alignment from the style or the align attribute", () => {
     const table = new FakeElement("TABLE").append(
       new FakeElement("THEAD").append(

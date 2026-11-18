@@ -74,37 +74,39 @@ describe("markdown copy without the async clipboard", () => {
 describe("copying a table as HTML", () => {
   it("writes the markup as plain text and as the rich HTML flavor", async () => {
     await using screen = await render(
-      <MarkdownTable>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th style={{ textAlign: "right" }}>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Ada &amp; co</td>
-            <td style={{ textAlign: "right" }}>1,200</td>
-          </tr>
-          <tr>
-            <td>
-              first
-              <br />
-              second
-            </td>
-            <td>
-              {/* The wrapper MarkdownMath renders around a formula. */}
-              <span data-markdown-math="inline" data-markdown-copy="\(x^2\)">
-                x²
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td>zero</td>
-            <td>garbage</td>
-          </tr>
-        </tbody>
-      </MarkdownTable>,
+      <div dir="rtl">
+        <MarkdownTable>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th style={{ textAlign: "right" }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Ada &amp; co</td>
+              <td style={{ textAlign: "right" }}>1,200</td>
+            </tr>
+            <tr>
+              <td>
+                first
+                <br />
+                second
+              </td>
+              <td>
+                {/* The wrapper MarkdownMath renders around a formula. */}
+                <span data-markdown-math="inline" data-markdown-copy="\(x^2\)">
+                  x²
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td>zero</td>
+              <td>garbage</td>
+            </tr>
+          </tbody>
+        </MarkdownTable>
+      </div>,
       // The table renders no links and reads no route.
       { router: false },
     );
@@ -133,9 +135,10 @@ describe("copying a table as HTML", () => {
       );
 
       const pasted = new DOMParser().parseFromString(markup, "text/html").querySelector("table");
+      expect(pasted?.getAttribute("dir")).toBe("rtl");
       const cells = [...(pasted?.querySelectorAll("th, td") ?? [])] as HTMLElement[];
       expect(cells.map((cell) => [cell.tagName, cell.innerHTML, cell.style.textAlign])).toEqual([
-        ["TH", "Name", "left"],
+        ["TH", "Name", "right"],
         ["TH", "Amount", "right"],
         ["TD", "Ada &amp; co", ""],
         ["TD", "1,200", "right"],

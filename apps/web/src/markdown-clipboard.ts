@@ -651,7 +651,11 @@ function htmlTableSection(tag: string, rows: ReadonlyArray<Element>, rtl: boolea
  * Cell content is text: inline formatting and link targets are not copied.
  */
 export function serializeTableElementToHtml(table: Element): string {
-  const rtl = table.getAttribute("dir") === "rtl";
+  const direction = table.getAttribute("dir");
+  const rtl =
+    direction === "rtl" ||
+    (direction !== "ltr" &&
+      table.ownerDocument?.defaultView?.getComputedStyle(table).direction === "rtl");
   const lines: string[] = [];
   let looseRows: Element[] = [];
   const flushLooseRows = () => {

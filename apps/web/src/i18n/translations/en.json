@@ -3557,6 +3557,7 @@
   "6d329f7d3a50c7e7": "Copy table",
   "6c71d251d9917587": "Copy as Markdown",
   "d510b122f84051a0": "Copy as CSV",
+  "66c4ee40252d9dec": "Copy as HTML",
   "ced684880c2e1961": "Allow {server} to run {tool}?",
   "b66fa23b5647b62d": "Send this message from {server}?",
   "bae7f74153fa8a05": "Save {names} from {server}?",

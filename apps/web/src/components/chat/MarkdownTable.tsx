@@ -39,6 +39,7 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
       text,
       format,
       format === "html" ? { "text/html": `<meta charset="utf-8">${text}` } : undefined,
+      { requireHtml: format === "html" },
     );
   };
 
