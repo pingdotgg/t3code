@@ -4987,6 +4987,8 @@
   "afdd35f49f2ab0a7": "T3 Code necesita el cliente del relay para que este entorno esté disponible a través de T3 Connect.",
   "2767fee9bffb00ac": "{step} de {total}",
   "752bb0ea8b33e33e": "Progreso de instalación del cliente del relay",
+  "f6eb1ac0cea7f4d7": "Descargados {downloaded} MB",
+  "9a3e0462ed1b6fd9": "Descargados {downloaded} MB de {total} MB",
   "2eadb8e0944eeee6": "Mantén T3 Code abierto mientras se instala el cliente del relay.",
   "0932e0330e2f409d": "Cliente del relay gestionado",
   "3683040758069062": [

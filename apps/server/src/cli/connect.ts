@@ -273,7 +273,7 @@ function relayClientInstallProgressMessage(stage: RelayClientInstallProgressStag
 }
 
 const reportRelayClientInstallProgress = (event: RelayClientInstallProgressEvent) =>
-  event.type === "progress"
+  event.type === "progress" && event.downloadedBytes === undefined
     ? Console.log(`Relay client: ${relayClientInstallProgressMessage(event.stage)}...`)
     : Effect.void;
 
@@ -607,7 +607,9 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
       options.installRelayClient === true ? () => Effect.succeed(true) : confirmRelayClientInstall,
       options.installRelayClient === true
         ? (event) =>
-            event.type === "progress" && event.stage === "downloading"
+            event.type === "progress" &&
+            event.stage === "downloading" &&
+            event.downloadedBytes === undefined
               ? Console.log("Installing the T3 Connect relay client...")
               : Effect.void
         : reportRelayClientInstallProgress,

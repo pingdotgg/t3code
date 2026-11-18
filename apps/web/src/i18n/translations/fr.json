@@ -4988,6 +4988,8 @@
   "afdd35f49f2ab0a7": "T3 Code a besoin du client relais pour rendre cet environnement disponible via T3 Connect.",
   "2767fee9bffb00ac": "{step} sur {total}",
   "752bb0ea8b33e33e": "Progression de l’installation du client relais",
+  "f6eb1ac0cea7f4d7": "{downloaded} Mo téléchargés",
+  "9a3e0462ed1b6fd9": "{downloaded} Mo sur {total} Mo téléchargés",
   "2eadb8e0944eeee6": "Gardez T3 Code ouvert pendant l’installation du client relais.",
   "0932e0330e2f409d": "Client relais géré",
   "3683040758069062": [

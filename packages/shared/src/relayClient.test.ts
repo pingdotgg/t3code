@@ -473,7 +473,7 @@ describe("RelayClient", () => {
       ),
   );
 
-  it.effect.skipIf(windowsHost)("reports byte progress while downloading the relay client", () => {
+  it.effect("reports byte progress while downloading the relay client", () => {
     const bytes = new Uint8Array(2 * 1024 * 1024 + 17);
     const chunkSize = 512 * 1024;
     let offset = 0;

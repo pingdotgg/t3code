@@ -4971,6 +4971,8 @@
   "afdd35f49f2ab0a7": "이 환경을 T3 Connect로 사용하려면 T3 Code에 릴레이 클라이언트가 필요합니다.",
   "2767fee9bffb00ac": "{total}단계 중 {step}단계",
   "752bb0ea8b33e33e": "릴레이 클라이언트 설치 진행률",
+  "f6eb1ac0cea7f4d7": "{downloaded}MB 다운로드됨",
+  "9a3e0462ed1b6fd9": "{total}MB 중 {downloaded}MB 다운로드됨",
   "2eadb8e0944eeee6": "릴레이 클라이언트를 설치하는 동안 T3 Code를 열어 두세요.",
   "0932e0330e2f409d": "관리형 릴레이 클라이언트",
   "3683040758069062": [

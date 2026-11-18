@@ -4988,6 +4988,8 @@
   "afdd35f49f2ab0a7": "T3 Code behöver reläklienten för att göra den här miljön tillgänglig via T3 Connect.",
   "2767fee9bffb00ac": "{step} av {total}",
   "752bb0ea8b33e33e": "Förlopp för installationen av reläklienten",
+  "f6eb1ac0cea7f4d7": "{downloaded} MB hämtade",
+  "9a3e0462ed1b6fd9": "{downloaded} av {total} MB hämtade",
   "2eadb8e0944eeee6": "Håll T3 Code öppet medan reläklienten installeras.",
   "0932e0330e2f409d": "Hanterad reläklient",
   "3683040758069062": [
