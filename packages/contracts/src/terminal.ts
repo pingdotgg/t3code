@@ -131,6 +131,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   label: Schema.String.check(Schema.isMaxLength(128)),
+  shell: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   // The PTY grid every renderer of this terminal should draw; absent from older servers.

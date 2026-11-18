@@ -413,6 +413,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
+    shell: session.shell,
     updatedAt: session.updatedAt,
     sequence: session.eventSequence,
     cols: session.cols,

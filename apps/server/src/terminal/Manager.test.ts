@@ -560,6 +560,7 @@ it.layer(
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(first.shell).toBe(ptyAdapter.spawnInputs[0]?.shell);
     }),
   );
 
