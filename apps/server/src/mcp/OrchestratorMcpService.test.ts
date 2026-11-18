@@ -3510,29 +3510,40 @@ describe("OrchestratorMcpService provider resolution", () => {
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("refuses, and does not allow, when the message policy cannot be read", () =>
-    Effect.gen(function* () {
-      const refuse = makeRefuseBlockedSender({
-        threads: {
-          getThreadShell: () => Effect.die("The policy is read before any thread."),
-          dispatch: () => Effect.die("Nothing is recorded when the policy is unknown."),
-        },
-        settings: {
-          getSettings: Effect.fail(
-            new ServerSettingsError({
-              settingsPath: "/synthetic/settings.json",
-              operation: "read-file",
-              cause: "unreadable",
-            }),
-          ),
-        },
-      });
-      const error = yield* refuse(
-        { threadId: ThreadId.make("thread:policy-sender") },
-        { threadId: ThreadId.make("thread:policy-target"), attempted: "a message", text: "hello" },
-      ).pipe(Effect.flip);
-      assert.equal(error._tag, "AgentMessagePolicyUnavailableError");
-    }),
+  it.effect(
+    "reads the message policy without secrets, and refuses when the policy itself cannot be read",
+    () =>
+      Effect.gen(function* () {
+        const unreadable = Effect.fail(
+          new ServerSettingsError({
+            settingsPath: "/synthetic/settings.json",
+            operation: "read-secret",
+            cause: "unreadable",
+          }),
+        );
+        const policyWith = (
+          getStoredSettings: Effect.Effect<ServerSettingsValue, ServerSettingsError>,
+        ) =>
+          makeRefuseBlockedSender({
+            threads: {
+              getThreadShell: () => Effect.die("An allowed or unread policy reads no thread."),
+              dispatch: () => Effect.die("Nothing is recorded when nothing is blocked."),
+            },
+            // The full read fails as it does when the secret store is down.
+            settings: { getSettings: unreadable, getStoredSettings },
+          })(
+            { threadId: ThreadId.make("thread:policy-sender") },
+            {
+              threadId: ThreadId.make("thread:policy-target"),
+              attempted: "a message",
+              text: "hello",
+            },
+          );
+        // Default allow: a failing secret store does not stop the send.
+        yield* policyWith(Effect.succeed(DEFAULT_SERVER_SETTINGS));
+        const error = yield* policyWith(unreadable).pipe(Effect.flip);
+        assert.equal(error._tag, "AgentMessagePolicyUnavailableError");
+      }),
   );
 
   it.effect.each(["local", "remote"] as const)(

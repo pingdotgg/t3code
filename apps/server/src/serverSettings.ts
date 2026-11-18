@@ -263,6 +263,13 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * The settings as stored, without reading any secret: secret fields are not filled in. For a
+     * caller that needs one plain value and must not fail because the secret store did. Both
+     * layers here supply it; optional so a hand-built service in a test need not.
+     */
+    readonly getStoredSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -339,6 +346,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
+    getStoredSettings: getSettings,
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -1400,6 +1408,7 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
+    getStoredSettings: getSettingsFromCache.pipe(Effect.map(toEffective)),
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(

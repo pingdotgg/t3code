@@ -26,7 +26,10 @@ interface Dependencies {
     ThreadManagement.ThreadManagementService["Service"],
     "getThreadShell" | "dispatch"
   >;
-  readonly settings: Pick<ServerSettings.ServerSettingsService["Service"], "getSettings">;
+  readonly settings: Pick<
+    ServerSettings.ServerSettingsService["Service"],
+    "getSettings" | "getStoredSettings"
+  >;
 }
 
 /** Who put the text there: a thread here, or a linked environment's client and the thread it named. */
@@ -88,7 +91,8 @@ export const makeRefuseBlockedSender = ({ threads, settings }: Dependencies) =>
     // The owner's own MCP client is not a thread.
     if (from === undefined) return;
     // A policy that cannot be read refuses: allowing here would let a failed read lift the block.
-    const policy = (yield* settings.getSettings.pipe(
+    // Read as stored, so a secret store that is down does not stop every send.
+    const policy = (yield* (settings.getStoredSettings ?? settings.getSettings).pipe(
       Effect.mapError(() => failure("The message policy could not be read.")),
     )).agentMessagePolicy;
     if (policy !== "block") return;
