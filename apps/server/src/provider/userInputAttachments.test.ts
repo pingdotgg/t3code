@@ -134,6 +134,8 @@ describe("question answer paths", () => {
           Effect.provide(Layer.fresh(DocumentText.layer)),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
+            // An async probe can let `staying` join only after `leaving` cancelled the lookup.
+            exists: (file) => Effect.sync(() => NodeFS.existsSync(file)),
             stat: (file) =>
               Effect.gen(function* () {
                 yield* Queue.offer(started, file);
@@ -276,6 +278,15 @@ describe("question answer paths", () => {
 
   it.effect.each([
     [
+      "page-specific headers and footers",
+      String.raw`{\rtf1\ansi\facingp\sectd\titlepg
+{\headerf First-page header}{\headerl Left-page header}{\headerr Right-page header}
+{\footerf First-page footer}{\footerl Left-page footer}{\footerr Right-page footer}
+\pard Approved delivery date: 24 November.\par
+}`,
+      "Approved delivery date: 24 November.",
+    ],
+    [
       "text symbols",
       String.raw`{\rtf1\ansi Pages 1\endash 5\emdash\lquote left\rquote\ldblquote right\rdblquote\bullet\b End\b0\unknown{\*\secret\bullet hidden}}`,
       "Pages 1–5—‘left’“right”•End",
@@ -308,7 +319,7 @@ describe("question answer paths", () => {
     ["large fallback", String.raw`{\rtf1\ansi\uc20\u945????????????????????Z}`, "αZ"],
     ["no fallback", String.raw`{\rtf1\ansi\uc0\u945Z}`, "αZ"],
     ["scoped count", String.raw`{\rtf1\ansi{\uc2\u945??}\u946?Z}`, "αβZ"],
-  ] as const)("extracts RTF symbols and Unicode fallbacks: %s", ([name, source, expected]) =>
+  ] as const)("extracts RTF text: %s", ([name, source, expected]) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const path = NodePath.join(config.attachmentsDir, `${name}.rtf`);
@@ -483,6 +494,37 @@ describe("question answer paths", () => {
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const cases = [
+        // Word stores object layout and field data outside the visible document text.
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Total cost is </w:t><w:drawing><wp:anchor><wp:positionH><wp:posOffset>1905000</wp:posOffset></wp:positionH><wp:positionV><wp:posOffset>-635</wp:posOffset></wp:positionV><wp14:sizeRelH><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH><wp14:sizeRelV><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV></wp:anchor></w:drawing><w:t>42 EUR.</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Total cost is 42 EUR."],
+          absent: ["1905000", "-635", "0042"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><mc:AlternateContent><mc:Choice Requires="cx"><w:drawing><wp:anchor><wp:positionH><wp:posOffset>1905000</wp:posOffset></wp:positionH><wp:positionV><wp:posOffset>-635</wp:posOffset></wp:positionV><wp14:sizeRelH><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH><wp14:sizeRelV><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV></wp:anchor></w:drawing><cx:chart/></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Chart caption</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>',
+          },
+          expected: ["Chart caption"],
+          absent: ["1905000", "-635"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>As shown </w:t><w:fldChar><w:fldData>RU5ETk9URQ==</w:fldData></w:fldChar><w:t>(Smith 2020) earlier.</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["As shown (Smith 2020) earlier."],
+          absent: ["RU5ETk9URQ=="],
+        },
         {
           ext: "docx",
           bounded: true,
@@ -643,7 +685,7 @@ describe("question answer paths", () => {
             ext === "pptx"
               ? {
                   "ppt/presentation.xml":
-                    '<presentation><sldId r:id="bad"/><sldId r:id="good"/></presentation>',
+                    '<presentation><sldIdLst><sldId r:id="bad"/><sldId r:id="good"/></sldIdLst></presentation>',
                   "ppt/_rels/presentation.xml.rels":
                     '<Relationships><Relationship Id="bad" Target="bad.xml"/><Relationship Id="good" Target="good.xml"/></Relationships>',
                   "ppt/bad.xml": "<slide><p>Discard</slide>",
@@ -707,10 +749,18 @@ describe("question answer paths", () => {
           ext: "docx",
           bounded: true,
           parts: {
-            "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent xmlns:mc="urn:mc"><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p></w:body></w:document>',
+            "word/document.xml": [
+              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body>',
+              '<w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 104</w:t><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/><w:t>$700.00</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 105</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/></mc:Choice><mc:Fallback><w:tab/></mc:Fallback></mc:AlternateContent><w:t>$800.00</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 106</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/></mc:Choice><mc:Fallback><w:t xml:space="preserve"> total </w:t></mc:Fallback></mc:AlternateContent><w:t>$900.00</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
           },
-          expected: ["First\nSecond\nThird\u2011party\u2011End"],
+          expected: [
+            "First\nSecond\nThird\u2011party\u2011End\nInvoice 104\t$700.00\nInvoice 105\t$800.00\nInvoice 106 total $900.00",
+          ],
         },
         {
           ext: "docx",
@@ -731,6 +781,16 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700"],
           absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
+          },
+          expected: ["Fee $700\n150\nFormula x+yx+y"],
+          absent: ["Reviewer", "2026-01-01", "JR", "Check", "was 120"],
         },
         {
           ext: "docx",
@@ -860,8 +920,16 @@ describe("question answer paths", () => {
           ext: "pptx",
           bounded: true,
           parts: {
-            "ppt/presentation.xml":
-              '<p:presentation><p:sldIdLst><p:sldId id="1" r:id="b"/><p:sldId id="2" r:id="a"/></p:sldIdLst></p:presentation>',
+            "ppt/presentation.xml": `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+              xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">
+              <p:sldIdLst><p:sldId id="256" r:id="b"/><p:sldId id="257" r:id="a"/></p:sldIdLst>
+              <p:extLst><p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"><p14:sectionLst>
+                <p14:section name="Schedule" id="{01F07B81-39E6-4BBB-9B89-66EA253FBD29}">
+                  <p14:sldIdLst><p14:sldId id="256"/><p14:sldId id="257"/></p14:sldIdLst>
+                </p14:section>
+              </p14:sectionLst></p:ext></p:extLst>
+            </p:presentation>`,
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide1.xml"/><Relationship Id="b" Target="slides/slide2.xml"/></Relationships>',
             "ppt/slides/slide1.xml": "<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p></p:sld>",
@@ -882,13 +950,15 @@ describe("question answer paths", () => {
             "## Slide 2",
             "Departure\nNotes:\nBoard at gate 4",
           ],
+          occurrences: { text: "## Slide ", count: 2 },
           absent: ["Unrelated notes", "[Skipped document part", "[Extracted text truncated"],
         },
         ...[false, true].map((missing) => ({
           ext: "pptx",
           bounded: true,
           parts: {
-            "ppt/presentation.xml": '<presentation><sldId r:id="a"/></presentation>',
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
             "ppt/slides/a.xml": "<slide><p>Slide text</p></slide>",
@@ -906,7 +976,7 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "ppt/presentation.xml":
-              '<presentation><sldId r:id="a"/><sldId r:id="b"/></presentation>',
+              '<presentation><sldIdLst><sldId r:id="a"/><sldId r:id="b"/></sldIdLst></presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/a.xml"/><Relationship Id="b" Target="slides/b.xml"/></Relationships>',
             "ppt/slides/a.xml": `<slide><p>${"A".repeat(600_000)}</p></slide>`,
@@ -928,9 +998,11 @@ describe("question answer paths", () => {
           ext: "odt",
           parts: {
             "content.xml":
-              '<office:document><text:h text:outline-level="2">Orchard</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates</text:p></office:document>',
+              '<office:document><text:h text:outline-level="2">\n  Orchard\n</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates <text:span>\n\t  shipped</text:span>   today<text:tab/>Dock<text:line-break/>Gate\u00a0B </text:p><text:p>Second</text:p><text:p>A<text:span><text:script>console.log(1);\n</text:script></text:span> B</text:p></office:document>',
           },
-          expected: ["## Orchard", "19   violet crates"],
+          expected: [
+            "## Orchard\n19   violet crates shipped today\tDock\nGate\u00a0B\nSecond\nA B",
+          ],
         },
         {
           ext: "ods",
@@ -977,9 +1049,9 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><text:p>First</text:p></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
+              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
           },
-          expected: ["## Slide 1", "First", "## Slide 2", "Second"],
+          expected: ["## Slide 1\nFirst slide\n\n## Slide 2\nSecond"],
         },
         {
           ext: "ods",
@@ -1038,7 +1110,7 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "ppt/presentation.xml":
-              '<p:presentation><p:sldId r:id="a"/><p:sldId r:id="missing"/></p:presentation>',
+              '<p:presentation><p:sldIdLst><p:sldId r:id="a"/><p:sldId r:id="missing"/></p:sldIdLst></p:presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide.xml"/></Relationships>',
             "ppt/slides/slide.xml": `<p:sld><a:p><a:t>${"A".repeat(1_000_100)}</a:t></a:p></p:sld>`,
@@ -1076,11 +1148,11 @@ describe("question answer paths", () => {
             "OEBPS/a.xhtml":
               '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p></body></html>',
             "OEBPS/b.xhtml":
-              "<!DOCTYPE html><html><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>",
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>',
           },
           expected: [
             "## Chapter 1",
-            "# First chapter",
+            "\n# First chapter",
             "Larkspur",
             "Direct div",
             "Direct section",
@@ -1093,6 +1165,7 @@ describe("question answer paths", () => {
             "Last chapter",
             "Price 10 8 old",
           ],
+          absent: ["My Novel", "Hidden Author"],
         },
       ];
       for (const [caseIndex, item] of cases.entries()) {
@@ -1263,10 +1336,14 @@ describe("question answer paths", () => {
       });
       expect(yield* (yield* DocumentText.DocumentText).ensure(unsupportedPath)).toBeUndefined();
       expect(NodeFS.existsSync(unsupportedPath + ".txt")).toBe(false);
-      NodeFS.writeFileSync(path, String.raw`{\rtf1 ` + "x".repeat(1_000_100) + "}");
-      expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toContain(
-        "[Extracted text truncated",
+      NodeFS.writeFileSync(
+        path,
+        String.raw`{\rtf1 ` + "x".repeat(999_999) + String.raw`\u-10179?\u-8576? After}`,
       );
+      const unicodeTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(unicodeTruncated).toContain("[Extracted text truncated");
+      expect(unicodeTruncated.isWellFormed()).toBe(true);
+      expect(unicodeTruncated.startsWith("x".repeat(999_999))).toBe(true);
       NodeFS.writeFileSync(path, String.raw`{\rtf1 First` + " ".repeat(1_000_100) + "Last}");
       const whitespaceTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
       expect(whitespaceTruncated).toBe(

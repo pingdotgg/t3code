@@ -174,50 +174,46 @@ describe("UsageLimitsPooled reset credits", () => {
     });
   });
 
-  it.each([false, true])(
-    "keeps confirmation permissions and redemption on the captured environment (next environment read-only: %s)",
-    async (readOnlyNext) => {
-      setup();
-      if (readOnlyNext) testState.readOnlyEnvironments.add("desk");
-      const now = Date.parse(checkedAt);
-      const laptopFresh = environments(
-        ["laptop", "Laptop", [redeemable("codex", "codex", "Codex", "2026-10-25T16:05:00.000Z")]],
-        ["desk", "Desk", [redeemable("codex_personal", "codex", "Codex")]],
-      );
-      const deskFresh = environments(
-        ["laptop", "Laptop", [redeemable("codex", "codex", "Codex")]],
-        [
-          "desk",
-          "Desk",
-          [redeemable("codex_personal", "codex", "Codex", "2026-10-25T16:10:00.000Z")],
-        ],
-      );
-      await using screen = await render(
-        <UsageLimitsPooled presentations={laptopFresh} now={now} />,
-      );
+  it("keeps confirmation permissions and redemption on the captured environment", async () => {
+    setup();
+    testState.readOnlyEnvironments.add("desk");
+    const now = Date.parse(checkedAt);
+    const laptopFresh = environments(
+      ["laptop", "Laptop", [redeemable("codex", "codex", "Codex", "2026-10-25T16:05:00.000Z")]],
+      ["desk", "Desk", [redeemable("codex_personal", "codex", "Codex")]],
+    );
+    const deskFresh = environments(
+      ["laptop", "Laptop", [redeemable("codex", "codex", "Codex")]],
+      [
+        "desk",
+        "Desk",
+        [redeemable("codex_personal", "codex", "Codex", "2026-10-25T16:10:00.000Z")],
+      ],
+    );
+    await using screen = await render(<UsageLimitsPooled presentations={laptopFresh} now={now} />);
 
-      await userEvent.click(screen.getByRole("button", { name: /^Codex:/ }));
-      await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Use reset" }));
-      const confirm = page.getByRole("alertdialog");
-      await expect.element(confirm).toBeVisible();
-      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
-      const useCredit = confirm.getByRole("button", { name: "Use credit" });
-      await expect.element(useCredit).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: /^Codex:/ }));
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Use reset" }));
+    const confirm = page.getByRole("alertdialog");
+    await expect.element(confirm).toBeVisible();
+    await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+    const useCredit = confirm.getByRole("button", { name: "Use credit" });
+    await expect.element(useCredit).toBeEnabled();
 
-      testState.readOnlyEnvironments.add("laptop");
-      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
-      await expect.element(useCredit).toBeDisabled();
-      expect(testState.consume).not.toHaveBeenCalled();
+    testState.readOnlyEnvironments.delete("desk");
+    testState.readOnlyEnvironments.add("laptop");
+    await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+    await expect.element(useCredit).toBeDisabled();
+    expect(testState.consume).not.toHaveBeenCalled();
 
-      testState.readOnlyEnvironments.delete("laptop");
-      await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
-      await expect.element(useCredit).toBeEnabled();
-      await userEvent.click(useCredit);
+    testState.readOnlyEnvironments.delete("laptop");
+    await screen.rerender(<UsageLimitsPooled presentations={new Map(deskFresh)} now={now} />);
+    await expect.element(useCredit).toBeEnabled();
+    await userEvent.click(useCredit);
 
-      expect(testState.consume).toHaveBeenCalledExactlyOnceWith({
-        environmentId: "laptop",
-        input: { instanceId: "codex" },
-      });
-    },
-  );
+    expect(testState.consume).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "laptop",
+      input: { instanceId: "codex" },
+    });
+  });
 });
