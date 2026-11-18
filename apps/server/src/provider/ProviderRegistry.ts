@@ -125,6 +125,11 @@ export class ProviderRegistry extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<ReadonlyArray<ServerProvider>>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/provider/ProviderRegistry") {}
 
@@ -1302,6 +1307,9 @@ export const layer = Layer.effect(
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
+      },
+      get subscribeChanges() {
+        return Effect.map(PubSub.subscribe(changesPubSub), Stream.fromSubscription);
       },
     } satisfies ProviderRegistry["Service"];
   }),

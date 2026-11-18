@@ -185,6 +185,7 @@ import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
+import * as ServerActivation from "./serverActivation.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -3359,6 +3360,7 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's send.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              const providerChanges = yield* providerRegistry.subscribeChanges;
               const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
                 startImmediately: true,
               });
@@ -3387,10 +3389,7 @@ export const layerWsRpc = (
               );
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
-                Stream.concat(
-                  Stream.fromEffect(providerRegistry.getProviders),
-                  providerRegistry.streamChanges,
-                ),
+                Stream.concat(Stream.fromEffect(providerRegistry.getProviders), providerChanges),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
@@ -3487,9 +3486,16 @@ export const layerWsRpc = (
                 rpcInitialItems([
                   { version: 1 as const, type: "snapshot" as const, config: initialConfig },
                 ]),
-                input.providerStatusDeltas === true
-                  ? updates.pipe(withProviderStatusDeltas(initialConfig.providers))
-                  : updates,
+                // Deferred maintenance starts once a client has its first snapshot.
+                Stream.unwrap(
+                  ServerActivation.markClientServed.pipe(
+                    Effect.as(
+                      input.providerStatusDeltas === true
+                        ? updates.pipe(withProviderStatusDeltas(initialConfig.providers))
+                        : updates,
+                    ),
+                  ),
+                ),
               );
             }),
           ),

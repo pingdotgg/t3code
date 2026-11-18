@@ -23,7 +23,7 @@ import * as PersistedCache from "effect/persistence/PersistedCache";
 import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
 import { detachStackFrame } from "../git/detachStackFrame.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
 /** Invalidation excludes only reads whose scopes share its stripe, not every PR read. */
@@ -243,7 +243,7 @@ export const layer = Layer.unwrap(
       Layer.provide(
         // Memoize cleanup acquisition with the store; Layer.tap runs per consumer.
         Layer.effectDiscard(
-          forkParked(
+          forkBackground(
             pruneExpiredEntryFiles(directory).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("Failed to prune PR cache files", { cause }),

@@ -10,6 +10,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerActivation from "../serverActivation.ts";
 import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
@@ -28,6 +29,7 @@ export const layer = Layer.effect(
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
     );
+    const background = yield* ServerActivation.ServerBackgroundStart;
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -45,7 +47,12 @@ export const layer = Layer.effect(
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
       ...Option.match(lifecycleEvents, {
         onNone: () => ({}),
-        onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+        onSome: (events) => ({
+          awaitServerReady:
+            background === undefined
+              ? events.awaitReady
+              : Effect.andThen(events.awaitReady, background.awaitTurn),
+        }),
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),

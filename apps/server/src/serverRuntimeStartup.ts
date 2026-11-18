@@ -45,7 +45,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
-import { forkParked, forkParkedFiber } from "./serverActivation.ts";
+import { forkBackground, forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -614,7 +614,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         : importPendingTranscripts
     ).pipe(forkParked);
 
-    yield* forkParked(
+    yield* forkBackground(
       Effect.gen(function* () {
         yield* Effect.logDebug("startup phase: recording startup heartbeat");
         yield* recordStartupHeartbeat.pipe(
@@ -623,6 +623,10 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
           }),
           Effect.ignoreCause({ log: true }),
         );
+      }),
+    );
+    yield* forkParked(
+      Effect.gen(function* () {
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
           const accessInfo = yield* issueHeadlessServeAccessInfo();

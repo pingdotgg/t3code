@@ -914,7 +914,13 @@ const layerMakeServer = Layer.unwrap(
     const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
-    const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
+    const layerActivation = Layer.merge(
+      Layer.succeed(ServerActivation.ServerActivation, awaitActivation),
+      Layer.effect(
+        ServerActivation.ServerBackgroundStart,
+        ServerActivation.makeBackgroundStart(awaitActivation),
+      ),
+    );
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
