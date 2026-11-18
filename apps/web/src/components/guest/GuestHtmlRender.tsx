@@ -11,6 +11,10 @@ import {
 } from "@t3tools/shared/htmlRender";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import {
+  htmlRenderHeightMemory,
+  rememberedHtmlRenderHeight,
+} from "~/components/chat/htmlRenderHeightMemory";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { observeResize } from "~/lib/observeResize";
 
@@ -33,6 +37,7 @@ export function GuestHtmlRender({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const [contentHeight, setContentHeight] = useState<number>();
+  const [remembered] = useState(() => htmlRenderHeightMemory.get(reference.attachmentId));
   // The theme rides in the fragment for the first paint; later changes are posted.
   const [src] = useState(
     () =>
@@ -58,6 +63,8 @@ export function GuestHtmlRender({
       if (frame === null || event.source !== frame.contentWindow) return;
       const height = readHtmlRenderContentHeight(event.data);
       if (height !== undefined) {
+        const box = boxRef.current;
+        if (box) htmlRenderHeightMemory.remember(reference.attachmentId, box.clientWidth, height);
         setContentHeight(height);
         return;
       }
@@ -75,13 +82,17 @@ export function GuestHtmlRender({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [reference.attachmentId]);
 
   return (
     <div
       ref={boxRef}
       style={{
-        height: htmlRenderFitHeight(reference, width, contentHeight),
+        height: htmlRenderFitHeight(
+          reference,
+          width,
+          contentHeight ?? rememberedHtmlRenderHeight(remembered, width),
+        ),
       }}
     >
       <iframe
