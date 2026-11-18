@@ -619,6 +619,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const observedEvents = yield* Queue.unbounded<EventId>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
+  const closedAll = yield* Queue.unbounded<{ readonly threadId: string }>();
   const scriptRuns =
     yield* Queue.unbounded<ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput>();
 
@@ -719,6 +720,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       dispatch,
     }),
     Layer.mock(TerminalManager.TerminalManager)({
+      close: (input) => Queue.offer(closedAll, input).pipe(Effect.asVoid),
       closeOnSettle: (input) =>
         Queue.offer(closedIdle, input).pipe(Effect.andThen(options.onCloseIdle?.() ?? Effect.void)),
     }),
@@ -773,6 +775,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     summaryRecovery,
     invalidatedCwds,
     closedIdle,
+    closedAll,
     scriptRuns,
     observedEvents,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
@@ -2117,13 +2120,25 @@ describe("ThreadSettlementServiceV2 terminals", () => {
       }),
   );
 
-  it.effect("runs the settle script in the thread's own worktree", () =>
+  it.effect.each([
+    { enabled: false, override: undefined, closeAll: false },
+    { enabled: true, override: undefined, closeAll: true },
+    { enabled: true, override: false, closeAll: false },
+  ])("closes terminals before the settle script: %j", ({ enabled, override, closeAll }) =>
     Effect.gen(function* () {
       const shared = appThread("shared-checkout-thread", "settled");
       const missing = appThread("removed-worktree-thread", "settled", "/worktrees/removed");
       const worktree = appThread("worktree-thread", "settled", "/worktrees/thread");
       const fixture = yield* makeHarness({
         snapshot: makeSnapshot([]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          closeRunningTerminalsOnSettle: enabled,
+          projectSettingsOverrides:
+            override === undefined
+              ? {}
+              : { [PROJECT_ID]: { closeRunningTerminalsOnSettle: override } },
+        },
         currentThreads: [shared, missing, worktree],
         existingWorktreePaths: ["/worktrees/thread"],
       });
@@ -2138,6 +2153,11 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         assert.strictEqual(run.threadId, worktree.id);
         assert.strictEqual(run.worktreePath, "/worktrees/thread");
         assert.strictEqual(run.trigger, "settle");
+        assert.strictEqual(yield* Queue.size(closeAll ? fixture.closedIdle : fixture.closedAll), 0);
+        assert.deepStrictEqual(
+          [...(yield* Queue.takeAll(closeAll ? fixture.closedAll : fixture.closedIdle))],
+          [shared, missing, worktree].map((thread) => ({ threadId: thread.id })),
+        );
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -2205,13 +2225,15 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     }),
   );
 
-  it.effect("runs the settle script once when a settlement is re-emitted", () =>
+  it.effect("closes terminals and runs the settle script once per settlement", () =>
     Effect.gen(function* () {
       const repeated = appThread("repeated-thread", "settled", "/worktrees/repeated");
       const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+      const currentThreads = [repeated, marker];
       const fixture = yield* makeHarness({
         snapshot: makeSnapshot([]),
-        currentThreads: [repeated, marker],
+        settings: { ...DEFAULT_SERVER_SETTINGS, closeRunningTerminalsOnSettle: true },
+        currentThreads,
         existingWorktreePaths: ["/worktrees/repeated", "/worktrees/marker"],
       });
 
@@ -2223,6 +2245,15 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* fixture.publishEvent(settledEvent(marker));
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        // A re-emitted settlement must not close the settle script's own terminal.
+        assert.strictEqual(yield* Queue.size(fixture.closedAll), 2);
+        currentThreads[0] = {
+          ...repeated,
+          settledAt: DateTime.add(repeated.settledAt!, { seconds: 1 }),
+        };
+        yield* fixture.publishEvent(settledEvent(currentThreads[0]));
+        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
+        assert.strictEqual(yield* Queue.size(fixture.closedAll), 3);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
