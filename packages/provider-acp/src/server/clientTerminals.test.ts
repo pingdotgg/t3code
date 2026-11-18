@@ -125,14 +125,15 @@ describe("AcpClientTerminals", () => {
             "-e",
             "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3CODE_THREAD_ID ?? '', env.T3_TEST_INHERITED, ...Object.keys(env).filter((name) => name.toUpperCase() === 'T3_TEST_OVERRIDE').map((name) => name + '=' + env[name])].join('|'))",
           ],
-          env:
-            sessionId === "unknown"
-              ? undefined
-              : [
+          ...(sessionId === "unknown"
+            ? {}
+            : {
+                env: [
                   { name: "T3_TEST_OVERRIDE", value: "first" },
                   { name: "t3_Test_Override", value: "second" },
                   { name: "T3_TEST_OVERRIDE", value: "request" },
                 ],
+              }),
         });
         yield* terminals.waitForExit({ sessionId, terminalId: created.terminalId });
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
