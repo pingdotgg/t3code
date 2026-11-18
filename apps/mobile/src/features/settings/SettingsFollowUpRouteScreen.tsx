@@ -34,13 +34,13 @@ const SENT_MESSAGE_DISPLAY_OPTIONS: ReadonlyArray<{
   readonly display: SentMessageDisplay;
   readonly label: string;
 }> = [
-  { display: "minimize", label: "Minimize" },
-  { display: "hide", label: "Hide" },
+  { display: "minimize", label: msg("Minimize") },
+  { display: "hide", label: msg("Hide") },
 ];
 
 const SENT_MESSAGE_SECTIONS = [
-  { key: "agentMessageDisplay", title: "Messages from other agents" },
-  { key: "automationMessageDisplay", title: "Messages from automations" },
+  { key: "agentMessageDisplay", title: msg("Messages from other agents") },
+  { key: "automationMessageDisplay", title: msg("Messages from automations") },
 ] as const;
 
 export function SettingsFollowUpRouteScreen() {
@@ -86,11 +86,11 @@ export function SettingsFollowUpRouteScreen() {
           ? (preferencesResult.value[section.key] ?? "minimize")
           : null;
         return (
-          <SettingsSection key={section.key} title={section.title}>
+          <SettingsSection key={section.key} title={m(section.title)}>
             {SENT_MESSAGE_DISPLAY_OPTIONS.map((option, index) => (
               <SettingsChoiceRow
                 key={option.display}
-                label={option.label}
+                label={m(option.label)}
                 selected={selected === option.display}
                 separated={index > 0}
                 disabled={!preferencesReady}

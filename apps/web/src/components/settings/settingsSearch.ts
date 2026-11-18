@@ -807,15 +807,19 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-message-display",
-    title: "Messages from other agents",
+    title: msg("Messages from other agents"),
     to: "/settings/chat",
-    searchTerms: ["sent by another agent subagent minimize collapse fold hide filter timeline"],
+    searchTerms: [
+      msg("sent by another agent subagent minimize collapse fold hide filter timeline"),
+    ],
   },
   {
     id: "automation-message-display",
-    title: "Messages from automations",
+    title: msg("Messages from automations"),
     to: "/settings/chat",
-    searchTerms: ["sent by automation scheduled task minimize collapse fold hide filter timeline"],
+    searchTerms: [
+      msg("sent by automation scheduled task minimize collapse fold hide filter timeline"),
+    ],
   },
   {
     id: "provider-update-checks",

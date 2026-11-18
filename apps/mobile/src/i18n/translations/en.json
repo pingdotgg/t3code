@@ -3222,6 +3222,10 @@
   "00b1b3b0bf010b1d": "Your message waits and runs after the current turn finishes.",
   "79e87310525279f8": "Steer",
   "a1e23f7b109d5925": "Your message reaches the agent right away, changing what it is working on.",
+  "dc8b0f21fc87be70": "Minimize",
+  "18d144bcd97f0371": "Hide",
+  "30419d947a1d8b40": "Messages from other agents",
+  "a8a2b6e6618fc6d2": "Messages from automations",
   "683838755eb7fe37": "While the agent is running",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
