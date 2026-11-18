@@ -293,6 +293,39 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect("resolves both legacy Azure work item URLs through the bound project", () =>
+    Effect.gen(function* () {
+      const tracker = IssueTrackerKind.make("azure-devops");
+      const host = "acme.visualstudio.com";
+      const service = yield* makeService({
+        projects: [
+          project({ id: "api", repository: "Api/_git/api", provider: tracker, host }),
+          project({
+            id: "web",
+            repository: "DefaultCollection/Web/_git/web",
+            provider: tracker,
+            host,
+          }),
+        ],
+        trackers: [fakeTracker({ kind: tracker })],
+      });
+      for (const path of ["Web", "DefaultCollection/Web"]) {
+        const ref = yield* service.resolveUrl(
+          `https://${host}/${path}/_workitems/edit/9`,
+          "api" as ProjectId,
+        );
+        expect(ref).toEqual({
+          projectId: "web",
+          tracker,
+          host,
+          scope: "DefaultCollection/Web",
+          key: "9",
+          writable: true,
+        });
+      }
+    }),
+  );
+
   it.effect("sends writes as interactive requests and reads as background ones", () =>
     Effect.gen(function* () {
       const interactive: Array<readonly [string, boolean]> = [];
@@ -421,7 +454,7 @@ describe("IssueService", () => {
       expect(result.errors).toEqual([
         { projectId: "api", projectTitle: "api", message: "The issue tracker request failed." },
       ]);
-      expect(result.viewers).toEqual({ "github.com": "julius" });
+      expect(result.viewers).toEqual({});
       expect(result.trackers).toEqual([
         expect.objectContaining({ host: "github.com", projectCount: 4, configured: true }),
         expect.objectContaining({
@@ -434,7 +467,13 @@ describe("IssueService", () => {
       ]);
 
       // Narrowing to one host still names every tracker, so the client can switch between them.
-      const narrowed = yield* service.list({ state: "open", host: "github.com" });
+      // Narrowing by involvement reads the account it compares against.
+      const narrowed = yield* service.list({
+        state: "open",
+        host: "github.com",
+        involvement: "assigned",
+      });
+      expect(narrowed.viewers).toEqual({ "github.com": "julius" });
       expect(narrowed.entries.every((entry) => entry.host === "github.com")).toBe(true);
       expect(narrowed.trackers.map((tracker) => tracker.host)).toEqual([
         "github.com",
