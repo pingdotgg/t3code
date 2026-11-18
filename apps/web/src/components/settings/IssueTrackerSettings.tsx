@@ -2,17 +2,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
   IssueTrackerConnectionList,
-  ProjectId,
 } from "@t3tools/contracts";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
-import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
@@ -24,6 +23,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 
 type TrackerIcon = ElementType<{ className?: string }>;
@@ -35,12 +35,37 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
 
 const UNBOUND = "";
 
+/** Null while an environment's first load is in flight; a failed load is left out. */
+type EnvironmentConnections = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList | null>;
+
+const connectionsAcrossEnvironmentsAtom = Atom.family((environmentIdsKey: string) => {
+  const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
+  return Atom.make((get): EnvironmentConnections => {
+    const connections = new Map<EnvironmentId, IssueTrackerConnectionList | null>();
+    for (const environmentId of environmentIds) {
+      const result = get(issueTrackerEnvironment.connections({ environmentId, input: {} }));
+      const data = AsyncResult.getOrElse(result, () => null);
+      if (data !== null || result.waiting) connections.set(environmentId, data);
+    }
+    return connections;
+  }).pipe(Atom.withLabel(`web-settings-issue-tracker-connections:${environmentIdsKey}`));
+});
+
 /**
- * Standalone issue trackers for one environment: connect each with a credential, and bind the
- * environment's projects to one of the tracker's scopes so their issues list beside the git
- * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
+ * Standalone issue trackers for the environments in scope: connect each with a credential, and
+ * bind projects to one of the tracker's scopes so their issues list beside the git host's. The
+ * first environment supplies what is shown; every write reaches all of them. Generic over the
+ * trackers the server reports; nothing here names Linear but its icon.
  */
-export function IssueTrackerSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
+export function IssueTrackerSettings({
+  environmentIds,
+}: {
+  readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
+}) {
+  const environmentId = environmentIds[0];
+  const connections = useAtomValue(
+    connectionsAcrossEnvironmentsAtom(JSON.stringify(environmentIds)),
+  );
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
@@ -77,9 +102,9 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
         <TrackerRow
           // Drafts belong to one environment; switching must not carry them over.
           key={`${tracker.tracker}-${environmentId}`}
-          environmentId={environmentId}
+          environmentIds={environmentIds}
           tracker={tracker}
-          bindings={query.data?.bindings ?? {}}
+          connections={connections}
         />
       ))}
     </SettingsSection>
@@ -87,14 +112,15 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
 }
 
 function TrackerRow({
-  environmentId,
+  environmentIds,
   tracker,
-  bindings,
+  connections,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly connections: EnvironmentConnections;
 }) {
+  const environmentId = environmentIds[0];
   const Icon = TRACKER_ICONS[tracker.tracker];
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const connect = useAtomCommand(issueTrackerEnvironment.connect, {
@@ -107,19 +133,27 @@ function TrackerRow({
   const submit = async (token: string | null) => {
     setBusy(true);
     setFailure(null);
-    const result = await connect({
-      environmentId,
-      input: { tracker: tracker.tracker, token },
-    });
+    const results = await Promise.all(
+      environmentIds.map((target) =>
+        connect({ environmentId: target, input: { tracker: tracker.tracker, token } }),
+      ),
+    );
     setBusy(false);
-    if (result._tag === "Success") return;
-    const error = squashAtomCommandFailure(result);
+    const failed = results.find((result) => result._tag !== "Success");
+    if (failed === undefined) return;
+    const error = squashAtomCommandFailure(failed);
     setFailure(error instanceof Error ? error.message : "The request failed.");
   };
 
   const inputId = `issue-tracker-${tracker.tracker}-${environmentId}`;
   const usable = tracker.connected && tracker.account !== null;
-  const summary = issueTrackerSummary(tracker, bindings);
+  const summary = issueTrackerSummary(
+    tracker,
+    Object.assign(
+      {},
+      ...[...connections.values()].map((list) => list?.bindings),
+    ) as IssueTrackerConnectionList["bindings"],
+  );
 
   return (
     <div className="first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20">
@@ -217,9 +251,9 @@ function TrackerRow({
               />
               {usable ? (
                 <ProjectBindings
-                  environmentId={environmentId}
+                  environmentIds={environmentIds}
                   tracker={tracker}
-                  bindings={bindings}
+                  connections={connections}
                 />
               ) : null}
             </div>
@@ -230,32 +264,74 @@ function TrackerRow({
   );
 }
 
-/** One picker per project of this environment: which of the tracker's scopes it reads, if any. */
+/**
+ * One picker per project in scope. Bindings are keyed by each machine's own project id, so a
+ * project checked out on several environments is bound on each one where the tracker works.
+ */
 function ProjectBindings({
-  environmentId,
+  environmentIds,
   tracker,
-  bindings,
+  connections,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentIds: readonly EnvironmentId[];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly connections: EnvironmentConnections;
 }) {
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const { groups } = useSettingsScope();
+  const usableOn = (environmentId: EnvironmentId) => {
+    const connection = connections
+      .get(environmentId)
+      ?.trackers.find((candidate) => candidate.tracker === tracker.tracker);
+    return connection?.connected && connection.account !== null ? connection : null;
+  };
+  const scopesOn = (environmentId: EnvironmentId) => usableOn(environmentId)?.scopes ?? [];
+  const projects = groups.flatMap((group) => {
+    const inScope = group.memberProjects.filter((member) =>
+      environmentIds.includes(member.environmentId),
+    );
+    const members = inScope.filter((member) => usableOn(member.environmentId) !== null);
+    if (members.length === 0) return [];
+    // Only scopes every copy's environment reaches, so one pick binds them all.
+    const scopes = scopesOn(members[0]!.environmentId).filter((scope) =>
+      members.every((member) =>
+        scopesOn(member.environmentId).some((candidate) => candidate.key === scope.key),
+      ),
+    );
+    // Editing before every copy's environment has loaded would silently skip that copy.
+    const loading = inScope.some((member) => connections.get(member.environmentId) === null);
+    return [{ key: group.projectKey, title: group.displayName, members, scopes, loading }];
+  });
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
   });
-  const [pending, setPending] = useState<ProjectId | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
-  const change = async (projectId: ProjectId, scope: string) => {
-    setPending(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-      },
-    });
+  const boundScope = (member: (typeof projects)[number]["members"][number]) => {
+    const binding = connections.get(member.environmentId)?.bindings[member.id];
+    return binding?.tracker === tracker.tracker ? binding.scope : UNBOUND;
+  };
+
+  const change = async (project: (typeof projects)[number], scope: string) => {
+    setPending(project.key);
+    await Promise.all(
+      project.members
+        .filter((member) =>
+          // Clearing leaves a copy bound to another tracker alone.
+          scope === UNBOUND
+            ? boundScope(member) !== UNBOUND
+            : scopesOn(member.environmentId).some((candidate) => candidate.key === scope),
+        )
+        .map((member) =>
+          bind({
+            environmentId: member.environmentId,
+            input: {
+              projectId: member.id,
+              binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+            },
+          }),
+        ),
+    );
     setPending(null);
   };
 
@@ -266,19 +342,20 @@ function ProjectBindings({
         description={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}
       />
       {projects.map((project) => {
-        const bound = bindings[project.id];
-        // A project bound to another tracker keeps that binding; this picker shows it unbound.
-        const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+        // Another tracker's binding, or copies that disagree (a partly failed save), read as
+        // unbound, so picking the scope again completes the binding everywhere.
+        const scopes = project.members.map(boundScope);
+        const value = scopes.every((scope) => scope === scopes[0]) ? scopes[0]! : UNBOUND;
         return (
           <SettingsRow
-            key={project.id}
+            key={project.key}
             title={project.title}
             control={
               <Select
                 value={value}
-                disabled={pending === project.id}
+                disabled={pending === project.key || project.loading}
                 onValueChange={(next) => {
-                  if (next !== null) void change(project.id, next);
+                  if (next !== null) void change(project, next);
                 }}
               >
                 <SelectTrigger
@@ -289,12 +366,12 @@ function ProjectBindings({
                   <SelectValue>
                     {value === UNBOUND
                       ? "Not bound"
-                      : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)}
+                      : (project.scopes.find((scope) => scope.key === value)?.name ?? value)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectItem value={UNBOUND}>Not bound</SelectItem>
-                  {tracker.scopes.map((scope) => (
+                  {project.scopes.map((scope) => (
                     <SelectItem key={scope.key} value={scope.key}>
                       {scope.name} ({scope.key})
                     </SelectItem>

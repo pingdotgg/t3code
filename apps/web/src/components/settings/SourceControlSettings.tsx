@@ -401,6 +401,9 @@ export function SourceControlSettingsPanel() {
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
   const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
+  const otherEnvironmentIds = connectedEnvironments
+    .map((candidate) => candidate.environmentId)
+    .filter((candidate) => candidate !== environmentId);
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -582,7 +585,10 @@ export function SourceControlSettingsPanel() {
         />
       )}
       {environmentId === null ? null : (
-        <IssueTrackerSettings key={environmentId} environmentId={environmentId} />
+        <IssueTrackerSettings
+          key={[environmentId, ...otherEnvironmentIds].join()}
+          environmentIds={[environmentId, ...otherEnvironmentIds]}
+        />
       )}
 
       <SourceControlWritingSettingsSection />
