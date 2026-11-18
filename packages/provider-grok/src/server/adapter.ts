@@ -49,7 +49,7 @@ import {
   xAiBackgroundShellTaskId,
   isXAiPersistentMonitor,
   extractXAiExitPlanMarkdown,
-  registerXAiSubagentFinished,
+  registerXAiSubagentLifecycle,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiExitPlanModeCapturedResponse,
@@ -180,12 +180,15 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
   runtime,
   requestUserInput,
   applyBackgroundTaskMutation,
+  startSubagent,
   finishSubagent,
   captureProposedPlan,
   lastProposedPlanMarkdown,
 }) =>
   registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation).pipe(
-    Effect.andThen(registerXAiSubagentFinished(runtime, finishSubagent)),
+    Effect.andThen(
+      registerXAiSubagentLifecycle(runtime, { start: startSubagent, finish: finishSubagent }),
+    ),
     Effect.andThen(registerGrokAskUserQuestionExtensions({ runtime, requestUserInput })),
     Effect.andThen(
       registerGrokExitPlanModeExtensions({
