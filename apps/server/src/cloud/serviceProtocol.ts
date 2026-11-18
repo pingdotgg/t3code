@@ -43,6 +43,12 @@ const unquoteWindowsArgument = (raw: string) =>
 export const serviceTaskIsDisabled = (taskXml: string): boolean =>
   /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
 
+export function preserveServiceTaskLogonType(taskXml: string, registeredTaskXml: string): string {
+  const logonType = /<LogonType>(?:InteractiveToken|S4U)<\/LogonType>/;
+  const registered = logonType.exec(registeredTaskXml)?.[0];
+  return registered === undefined ? taskXml : taskXml.replace(logonType, registered);
+}
+
 /** A task as Task Scheduler should hold it while its service must stay stopped. */
 export const disabledServiceTask = (taskXml: string): string =>
   serviceTaskIsDisabled(taskXml)

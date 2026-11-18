@@ -466,20 +466,26 @@ setInterval(() => {}, 1_000);
         conhostPath: "conhost.exe",
       });
       yield* fs.writeFileString(unitPath, unit);
-      // Task Scheduler's copy: `t3 doctor` disabled it to keep the service stopped.
-      let task = disabledServiceTask(unit.replace("1.1.0", "1.0.0"));
+      const headlessUnit = unit.replace(
+        "<LogonType>InteractiveToken</LogonType>",
+        "<LogonType>S4U</LogonType>",
+      );
+      // Task Scheduler keeps logon settings separately from the saved XML.
+      let task = disabledServiceTask(headlessUnit.replace("1.1.0", "1.0.0"));
       const schtasks = async (...args: ReadonlyArray<string>) => {
         if (args[0] === "/Create") task = await NodeFSP.readFile(args[2] ?? "", "utf8");
         return { stdout: task };
       };
 
       yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
-      assert.equal(task, disabledServiceTask(unit));
+      assert.equal(task, disabledServiceTask(headlessUnit));
+      assert.equal(yield* fs.readFileString(unitPath), headlessUnit);
       assert.deepEqual(yield* fs.readDirectory(root), ["t3code-task.xml"]);
 
       task = unit.replace("1.1.0", "1.0.0");
       yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
       assert.equal(task, unit);
+      assert.equal(yield* fs.readFileString(unitPath), unit);
     }),
   );
 

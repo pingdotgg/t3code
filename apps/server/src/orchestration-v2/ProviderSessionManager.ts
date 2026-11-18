@@ -3092,8 +3092,7 @@ export const layerWithOptions = (
                     if (
                       adapter.continuationKey === live.continuationKey &&
                       model.startsWith("t3proxy/") &&
-                      live.inferenceCatalog !== undefined &&
-                      !live.inferenceCatalog.includes(model.slice("t3proxy/".length)) &&
+                      !live.inferenceCatalog?.includes(model.slice("t3proxy/".length)) &&
                       adapter.inferenceCatalog?.includes(model.slice("t3proxy/".length))
                     ) {
                       return "The hosted model catalog changed; reopening the provider session.";
