@@ -1,0 +1,148 @@
+{
+  "about": "Golden cases for computer-use policy, copied from LocalRouter (github.com/jayleaton/localrouter @fe24726, src/computer/policy_golden.json, Apache-2.0, Copyright 2026 Jay Leaton) with the drag action removed and Ada's action field names. ComputerPolicy.test.ts must give every verdict here.",
+  "control": [
+    { "kind": "open_app", "verdict": "auto" },
+    { "kind": "quit_app", "verdict": "auto" },
+    { "kind": "volume", "verdict": "auto" },
+    { "kind": "media", "verdict": "auto" },
+    { "kind": "dark_mode", "verdict": "auto" },
+    { "kind": "lock_screen", "verdict": "tap" },
+    { "kind": "shell", "verdict": "refused" },
+    { "kind": "", "verdict": "refused" }
+  ],
+  "screen": [
+    { "action": { "kind": "click", "role": "button", "label": "Send" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Reply all" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Post" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Buy now" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Place Order" }, "verdict": "tap" },
+    {
+      "action": { "kind": "click", "role": "button", "label": "Proceed to Check out" },
+      "verdict": "tap"
+    },
+    { "action": { "kind": "click", "role": "button", "label": "Delete" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Move to Trash" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Submit" }, "verdict": "tap" },
+    {
+      "action": { "kind": "click", "role": "button", "label": "Confirm purchase" },
+      "verdict": "tap"
+    },
+    { "action": { "kind": "click", "role": "button", "label": "Enviar" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Supprimer" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Löschen" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "Jetzt kaufen" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "送信" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "link", "label": "Add to Cart" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "SEND!" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "button", "label": "pay-now" }, "verdict": "tap" },
+    {
+      "action": { "kind": "click", "role": "button", "label": "Sender details" },
+      "verdict": "judge"
+    },
+    {
+      "action": { "kind": "click", "role": "link", "label": "Postcode lookup" },
+      "verdict": "judge"
+    },
+    { "action": { "kind": "click", "role": "textbox", "label": "Message" }, "verdict": "auto" },
+    { "action": { "kind": "click", "role": "tab", "label": "Inbox" }, "verdict": "auto" },
+    { "action": { "kind": "click", "role": "row", "label": "Dana Lee" }, "verdict": "auto" },
+    { "action": { "kind": "click", "role": "button", "label": "OK" }, "verdict": "judge" },
+    { "action": { "kind": "click", "role": "text", "label": "Continue" }, "verdict": "judge" },
+    {
+      "action": { "kind": "click", "role": "row", "label": "Delete conversation" },
+      "verdict": "tap"
+    },
+    {
+      "action": {
+        "kind": "type",
+        "role": "textbox",
+        "label": "Search or type URL",
+        "text": "weather"
+      },
+      "verdict": "auto"
+    },
+    {
+      "action": {
+        "kind": "type",
+        "role": "textbox",
+        "label": "Address and search bar",
+        "text": "news.ycombinator.com"
+      },
+      "verdict": "auto"
+    },
+    {
+      "action": {
+        "kind": "type",
+        "role": "textbox",
+        "label": "Type a message",
+        "text": "on my way"
+      },
+      "verdict": "tap"
+    },
+    { "action": { "kind": "type", "role": "textbox", "label": "", "text": "x" }, "verdict": "tap" },
+    {
+      "action": { "kind": "type", "role": "textbox", "label": "Search", "text": "a\nb" },
+      "verdict": "tap"
+    },
+    {
+      "action": { "kind": "type", "role": "textbox", "label": "Search", "text": "a\rb" },
+      "verdict": "tap"
+    },
+    {
+      "action": { "kind": "type", "role": "button", "label": "Search", "text": "a" },
+      "verdict": "tap"
+    },
+    {
+      "action": { "kind": "type", "role": "textbox", "label": "Search", "text": "" },
+      "verdict": "refused"
+    },
+    {
+      "action": { "kind": "type", "role": "textbox", "label": "SEARCH MAIL", "text": "invoice" },
+      "verdict": "auto"
+    },
+    {
+      "action": { "kind": "type", "role": "textbox", "label": "検索", "text": "天気" },
+      "verdict": "auto"
+    },
+    {
+      "action": {
+        "kind": "press",
+        "key": "enter",
+        "fieldRole": "textbox",
+        "fieldLabel": "Search mail"
+      },
+      "verdict": "auto"
+    },
+    {
+      "action": {
+        "kind": "press",
+        "key": "enter",
+        "fieldRole": "textbox",
+        "fieldLabel": "Type a message"
+      },
+      "verdict": "tap"
+    },
+    { "action": { "kind": "press", "key": "enter" }, "verdict": "tap" },
+    { "action": { "kind": "press", "key": "space" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "escape" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "tab" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "cmd+q" }, "verdict": "refused" },
+    { "action": { "kind": "scroll", "direction": "down" }, "verdict": "auto" },
+    { "action": { "kind": "scroll", "direction": "top" }, "verdict": "auto" },
+    { "action": { "kind": "scroll", "direction": "sideways" }, "verdict": "refused" },
+    { "action": { "kind": "surface", "what": "app", "name": "Safari" }, "verdict": "auto" },
+    { "action": { "kind": "surface", "what": "tab", "name": "Inbox" }, "verdict": "auto" },
+    { "action": { "kind": "surface", "what": "app", "name": "" }, "verdict": "refused" },
+    { "action": { "kind": "surface", "what": "window", "name": "Safari" }, "verdict": "refused" },
+    { "action": { "kind": "shell", "text": "rm -rf ~" }, "verdict": "refused" }
+  ],
+  "after_judge": [
+    { "p": 0.1, "verdict": "auto" },
+    { "p": 0.29, "verdict": "auto" },
+    { "p": 0.3, "verdict": "tap" },
+    { "p": 0.9, "verdict": "tap" },
+    { "p": null, "verdict": "tap" },
+    { "p": -1, "verdict": "tap" },
+    { "p": 1.5, "verdict": "tap" }
+  ]
+}

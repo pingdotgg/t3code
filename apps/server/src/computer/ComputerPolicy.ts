@@ -1,0 +1,291 @@
+// Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/companion/src/executor/policy.ts),
+// Apache-2.0, Copyright 2026 Jay Leaton. Modified for Ada.
+import type { ComputerAction, ComputerDecision } from "@t3tools/contracts";
+import { COMPUTER_CONTROL_KINDS } from "@t3tools/contracts";
+
+/**
+ * What a computer action needs before the helper may do it. The server is the authority: the helper asks before
+ * every action and acts only on a grant. Pure: no I/O, no clock.
+ *
+ * The rules only ever add taps. A label the lexicon misses still goes to the judgment, and a judgment that
+ * fails asks.
+ */
+
+const MAX_LABEL_BYTES = 400;
+const MAX_TEXT_BYTES = 4_000;
+/** At or above this a judged click asks first: a needless tap costs a second, a wrong click cannot be undone. */
+const JUDGE_THRESHOLD = 0.3;
+
+const SCROLL_DIRECTIONS: ReadonlyArray<string> = ["up", "down", "top", "bottom"];
+const BENIGN_CLICK_ROLES: ReadonlyArray<string> = ["textbox", "tab", "row"];
+const PASSIVE_KEYS: ReadonlyArray<string> = ["space", "escape", "tab"];
+
+const auto = (): ComputerDecision => ({ verdict: "auto", why: "" });
+const refused = (why: string): ComputerDecision => ({ verdict: "refused", why });
+
+const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+
+/**
+ * A fixed control: the simple ones run without asking, locking the screen asks first, anything else is
+ * refused.
+ */
+export function control(kind: string): ComputerDecision {
+  if (!(COMPUTER_CONTROL_KINDS as ReadonlyArray<string>).includes(kind))
+    return refused(
+      "not one of the fixed controls (open_app, quit_app, volume, media, dark_mode, lock_screen)",
+    );
+  return kind === "lock_screen" ? { verdict: "tap", why: "locking the screen" } : auto();
+}
+
+/**
+ * The rule for one on-screen step. `judge` means: ask the decision provider whether it could send, buy, delete,
+ * post or submit something, then `afterJudge`.
+ */
+export function screen(action: ComputerAction): ComputerDecision {
+  const label = action.label ?? "";
+  if (
+    utf8Bytes(label) > MAX_LABEL_BYTES ||
+    utf8Bytes(action.name ?? "") > MAX_LABEL_BYTES ||
+    utf8Bytes(action.fieldLabel ?? "") > MAX_LABEL_BYTES
+  )
+    return refused("a label longer than any control's");
+
+  switch (action.kind) {
+    case "scroll":
+      return SCROLL_DIRECTIONS.includes(action.direction ?? "")
+        ? auto()
+        : refused("an unknown scroll direction");
+    case "surface":
+      if (action.what !== "tab" && action.what !== "app")
+        return refused("a surface that is neither a tab nor an app");
+      if (!action.name) return refused("a surface with no name");
+      // Bringing a named app or tab forward changes nothing in it.
+      return auto();
+    case "pointer":
+      // The real pointer and keyboard for a step the background could not take: always the person's to allow.
+      return {
+        verdict: "tap",
+        why: action.why
+          ? `it needs your mouse for a moment: ${action.why}`
+          : "it needs your mouse for a moment",
+      };
+    case "press":
+      if (PASSIVE_KEYS.includes(action.key ?? "")) return auto();
+      if (action.key !== "enter") return refused("a key other than Enter, Space, Escape or Tab");
+      if (action.fieldRole && searchField(action.fieldRole, action.fieldLabel ?? "")) return auto();
+      return { verdict: "tap", why: "pressing Enter could send or submit what was typed" };
+    case "type": {
+      const text = action.text ?? "";
+      if (!text) return refused("typing with no text");
+      if (utf8Bytes(text) > MAX_TEXT_BYTES) return refused("more text than one step may type");
+      if (/[\r\n]/.test(text))
+        return { verdict: "tap", why: "the text has a line break, which can send it" };
+      if (searchField(action.role ?? "", label)) return auto();
+      return { verdict: "tap", why: "typing into a field that is not a search or address box" };
+    }
+    case "click": {
+      const why = consequential(label);
+      if (why) return { verdict: "tap", why };
+      // Focusing a text box, picking a tab or selecting a row in a list commits nothing.
+      if (BENIGN_CLICK_ROLES.includes(action.role ?? "")) return auto();
+      return { verdict: "judge", why: "" };
+    }
+    default:
+      return refused(
+        "not a step computer use takes (click, type, press, scroll, surface, pointer)",
+      );
+  }
+}
+
+const UNCHECKED = "whether it could send, buy or delete something could not be checked";
+
+/** The provider's judgment for a `judge` step: the probability that it is consequential. Unknown is a tap. */
+export function afterJudge(probability: number | null | undefined): ComputerDecision {
+  if (probability === null || probability === undefined) return { verdict: "tap", why: UNCHECKED };
+  if (!Number.isFinite(probability) || probability < 0 || probability > 1)
+    return { verdict: "tap", why: UNCHECKED };
+  if (probability >= JUDGE_THRESHOLD)
+    return { verdict: "tap", why: "it may send, buy, delete, post or submit something" };
+  return auto();
+}
+
+const SEARCH_WORDS: ReadonlyArray<string> = [
+  "search",
+  "find",
+  "filter",
+  "address",
+  "url",
+  "go to",
+  "buscar",
+  "búsqueda",
+  "rechercher",
+  "recherche",
+  "suchen",
+  "suche",
+  "cerca",
+  "pesquisar",
+  "zoeken",
+  "検索",
+  "搜索",
+];
+
+/** A search, find, filter or address box: typing there and pressing Enter runs a search or opens a page. */
+function searchField(role: string, label: string): boolean {
+  if (role !== "textbox") return false;
+  const lowered = lower(label);
+  return SEARCH_WORDS.some((word) => lowered.includes(word));
+}
+
+interface Entry {
+  readonly why: string;
+  readonly words: ReadonlyArray<string>;
+}
+
+const LEXICON: ReadonlyArray<Entry> = [
+  {
+    why: "its label reads as sending or posting",
+    words: [
+      "send",
+      "reply",
+      "post",
+      "publish",
+      "share",
+      "tweet",
+      "comment",
+      "forward",
+      "enviar",
+      "responder",
+      "publicar",
+      "compartir",
+      "envoyer",
+      "répondre",
+      "publier",
+      "partager",
+      "senden",
+      "antworten",
+      "veröffentlichen",
+      "teilen",
+      "inviare",
+      "rispondi",
+      "pubblica",
+      "condividi",
+      "verzenden",
+      "送信",
+      "发送",
+      "发布",
+    ],
+  },
+  {
+    why: "its label reads as buying or paying",
+    words: [
+      "buy",
+      "purchase",
+      "pay",
+      "checkout",
+      "order",
+      "subscribe",
+      "donate",
+      "transfer",
+      "book",
+      "comprar",
+      "pagar",
+      "suscribirse",
+      "acheter",
+      "payer",
+      "commander",
+      "kaufen",
+      "bezahlen",
+      "bestellen",
+      "abonnieren",
+      "acquista",
+      "paga",
+      "ordina",
+      "kopen",
+      "betalen",
+      "購入",
+      "购买",
+      "支付",
+    ],
+  },
+  {
+    why: "its label reads as deleting",
+    words: [
+      "delete",
+      "remove",
+      "erase",
+      "discard",
+      "trash",
+      "archive",
+      "uninstall",
+      "wipe",
+      "eliminar",
+      "borrar",
+      "supprimer",
+      "effacer",
+      "löschen",
+      "entfernen",
+      "elimina",
+      "cancella",
+      "verwijderen",
+      "excluir",
+      "削除",
+      "删除",
+    ],
+  },
+  {
+    why: "its label reads as submitting or confirming",
+    words: [
+      "submit",
+      "confirm",
+      "approve",
+      "merge",
+      "sign",
+      "accept",
+      "agree",
+      "authorize",
+      "authorise",
+      "enviar",
+      "confirmar",
+      "aceptar",
+      "valider",
+      "confirmer",
+      "accepter",
+      "bestätigen",
+      "absenden",
+      "akzeptieren",
+      "conferma",
+      "accetta",
+      "bevestigen",
+      "確認",
+      "确认",
+      "提交",
+    ],
+  },
+];
+
+const PHRASES: ReadonlyArray<{ readonly text: string; readonly why: string }> = [
+  { text: "check out", why: "its label reads as buying or paying" },
+  { text: "place order", why: "its label reads as buying or paying" },
+  { text: "add to cart", why: "its label reads as buying or paying" },
+  { text: "empty trash", why: "its label reads as deleting" },
+  { text: "move to trash", why: "its label reads as deleting" },
+];
+
+// ASCII separators only, as the box tokenizes: a multi-byte one would split UTF-8 words.
+const SEPARATORS = /[ \t\r\n.,;:!?()[\]{}"'`/\\|\-_+*&#@<>=~^%$]+/;
+
+/** Why a control's label needs a tap, or null. Whole words, ASCII case folded, several languages. */
+function consequential(label: string): string | null {
+  const lowered = lower(label);
+  for (const phrase of PHRASES) if (lowered.includes(phrase.text)) return phrase.why;
+  for (const word of lowered.split(SEPARATORS)) {
+    if (!word) continue;
+    for (const entry of LEXICON) if (entry.words.includes(word)) return entry.why;
+  }
+  return null;
+}
+
+/** ASCII lower case only, as the box folds: other characters are kept, so UTF-8 words still match. */
+function lower(value: string): string {
+  return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
