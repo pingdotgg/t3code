@@ -108,7 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
-  "/settings/daemons": "Daemons",
+  "/settings/daemons": msg("Daemons"),
   "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
@@ -1086,7 +1086,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "daemons",
-    title: "Daemons",
+    title: msg("Daemons"),
     to: "/settings/daemons",
     searchTerms: ["background process command service keep running restart maestro"],
   },

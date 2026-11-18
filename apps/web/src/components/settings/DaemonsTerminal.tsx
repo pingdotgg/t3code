@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 import { type DaemonId, daemonTerminalTarget, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -26,6 +27,7 @@ export default function DaemonsTerminal({
     terminalEnvironment.observe({ environmentId, input: daemonTerminalTarget(daemonId) }),
   );
   const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
+  const gt = useGT();
   const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);
   const [error, setError] = useState<string | null>(null);
   const cursor = useRef(INITIAL_TERMINAL_OUTPUT_CURSOR);
@@ -49,7 +51,7 @@ export default function DaemonsTerminal({
         if (/^https?:\/\//i.test(url))
           void ensureLocalApi()
             .shell.openExternal(url)
-            .catch(() => setError("Could not open the link."));
+            .catch(() => setError(gt("Could not open the link.")));
       },
     })
       .then((terminal) => {
@@ -61,7 +63,7 @@ export default function DaemonsTerminal({
         cursor.current = INITIAL_TERMINAL_OUTPUT_CURSOR;
         setSurface(terminal);
       })
-      .catch(() => setError("Could not load the terminal."));
+      .catch(() => setError(gt("Could not load the terminal.")));
     return () => {
       disposed = true;
       created?.dispose();
@@ -72,12 +74,12 @@ export default function DaemonsTerminal({
     <>
       <div
         ref={mountSurface}
-        aria-label="Daemon terminal"
+        aria-label={gt("Daemon terminal")}
         className="relative h-[60vh] overflow-hidden rounded-md border border-border"
       />
       {result._tag === "Failure" ? (
         <p role="status" className="text-sm text-muted-foreground">
-          This daemon has no terminal yet. Enable it to start one.
+          <T>This daemon has no terminal yet. Enable it to start one.</T>
         </p>
       ) : null}
       {error ? (

@@ -19,6 +19,7 @@ import {
   SquareTerminalIcon,
   Trash2Icon,
 } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { lazy, type ReactNode, Suspense, useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -53,7 +54,7 @@ import { EnvironmentRow } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { ScheduledRelativeLabel } from "./ScheduledTasksSettings";
 
@@ -77,11 +78,13 @@ export function DaemonsSettings() {
     readonly environmentId: EnvironmentId;
     readonly daemon: Daemon;
   } | null>(null);
+  const setting = useSearchableSetting();
+  const gt = useGT();
   const creationEnvironment = environment ?? connectedEnvironments[0];
   return (
     <SettingsPageContainer>
       <SettingsSection
-        {...searchableSetting("daemons")}
+        {...setting("daemons")}
         variant="plain"
         headerAction={
           <Button
@@ -94,12 +97,12 @@ export function DaemonsSettings() {
             }
           >
             <PlusIcon className="size-3" />
-            New daemon
+            <T>New daemon</T>
           </Button>
         }
       >
         {scope.kind === "unavailable" ? (
-          <SettingsSection title="Unavailable selection">
+          <SettingsSection title={gt("Unavailable selection")}>
             <SettingsRow title={scope.message} />
           </SettingsSection>
         ) : environments.length === 0 ? (
@@ -108,8 +111,12 @@ export function DaemonsSettings() {
               <EmptyMedia variant="icon">
                 <ServerCogIcon />
               </EmptyMedia>
-              <EmptyTitle>No environments available</EmptyTitle>
-              <EmptyDescription>Connect an environment to manage its daemons.</EmptyDescription>
+              <EmptyTitle>
+                <T>No environments available</T>
+              </EmptyTitle>
+              <EmptyDescription>
+                <T>Connect an environment to manage its daemons.</T>
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -153,7 +160,9 @@ export function DaemonsSettings() {
               </Suspense>
             </DialogPanel>
             <DialogFooter>
-              <DialogClose render={<Button size="sm" />}>Done</DialogClose>
+              <DialogClose render={<Button size="sm" />}>
+                <T>Done</T>
+              </DialogClose>
             </DialogFooter>
           </DialogPopup>
         </Dialog>
@@ -180,6 +189,7 @@ function DaemonEnvironmentGroup({
       ? daemonsEnvironment.live({ environmentId: environment.environmentId, input: {} })
       : null,
   );
+  const gt = useGT();
   const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
   const daemons = query.data?.daemons;
   return (
@@ -198,11 +208,14 @@ function DaemonEnvironmentGroup({
         </span>
       </EnvironmentRow>
       {!connected ? null : query.error ? (
-        <SettingsRow title="Could not load daemons" description={query.error} />
+        <SettingsRow title={gt("Could not load daemons")} description={query.error} />
       ) : !daemons ? (
-        <SettingsRow title="Loading daemons…" role="status" />
+        <SettingsRow title={gt("Loading daemons…")} role="status" />
       ) : daemons.length === 0 ? (
-        <SettingsRow title="No daemons" description="Nothing runs in the background here." />
+        <SettingsRow
+          title={gt("No daemons")}
+          description={gt("Nothing runs in the background here.")}
+        />
       ) : (
         daemons.map((daemon) => (
           <DaemonRow
@@ -219,30 +232,47 @@ function DaemonEnvironmentGroup({
 }
 
 function DaemonStatusLabel({ daemon }: { readonly daemon: Daemon }) {
+  const gt = useGT();
   const { status } = daemon;
   const exit =
-    status.lastExitCode !== null ? `last exit code ${status.lastExitCode}` : status.lastError;
+    status.lastExitCode !== null
+      ? gt("last exit code {code}", { code: status.lastExitCode })
+      : status.lastError;
   switch (status.state) {
     case "running":
       return (
         <>
-          <Badge variant="success">running</Badge>
-          {status.pid !== null ? <span>pid {status.pid}</span> : null}
+          <Badge variant="success">
+            <T context="daemon state">running</T>
+          </Badge>
+          {status.pid !== null ? <span>{gt("pid {pid}", { pid: status.pid })}</span> : null}
           {status.startedAt ? (
-            <span>
-              since <ScheduledRelativeLabel value={status.startedAt} />
-            </span>
+            <T>
+              <span>
+                since{" "}
+                <Var>
+                  <ScheduledRelativeLabel value={status.startedAt} />
+                </Var>
+              </span>
+            </T>
           ) : null}
         </>
       );
     case "restarting":
       return (
         <>
-          <Badge variant="warning">restarting</Badge>
+          <Badge variant="warning">
+            <T context="daemon state">restarting</T>
+          </Badge>
           {status.nextAttemptAt ? (
-            <span>
-              next attempt <ScheduledRelativeLabel value={status.nextAttemptAt} />
-            </span>
+            <T>
+              <span>
+                next attempt{" "}
+                <Var>
+                  <ScheduledRelativeLabel value={status.nextAttemptAt} />
+                </Var>
+              </span>
+            </T>
           ) : null}
           {exit ? <span>{exit}</span> : null}
         </>
@@ -250,7 +280,9 @@ function DaemonStatusLabel({ daemon }: { readonly daemon: Daemon }) {
     case "stopped":
       return (
         <>
-          <Badge variant="outline">stopped</Badge>
+          <Badge variant="outline">
+            <T context="daemon state">stopped</T>
+          </Badge>
           {exit ? <span>{exit}</span> : null}
         </>
       );
@@ -268,6 +300,7 @@ function DaemonRow({
   readonly onEdit: () => void;
   readonly onOpenTerminal: () => void;
 }) {
+  const gt = useGT();
   const canOperate = useAtomValue(daemonsEnvironment.upsert.permissionAtom(environmentId));
   const [busy, setBusy] = useState(false);
   const upsert = useAtomCommand(daemonsEnvironment.upsert, { label: "daemon enable" });
@@ -276,7 +309,9 @@ function DaemonRow({
   const act = async (action: "toggle" | "restart" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (action === "delete") {
-      const message = `Delete "${daemon.name}"?\nIts process stops and its output is discarded.`;
+      const message = gt('Delete "{name}"?\nIts process stops and its output is discarded.', {
+        name: daemon.name,
+      });
       const confirmed =
         (await requestConfirmDialog(message, { variant: "destructive" })) ??
         window.confirm(message);
@@ -292,7 +327,7 @@ function DaemonRow({
           : await remove({ environmentId, input: { id: daemon.id } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Could not update daemon", squashAtomCommandFailure(result));
+      reportFailure(gt("Could not update daemon"), squashAtomCommandFailure(result));
     }
   };
   return (
@@ -314,12 +349,12 @@ function DaemonRow({
             onClick={onOpenTerminal}
           >
             <SquareTerminalIcon className="size-3" />
-            Terminal
+            <T>Terminal</T>
           </Button>
           <Switch
             checked={daemon.enabled}
             disabled={busy || !canOperate}
-            aria-label={`Enable ${daemon.name}`}
+            aria-label={gt("Enable {name}", { name: daemon.name })}
             onCheckedChange={() => void act("toggle")}
           />
           <Menu>
@@ -329,7 +364,7 @@ function DaemonRow({
                   size="icon-sm"
                   variant="ghost"
                   disabled={busy || !canOperate}
-                  aria-label={`Actions for ${daemon.name}`}
+                  aria-label={gt("Actions for {name}", { name: daemon.name })}
                 />
               }
             >
@@ -338,16 +373,16 @@ function DaemonRow({
             <MenuPopup align="end">
               <MenuItem onClick={onEdit}>
                 <PencilIcon />
-                Edit
+                <T>Edit</T>
               </MenuItem>
               <MenuItem disabled={!daemon.enabled} onClick={() => void act("restart")}>
                 <RotateCwIcon />
-                Restart
+                <T>Restart</T>
               </MenuItem>
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
-                Delete
+                <T>Delete</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -384,6 +419,7 @@ function DaemonEditorDialog({
   readonly initial: Editor;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initial.environmentId);
   const [name, setName] = useState(initial.daemon?.name ?? "");
@@ -413,7 +449,7 @@ function DaemonEditorDialog({
     setSaving(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure("Could not save daemon", squashAtomCommandFailure(result));
+        reportFailure(gt("Could not save daemon"), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -424,15 +460,17 @@ function DaemonEditorDialog({
     <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
       <DialogPopup className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{initial.daemon ? "Edit daemon" : "New daemon"}</DialogTitle>
+          <DialogTitle>{initial.daemon ? gt("Edit daemon") : gt("New daemon")}</DialogTitle>
           <DialogDescription>
-            A shell command this server keeps running. It starts when the server starts and restarts
-            after it exits.
+            <T>
+              A shell command this server keeps running. It starts when the server starts and
+              restarts after it exits.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <fieldset disabled={saving} className="min-w-0 space-y-5">
-            <Field label="Runs on" htmlFor="daemon-environment">
+            <Field label={gt("Runs on")} htmlFor="daemon-environment">
               <Select
                 value={environmentId}
                 disabled={initial.daemon !== null}
@@ -448,7 +486,7 @@ function DaemonEditorDialog({
                         kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
                         className="size-4"
                       />
-                      {environment?.label ?? "Unavailable environment"}
+                      {environment?.label ?? gt("Unavailable environment")}
                     </span>
                   </SelectValue>
                 </SelectTrigger>
@@ -471,7 +509,7 @@ function DaemonEditorDialog({
                 </SelectPopup>
               </Select>
             </Field>
-            <Field label="Name" htmlFor="daemon-name">
+            <Field label={gt("Name")} htmlFor="daemon-name">
               <Input
                 id="daemon-name"
                 value={name}
@@ -479,7 +517,11 @@ function DaemonEditorDialog({
                 onChange={(event) => setName(event.target.value)}
               />
             </Field>
-            <Field label="Command" htmlFor="daemon-command" hint="Runs with sh -c.">
+            <Field
+              label={gt("Command")}
+              htmlFor="daemon-command"
+              hint={gt("Runs with {shell}.", { shell: "sh -c" })}
+            >
               <Textarea
                 id="daemon-command"
                 value={command}
@@ -488,9 +530,9 @@ function DaemonEditorDialog({
               />
             </Field>
             <Field
-              label="Working folder"
+              label={gt("Working folder")}
               htmlFor="daemon-cwd"
-              hint="An absolute path on the machine that runs the daemon."
+              hint={gt("An absolute path on the machine that runs the daemon.")}
             >
               <Input
                 id="daemon-cwd"
@@ -500,7 +542,9 @@ function DaemonEditorDialog({
               />
             </Field>
             <div className="flex items-center justify-between">
-              <Label htmlFor="daemon-enabled">Enabled</Label>
+              <Label htmlFor="daemon-enabled">
+                <T>Enabled</T>
+              </Label>
               <Switch
                 id="daemon-enabled"
                 checked={enabled}
@@ -510,13 +554,15 @@ function DaemonEditorDialog({
           </fieldset>
         </DialogPanel>
         <DialogFooter>
-          <DialogClose render={<Button size="sm" variant="outline" />}>Cancel</DialogClose>
+          <DialogClose render={<Button size="sm" variant="outline" />}>
+            <T>Cancel</T>
+          </DialogClose>
           <Button
             size="sm"
             disabled={saving || !complete || !canOperate || environment === undefined}
             onClick={() => void submit()}
           >
-            Save
+            <T>Save</T>
           </Button>
         </DialogFooter>
       </DialogPopup>
