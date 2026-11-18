@@ -85,7 +85,7 @@ describe("layout drops from sidebar buttons", () => {
     const column = (id: string, tabs: LayoutTab[]): LayoutColumn => ({
       id,
       width: 1,
-      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1 }],
+      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1, groups: [] }],
     });
     const workspace = (id: string, columns: LayoutColumn[]) => ({
       id,
@@ -328,7 +328,7 @@ describe("layout drops of a thread's surfaces", () => {
     const column = (id: string, tabs: LayoutTab[]): LayoutColumn => ({
       id,
       width: 1,
-      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1 }],
+      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1, groups: [] }],
     });
     const workspace = (id: string, columns: LayoutColumn[]) => ({
       id,

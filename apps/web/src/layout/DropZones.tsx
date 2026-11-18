@@ -104,7 +104,7 @@ function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
   return {
     tabs: tabs.filter((tab) => tab.id !== state.sourceTabId),
     reorder: tabs.some((tab) => tab.id === state.sourceTabId),
-    index: target.index,
+    index: target.marker,
   };
 }
 

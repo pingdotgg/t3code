@@ -30,6 +30,7 @@ function workspace(id: string, withPane: boolean): LayoutWorkspace {
                 id: `pane-${id}`,
                 size: 1,
                 activeTabId: `tab-${id}`,
+                groups: [],
                 tabs: [{ id: `tab-${id}`, content: settings }],
               },
             ],

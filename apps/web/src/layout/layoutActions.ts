@@ -5,6 +5,7 @@ import { closeThreadSurface } from "../components/ThreadSurfaceTab";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useClosedViewStore } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { getClientSettings } from "../hooks/useSettings";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
@@ -14,6 +15,7 @@ import {
   selectFocusedTab,
   type LayoutLauncherContent,
   type LayoutOpenPlacement,
+  type LayoutPane,
   type LayoutTabContent,
 } from "./layoutModel";
 import {
@@ -26,10 +28,36 @@ import { readProjects, readThreadLineage, readThreadShell } from "../state/entit
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useUiStateStore } from "../uiStateStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
-import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
+import { runInNewLayoutTab, setLayoutPaneTabOrder, useLayoutStore } from "./layoutStore";
+import { arrangePaneStrip, drawnPaneTabIds, paneStripGroups } from "./paneStrip.logic";
+import {
+  paneStripThreadKeys,
+  paneStripThreadStateOf,
+  paneStripThreadStatesAtom,
+} from "./paneStripThreadStates";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { threadlessSurfacesProjectRef, threadlessSurfacesRef } from "../threadlessSurfaces";
+
+/** The pane's tabs as its strip draws them, from the same states `usePaneSiblingTabs` reads. */
+function readDrawnPaneTabIds(pane: LayoutPane): string[] {
+  const settings = getClientSettings();
+  const keys =
+    settings.paneTabsWorkingGroup || settings.paneTabsFollowInbox ? paneStripThreadKeys(pane) : [];
+  return drawnPaneTabIds(
+    arrangePaneStrip({
+      tabs: pane.tabs,
+      activeTabId: pane.activeTabId,
+      groups: paneStripGroups(pane, settings.paneTabsWorkingGroup),
+      threadStateOf: paneStripThreadStateOf(
+        keys,
+        appAtomRegistry.get(paneStripThreadStatesAtom(keys)),
+      ),
+      hideSettled: settings.paneTabsFollowInbox,
+    }),
+  );
+}
+setLayoutPaneTabOrder(readDrawnPaneTabIds);
 
 /** Remove a parked or discarded thread everywhere, without settling it again. */
 export function closeLayoutThread(threadRef: ScopedThreadRef): void {
@@ -247,6 +275,21 @@ export function closeOtherLayoutTabsByUser(tabId: string): void {
     if (tab.id !== tabId) closeLayoutTabByUser(tab.id, { bulk: true });
   }
   store.focusTab(tabId);
+}
+
+/** Close every tab of a group, each as its own close button would, the shown one last. */
+export function closeLayoutTabGroupByUser(groupId: string): void {
+  const pane = useLayoutStore
+    .getState()
+    .layout.workspaces.flatMap((workspace) => workspace.columns)
+    .flatMap((column) => column.panes)
+    .find((candidate) => candidate.groups.some((group) => group.id === groupId));
+  if (!pane) return;
+  const members = pane.tabs.filter((tab) => tab.groupId === groupId);
+  const shown = members.filter((tab) => tab.id === pane.activeTabId);
+  for (const tab of [...members.filter((tab) => !shown.includes(tab)), ...shown]) {
+    closeLayoutTabByUser(tab.id, { bulk: true });
+  }
 }
 
 /** Fill the window with the focused pane, or bring the others back (alt+cmd+F). */

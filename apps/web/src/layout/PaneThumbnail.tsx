@@ -51,7 +51,8 @@ import type { LayoutTab } from "./layoutModel";
 import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
-  LayoutPaneTab,
+  PaneStripItems,
+  PaneTabGroupLine,
   usePaneSiblingTabs,
   useLayoutTabLabel,
 } from "./PaneTabs";
@@ -295,18 +296,15 @@ function PaneThumbnailHeader({
       {/* Hidden, it leaves its pane unmarked: a marked pane draws its notch cuts. */}
       <PaneNotch marksHost={!hidden}>
         <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-          {siblingTabs.before.map((sibling) => (
-            <LayoutPaneTab key={sibling.id} tab={sibling} />
-          ))}
+          <PaneStripItems items={siblingTabs.before} />
           <span className={LAYOUT_TAB_SLOT_CLASS}>
             <div className={PANE_TAB_CLASS}>
               <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
               <span className="min-w-0 truncate">{label.title}</span>
             </div>
+            <PaneTabGroupLine color={siblingTabs.activeColor} />
           </span>
-          {siblingTabs.after.map((sibling) => (
-            <LayoutPaneTab key={sibling.id} tab={sibling} />
-          ))}
+          <PaneStripItems items={siblingTabs.after} />
         </div>
         {tab.content.kind === "chat" ? (
           <Button variant="bare" size="icon-xs" data-pane-notch-add="" tabIndex={-1}>

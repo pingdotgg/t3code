@@ -16,14 +16,18 @@ import { useLayoutStore } from "./layoutStore";
 import { readIssueListPreferences } from "../components/issue/issueListPreferences";
 import { readPullRequestListPreferences } from "../components/pullRequest/pullRequestListPreferences";
 
+export function isLayoutRoutePath(pathname: string): boolean {
+  return pathname === "/pull-requests" || pathname === "/issues";
+}
+
 /** The page tab a URL shows in the layout. Settings and Usage open as modals over it instead. */
 export function layoutRoutePage(location: {
   pathname: string;
   href: string;
 }): LayoutPageContent | null {
-  if (location.pathname === "/pull-requests") return { kind: "pull-requests", href: location.href };
-  if (location.pathname === "/issues") return { kind: "issues", href: location.href };
-  return null;
+  return isLayoutRoutePath(location.pathname)
+    ? { kind: location.pathname === "/issues" ? "issues" : "pull-requests", href: location.href }
+    : null;
 }
 
 export function layoutPageHref(content: LayoutPageContent): string {

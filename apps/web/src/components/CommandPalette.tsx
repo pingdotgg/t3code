@@ -58,7 +58,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouteContext } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
@@ -238,7 +238,11 @@ import {
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
-import { buildLayoutPaletteItems, buildOpenBesidePaletteItem } from "../layout/layoutPaletteItems";
+import {
+  buildLayoutPaletteItems,
+  buildOpenBesidePaletteItem,
+  buildTabGroupPaletteItems,
+} from "../layout/layoutPaletteItems";
 import {
   findTerminalSplitTarget,
   queueTerminalFocusFromPalette,
@@ -286,7 +290,8 @@ import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
-import { useOpenLayoutPage } from "../layout/pageNavigation";
+import { isLayoutRoutePath, useOpenLayoutPage } from "../layout/pageNavigation";
+import { useIndexShowsLayout } from "../layout/useIndexShowsLayout";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
@@ -473,6 +478,8 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const openLayoutPage = useOpenLayoutPage();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const { authGateState } = useRouteContext({ from: "__root__" });
+  const indexShowsLayout = useIndexShowsLayout(authGateState.status === "hosted-static");
   const { openChildSearch, setOpen } = props;
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
@@ -1727,9 +1734,17 @@ function OpenCommandPaletteDialog(props: {
   const openBesideItem =
     activeThread || activeDraftThread ? buildOpenBesidePaletteItem(messages) : null;
   if (openBesideItem) actionItems.push(openBesideItem);
-  // The index shows the layout too once there is a project.
-  if (activeThread || activeDraftThread || (pathname === "/" && projects.length > 0)) {
-    actionItems.push(...buildLayoutPaletteItems(scrollingWorkspaces, messages));
+  // Matches when WorkspacePlane shows the workspace.
+  if (
+    activeThread ||
+    activeDraftThread ||
+    isLayoutRoutePath(pathname) ||
+    (pathname === "/" && indexShowsLayout)
+  ) {
+    actionItems.push(
+      ...buildLayoutPaletteItems(scrollingWorkspaces, messages),
+      ...buildTabGroupPaletteItems(),
+    );
   }
 
   actionItems.push({

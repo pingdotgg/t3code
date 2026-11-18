@@ -1,4 +1,8 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import { resolveTerminalActivityStatus } from "@t3tools/client-runtime/state/terminal";
 import type {
   ContextMenuItem,
@@ -49,6 +53,9 @@ import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { Button, ContentButton } from "../components/ui/button";
+import { StatusDot, type StatusDotTone } from "../components/ui/status-dot";
+import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../components/Sidebar.logic";
+import { useUiStateStore } from "../uiStateStore";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
@@ -81,13 +88,17 @@ import {
   isLayoutGhostTab,
   isLayoutGhostTabShown,
   isLayoutPageContent,
+  LAYOUT_TAB_GROUP_COLORS,
+  nextLayoutTabGroupColor,
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
   type LayoutTab,
+  type LayoutTabGroupColor,
   canCloseLayoutTab,
 } from "./layoutModel";
 import {
   closeLayoutTabByUser,
+  closeLayoutTabGroupByUser,
   closeOtherLayoutTabsByUser,
   createLayoutNewTabContent,
   openLayoutNewThreadTab,
@@ -98,11 +109,22 @@ import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
 import { scrollTabStripFromRow, setWheelScroller, wheelDeltaPx } from "../motion/gesture";
-import { useClientSettings } from "../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
-
-const EMPTY_TABS: readonly LayoutTab[] = [];
+import {
+  arrangePaneStrip,
+  splitPaneStrip,
+  paneStripGroups,
+  type PaneStripItem,
+  type PaneTabGroupDefinition,
+} from "./paneStrip.logic";
+import {
+  paneStripThreadKeys,
+  paneStripThreadStateOf,
+  paneStripThreadStatesAtom,
+} from "./paneStripThreadStates";
+import { requestTabGroupEditor, TAB_GROUP_COLOR_LABEL, TAB_GROUP_TONE } from "./TabGroupEditor";
 
 /**
  * A pane's tab strip, one DOM node per pane that outlives its tabs' headers:
@@ -707,37 +729,195 @@ function usePaneJoinMotionMs(): number {
 }
 
 /**
- * The other tabs of the pane this chat renders in, split around the active
- * one so the notch lists them in order (pen R49C1s: active tab, then the
- * pane's other tabs, then "+"). Empty outside a layout host.
+ * The strip items of the pane this chat renders in, split around the active
+ * tab so the notch lists them in order (pen R49C1s: active tab, then the
+ * pane's other tabs, then "+"). Empty outside a layout host. `omitTabId` is a tab the header
+ * draws elsewhere.
  */
-export function useLayoutPaneSiblingTabs(): {
-  before: readonly LayoutTab[];
-  after: readonly LayoutTab[];
-} {
+export function useLayoutPaneSiblingTabs(omitTabId?: string): PaneSiblingTabs {
   const { tabId, paneId } = useLayoutPane();
-  return usePaneSiblingTabs(paneId, tabId);
+  return usePaneSiblingTabs(paneId, tabId, omitTabId);
 }
+
+interface PaneSiblingTabs {
+  before: readonly PaneStripItem[];
+  after: readonly PaneStripItem[];
+  activeColor: LayoutTabGroupColor | null;
+}
+
+const NO_SIBLING_TABS: PaneSiblingTabs = { before: [], after: [], activeColor: null };
 
 /** The same for a pane and tab named outright, outside their pane's context. */
 export function usePaneSiblingTabs(
   paneId: string | null,
   tabId: string | null,
-): {
-  before: readonly LayoutTab[];
-  after: readonly LayoutTab[];
-} {
+  omitTabId?: string,
+): PaneSiblingTabs {
   const pane = useLayoutStore((state) =>
     paneId === null ? null : (findLayoutPane(state.layout, paneId)?.pane ?? null),
   );
-  return (() => {
-    if (!pane || tabId === null || pane.tabs.length < 2) {
-      return { before: EMPTY_TABS, after: EMPTY_TABS };
-    }
-    const index = pane.tabs.findIndex((tab) => tab.id === tabId);
-    if (index === -1) return { before: EMPTY_TABS, after: EMPTY_TABS };
-    return { before: pane.tabs.slice(0, index), after: pane.tabs.slice(index + 1) };
-  })();
+  const workingGroup = useClientSettings((settings) => settings.paneTabsWorkingGroup);
+  const hideSettled = useClientSettings((settings) => settings.paneTabsFollowInbox);
+  const threadKeys = (workingGroup || hideSettled) && pane ? paneStripThreadKeys(pane) : [];
+  const threadStates = useAtomValue(paneStripThreadStatesAtom(threadKeys));
+  if (!pane || tabId === null || !pane.tabs.some((tab) => tab.id === tabId)) {
+    return NO_SIBLING_TABS;
+  }
+  const split = splitPaneStrip(
+    arrangePaneStrip({
+      tabs: omitTabId === undefined ? pane.tabs : pane.tabs.filter((tab) => tab.id !== omitTabId),
+      activeTabId: tabId,
+      groups: paneStripGroups(pane, workingGroup),
+      threadStateOf: paneStripThreadStateOf(threadKeys, threadStates),
+      hideSettled,
+    }),
+    tabId,
+  );
+  return split.before.length === 0 && split.after.length === 0 && split.activeColor === null
+    ? NO_SIBLING_TABS
+    : split;
+}
+
+export function PaneStripItems({ items }: { items: readonly PaneStripItem[] }) {
+  return items.map((item) =>
+    item.kind === "tab" ? (
+      <LayoutPaneTab
+        key={item.tab.id}
+        tab={item.tab}
+        color={item.group?.color ?? null}
+        groupId={item.group?.id ?? null}
+      />
+    ) : (
+      <span key={`group:${item.group.id}`} className={LAYOUT_TAB_SLOT_CLASS}>
+        <PaneTabGroupChip group={item.group} count={item.count} />
+      </span>
+    ),
+  );
+}
+
+const TAB_GROUP_LINE_CLASS = {
+  grey: "bg-dim-foreground",
+  blue: "bg-info",
+  red: "bg-destructive",
+  yellow: "bg-warning",
+  green: "bg-success",
+  purple: "bg-merged",
+} as const satisfies Record<LayoutTabGroupColor, string>;
+
+/** The line under a grouped tab, in its group's hue. Its tab slot positions it. */
+export function PaneTabGroupLine({ color }: { color: LayoutTabGroupColor | null }) {
+  if (color === null) return null;
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute inset-x-2 bottom-0 h-0.5 rounded-full",
+        TAB_GROUP_LINE_CLASS[color],
+      )}
+    />
+  );
+}
+
+export function paneStripItemTabs(items: readonly PaneStripItem[]): LayoutTab[] {
+  return items.flatMap((item) => (item.kind === "tab" ? [item.tab] : []));
+}
+
+type TabGroupMenuId =
+  | "group:rename"
+  | "group:color"
+  | `group:color:${LayoutTabGroupColor}`
+  | "group:ungroup"
+  | "group:close"
+  | "group:turn-off";
+
+function tabGroupMenuItems(group: PaneTabGroupDefinition): ContextMenuItem<TabGroupMenuId>[] {
+  if (group.rule !== null) return [{ id: "group:turn-off", label: "Turn off the Working group" }];
+  return [
+    { id: "group:rename", label: "Rename", icon: "pencil" },
+    {
+      id: "group:color",
+      label: "Color",
+      children: LAYOUT_TAB_GROUP_COLORS.map((color) => ({
+        id: `group:color:${color}` as const,
+        label: TAB_GROUP_COLOR_LABEL[color],
+        checked: color === group.color,
+      })),
+    },
+    { id: "group:ungroup", label: "Ungroup", separatorBefore: true },
+    { id: "group:close", label: "Close group", icon: "x", destructive: true },
+  ];
+}
+
+async function showTabGroupMenu(
+  group: PaneTabGroupDefinition,
+  position: { x: number; y: number },
+): Promise<void> {
+  const api = readLocalApi();
+  if (!api) return;
+  const action = await api.contextMenu.show(tabGroupMenuItems(group), position);
+  const store = useLayoutStore.getState();
+  if (action === null || action === "group:color") return;
+  if (action === "group:turn-off") {
+    updateClientSettings({ paneTabsWorkingGroup: false });
+    return;
+  }
+  if (action === "group:rename") {
+    const draft = await requestTabGroupEditor({
+      heading: "Edit group",
+      action: "Save",
+      initial: { title: group.title, color: group.color },
+    });
+    if (draft) store.updateTabGroup(group.id, draft);
+    return;
+  }
+  if (action === "group:ungroup") {
+    store.ungroupTabGroup(group.id);
+    return;
+  }
+  if (action === "group:close") {
+    closeLayoutTabGroupByUser(group.id);
+    return;
+  }
+  const color = LAYOUT_TAB_GROUP_COLORS.find((candidate) => action === `group:color:${candidate}`);
+  if (color) store.updateTabGroup(group.id, { color });
+}
+
+function PaneTabGroupChip({ group, count }: { group: PaneTabGroupDefinition; count: number }) {
+  const { paneId } = useLayoutPane();
+  const name = group.title || "Unnamed group";
+  const toggle = () => {
+    const store = useLayoutStore.getState();
+    if (group.rule === null) store.updateTabGroup(group.id, { collapsed: !group.collapsed });
+    else if (paneId !== null) store.setWorkingGroupExpanded(paneId, group.collapsed);
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ContentButton
+            variant="tab"
+            type="button"
+            data-tab-group-chip={group.id}
+            aria-expanded={!group.collapsed}
+            aria-label={`${name}, ${count} ${count === 1 ? "tab" : "tabs"}`}
+            onClick={toggle}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void showTabGroupMenu(group, { x: event.clientX, y: event.clientY });
+            }}
+          />
+        }
+      >
+        <StatusDot tone={TAB_GROUP_TONE[group.color]} />
+        {group.title ? <span className="min-w-0 truncate">{group.title}</span> : null}
+        {group.collapsed ? <span className="tabular-nums">{count}</span> : null}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {group.collapsed ? `Show ${name}` : `Collapse ${name}`}
+      </TooltipPopup>
+    </Tooltip>
+  );
 }
 
 export type LayoutTabMenuId =
@@ -747,6 +927,10 @@ export type LayoutTabMenuId =
   | "layout:new-column"
   | "layout:new-workspace"
   | "layout:fill"
+  | "layout:group-new"
+  | "layout:group-add"
+  | `layout:group-add:${string}`
+  | "layout:group-remove"
   | "layout:copy-link"
   | "layout:close-tab"
   | "layout:close-other-tabs";
@@ -805,6 +989,27 @@ export function buildLayoutTabMenuItems(
       ...keys("layout.fill"),
     });
   }
+  items.push({
+    id: "layout:group-new",
+    label: "Add tab to new group",
+    icon: "folder-plus",
+    separatorBefore: true,
+  });
+  const otherGroups = location.pane.groups.filter((group) => group.id !== location.tab.groupId);
+  if (otherGroups.length > 0) {
+    items.push({
+      id: "layout:group-add",
+      label: "Add tab to group",
+      icon: "folder",
+      children: otherGroups.map((group) => ({
+        id: `layout:group-add:${group.id}` as const,
+        label: group.title || "Unnamed group",
+      })),
+    });
+  }
+  if (location.tab.groupId !== undefined) {
+    items.push({ id: "layout:group-remove", label: "Remove from group" });
+  }
   if (location.tab.content.kind === "chat" && location.tab.content.target.kind === "server") {
     items.push({
       id: "layout:copy-link",
@@ -828,6 +1033,8 @@ export function buildLayoutTabMenuItems(
   return items;
 }
 
+const GROUP_ADD_PREFIX = "layout:group-add:";
+
 export function isLayoutTabMenuId(id: string): id is LayoutTabMenuId {
   return id.startsWith("layout:");
 }
@@ -846,6 +1053,10 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
   const store = useLayoutStore.getState();
   const location = findLayoutTab(store.layout, (tab) => tab.id === tabId);
   if (!location) return;
+  if (action.startsWith(GROUP_ADD_PREFIX)) {
+    store.addTabToGroup(tabId, action.slice(GROUP_ADD_PREFIX.length));
+    return;
+  }
   switch (action) {
     case "layout:keep":
       store.keepTab(tabId);
@@ -874,6 +1085,18 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     case "layout:fill":
       store.focusTab(tabId);
       store.toggleMaximizedTab(tabId);
+      return;
+    case "layout:group-new":
+      void requestTabGroupEditor({
+        heading: "New tab group",
+        action: "Create",
+        initial: { title: "", color: nextLayoutTabGroupColor(location.pane) },
+      }).then((draft) => {
+        if (draft) useLayoutStore.getState().createTabGroup(tabId, draft);
+      });
+      return;
+    case "layout:group-remove":
+      store.removeTabFromGroup(tabId);
       return;
     case "layout:copy-link": {
       const link = threadLinkFor(location.tab);
@@ -1119,24 +1342,54 @@ export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
  * or its close button closes it, right click opens the tab's own menu without
  * showing it, dragging moves or splits it.
  */
-export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutTab }) {
+export const LayoutPaneTab = memo(function LayoutPaneTab({
+  tab,
+  color = null,
+  groupId = null,
+}: {
+  tab: LayoutTab;
+  color?: LayoutTabGroupColor | null;
+  groupId?: string | null;
+}) {
   if (tab.content.kind === "chat" && tab.content.target.kind === "server") {
-    return <ThreadLayoutPaneTab tab={tab} threadRef={tab.content.target.threadRef} />;
+    return (
+      <ThreadLayoutPaneTab
+        tab={tab}
+        threadRef={tab.content.target.threadRef}
+        color={color}
+        groupId={groupId}
+      />
+    );
   }
-  return <PlainLayoutPaneTab tab={tab} />;
+  return <PlainLayoutPaneTab tab={tab} color={color} groupId={groupId} />;
 });
 
-function PlainLayoutPaneTab({ tab }: { tab: LayoutTab }) {
+interface PaneTabGroupProps {
+  color: LayoutTabGroupColor | null;
+  groupId: string | null;
+}
+
+function PlainLayoutPaneTab({ tab, color, groupId }: { tab: LayoutTab } & PaneTabGroupProps) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   return (
     <LayoutPaneTabButton
       tab={tab}
+      color={color}
+      groupId={groupId}
       onOpenMenu={(position) => void showLayoutTabMenu(tab.id, position, keybindings)}
     />
   );
 }
 
-function ThreadLayoutPaneTab({ tab, threadRef }: { tab: LayoutTab; threadRef: ScopedThreadRef }) {
+function ThreadLayoutPaneTab({
+  tab,
+  threadRef,
+  color,
+  groupId,
+}: {
+  tab: LayoutTab;
+  threadRef: ScopedThreadRef;
+} & PaneTabGroupProps) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canShareWithGuest = useAtomValue(canShareWithGuestAtom(threadRef.environmentId));
   const thread = useQuietThreadShell(threadRef);
@@ -1154,16 +1407,48 @@ function ThreadLayoutPaneTab({ tab, threadRef }: { tab: LayoutTab; threadRef: Sc
       if (isLayoutTabMenuId(id)) runLayoutTabMenuAction(id, tab.id);
     },
   });
-  return <LayoutPaneTabButton tab={tab} onOpenMenu={openMenu} />;
+  const followInbox = useClientSettings((settings) => settings.paneTabsFollowInbox);
+  const localLastVisitedAt = useUiStateStore((state) =>
+    followInbox ? state.threadLastVisitedAtById[scopedThreadKey(threadRef)] : undefined,
+  );
+  const dot =
+    followInbox && thread
+      ? resolveSidebarFolderDot([
+          {
+            ...thread,
+            lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
+          },
+        ])
+      : null;
+  return (
+    <LayoutPaneTabButton
+      tab={tab}
+      color={color}
+      groupId={groupId}
+      onOpenMenu={openMenu}
+      status={dot === null || dot === "working" ? null : NEEDS_YOU_DOT[dot]}
+    />
+  );
 }
+
+/** The sidebar's dot for a thread that needs you, as a closed folder draws it. */
+const NEEDS_YOU_DOT = {
+  attention: { tone: "warning", label: "Needs you" },
+  failed: { tone: "danger", label: "Failed" },
+  unread: { tone: "success", label: "Done" },
+} as const satisfies Record<string, { tone: StatusDotTone; label: string }>;
 
 function LayoutPaneTabButton({
   tab,
+  color,
+  groupId,
   onOpenMenu,
+  status = null,
 }: {
   tab: LayoutTab;
   onOpenMenu: (position: { x: number; y: number }) => void;
-}) {
+  status?: { tone: StatusDotTone; label: string } | null;
+} & PaneTabGroupProps) {
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
     useLayoutStore.getState().focusTab(tab.id);
@@ -1187,6 +1472,7 @@ function LayoutPaneTabButton({
               variant="tab"
               type="button"
               data-layout-pane-tab={tab.id}
+              data-tab-group={groupId ?? undefined}
               onClick={focusTab}
               onDoubleClick={() => useLayoutStore.getState().keepTab(tab.id)}
               onAuxClick={(event) => closeLayoutTabOnMiddleClick(event, tab.id)}
@@ -1209,12 +1495,19 @@ function LayoutPaneTabButton({
           >
             {label.title}
           </span>
+          {status ? (
+            <>
+              <StatusDot tone={status.tone} />
+              <span className="sr-only">, {status.label}</span>
+            </>
+          ) : null}
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {label.tooltip}
+          {status ? `${label.tooltip}\n${status.label}` : label.tooltip}
         </TooltipPopup>
       </Tooltip>
       <LayoutTabCloseButton tabId={tab.id} title={label.title} />
+      <PaneTabGroupLine color={color} />
     </span>
   );
 }

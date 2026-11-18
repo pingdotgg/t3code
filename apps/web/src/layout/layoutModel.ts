@@ -74,14 +74,39 @@ export interface LayoutTab {
    * replaces it. A lineage child names the thread it was opened from; a plain open has null.
    */
   ghostOf?: ScopedThreadRef | null;
+  /** The pane's group (`LayoutPane.groups`) this tab belongs to. */
+  groupId?: string;
 }
 
 function keepLayoutTabObject({ ghostOf: _ghostOf, ...tab }: LayoutTab): LayoutTab {
   return tab;
 }
 
+function withoutLayoutTabGroup({ groupId: _groupId, ...tab }: LayoutTab): LayoutTab {
+  return tab;
+}
+
 export function isLayoutGhostTab(tab: LayoutTab): boolean {
   return tab.ghostOf !== undefined;
+}
+
+/** The tab group colors the theme has a hue for. */
+export const LAYOUT_TAB_GROUP_COLORS = [
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "purple",
+] as const;
+export type LayoutTabGroupColor = (typeof LAYOUT_TAB_GROUP_COLORS)[number];
+
+/** A named, colored run of a pane's tabs, which carry its id, as Chrome's tab groups. */
+export interface LayoutTabGroup {
+  id: string;
+  title: string;
+  color: LayoutTabGroupColor;
+  collapsed: boolean;
 }
 
 export interface LayoutPane {
@@ -90,6 +115,13 @@ export interface LayoutPane {
   activeTabId: string | null;
   /** Share of the column's height; a column's panes sum to 1. */
   size: number;
+  /** Each group's tabs sit next to each other; a group with no tabs left is dropped. */
+  groups: LayoutTabGroup[];
+  /**
+   * The Working group is computed from thread states, not stored; only whether it is
+   * open in this pane is. Absent, it is collapsed.
+   */
+  workingGroupExpanded?: true;
 }
 
 export interface LayoutColumn {
@@ -184,7 +216,7 @@ function createWorkspace(columns: LayoutColumn[] = []): LayoutWorkspace {
 }
 
 function createPane(tab: LayoutTab, size = 1): LayoutPane {
-  return { id: createLayoutId("pane"), tabs: [tab], activeTabId: tab.id, size };
+  return { id: createLayoutId("pane"), tabs: [tab], activeTabId: tab.id, size, groups: [] };
 }
 
 function createColumn(pane: LayoutPane, width = 1): LayoutColumn {
@@ -583,15 +615,17 @@ function mapWorkspaces(
   return changed ? { ...state, workspaces } : state;
 }
 
+/** A pane the update changes keeps its groups whole (see `normalizePaneGroups`). */
 function mapPanes(state: LayoutState, update: (pane: LayoutPane) => LayoutPane): LayoutState {
   return mapWorkspaces(state, (workspace) => {
     let workspaceChanged = false;
     const columns = workspace.columns.map((column) => {
       let columnChanged = false;
       const panes = column.panes.map((pane) => {
-        const next = update(pane);
-        if (next !== pane) columnChanged = true;
-        return next;
+        const updated = update(pane);
+        if (updated === pane) return pane;
+        columnChanged = true;
+        return normalizePaneGroups(updated);
       });
       if (!columnChanged) return column;
       workspaceChanged = true;
@@ -609,16 +643,66 @@ function scaleToOne<T extends { size: number }>(items: T[]): T[] {
 }
 
 /**
+ * A pane's groups made whole: its tabs name only groups it has, a run of
+ * ungrouped tabs between two tabs of one group joins it (a tab opened inside
+ * a group), a group's tabs past its first run leave it, and a group with no
+ * tabs is dropped.
+ */
+function normalizePaneGroups(pane: LayoutPane): LayoutPane {
+  if (pane.groups.length === 0 && pane.tabs.every((tab) => tab.groupId === undefined)) return pane;
+  const known = new Set(pane.groups.map((group) => group.id));
+  const ids = pane.tabs.map((tab) =>
+    tab.groupId !== undefined && known.has(tab.groupId) ? tab.groupId : undefined,
+  );
+  for (let start = 0; start < ids.length; start += 1) {
+    if (ids[start] !== undefined) continue;
+    let end = start;
+    while (end < ids.length && ids[end] === undefined) end += 1;
+    const left = ids[start - 1];
+    if (left !== undefined && left === ids[end]) ids.fill(left, start, end);
+    start = end;
+  }
+  const ended = new Set<string>();
+  let previous: string | undefined;
+  ids.forEach((id, index) => {
+    if (previous !== undefined && id !== previous) ended.add(previous);
+    const kept = id !== undefined && ended.has(id) ? undefined : id;
+    ids[index] = kept;
+    previous = kept;
+  });
+  const tabs = pane.tabs.map((tab, index) => {
+    const groupId = ids[index];
+    if (tab.groupId === groupId) return tab;
+    return groupId === undefined ? withoutLayoutTabGroup(tab) : { ...tab, groupId };
+  });
+  const used = new Set(ids);
+  const groups = pane.groups.filter(
+    (group, index, all) =>
+      used.has(group.id) && all.findIndex((other) => other.id === group.id) === index,
+  );
+  const tabsChanged = tabs.some((tab, index) => tab !== pane.tabs[index]);
+  const groupsChanged = groups.length !== pane.groups.length;
+  if (!tabsChanged && !groupsChanged) return pane;
+  return {
+    ...pane,
+    tabs: tabsChanged ? tabs : pane.tabs,
+    groups: groupsChanged ? groups : pane.groups,
+  };
+}
+
+/**
  * Restore the model's invariants: no empty panes or columns, pane sizes sum
- * to 1, valid active tabs and focus, and exactly one empty workspace at the
- * bottom. An empty workspace that is focused survives until focus leaves it.
+ * to 1, valid active tabs, whole groups and focus, and exactly one empty
+ * workspace at the bottom. An empty workspace that is focused survives until
+ * focus leaves it.
  */
 function normalizeLayout(state: LayoutState): LayoutState {
   let workspaces = state.workspaces.map((workspace) => {
     let changed = false;
     const keptColumns = workspace.columns.flatMap((column) => {
-      const kept = column.panes.flatMap((pane) => {
-        if (pane.tabs.length === 0) return [];
+      const kept = column.panes.flatMap((original) => {
+        if (original.tabs.length === 0) return [];
+        const pane = normalizePaneGroups(original);
         if (pane.activeTabId !== null && pane.tabs.some((tab) => tab.id === pane.activeTabId)) {
           return [pane];
         }
@@ -922,7 +1006,11 @@ export function focusLayoutColumnEdge(state: LayoutState, edge: "first" | "last"
  * the first or last column, a pane that shares its column (or a tab that
  * shares its pane) moves into a new column there; a lone column stays.
  */
-export function moveLayoutFocused(state: LayoutState, direction: LayoutDirection): LayoutState {
+export function moveLayoutFocused(
+  state: LayoutState,
+  direction: LayoutDirection,
+  order?: LayoutPaneTabOrder,
+): LayoutState {
   const found = locateFocusedPane(state);
   if (!found) return state;
   const { workspace, column, columnIndex, pane, paneIndex } = found;
@@ -954,11 +1042,16 @@ export function moveLayoutFocused(state: LayoutState, direction: LayoutDirection
   if (column.panes.length === 1 && pane.tabs.length === 1) return state;
   const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
   if (!tab) return state;
-  return moveLayoutTab(state, tab.id, {
-    kind: "column",
-    workspaceId: workspace.id,
-    index: direction === "left" ? 0 : workspace.columns.length,
-  });
+  return moveLayoutTab(
+    state,
+    tab.id,
+    {
+      kind: "column",
+      workspaceId: workspace.id,
+      index: direction === "left" ? 0 : workspace.columns.length,
+    },
+    order,
+  );
 }
 
 /**
@@ -1023,22 +1116,29 @@ export function focusLayoutWorkspaceStep(state: LayoutState, delta: 1 | -1): Lay
  * follows. Below the last workspace is the empty one, and above the first a
  * new one opens, so this is also how a thread gets a workspace of its own.
  */
-export function moveLayoutTabToWorkspace(state: LayoutState, delta: 1 | -1): LayoutState {
+export function moveLayoutTabToWorkspace(
+  state: LayoutState,
+  delta: 1 | -1,
+  order?: LayoutPaneTabOrder,
+): LayoutState {
   const chat = selectFocusedChatTab(state);
   if (!chat) return state;
   const index = state.workspaces.indexOf(chat.workspace);
   const target = state.workspaces[index + delta];
-  if (!target) return delta === -1 ? moveLayoutTabToNewWorkspace(state, chat.tab.id, 0) : state;
+  if (!target) {
+    return delta === -1 ? moveLayoutTabToNewWorkspace(state, chat.tab.id, 0, null, order) : state;
+  }
   // A workspace's only chat moving into the empty one would just trade places.
   const tabsInWorkspace = chat.workspace.columns
     .flatMap((column) => column.panes)
     .flatMap((pane) => pane.tabs).length;
   if (tabsInWorkspace === 1 && isBlankLayoutWorkspace(target)) return state;
-  return moveLayoutTab(state, chat.tab.id, {
-    kind: "column",
-    workspaceId: target.id,
-    index: target.columns.length,
-  });
+  return moveLayoutTab(
+    state,
+    chat.tab.id,
+    { kind: "column", workspaceId: target.id, index: target.columns.length },
+    order,
+  );
 }
 
 /**
@@ -1051,6 +1151,7 @@ export function moveLayoutTabToNewWorkspace(
   tabId: string,
   index: number,
   name: string | null = null,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   const location = findLayoutTab(state, (tab) => tab.id === tabId);
   if (!location) return state;
@@ -1068,11 +1169,12 @@ export function moveLayoutTabToNewWorkspace(
   // Never below the trailing empty workspace.
   workspaces.splice(Math.max(0, Math.min(index, workspaces.length - 1)), 0, workspace);
   const withWorkspace = { ...state, workspaces };
-  const moved = moveLayoutTab(withWorkspace, tabId, {
-    kind: "column",
-    workspaceId: workspace.id,
-    index: 0,
-  });
+  const moved = moveLayoutTab(
+    withWorkspace,
+    tabId,
+    { kind: "column", workspaceId: workspace.id, index: 0 },
+    order,
+  );
   return moved === withWorkspace ? state : moved;
 }
 
@@ -1085,6 +1187,7 @@ export function moveLayoutChatToColumn(
   tabId: string,
   workspaceId: string,
   index: number,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   const location = findLayoutTab(state, (tab) => tab.id === tabId);
   if (!location) return state;
@@ -1098,7 +1201,7 @@ export function moveLayoutChatToColumn(
   ) {
     return state;
   }
-  return moveLayoutTab(state, tabId, { kind: "column", workspaceId, index });
+  return moveLayoutTab(state, tabId, { kind: "column", workspaceId, index }, order);
 }
 
 /**
@@ -1110,6 +1213,7 @@ export function showLayoutChatInNewWorkspace(
   state: LayoutState,
   content: Extract<LayoutTabContent, { kind: "chat" }>,
   name: string | null,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   const existing = findLayoutTabByContent(state, content);
   if (existing) {
@@ -1123,7 +1227,13 @@ export function showLayoutChatInNewWorkspace(
         name === null ? state : renameLayoutWorkspace(state, existing.workspace.id, name);
       return focusLayoutTab(renamed, existing.tab.id);
     }
-    return moveLayoutTabToNewWorkspace(state, existing.tab.id, state.workspaces.length - 1, name);
+    return moveLayoutTabToNewWorkspace(
+      state,
+      existing.tab.id,
+      state.workspaces.length - 1,
+      name,
+      order,
+    );
   }
   const trailing = state.workspaces.at(-1)!;
   const named = name === null ? state : renameLayoutWorkspace(state, trailing.id, name);
@@ -1471,7 +1581,8 @@ export function selectLayoutOpenAnchor(state: LayoutState): LayoutTabLocation | 
 
 /**
  * Put `ghost` in a pane as its only ghost, after `afterTabId` (or last), and focus it. The
- * pane's previous ghost gives up its place and its id.
+ * pane's previous ghost gives up its place and its id. Beside a grouped tab it lands past the
+ * group, so a preview never joins one.
  */
 function placeLayoutGhost(
   state: LayoutState,
@@ -1485,7 +1596,11 @@ function placeLayoutGhost(
   const previous = found.pane.tabs.find(isLayoutGhostTab);
   const ghost: LayoutTab = { id: previous?.id ?? createLayoutId("tab"), content, ghostOf };
   const tabs = found.pane.tabs.filter((tab) => tab !== previous);
-  const afterIndex = tabs.findIndex((tab) => tab.id === afterTabId);
+  const groupId = tabs.find((tab) => tab.id === afterTabId)?.groupId;
+  const afterIndex =
+    groupId === undefined
+      ? tabs.findIndex((tab) => tab.id === afterTabId)
+      : tabs.findLastIndex((tab) => tab.groupId === groupId);
   tabs.splice(afterIndex === -1 ? tabs.length : afterIndex + 1, 0, ghost);
   const placed = mapPanes(state, (pane) =>
     pane.id === paneId ? { ...pane, tabs, activeTabId: ghost.id } : pane,
@@ -1516,7 +1631,9 @@ export function showLayoutContent(state: LayoutState, content: LayoutTabContent)
   }
   const { tab } = anchor;
   if (tab.content.kind === "launcher" || isLayoutGhostTab(tab)) {
-    return focusLayoutTab(replaceLayoutTabContent(state, tab.id, content, null), tab.id);
+    // A launcher in a group becomes a kept tab: a ghost there would be swapped out in place.
+    const ghostOf = tab.content.kind === "launcher" && tab.groupId !== undefined ? undefined : null;
+    return focusLayoutTab(replaceLayoutTabContent(state, tab.id, content, ghostOf), tab.id);
   }
   return placeLayoutGhost(state, anchor.pane.id, tab.id, content, null);
 }
@@ -1618,13 +1735,36 @@ export function keepLayoutTab(state: LayoutState, tabId: string): LayoutState {
   );
 }
 
+/** A pane's tabs in the order its strip draws them, which can leave tabs out. */
+export type LayoutPaneTabOrder = (pane: LayoutPane) => readonly string[];
+
+/** The tab a pane shows once `tabId` leaves it: its drawn neighbor, else its pane neighbor. */
+function nextLayoutActiveTab(
+  pane: LayoutPane,
+  tabId: string,
+  tabIndex: number,
+  order: LayoutPaneTabOrder | undefined,
+): string | null {
+  if (pane.activeTabId !== tabId) return pane.activeTabId;
+  const drawn = order?.(pane) ?? [];
+  const at = drawn.indexOf(tabId);
+  const neighbor = at === -1 ? undefined : (drawn[at + 1] ?? drawn[at - 1]);
+  if (neighbor !== undefined) return neighbor;
+  const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
+  return tabs[Math.min(tabIndex, tabs.length - 1)]?.id ?? null;
+}
+
 /**
- * Close a tab; its pane activates the neighboring tab, and empty panes
+ * Close a tab; its pane activates its next drawn tab, and empty panes
  * collapse. No workspace is left without a tab: its last one gives way to a
  * blank tab, and closing that closes the workspace for the one beside it.
  * The spare at the bottom stays, and the window's last blank tab does not close.
  */
-export function closeLayoutTab(state: LayoutState, tabId: string): LayoutState {
+export function closeLayoutTab(
+  state: LayoutState,
+  tabId: string,
+  order?: LayoutPaneTabOrder,
+): LayoutState {
   const location = findLayoutTab(state, (tab) => tab.id === tabId);
   if (!location) return state;
   if (workspaceTabCount(location.workspace) === 1) {
@@ -1645,11 +1785,9 @@ export function closeLayoutTab(state: LayoutState, tabId: string): LayoutState {
     if (pane.id !== location.pane.id) return pane;
     const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
     const activeTabId =
-      pane.activeTabId === tabId
-        ? anchor?.pane.id === pane.id
-          ? anchor.tab.id
-          : (tabs[Math.min(location.tabIndex, tabs.length - 1)]?.id ?? null)
-        : pane.activeTabId;
+      pane.activeTabId === tabId && anchor?.pane.id === pane.id
+        ? anchor.tab.id
+        : nextLayoutActiveTab(pane, tabId, location.tabIndex, order);
     return { ...pane, tabs, activeTabId };
   });
   if (location.pane.tabs.length > 1) return normalizeLayout(closed);
@@ -1703,23 +1841,30 @@ export function canCloseLayoutTab(state: LayoutState, tabId: string): boolean {
   );
 }
 
-/** Activate the next (1) or previous (-1) tab of the focused pane, wrapping around. */
-export function focusAdjacentLayoutTab(state: LayoutState, delta: 1 | -1): LayoutState {
+/** Activate the next (1) or previous (-1) tab of the focused pane's strip, wrapping around. */
+export function focusAdjacentLayoutTab(
+  state: LayoutState,
+  delta: 1 | -1,
+  order?: LayoutPaneTabOrder,
+): LayoutState {
   const pane = selectFocusedPane(state);
-  if (!pane || pane.tabs.length < 2) return state;
-  const index = pane.tabs.findIndex((tab) => tab.id === pane.activeTabId);
-  const next = pane.tabs[(index + delta + pane.tabs.length) % pane.tabs.length]!;
-  return focusLayoutTab(state, next.id);
+  if (!pane) return state;
+  const drawn = order?.(pane) ?? [];
+  const ids = drawn.length > 0 ? drawn : pane.tabs.map((tab) => tab.id);
+  if (ids.length < 2) return state;
+  const index = ids.indexOf(pane.activeTabId ?? "");
+  return focusLayoutTab(state, ids[(index + delta + ids.length) % ids.length]!);
 }
 
 /** Close every tab matching the predicate, e.g. tabs of a deleted thread. */
 export function closeLayoutTabsWhere(
   state: LayoutState,
   predicate: (tab: LayoutTab) => boolean,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   let next = state;
   for (let match = findLayoutTab(next, predicate); match; match = findLayoutTab(next, predicate)) {
-    const closed = closeLayoutTab(next, match.tab.id);
+    const closed = closeLayoutTab(next, match.tab.id, order);
     // The window's lone launcher stays.
     if (closed === next) break;
     next = closed;
@@ -1727,11 +1872,32 @@ export function closeLayoutTabsWhere(
   return next;
 }
 
+/**
+ * The group a tab dropped between `left` and `right` of its own pane (`others`) ends up in:
+ * theirs when both share one, its own while it stays beside that group or is its only
+ * `present` tab, else none. A drop from another pane loses its group on insertion.
+ */
+function groupAtDrop(
+  tab: LayoutTab,
+  others: readonly LayoutTab[],
+  at: number,
+  present: (tab: LayoutTab) => boolean,
+): string | undefined {
+  const left = others[at - 1];
+  const right = others[at];
+  if (left?.groupId !== undefined && left.groupId === right?.groupId) return left.groupId;
+  const own = tab.groupId;
+  if (own === undefined) return undefined;
+  const alone = !others.some((other) => other.groupId === own && present(other));
+  return alone || left?.groupId === own || right?.groupId === own ? own : undefined;
+}
+
 /** Move a tab into a pane, beside a pane as a split, or into a new column. */
 export function moveLayoutTab(
   state: LayoutState,
   tabId: string,
   destination: LayoutTabDestination,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   const location = findLayoutTab(state, (tab) => tab.id === tabId);
   if (!location) return state;
@@ -1740,8 +1906,28 @@ export function moveLayoutTab(
     if (index === location.tabIndex) return focusLayoutTab(state, tabId);
     const reordered = mapPanes(state, (pane) => {
       if (pane.id !== location.pane.id) return pane;
-      const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
-      tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, keepLayoutTabObject(location.tab));
+      const others = pane.tabs.filter((tab) => tab.id !== tabId);
+      const at = Math.max(0, Math.min(index, others.length));
+      const moved = keepLayoutTabObject(location.tab);
+      // A tab the strip leaves out is not there to keep a group; one a collapse hides is.
+      const expanded = {
+        ...pane,
+        groups: pane.groups.map((group) => ({ ...group, collapsed: false })),
+      };
+      const drawn = order === undefined ? null : new Set(order(expanded));
+      const present = (tab: LayoutTab) => drawn === null || drawn.has(tab.id);
+      const groupId = groupAtDrop(moved, others, at, present);
+      const placed = groupId === undefined ? withoutLayoutTabGroup(moved) : { ...moved, groupId };
+      // Its group's left-out tabs travel with it, so the group stays one run.
+      const mates =
+        groupId === undefined
+          ? []
+          : others.filter((tab) => tab.groupId === groupId && !present(tab));
+      const travel =
+        mates.length > 0 && !others.some((tab) => tab.groupId === groupId && present(tab));
+      const tabs = travel ? others.filter((tab) => !mates.includes(tab)) : others;
+      const offset = travel ? others.slice(0, at).filter((tab) => mates.includes(tab)).length : 0;
+      tabs.splice(at - offset, 0, placed, ...(travel ? mates : []));
       return { ...pane, tabs, activeTabId: tabId };
     });
     return focusLayoutPane(reordered, location.pane.id);
@@ -1769,11 +1955,11 @@ export function moveLayoutTab(
     if (pane.id === growPaneId) return { ...pane, size: pane.size + location.pane.size };
     if (pane.id !== location.pane.id) return pane;
     const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
-    const activeTabId =
-      pane.activeTabId === tabId
-        ? (tabs[Math.min(location.tabIndex, tabs.length - 1)]?.id ?? null)
-        : pane.activeTabId;
-    return { ...pane, tabs, activeTabId };
+    return {
+      ...pane,
+      tabs,
+      activeTabId: nextLayoutActiveTab(pane, tabId, location.tabIndex, order),
+    };
   });
   const tab = keepLayoutTabObject(location.tab);
   if (destination.kind === "pane") {
@@ -1810,10 +1996,11 @@ export function placeLayoutContent(
   state: LayoutState,
   content: LayoutTabContent,
   destination: LayoutTabDestination,
+  order?: LayoutPaneTabOrder,
 ): LayoutState {
   const existing = findLayoutTabByContent(state, content);
   if (existing) {
-    const moved = moveLayoutTab(state, existing.tab.id, destination);
+    const moved = moveLayoutTab(state, existing.tab.id, destination, order);
     return moved === state ? focusLayoutTab(state, existing.tab.id) : moved;
   }
   const tab = createLayoutTab(content);
@@ -2127,6 +2314,131 @@ export function resizeLayoutPane(state: LayoutState, paneId: string, size: numbe
   );
 }
 
+/** The color a pane's next group takes: the least used one, in list order. */
+export function nextLayoutTabGroupColor(pane: LayoutPane): LayoutTabGroupColor {
+  const uses = (color: LayoutTabGroupColor) =>
+    pane.groups.filter((group) => group.color === color).length;
+  return LAYOUT_TAB_GROUP_COLORS.reduce((best, color) => (uses(color) < uses(best) ? color : best));
+}
+
+/** The tab leaves its group, if any, and starts one. */
+export function createLayoutTabGroup(
+  state: LayoutState,
+  tabId: string,
+  group: Pick<LayoutTabGroup, "title" | "color">,
+): LayoutState {
+  const ungrouped = removeLayoutTabFromGroup(state, tabId);
+  const location = findLayoutTab(ungrouped, (tab) => tab.id === tabId);
+  if (!location) return state;
+  const created: LayoutTabGroup = {
+    id: createLayoutId("group"),
+    title: group.title.trim(),
+    color: group.color,
+    collapsed: false,
+  };
+  return mapPanes(ungrouped, (pane) =>
+    pane.id === location.pane.id
+      ? {
+          ...pane,
+          groups: [...pane.groups, created],
+          tabs: pane.tabs.map((tab) =>
+            tab.id === tabId ? { ...keepLayoutTabObject(tab), groupId: created.id } : tab,
+          ),
+        }
+      : pane,
+  );
+}
+
+/** Move a tab of the group's pane to the end of the group, joining it. */
+export function addLayoutTabToGroup(
+  state: LayoutState,
+  tabId: string,
+  groupId: string,
+): LayoutState {
+  const location = findLayoutTab(state, (tab) => tab.id === tabId);
+  if (
+    !location ||
+    location.tab.groupId === groupId ||
+    !location.pane.groups.some((group) => group.id === groupId)
+  ) {
+    return state;
+  }
+  return mapPanes(state, (pane) => {
+    if (pane.id !== location.pane.id) return pane;
+    const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
+    const last = tabs.findLastIndex((tab) => tab.groupId === groupId);
+    tabs.splice(last + 1, 0, { ...keepLayoutTabObject(location.tab), groupId });
+    return { ...pane, tabs };
+  });
+}
+
+/** Take a tab out of its group, placing it right after the group. */
+export function removeLayoutTabFromGroup(state: LayoutState, tabId: string): LayoutState {
+  const location = findLayoutTab(state, (tab) => tab.id === tabId);
+  const groupId = location?.tab.groupId;
+  if (!location || groupId === undefined) return state;
+  return mapPanes(state, (pane) => {
+    if (pane.id !== location.pane.id) return pane;
+    const tabs = pane.tabs.filter((tab) => tab.id !== tabId);
+    const last = tabs.findLastIndex((tab) => tab.groupId === groupId);
+    tabs.splice(last === -1 ? location.tabIndex : last + 1, 0, withoutLayoutTabGroup(location.tab));
+    return { ...pane, tabs };
+  });
+}
+
+/**
+ * Rename, recolor, collapse or expand a group. Collapsing leaves the pane's
+ * shown tab alone: the strip keeps drawing it beside the group's chip.
+ */
+export function updateLayoutTabGroup(
+  state: LayoutState,
+  groupId: string,
+  patch: Partial<Pick<LayoutTabGroup, "title" | "color" | "collapsed">>,
+): LayoutState {
+  return mapPanes(state, (pane) => {
+    const index = pane.groups.findIndex((group) => group.id === groupId);
+    const group = pane.groups[index];
+    if (!group) return pane;
+    const next = { ...group, ...patch, title: (patch.title ?? group.title).trim() };
+    if (
+      next.title === group.title &&
+      next.color === group.color &&
+      next.collapsed === group.collapsed
+    ) {
+      return pane;
+    }
+    return { ...pane, groups: pane.groups.with(index, next) };
+  });
+}
+
+/** The group goes, its tabs stay where they are. */
+export function ungroupLayoutTabGroup(state: LayoutState, groupId: string): LayoutState {
+  return mapPanes(state, (pane) =>
+    pane.groups.some((group) => group.id === groupId)
+      ? {
+          ...pane,
+          groups: pane.groups.filter((group) => group.id !== groupId),
+          tabs: pane.tabs.map((tab) =>
+            tab.groupId === groupId ? withoutLayoutTabGroup(tab) : tab,
+          ),
+        }
+      : pane,
+  );
+}
+
+export function setLayoutWorkingGroupExpanded(
+  state: LayoutState,
+  paneId: string,
+  expanded: boolean,
+): LayoutState {
+  return mapPanes(state, (pane) => {
+    if (pane.id !== paneId || (pane.workingGroupExpanded === true) === expanded) return pane;
+    if (expanded) return { ...pane, workingGroupExpanded: true };
+    const { workingGroupExpanded: _expanded, ...collapsed } = pane;
+    return collapsed;
+  });
+}
+
 // Persistence format.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2203,6 +2515,23 @@ function migrateLegacyTabContent(content: unknown): LayoutTabContent {
   return content as LayoutTabContent;
 }
 
+/** A malformed group is dropped and its tabs fall back to ungrouped, never the whole layout. */
+function decodeLayoutTabGroups(value: unknown): LayoutTabGroup[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((group) =>
+    isRecord(group) && typeof group.id === "string"
+      ? [
+          {
+            id: group.id,
+            title: typeof group.title === "string" ? group.title : "",
+            color: LAYOUT_TAB_GROUP_COLORS.find((color) => color === group.color) ?? "grey",
+            collapsed: group.collapsed === true,
+          },
+        ]
+      : [],
+  );
+}
+
 function isFraction(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1;
 }
@@ -2264,13 +2593,17 @@ export function decodePersistedLayoutState(value: unknown): LayoutState {
       cameraWidth: isPositive(workspace.cameraWidth) ? workspace.cameraWidth : null,
       columns: workspace.columns.map((column) => ({
         ...column,
-        panes: column.panes.map((pane) => ({
+        panes: column.panes.map(({ workingGroupExpanded, ...pane }) => ({
           ...pane,
+          groups: decodeLayoutTabGroups(pane.groups),
+          ...(workingGroupExpanded === true ? { workingGroupExpanded } : {}),
           tabs: pane.tabs.map((tab) => {
             const decoded = { ...tab, content: migrateLegacyTabContent(tab.content) };
+            const grouped =
+              typeof tab.groupId === "string" ? decoded : withoutLayoutTabGroup(decoded);
             return isThreadRef(tab.ghostOf) || tab.ghostOf === null
-              ? decoded
-              : keepLayoutTabObject(decoded);
+              ? grouped
+              : keepLayoutTabObject(grouped);
           }),
         })),
       })),

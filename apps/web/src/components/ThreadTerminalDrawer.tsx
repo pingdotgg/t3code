@@ -52,7 +52,13 @@ import { PaneNotch } from "~/components/PaneNotch";
 import { beginLayoutTabDrag } from "~/layout/layoutDrag";
 import { useLayoutStore } from "~/layout/layoutStore";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
-import { LayoutPaneTab, LayoutPaneTabStrip, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
+import {
+  LayoutPaneTabStrip,
+  PaneStripItems,
+  PaneTabGroupLine,
+  useLayoutPaneSiblingTabs,
+} from "~/layout/PaneTabs";
+import type { LayoutTabGroupColor } from "~/layout/layoutModel";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -1410,10 +1416,12 @@ function TerminalTabsNotch({
 
 function TerminalTabStrip({
   notch,
+  groupColor = null,
   ref,
   children,
 }: {
   notch: boolean;
+  groupColor?: LayoutTabGroupColor | null;
   ref: RefObject<HTMLDivElement | null>;
   children: ReactNode;
 }) {
@@ -1424,11 +1432,12 @@ function TerminalTabStrip({
       <div
         ref={ref}
         data-layout-pane-tab={tabId ?? undefined}
-        className="flex shrink-0 items-center gap-1"
+        className="relative flex shrink-0 items-center gap-1"
         role="tablist"
         aria-label={gt("Terminals")}
       >
         {children}
+        <PaneTabGroupLine color={groupColor} />
       </div>
     );
   }
@@ -1954,10 +1963,12 @@ export default function ThreadTerminalDrawer({
               </TerminalActionButton>
             }
           >
-            {mode === "pane"
-              ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
-              : null}
-            <TerminalTabStrip notch={mode === "pane"} ref={tabStripRef}>
+            {mode === "pane" ? <PaneStripItems items={siblingTabs.before} /> : null}
+            <TerminalTabStrip
+              notch={mode === "pane"}
+              groupColor={siblingTabs.activeColor}
+              ref={tabStripRef}
+            >
               {resolvedTerminalGroups.flatMap((terminalGroup, groupIndex) =>
                 terminalGroup.terminalIds.map((terminalId) => {
                   const isActive = terminalId === resolvedActiveTerminalId;
@@ -2051,9 +2062,7 @@ export default function ThreadTerminalDrawer({
               )}
               {mode === "pane" ? null : newTerminalButton}
             </TerminalTabStrip>
-            {mode === "pane"
-              ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
-              : null}
+            {mode === "pane" ? <PaneStripItems items={siblingTabs.after} /> : null}
           </TerminalTabsNotch>
         </div>
       )}

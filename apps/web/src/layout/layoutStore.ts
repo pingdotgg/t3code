@@ -8,12 +8,14 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { createDeferredStorage } from "../lib/storage";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
+  addLayoutTabToGroup,
   arrangeLayoutWorkspaces,
   fitLayoutColumns,
   LAYOUT_READABLE_COLUMN_PX,
   closeLayoutTab,
   closeLayoutTabsWhere,
   createLayoutState,
+  createLayoutTabGroup,
   cycleLayoutColumnWidth,
   decodePersistedLayoutState,
   findLayoutTabByContent,
@@ -40,21 +42,33 @@ import {
   placeLayoutContent,
   placeLayoutTabs,
   pullLayoutPane,
+  removeLayoutTabFromGroup,
   replaceLayoutTabContent,
   resizeLayoutColumn,
   resizeLayoutColumnEdge,
   resizeLayoutPane,
+  setLayoutWorkingGroupExpanded,
+  ungroupLayoutTabGroup,
+  updateLayoutTabGroup,
   type LayoutCompanionKind,
   type LayoutDirection,
   type LayoutOpenOptions,
   type LayoutOpenPlacement,
   type LayoutState,
   type LayoutTab,
+  type LayoutPaneTabOrder,
   type LayoutTabContent,
   type LayoutTabDestination,
+  type LayoutTabGroup,
   type LayoutTabPlacement,
 } from "./layoutModel";
 import type { ThreadRouteTarget } from "../threadRoutes";
+
+let paneTabOrder: LayoutPaneTabOrder | undefined;
+/** How pane strips draw their tabs, which closes and ctrl+Tab follow (see `layoutActions`). */
+export function setLayoutPaneTabOrder(order: LayoutPaneTabOrder): void {
+  paneTabOrder = order;
+}
 
 // The strip's visible width in px, measured by the surface host. Columns
 // are arranged at it (see `arrangeLayoutWorkspaces`).
@@ -324,6 +338,15 @@ interface LayoutStoreState {
   closeTab: (tabId: string) => void;
   closeTabsWhere: (predicate: (tab: LayoutTab) => boolean) => void;
   focusAdjacentTab: (delta: 1 | -1) => void;
+  createTabGroup: (tabId: string, group: Pick<LayoutTabGroup, "title" | "color">) => void;
+  addTabToGroup: (tabId: string, groupId: string) => void;
+  removeTabFromGroup: (tabId: string) => void;
+  updateTabGroup: (
+    groupId: string,
+    patch: Partial<Pick<LayoutTabGroup, "title" | "color" | "collapsed">>,
+  ) => void;
+  ungroupTabGroup: (groupId: string) => void;
+  setWorkingGroupExpanded: (paneId: string, expanded: boolean) => void;
   /** Resize a column measured in shares of `unitWidth`, and arrange its workspace there. */
   resizeColumnEdge: (
     columnId: string,
@@ -472,12 +495,17 @@ export const useLayoutStore = create<LayoutStoreState>()(
         renameWorkspace: (workspaceId, name) =>
           apply((layout) => renameLayoutWorkspace(layout, workspaceId, name)),
         moveTabToNewWorkspace: (tabId, index) =>
-          apply((layout) => moveLayoutTabToNewWorkspace(layout, tabId, index)),
+          apply((layout) => moveLayoutTabToNewWorkspace(layout, tabId, index, null, paneTabOrder)),
         moveChatToColumn: (tabId, workspaceId, index) =>
-          apply((layout) => moveLayoutChatToColumn(layout, tabId, workspaceId, index)),
+          apply((layout) =>
+            moveLayoutChatToColumn(layout, tabId, workspaceId, index, paneTabOrder),
+          ),
         showChatInNewWorkspace: (target, name) =>
-          apply((layout) => showLayoutChatInNewWorkspace(layout, { kind: "chat", target }, name)),
-        closeTabByUser: (tabId) => closeByUser((layout) => closeLayoutTab(layout, tabId)),
+          apply((layout) =>
+            showLayoutChatInNewWorkspace(layout, { kind: "chat", target }, name, paneTabOrder),
+          ),
+        closeTabByUser: (tabId) =>
+          closeByUser((layout) => closeLayoutTab(layout, tabId, paneTabOrder)),
         focusChat: (target) =>
           apply((layout) => {
             const existing = findLayoutTabByContent(layout, { kind: "chat", target });
@@ -515,9 +543,21 @@ export const useLayoutStore = create<LayoutStoreState>()(
         replaceTabContent: (tabId, content) =>
           apply((layout) => replaceLayoutTabContent(layout, tabId, content)),
         keepTab: (tabId) => apply((layout) => keepLayoutTab(layout, tabId)),
-        closeTab: (tabId) => apply((layout) => closeLayoutTab(layout, tabId)),
-        closeTabsWhere: (predicate) => apply((layout) => closeLayoutTabsWhere(layout, predicate)),
-        focusAdjacentTab: (delta) => apply((layout) => focusAdjacentLayoutTab(layout, delta)),
+        closeTab: (tabId) => apply((layout) => closeLayoutTab(layout, tabId, paneTabOrder)),
+        closeTabsWhere: (predicate) =>
+          apply((layout) => closeLayoutTabsWhere(layout, predicate, paneTabOrder)),
+        focusAdjacentTab: (delta) =>
+          apply((layout) => focusAdjacentLayoutTab(layout, delta, paneTabOrder)),
+        createTabGroup: (tabId, group) =>
+          apply((layout) => createLayoutTabGroup(layout, tabId, group)),
+        addTabToGroup: (tabId, groupId) =>
+          apply((layout) => addLayoutTabToGroup(layout, tabId, groupId)),
+        removeTabFromGroup: (tabId) => apply((layout) => removeLayoutTabFromGroup(layout, tabId)),
+        updateTabGroup: (groupId, patch) =>
+          apply((layout) => updateLayoutTabGroup(layout, groupId, patch)),
+        ungroupTabGroup: (groupId) => apply((layout) => ungroupLayoutTabGroup(layout, groupId)),
+        setWorkingGroupExpanded: (paneId, expanded) =>
+          apply((layout) => setLayoutWorkingGroupExpanded(layout, paneId, expanded)),
         resizeColumnEdge: (columnId, width, unitWidth, drawnUnitWidth) =>
           apply(
             (layout) =>
@@ -532,9 +572,9 @@ export const useLayoutStore = create<LayoutStoreState>()(
             true,
           ),
         moveTab: (tabId, destination) =>
-          apply((layout) => moveLayoutTab(layout, tabId, destination)),
+          apply((layout) => moveLayoutTab(layout, tabId, destination, paneTabOrder)),
         placeContent: (content, destination) =>
-          apply((layout) => placeLayoutContent(layout, content, destination)),
+          apply((layout) => placeLayoutContent(layout, content, destination, paneTabOrder)),
         focusTab: (tabId) => apply((layout) => focusLayoutTab(layout, tabId)),
         focusPane: (paneId) => apply((layout) => focusLayoutPane(layout, paneId)),
         focusWorkspace: (workspaceId) =>
@@ -546,10 +586,12 @@ export const useLayoutStore = create<LayoutStoreState>()(
         cycleColumnWidth: (columnId) => apply((layout) => cycleLayoutColumnWidth(layout, columnId)),
         resizePane: (paneId, size) => apply((layout) => resizeLayoutPane(layout, paneId, size)),
         focusColumnEdge: (edge) => focusSoon((layout) => focusLayoutColumnEdge(layout, edge)),
-        moveFocused: (direction) => apply((layout) => moveLayoutFocused(layout, direction)),
+        moveFocused: (direction) =>
+          apply((layout) => moveLayoutFocused(layout, direction, paneTabOrder)),
         pullPane: (side) => apply((layout) => pullLayoutPane(layout, side)),
         focusWorkspaceStep: (delta) => apply((layout) => focusLayoutWorkspaceStep(layout, delta)),
-        moveTabToWorkspace: (delta) => apply((layout) => moveLayoutTabToWorkspace(layout, delta)),
+        moveTabToWorkspace: (delta) =>
+          apply((layout) => moveLayoutTabToWorkspace(layout, delta, paneTabOrder)),
         moveWorkspace: (delta) => apply((layout) => moveLayoutWorkspace(layout, delta)),
         centerRequest: 0,
         requestCenter: () => set((state) => ({ centerRequest: state.centerRequest + 1 })),

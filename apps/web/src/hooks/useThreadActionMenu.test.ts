@@ -193,4 +193,25 @@ describe("thread menu permissions", () => {
     expect(state.effects).toEqual(["find"]);
     expect(onFind).toHaveBeenCalledExactlyOnceWith(target);
   });
+
+  it("hands a pick in a leading item's submenu to the leading action", async () => {
+    state.show.mockResolvedValue("layout:group-add:g" as ThreadActionMenuId);
+    const onLeadingAction = vi.fn((id: string) => recordEffect(id));
+    useThreadActionMenu({
+      threadRef: target,
+      projectCwd: "/project",
+      onStartRename: () => recordEffect("rename"),
+      canShareWithGuest: false,
+      leadingItems: () => [
+        {
+          id: "layout:group-add",
+          label: "Add tab to group",
+          children: [{ id: "layout:group-add:g", label: "g" }],
+        },
+      ],
+      onLeadingAction,
+    }).openMenu(position);
+    await state.completed.promise;
+    expect(onLeadingAction).toHaveBeenCalledExactlyOnceWith("layout:group-add:g");
+  });
 });

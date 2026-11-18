@@ -11,7 +11,13 @@ import {
   ArrowUpToLineIcon,
   ChevronFirstIcon,
   ChevronLastIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   Columns2Icon,
+  FolderIcon,
+  FolderMinusIcon,
+  FolderPlusIcon,
+  FolderXIcon,
   KeyboardIcon,
   LayoutGridIcon,
   Maximize2Icon,
@@ -19,6 +25,7 @@ import {
   RulerIcon,
   Rows2Icon,
   PanelRightIcon,
+  UngroupIcon,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,6 +39,7 @@ import { SURFACE_LAUNCHER_ENTRIES } from "../components/SurfaceLauncher";
 import { Kbd } from "../components/ui/kbd";
 import { m, type MessageResolver } from "../i18n/messages";
 import {
+  closeLayoutTabGroupByUser,
   openLayoutBeside,
   openLayoutNewTab,
   readLayoutOpenBesideKinds,
@@ -39,7 +47,10 @@ import {
 } from "./layoutActions";
 import { isScrollingWorkspaceCommand } from "./layoutBehavior";
 import { runLayoutCommand } from "./layoutCommands";
+import { findLayoutTab, selectFocusedTab } from "./layoutModel";
 import { toggleLayoutShortcutSheet } from "./layoutOverlayStore";
+import { useLayoutStore } from "./layoutStore";
+import { runLayoutTabMenuAction } from "./PaneTabs";
 
 /**
  * "Open beside…" (pen hJiZ5): what the launcher offers, opened as tabs of the
@@ -265,4 +276,73 @@ export function buildLayoutPaletteItems(
       run: async () => toggleLayoutShortcutSheet(),
     },
   ];
+}
+
+/** The focused tab's group actions, as its tab menu and group chip offer them. */
+export function buildTabGroupPaletteItems(): Array<
+  CommandPaletteSubmenuItem | CommandPaletteActionItem
+> {
+  const layout = useLayoutStore.getState().layout;
+  const focusedId = selectFocusedTab(layout)?.id;
+  const location = findLayoutTab(layout, (tab) => tab.id === focusedId);
+  if (!location) return [];
+  const { tab, pane } = location;
+  const item = (
+    value: string,
+    title: string,
+    Icon: LucideIcon,
+    run: () => void,
+  ): CommandPaletteActionItem => ({
+    kind: "action",
+    value: `action:tab-group:${value}`,
+    searchTerms: [title.toLowerCase(), "tab group", "group"],
+    title,
+    icon: <Icon className={ITEM_ICON_CLASS} />,
+    run: async () => run(),
+  });
+  const store = useLayoutStore.getState();
+  const items: Array<CommandPaletteSubmenuItem | CommandPaletteActionItem> = [
+    item("new", "Add tab to new group", FolderPlusIcon, () =>
+      runLayoutTabMenuAction("layout:group-new", tab.id),
+    ),
+  ];
+  const others = pane.groups.filter((candidate) => candidate.id !== tab.groupId);
+  if (others.length > 0) {
+    items.push({
+      kind: "submenu",
+      value: "action:tab-group:add",
+      searchTerms: ["add tab to group", "tab group", "group"],
+      title: "Add tab to group…",
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "tab-group-add",
+          label: "Add tab to group",
+          items: others.map((other) =>
+            item(`add:${other.id}`, other.title || "Unnamed group", FolderIcon, () =>
+              store.addTabToGroup(tab.id, other.id),
+            ),
+          ),
+        },
+      ],
+    });
+  }
+  const group = pane.groups.find((candidate) => candidate.id === tab.groupId);
+  if (!group) return items;
+  items.push(
+    item("remove", "Remove tab from group", FolderMinusIcon, () =>
+      runLayoutTabMenuAction("layout:group-remove", tab.id),
+    ),
+    group.collapsed
+      ? item("expand", "Expand tab group", ChevronsUpDownIcon, () =>
+          store.updateTabGroup(group.id, { collapsed: false }),
+        )
+      : item("collapse", "Collapse tab group", ChevronsDownUpIcon, () =>
+          store.updateTabGroup(group.id, { collapsed: true }),
+        ),
+    item("ungroup", "Ungroup tabs", UngroupIcon, () => store.ungroupTabGroup(group.id)),
+    item("close", "Close tab group", FolderXIcon, () => closeLayoutTabGroupByUser(group.id)),
+  );
+  return items;
 }

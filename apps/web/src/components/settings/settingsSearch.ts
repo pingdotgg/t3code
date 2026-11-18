@@ -570,6 +570,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "working-tab-group",
+    title: msg("Working tab group"),
+    to: "/settings/general",
+    searchTerms: ["pane tab strip group working running collapse chip fold"],
+  },
+  {
+    id: "tabs-follow-inbox",
+    title: msg("Tabs follow the inbox"),
+    to: "/settings/general",
+    searchTerms: ["pane tab strip settled snoozed hide needs you dot without sidebar"],
+  },
+  {
     id: "scrolling-workspaces",
     title: msg("Scrolling workspaces"),
     to: "/settings/labs",

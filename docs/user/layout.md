@@ -40,6 +40,23 @@ workspaces stacked vertically, with an overview to move between them.
   follows your fingers; a mouse wheel moves one workspace per notch. "Move to a new
   workspace" in a tab's menu starts one, and `mod+alt+o`, a pinch, or resting the
   pointer in the bottom-left corner zooms out to all of them.
+- **Tab groups:** right-click a tab and pick **Add tab to new group** to name and
+  color a group, **Add tab to group** to join one in the same pane, or **Remove from
+  group**. Click a group's name to collapse it to a chip with its tab count, and
+  right-click it to rename, recolor, ungroup, or close its tabs. Dragging a tab
+  between two tabs of a group puts it in the group. The command palette offers the
+  same actions for the focused tab.
+- **Working group:** chats whose thread is working gather in a **Working** group at
+  the start of their pane's tabs, collapsed until you click it. While it is collapsed,
+  the chat you are looking at stays in its place, and `ctrl+Tab` skips the chats inside it.
+  Turn it off with **Settings › General › Working tab group**, or from the group's
+  right-click menu.
+- **Tabs follow the inbox:** **Settings › General › Tabs follow the inbox** lets you
+  work with the sidebar closed. A settled or snoozed thread's chat leaves the tabs once you
+  switch away, and a dot marks a chat that needs you. With the Working group collapsed,
+  `ctrl+Tab` then steps through just the chats that need you. The tabs stay open underneath,
+  so turning it off brings them back. Threads you have not opened still appear only
+  in the sidebar.
 
 Closing a chat tab settles a finished thread (see [Thread sidebar](./thread-sidebar.md)).
 The arrangement is saved on each device. **Settings › Layout** sets where the terminal

@@ -58,6 +58,8 @@ function createTestRouter(path: string): AnyRouter {
   return createRouter({
     routeTree: createRootRoute({ component: RoutedUiOutlet }),
     history: createMemoryHistory({ initialEntries: [path] }),
+    // The app's root route supplies this from beforeLoad.
+    context: { authGateState: { status: "authenticated" } },
     // The router's error UI would otherwise turn a crash into a passing negative assertion.
     disableGlobalCatchBoundary: true,
   });

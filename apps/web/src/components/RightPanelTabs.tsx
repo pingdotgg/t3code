@@ -8,13 +8,20 @@ import {
   LayoutNewTabButton,
   LayoutPaneTab,
   LayoutPaneTabStrip,
+  PaneStripItems,
+  PaneTabGroupLine,
   showLayoutTabMenu,
   tabMuteMenuItem,
   useLayoutPaneSiblingTabs,
   useLayoutTabLabel,
   useLayoutTabRenameRequested,
 } from "../layout/PaneTabs";
-import { findLayoutTab, type LayoutTab } from "../layout/layoutModel";
+import {
+  findLayoutPane,
+  findLayoutTab,
+  type LayoutTab,
+  type LayoutTabGroupColor,
+} from "../layout/layoutModel";
 import type {
   ContextMenuItem,
   EnvironmentId,
@@ -481,6 +488,7 @@ function RightPanelTab(
     ownsDesktopTitleBar: boolean;
     notched: boolean;
     layoutTabId: string | null;
+    groupColor: LayoutTabGroupColor | null;
     threadTitle: string | null;
   },
 ) {
@@ -502,6 +510,7 @@ function RightPanelTab(
     pending,
     notched,
     layoutTabId,
+    groupColor,
     ownsDesktopTitleBar,
     onActivate,
     onClose,
@@ -550,6 +559,7 @@ function RightPanelTab(
         "cursor-pointer group/tab flex shrink-0 items-center",
         notched && "max-md:min-w-0 max-md:shrink",
         isDragging && "relative z-10",
+        groupColor && "relative",
         // In the notch a tab is the chat's 28px notch tab (pen JiaZk).
         notched
           ? "h-7 gap-1.75 rounded-control px-2.5 text-label"
@@ -689,6 +699,7 @@ function RightPanelTab(
           </Tooltip>
         )}
       </>
+      <PaneTabGroupLine color={groupColor} />
     </div>
   );
 }
@@ -710,14 +721,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   // Embedded, this is one surface's tab in the layout: it drags like any tab
   // and its pane's other tabs sit around it in the notch.
-  const { tabId: layoutPaneTabId, leadingEdge } = useLayoutPane();
+  const { tabId: layoutPaneTabId, paneId, leadingEdge } = useLayoutPane();
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
-  const siblingTabs = useLayoutPaneSiblingTabs();
   const isMobile = useMediaQuery("max-md");
-  const pinnedChatTab =
-    isMobile && layoutTabId !== null
-      ? [...siblingTabs.before, ...siblingTabs.after].find((tab) => tab.content.kind === "chat")
-      : undefined;
+  const pinnedChatTab = useLayoutStore((state) =>
+    isMobile && layoutTabId !== null && paneId !== null
+      ? findLayoutPane(state.layout, paneId)?.pane.tabs.find((tab) => tab.content.kind === "chat")
+      : undefined,
+  );
+  const siblingTabs = useLayoutPaneSiblingTabs(pinnedChatTab?.id);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const renameRequested = useLayoutTabRenameRequested(layoutTabId);
   const renamingDeviceId = renamingDevice ?? (renameRequested ? props.activeSurfaceId : null);
@@ -1096,11 +1108,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null
           }
         >
-          {layoutTabId !== null
-            ? siblingTabs.before
-                .filter((tab) => tab.id !== pinnedChatTab?.id)
-                .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
-            : null}
+          {layoutTabId !== null ? <PaneStripItems items={siblingTabs.before} /> : null}
           <PanelTabStrip
             notched={notched}
             // A scrolling strip in the title bar leaves the drag region, so trackpad scrolls reach it.
@@ -1149,6 +1157,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     ownsDesktopTitleBar={ownsDesktopTitleBar}
                     notched={notched}
                     layoutTabId={layoutTabId}
+                    groupColor={
+                      layoutTabId !== null && surface.id === props.activeSurfaceId
+                        ? siblingTabs.activeColor
+                        : null
+                    }
                     threadTitle={props.threadTitle ?? null}
                     onActivate={onActivateTab}
                     onClose={onCloseTab}
@@ -1162,11 +1175,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </SortableTabList>
             {notched ? null : addSurfaceMenu}
           </PanelTabStrip>
-          {layoutTabId !== null
-            ? siblingTabs.after
-                .filter((tab) => tab.id !== pinnedChatTab?.id)
-                .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
-            : null}
+          {layoutTabId !== null ? <PaneStripItems items={siblingTabs.after} /> : null}
         </PanelTabsNotch>
         {/* In the notch the tabs scroll by wheel and ctrl+Tab; the actions need the room. */}
         {!notched && tabScrollState.hasOverflow ? (

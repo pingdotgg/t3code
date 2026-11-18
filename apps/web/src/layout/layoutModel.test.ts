@@ -3,9 +3,12 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  addLayoutTabToGroup,
   canCloseLayoutTab,
   closeLayoutTab,
   closedLayoutTabIds,
+  focusAdjacentLayoutTab,
+  createLayoutTabGroup,
   moveLayoutTabToNewWorkspace,
   createLayoutState,
   decodePersistedLayoutState,
@@ -16,11 +19,13 @@ import {
   layoutChatSwaps,
   moveLayoutTab,
   moveLayoutTabToWorkspace,
+  nextLayoutTabGroupColor,
   openLayoutGhostChat,
   openLayoutKeptTab,
   openLayoutTab,
   placeLayoutContent,
   placeLayoutTabs,
+  removeLayoutTabFromGroup,
   replaceLayoutTabContent,
   resizeLayoutColumnEdge,
   sameLayoutSpan,
@@ -29,9 +34,13 @@ import {
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
+  setLayoutWorkingGroupExpanded,
   shareLayoutBeside,
   showLayoutContent,
   THREAD_TERMINAL_SURFACE_ID,
+  ungroupLayoutTabGroup,
+  updateLayoutTabGroup,
+  type LayoutPaneTabOrder,
   type LayoutState,
   type LayoutTab,
   type LayoutTabContent,
@@ -59,7 +68,8 @@ const columnsOf = (state: LayoutState) =>
 /*
  * Layouts as text: workspaces of columns of panes of tabs. `A` is a kept chat of thread A, `~A`
  * its ghost, `t:A` A's terminal, `+` (or `+2`) a launcher, `+:A` one opened from A, `PR` the pull
- * requests page; `*` marks a pane's active tab and `!` the focused one.
+ * requests page; `@g` puts a tab in its pane's group titled g; `*` marks a pane's active tab and
+ * `!` the focused one.
  */
 type Shape = string[][][];
 
@@ -73,7 +83,8 @@ const draftOf = (name: string): LayoutTabContent => ({
   target: { kind: "draft", draftId: name as DraftId },
 });
 
-function tabOf(label: string): LayoutTab {
+function tabOf(grouped: string): LayoutTab {
+  const [label = "", groupId] = grouped.split("@");
   const name = label.replace(/^~/, "");
   const content: LayoutTabContent = name.startsWith("+")
     ? {
@@ -86,7 +97,12 @@ function tabOf(label: string): LayoutTab {
       : name.startsWith("t:")
         ? { kind: "surface", threadRef: refOf(name.slice(2)), surfaceId: "thread-terminal" }
         : chatOf(name);
-  return { id: name, content, ...(label.startsWith("~") ? { ghostOf: null } : {}) };
+  return {
+    id: name,
+    content,
+    ...(label.startsWith("~") ? { ghostOf: null } : {}),
+    ...(groupId ? { groupId } : {}),
+  };
 }
 
 function layoutOf(...shapes: Shape[]): LayoutState {
@@ -114,7 +130,16 @@ function layoutOf(...shapes: Shape[]): LayoutState {
           labels.findIndex((label) => /[*!]/.test(label)),
           0,
         );
-        return { id: paneId(w, c, p), size: 1 / panes.length, tabs, activeTabId: tabs[active]!.id };
+        const groups = [
+          ...new Set(tabs.flatMap((tab) => (tab.groupId === undefined ? [] : [tab.groupId]))),
+        ].map((id) => ({ id, title: id, color: "grey" as const, collapsed: false }));
+        return {
+          id: paneId(w, c, p),
+          size: 1 / panes.length,
+          tabs,
+          activeTabId: tabs[active]!.id,
+          groups,
+        };
       }),
     })),
   }));
@@ -148,7 +173,8 @@ function shapeOf(state: LayoutState): Shape[] {
                 : tab.id === pane.activeTabId && pane.tabs.length > 1
                   ? "*"
                   : "";
-            return `${tab.ghostOf !== undefined ? "~" : ""}${name}${mark}`;
+            const group = pane.groups.find((candidate) => candidate.id === tab.groupId);
+            return `${tab.ghostOf !== undefined ? "~" : ""}${name}${group ? `@${group.title}` : ""}${mark}`;
           }),
         ),
       ),
@@ -158,7 +184,7 @@ function shapeOf(state: LayoutState): Shape[] {
 const column = (id: string, width: number) => ({
   id,
   width,
-  panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null, size: 1 }],
+  panes: [{ id: `${id}-pane`, tabs: [], activeTabId: null, size: 1, groups: [] }],
 });
 
 function drawnRightEdges(
@@ -474,8 +500,39 @@ describe("blank workspaces", () => {
   });
 });
 
+/** A strip order that draws every tab of a pane but `hidden` and collapsed ones, unless shown. */
+const drawingAllBut =
+  (...hidden: string[]): LayoutPaneTabOrder =>
+  (pane) =>
+    pane.tabs.flatMap((tab) => {
+      const collapsed = pane.groups.some((group) => group.id === tab.groupId && group.collapsed);
+      return tab.id === pane.activeTabId || (!hidden.includes(tab.id) && !collapsed)
+        ? [tab.id]
+        : [];
+    });
+
 describe("closeLayoutTab", () => {
-  it.each<{ case: string; layout: Shape[]; close: string; expected: Shape[] }>([
+  it.each<{
+    case: string;
+    layout: Shape[];
+    close: string;
+    hidden?: string[];
+    expected: Shape[];
+  }>([
+    {
+      case: "the strip's next drawn tab takes over, past hidden ones",
+      layout: [[[["A", "B!", "C", "D"]]], [[["+"]]]],
+      close: "B",
+      hidden: ["C"],
+      expected: [[[["A", "C", "D!"]]]],
+    },
+    {
+      case: "the last drawn tab hands over to the drawn one before it",
+      layout: [[[["A", "B", "C!", "D"]]], [[["+"]]]],
+      close: "C",
+      hidden: ["B", "D"],
+      expected: [[[["A!", "B", "D"]]]],
+    },
     {
       case: "a workspace's last thread gives way to a blank tab",
       layout: [[[["A!"]]], [[["B"]]], [[["+"]]]],
@@ -512,9 +569,9 @@ describe("closeLayoutTab", () => {
       close: "+",
       expected: [[[["A!"]]]],
     },
-  ])("$case", ({ layout, close, expected }) => {
+  ])("$case", ({ layout, close, hidden = [], expected }) => {
     const state = layoutOf(...layout);
-    const closed = closeLayoutTab(state, close);
+    const closed = closeLayoutTab(state, close, drawingAllBut(...hidden));
     expect(shapeOf(closed)).toEqual(expected);
     expect(closed.workspaces.map(isBlankLayoutWorkspace).at(-1)).toBe(true);
     expect(closed.workspaces).toHaveLength(expected.length + 1);
@@ -832,6 +889,7 @@ describe("moveLayoutTab", () => {
                   id: "chat-pane",
                   size: 0.55,
                   activeTabId: "chat",
+                  groups: [],
                   tabs: [
                     {
                       id: "chat",
@@ -851,6 +909,7 @@ describe("moveLayoutTab", () => {
                   id: "other-pane",
                   size: 0.45,
                   activeTabId: "other-terminal",
+                  groups: [],
                   tabs: [
                     {
                       id: "other-terminal",
@@ -901,5 +960,286 @@ describe("closedLayoutTabIds", () => {
     expect(closedLayoutTabIds(layout, moveLayoutTabToNewWorkspace(layout, diffTabId, 1))).toEqual(
       [],
     );
+  });
+});
+
+describe("tab groups", () => {
+  const paneOf = (state: LayoutState) => state.workspaces[0]!.columns[0]!.panes[0]!;
+  const groupId = (state: LayoutState, title: string) =>
+    state.workspaces
+      .flatMap((workspace) => workspace.columns)
+      .flatMap((column) => column.panes)
+      .flatMap((pane) => pane.groups)
+      .find((group) => group.title === title)!.id;
+
+  it.each<{
+    case: string;
+    layout: Shape[];
+    act: (state: LayoutState) => LayoutState;
+    expected: Shape[];
+  }>([
+    {
+      case: "a tab starts a group",
+      layout: [[[["A!", "B", "C"]]]],
+      act: (state) => createLayoutTabGroup(state, "B", { title: " h ", color: "red" }),
+      expected: [[[["A!", "B@h", "C"]]]],
+    },
+    {
+      case: "a grouped tab starts a new group after its old one",
+      layout: [[[["A@g!", "B@g", "C@g", "D"]]]],
+      act: (state) => createLayoutTabGroup(state, "B", { title: "h", color: "red" }),
+      expected: [[[["A@g!", "C@g", "B@h", "D"]]]],
+    },
+    {
+      case: "a tab added to a group moves to its end",
+      layout: [[[["A!", "B@g", "C@g", "D"]]]],
+      act: (state) => addLayoutTabToGroup(state, "A", "g"),
+      expected: [[[["B@g", "C@g", "A@g!", "D"]]]],
+    },
+    {
+      case: "a tab removed from a group lands right after it",
+      layout: [[[["A!", "B@g", "C@g", "D@g", "E"]]]],
+      act: (state) => removeLayoutTabFromGroup(state, "C"),
+      expected: [[[["A!", "B@g", "D@g", "C", "E"]]]],
+    },
+    {
+      case: "a group's last tab leaving drops the group",
+      layout: [[[["A!", "B@g"]]]],
+      act: (state) => removeLayoutTabFromGroup(state, "B"),
+      expected: [[[["A!", "B"]]]],
+    },
+    {
+      case: "a tab dropped between two of a group joins it",
+      layout: [[[["A!", "B@g", "C@g", "D"]]]],
+      act: (state) => moveLayoutTab(state, "A", { kind: "pane", paneId: "w0c0p0", index: 1 }),
+      expected: [[[["B@g", "A@g!", "C@g", "D"]]]],
+    },
+    {
+      case: "a tab dropped at a group's edge stays out of it",
+      layout: [[[["A!", "B@g", "C@g", "D"]]]],
+      act: (state) => moveLayoutTab(state, "D", { kind: "pane", paneId: "w0c0p0", index: 1 }),
+      expected: [[[["A", "D!", "B@g", "C@g"]]]],
+    },
+    {
+      case: "a member dragged past the group leaves it",
+      layout: [[[["A!", "B@g", "C@g", "D@g", "E"]]]],
+      act: (state) => moveLayoutTab(state, "C", { kind: "pane", paneId: "w0c0p0", index: 4 }),
+      expected: [[[["A", "B@g", "D@g", "E", "C!"]]]],
+    },
+    {
+      case: "a member dragged to its group's edge stays in it",
+      layout: [[[["A!", "B@g", "C@g", "D"]]]],
+      act: (state) => moveLayoutTab(state, "C", { kind: "pane", paneId: "w0c0p0", index: 1 }),
+      expected: [[[["A", "C@g!", "B@g", "D"]]]],
+    },
+    {
+      case: "a tab moved into another pane's group joins it, and its old group goes",
+      layout: [[[["A!", "B@g"]], [["C@h", "D@h"]]]],
+      act: (state) => moveLayoutTab(state, "B", { kind: "pane", paneId: "w0c1p0", index: 1 }),
+      expected: [[[["A"]], [["C@h", "B@h!", "D@h"]]]],
+    },
+    {
+      case: "a tab moved past another pane's group leaves its own behind",
+      layout: [[[["A!", "B@g"]], [["C@h", "D@h"]]]],
+      act: (state) => moveLayoutTab(state, "B", { kind: "pane", paneId: "w0c1p0", index: 2 }),
+      expected: [[[["A"]], [["C@h", "D@h", "B!"]]]],
+    },
+    {
+      case: "a tab moved to a new column leaves its group",
+      layout: [[[["A!", "B@g"]]]],
+      act: (state) => moveLayoutTab(state, "B", { kind: "column", workspaceId: "w0", index: 1 }),
+      expected: [[[["A"]], [["B!"]]]],
+    },
+    {
+      case: "a tab opened inside a group joins it",
+      layout: [[[["A", "B@g!", "C@g"]]]],
+      act: (state) => openLayoutTab(state, chatOf("N")),
+      expected: [[[["A", "B@g", "N@g!", "C@g"]]]],
+    },
+    {
+      case: "a tab opened after a group's last tab stays out of it",
+      layout: [[[["A", "B@g!", "C"]]]],
+      act: (state) => openLayoutTab(state, chatOf("N")),
+      expected: [[[["A", "B@g", "N!", "C"]]]],
+    },
+    {
+      case: "closing a group's last tab drops the group",
+      layout: [[[["A!", "B@g"]]]],
+      act: (state) => closeLayoutTab(state, "B"),
+      expected: [[[["A!"]]]],
+    },
+    {
+      case: "ungrouping keeps the tabs in place",
+      layout: [[[["A@g!", "B@g", "C"]]]],
+      act: (state) => ungroupLayoutTabGroup(state, "g"),
+      expected: [[[["A!", "B", "C"]]]],
+    },
+    {
+      case: "ctrl+Tab steps over tabs the strip leaves out",
+      layout: [[[["A", "B!", "C", "D"]]]],
+      act: (state) => focusAdjacentLayoutTab(state, 1, drawingAllBut("C")),
+      expected: [[[["A", "B", "C", "D!"]]]],
+    },
+    {
+      case: "ctrl+shift+Tab wraps over tabs the strip leaves out",
+      layout: [[[["A!", "B", "C", "D"]]]],
+      act: (state) => focusAdjacentLayoutTab(state, -1, drawingAllBut("D")),
+      expected: [[[["A", "B", "C!", "D"]]]],
+    },
+    {
+      case: "a tab moved away hands its pane to the next drawn tab",
+      layout: [[[["A", "B!", "C", "D"]]]],
+      act: (state) =>
+        moveLayoutTab(
+          state,
+          "B",
+          { kind: "column", workspaceId: "w0", index: 1 },
+          drawingAllBut("C"),
+        ),
+      expected: [[[["A", "C", "D*"]], [["B!"]]]],
+    },
+    {
+      case: "a tab moved to the next workspace hands its pane to the next drawn tab",
+      layout: [[[["A", "B!", "C", "D"]]], [[["E"]]]],
+      act: (state) => moveLayoutTabToWorkspace(state, 1, drawingAllBut("C")),
+      expected: [[[["A", "C", "D*"]]], [[["E"]], [["B!"]]]],
+    },
+    {
+      case: "a group's only tab keeps its group wherever it is dragged",
+      layout: [[[["A!", "B@g", "C"]]]],
+      act: (state) => moveLayoutTab(state, "B", { kind: "pane", paneId: "w0c0p0", index: 0 }),
+      expected: [[[["B@g!", "A", "C"]]]],
+    },
+    {
+      case: "a group's only drawn tab keeps its group, and its left-out tabs follow it",
+      layout: [[[["X!", "A@g", "H@g", "Y"]]]],
+      act: (state) =>
+        moveLayoutTab(state, "A", { kind: "pane", paneId: "w0c0p0", index: 3 }, drawingAllBut("H")),
+      expected: [[[["X", "Y", "A@g!", "H@g"]]]],
+    },
+    {
+      case: "a collapsed group's only drawn tab keeps it, and its left-out tabs follow it",
+      layout: [[[["X!", "A@g", "H@g", "Y"]]]],
+      act: (state) =>
+        moveLayoutTab(
+          updateLayoutTabGroup(state, "g", { collapsed: true }),
+          "A",
+          { kind: "pane", paneId: "w0c0p0", index: 3 },
+          drawingAllBut("H"),
+        ),
+      expected: [[[["X", "Y", "A@g!", "H@g"]]]],
+    },
+    {
+      case: "a tab dragged out of a collapsed group leaves it to its folded tabs",
+      layout: [[[["X!", "A@g", "B@g", "Y"]]]],
+      act: (state) =>
+        moveLayoutTab(
+          updateLayoutTabGroup(state, "g", { collapsed: true }),
+          "A",
+          { kind: "pane", paneId: "w0c0p0", index: 3 },
+          drawingAllBut(),
+        ),
+      expected: [[[["X", "B@g", "Y", "A!"]]]],
+    },
+    {
+      case: "a ghost starting a group is kept",
+      layout: [[[["A!", "~B"]]]],
+      act: (state) => createLayoutTabGroup(state, "B", { title: "h", color: "red" }),
+      expected: [[[["A!", "B@h"]]]],
+    },
+    {
+      case: "a ghost added to a group is kept",
+      layout: [[[["A@g!", "~B"]]]],
+      act: (state) => addLayoutTabToGroup(state, "B", "g"),
+      expected: [[[["A@g!", "B@g"]]]],
+    },
+    {
+      case: "a launcher in a group turns into a kept tab of it",
+      layout: [[[["A@g", "+@g!", "B@g"]]]],
+      act: (state) => showLayoutContent(showLayoutContent(state, chatOf("N")), chatOf("M")),
+      expected: [[[["A@g", "N@g", "B@g", "~M!"]]]],
+    },
+    {
+      case: "a preview opened from a grouped tab lands past the group, ungrouped",
+      layout: [[[["A", "B@g!", "C@g", "D"]]]],
+      act: (state) => showLayoutContent(state, chatOf("N")),
+      expected: [[[["A", "B@g", "C@g", "~N!", "D"]]]],
+    },
+  ])("$case", ({ layout, act, expected }) => {
+    const after = act(layoutOf(...layout));
+    expect(shapeOf(after)).toEqual(expected);
+    const groupIds = paneOf(after).groups.map((group) => group.id);
+    const memberIds = new Set(paneOf(after).tabs.flatMap((tab) => tab.groupId ?? []));
+    expect(groupIds.toSorted()).toEqual([...memberIds].toSorted());
+  });
+
+  it("starts a group open, with the trimmed title and color given", () => {
+    const created = createLayoutTabGroup(layoutOf([[["A!"]]]), "A", {
+      title: " h ",
+      color: "red",
+    });
+    expect(paneOf(created).groups).toEqual([
+      { id: groupId(created, "h"), title: "h", color: "red", collapsed: false },
+    ]);
+  });
+
+  it("renames, recolors and collapses a group, and leaves an unchanged one alone", () => {
+    const state = layoutOf([[["A@g!", "B@g"]]]);
+    const updated = updateLayoutTabGroup(state, "g", {
+      title: "Review ",
+      color: "green",
+      collapsed: true,
+    });
+    expect(paneOf(updated).groups).toEqual([
+      { id: "g", title: "Review", color: "green", collapsed: true },
+    ]);
+    expect(selectFocusedTab(updated)?.id).toBe("A");
+    expect(updateLayoutTabGroup(state, "g", { title: "g", collapsed: false })).toBe(state);
+  });
+
+  it("picks the least used color for a pane's next group", () => {
+    const state = layoutOf([[["A@g!", "B@h"]]]);
+    const pane = paneOf(updateLayoutTabGroup(state, "h", { color: "blue" }));
+    expect(nextLayoutTabGroupColor(pane)).toBe("red");
+  });
+
+  it("opens and collapses a pane's Working group, storing only an open one", () => {
+    const state = layoutOf([[["A!"]]]);
+    const opened = setLayoutWorkingGroupExpanded(state, "w0c0p0", true);
+    expect(paneOf(opened).workingGroupExpanded).toBe(true);
+    expect(setLayoutWorkingGroupExpanded(opened, "w0c0p0", true)).toBe(opened);
+    expect(
+      "workingGroupExpanded" in paneOf(setLayoutWorkingGroupExpanded(opened, "w0c0p0", false)),
+    ).toBe(false);
+  });
+
+  it("loads groups saved with the layout, and layouts saved before groups", () => {
+    const saved = layoutOf([[["A@g!", "B@g", "C"]]]);
+    const withWorking = setLayoutWorkingGroupExpanded(
+      updateLayoutTabGroup(saved, "g", { collapsed: true }),
+      "w0c0p0",
+      true,
+    );
+    const loaded = decodePersistedLayoutState(JSON.parse(JSON.stringify(withWorking)));
+    expect(shapeOf(loaded)).toEqual([[[["A@g!", "B@g", "C"]]]]);
+    expect(paneOf(loaded).groups).toEqual([
+      { id: "g", title: "g", color: "grey", collapsed: true },
+    ]);
+    expect(paneOf(loaded).workingGroupExpanded).toBe(true);
+
+    const beforeGroups = JSON.parse(JSON.stringify(layoutOf([[["A!", "B"]]])));
+    delete beforeGroups.workspaces[0].columns[0].panes[0].groups;
+    expect(paneOf(decodePersistedLayoutState(beforeGroups)).groups).toEqual([]);
+  });
+
+  it("drops a malformed saved group and ungroups its tabs, keeping the layout", () => {
+    const saved = JSON.parse(JSON.stringify(layoutOf([[["A@g!", "B@h", "C"]]])));
+    saved.workspaces[0].columns[0].panes[0].groups[0] = { title: 3 };
+    saved.workspaces[0].columns[0].panes[0].groups[1].color = "chartreuse";
+    const loaded = decodePersistedLayoutState(saved);
+    expect(shapeOf(loaded)).toEqual([[[["A!", "B@h", "C"]]]]);
+    expect(paneOf(loaded).groups).toEqual([
+      { id: "h", title: "h", color: "grey", collapsed: false },
+    ]);
   });
 });

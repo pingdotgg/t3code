@@ -29,6 +29,12 @@ import {
   type LayoutTabLocation,
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
+import {
+  isDrawnInWorkingGroup,
+  paneDropIndex,
+  paneDropMarker,
+  type PaneStripDropItem,
+} from "./paneStrip.logic";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { notePaneDrop } from "../motion/paneDrop";
@@ -64,7 +70,8 @@ export type LayoutDragContentSource = Exclude<LayoutDragSource, { kind: "tab" }>
 
 export type LayoutDropTarget =
   | { kind: "side"; paneId: string; side: LayoutDirection }
-  | { kind: "into"; paneId: string; index?: number }
+  /** `index` is in the pane's tabs; `marker` is the drawn gap that shows it. */
+  | { kind: "into"; paneId: string; index?: number; marker?: number }
   | { kind: "extend"; edge: "left" | "right" | "bottom" };
 
 export interface LayoutDragRect {
@@ -77,7 +84,8 @@ export interface LayoutDragRect {
 export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
-  tabs?: readonly { id: string; rect: LayoutDragRect }[];
+  /** The strip's drawn tabs and group chips, in order. */
+  tabs?: readonly (PaneStripDropItem & { rect: LayoutDragRect })[];
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -140,15 +148,26 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const paneId = element.dataset.layoutPaneId;
       const rect = element.getBoundingClientRect();
       if (!paneId || rect.width === 0 || rect.height === 0) return [];
-      const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
-        (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
-      );
+      const tabs = [
+        ...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab], [data-tab-group-chip]"),
+      ].map((item) => {
+        const rect = toRect(item.getBoundingClientRect());
+        const { layoutPaneTab, tabGroupChip, tabGroup } = item.dataset;
+        return layoutPaneTab === undefined
+          ? { id: tabGroupChip!, chip: true, rect }
+          : { id: layoutPaneTab, ...(tabGroup === undefined ? {} : { group: tabGroup }), rect };
+      });
       return [
         { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
       ];
     },
   );
   return { panes, strip: toRect(strip.getBoundingClientRect()) };
+}
+
+/** The drawn item a drop at `x` lands before, or -1 past the last. */
+function layoutDropBefore(items: readonly { rect: LayoutDragRect }[], x: number): number {
+  return items.findIndex((item) => x < (item.rect.left + item.rect.right) / 2);
 }
 
 function contains(rect: LayoutDragRect, point: { x: number; y: number }): boolean {
@@ -375,12 +394,20 @@ export function moveLayoutDrag(
   let raw = composer ? null : resolveLayoutDropTarget(point, measured.panes, measured.strip);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
-    const tabs = measured.panes
-      .find((pane) => pane.paneId === paneId)
-      ?.tabs?.filter((tab) => tab.id !== sourceTabId);
-    if (tabs) {
-      const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
-      raw = { ...raw, index: before === -1 ? tabs.length : before };
+    const drawn = measured.panes.find((pane) => pane.paneId === paneId)?.tabs;
+    const tabs = drawn?.filter((tab) => tab.id !== sourceTabId);
+    const pane = findLayoutPane(layout, paneId)?.pane;
+    // Working draws its tabs by thread state, so reordering one there changes nothing visible.
+    if (drawn && sourceTabId !== null && isDrawnInWorkingGroup(drawn, sourceTabId)) {
+      raw = { kind: "into", paneId };
+    } else if (tabs && pane) {
+      const strip = {
+        tabs: pane.tabs.filter((tab) => tab.id !== sourceTabId),
+        groups: pane.groups,
+        drawn: tabs,
+      };
+      const index = paneDropIndex({ ...strip, before: layoutDropBefore(tabs, point.x) });
+      raw = { ...raw, index, marker: paneDropMarker({ ...strip, index }) };
     }
   }
   const target =

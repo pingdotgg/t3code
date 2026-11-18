@@ -221,9 +221,10 @@ vi.mock("../state/projects", async () => {
   };
 });
 vi.mock("../layout/PaneTabs", () => ({
-  LayoutPaneTab: () => null,
+  PaneStripItems: () => null,
+  PaneTabGroupLine: () => null,
   LayoutPaneTabStrip: ({ children }: { children: React.ReactNode }) => children,
-  useLayoutPaneSiblingTabs: () => ({ before: [], after: [] }),
+  useLayoutPaneSiblingTabs: () => ({ before: [], after: [], activeColor: null }),
 }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));

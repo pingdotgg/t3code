@@ -540,6 +540,12 @@ function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(settings.paneTabsWorkingGroup !== DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup
+      ? ["Working tab group"]
+      : []),
+    ...(settings.paneTabsFollowInbox !== DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox
+      ? ["Tabs follow the inbox"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -729,6 +735,8 @@ function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      paneTabsWorkingGroup: DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup,
+      paneTabsFollowInbox: DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1002,6 +1010,66 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("working-tab-group")}
+          description={
+            <T>
+              Gather the chats of working threads into a Working group at the start of each pane's
+              tabs. Click the group to open or collapse it.
+            </T>
+          }
+          resetAction={
+            settings.paneTabsWorkingGroup !== DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup ? (
+              <SettingResetButton
+                label="working tab group"
+                onClick={() =>
+                  updateSettings({
+                    paneTabsWorkingGroup: DEFAULT_UNIFIED_SETTINGS.paneTabsWorkingGroup,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.paneTabsWorkingGroup}
+              onCheckedChange={(checked) =>
+                updateSettings({ paneTabsWorkingGroup: Boolean(checked) })
+              }
+              aria-label={gt("Working tab group")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("tabs-follow-inbox")}
+          description={
+            <T>
+              Settled and snoozed threads leave the tabs once you switch away, and a dot marks tabs
+              that need you. Turning this off brings every tab back.
+            </T>
+          }
+          resetAction={
+            settings.paneTabsFollowInbox !== DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox ? (
+              <SettingResetButton
+                label="tabs follow the inbox"
+                onClick={() =>
+                  updateSettings({
+                    paneTabsFollowInbox: DEFAULT_UNIFIED_SETTINGS.paneTabsFollowInbox,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.paneTabsFollowInbox}
+              onCheckedChange={(checked) =>
+                updateSettings({ paneTabsFollowInbox: Boolean(checked) })
+              }
+              aria-label={gt("Tabs follow the inbox")}
             />
           }
         />
