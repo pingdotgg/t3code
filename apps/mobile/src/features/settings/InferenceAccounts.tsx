@@ -4,6 +4,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   inferenceAccountRetryAfter,
   inferenceAccountStatus,
+  inferenceHostCandidates,
   inferenceHostRoutingIssue,
 } from "@t3tools/client-runtime/state/inference-proxy";
 import {
@@ -84,11 +85,13 @@ function ProviderRoutingSwitch({
   provider,
   driver,
   onSetup,
+  onRouteChange,
 }: {
   environment: SettingsTarget;
   provider: ServerProvider;
   driver: InferenceDriver;
   onSetup: () => void;
+  onRouteChange: () => void;
 }) {
   const { environmentId } = environment;
   const { environments } = useEnvironments();
@@ -123,7 +126,9 @@ function ProviderRoutingSwitch({
       : await manage({ environmentId, input: { operation: "removeRoute", instanceId } });
     inFlight.current = false;
     setPending(false);
-    if (result._tag === "Failure") {
+    if (result._tag === "Success") {
+      onRouteChange();
+    } else {
       const cause = squashAtomCommandFailure(result);
       setFailure({
         target: value,
@@ -241,8 +246,8 @@ function InferenceControls({
     setPending(true);
     setNotice("");
     const result = await command({ environmentId, input });
-    setPending(false);
     if (result._tag === "Failure") {
+      setPending(false);
       setNotice(String(squashAtomCommandFailure(result)));
       return;
     }
@@ -265,7 +270,8 @@ function InferenceControls({
       setNotice("Waiting for the host to finish sign-in. Check status after a moment.");
     if (
       setupDriver &&
-      (result.value.status === "ok" || (input.operation === "configure" && input.enabled))
+      (result.value.status === "ok" ||
+        (input.operation === "configure" && input.enabled && input.expectedEnabled === false))
     ) {
       const connected = await enableRouting({
         consumer: { environmentId, label: environment.label },
@@ -279,6 +285,7 @@ function InferenceControls({
         setNotice(failure instanceof Error ? failure.message : String(failure));
       }
     }
+    setPending(false);
     return result.value;
   }
   const host = query.data;
@@ -440,15 +447,9 @@ function InferenceControls({
           onPress={() => void run({ operation: "removeRoute", instanceId: route.instanceId })}
         />
       ))}
-      {environments
-        .filter(
-          (e) =>
-            e.connection.phase === "connected" &&
-            e.serverConfig?.environment.capabilities.inferenceProxy,
-        )
-        .map((host) => (
-          <Route key={host.environmentId} host={host} consumer={environment} />
-        ))}
+      {inferenceHostCandidates(environments, environmentId).map((host) => (
+        <Route key={host.environmentId} host={host} consumer={environment} />
+      ))}
     </View>
   );
 }
@@ -479,6 +480,7 @@ export function InferenceAccounts({
             provider={provider}
             driver={driver}
             onSetup={() => setPanel(driver)}
+            onRouteChange={() => setPanel((current) => (current === driver ? null : current))}
           />
         );
       })}

@@ -1,5 +1,6 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -211,9 +212,11 @@ describe("AddProviderInstanceDialog environment routing", () => {
   it("routes the default provider and opens the selected host's accounts before settings update", async () => {
     setup();
     actions.supportsInference = true;
-    actions.enableInference.mockResolvedValue(
-      AsyncResult.success({ environmentId: EnvironmentId.make("studio"), label: "Studio" }),
-    );
+    actions.enableInference
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No Codex accounts."))))
+      .mockResolvedValueOnce(
+        AsyncResult.success({ environmentId: EnvironmentId.make("studio"), label: "Studio" }),
+      );
     await using _screen = await render(dialog());
     await choose("Codex");
     await click("Next");
@@ -222,6 +225,18 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.enableInference).toHaveBeenCalledExactlyOnceWith({
       consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
       driver: "codex",
+      environments: expect.any(Array),
+    });
+    expect(queryButton("Set up accounts here")).toBeDefined();
+    await click("Back");
+    await choose("Claude");
+    await click("Next");
+    await choose("Use inference accounts");
+    expect(queryButton("Set up accounts here")).toBeUndefined();
+    await click("Continue");
+    expect(actions.enableInference).toHaveBeenLastCalledWith({
+      consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
+      driver: "claudeAgent",
       environments: expect.any(Array),
     });
     expect(document.body.textContent).toContain("Using Studio for inference.");

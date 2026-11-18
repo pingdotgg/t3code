@@ -2,7 +2,6 @@ import {
   EnvironmentId,
   InferenceDriver,
   INFERENCE_HARNESSES,
-  ProviderDriverKind,
   type CustomModelSetting,
   type ServerProviderModel,
   type SettingsSecretValue,
@@ -307,9 +306,7 @@ export function routeProvider(driver: InferenceDriver, label: string | null, rou
     models: [...new Set(route.models.filter((id) => !isGptImageModel(id)))],
   };
   return {
-    driver: ProviderDriverKind.make(driver),
     displayName: label === null ? name : `${name} via ${label}`,
-    enabled: true,
     config: harness.config(chatRoute),
     environment: harness.environment(chatRoute),
   };

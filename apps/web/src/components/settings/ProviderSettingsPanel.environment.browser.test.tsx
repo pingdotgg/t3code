@@ -328,11 +328,28 @@ describe("EnvironmentProviderSettings routing", () => {
       .element(screen.getByRole("status"))
       .toHaveTextContent("No connected inference host.");
     await userEvent.click(screen.getByRole("button", { name: "Set up accounts here" }));
-    await expect
-      .element(screen.getByText("Connect to Remote device to manage its accounts"))
-      .toBeVisible();
+    const localSetup = screen.getByText("Connect to Remote device to manage its accounts");
+    await expect.element(localSetup).toBeVisible();
     await expect.element(proxySwitch).toBeEnabled();
     await expect.element(proxySwitch).not.toBeChecked();
+
+    await userEvent.click(proxySwitch);
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { inferenceEnabled: true, inferenceHostId: environmentId },
+        },
+      },
+    };
+    await screen.rerender(panel({ targetInstanceId: codexId }));
+    await expect.element(proxySwitch).toBeChecked();
+    await userEvent.click(proxySwitch);
+    state.settings = DEFAULT_UNIFIED_SETTINGS;
+    await screen.rerender(panel({ targetInstanceId: codexId }));
+    await expect.element(proxySwitch).not.toBeChecked();
+    await expect.element(localSetup).not.toBeInTheDocument();
   });
 
   it.each(["codex", "opencode", "pi"] as const)(

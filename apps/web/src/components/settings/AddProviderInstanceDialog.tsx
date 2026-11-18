@@ -356,6 +356,7 @@ export function AddProviderInstanceDialog({
   };
   const selectProvider = (value: string) => {
     setLocalSetup(false);
+    inference.clearError();
     setSelection(value);
     setIsManualAcpConfiguration(false);
     setHasAttemptedSubmit(false);

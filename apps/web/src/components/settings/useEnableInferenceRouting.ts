@@ -39,5 +39,5 @@ export function useEnableInferenceRouting(environmentId: EnvironmentId, environm
     return null;
   }
 
-  return { canConnect, pending, error, run };
+  return { canConnect, pending, error, run, clearError: () => setError(null) };
 }

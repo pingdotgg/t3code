@@ -31,6 +31,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { NetService } from "@t3tools/shared/Net";
 import { isProviderInstanceEnabledInAnyScope } from "@t3tools/shared/serverSettings";
 import { readTailscaleServeRoutesTo } from "@t3tools/tailscale";
+import * as Arr from "effect/Array";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cache from "effect/Cache";
 import * as Digest from "effect/crypto/Digest";
@@ -1568,26 +1569,21 @@ const make = Effect.gen(function* () {
         return target ? [{ ...target, models: [] }] : null;
       }
       const current = yield* settings.getSettings;
-      const active = INFERENCE_DRIVERS.map((candidateDriver) => {
+      const active = Arr.findFirst(INFERENCE_DRIVERS, (candidateDriver) => {
+        if (driver !== undefined && candidateDriver !== driver) return Option.none();
         const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(candidateDriver));
-        return {
-          driver: candidateDriver,
-          instanceId,
-          instance: current.providerInstances[instanceId],
-        };
-      }).find(
-        ({ driver: candidateDriver, instanceId, instance }) =>
-          (driver === undefined || candidateDriver === driver) &&
-          instance !== undefined &&
-          isProviderInstanceEnabledInAnyScope(current, instanceId) &&
-          isInferenceProviderConfig(instance.config) &&
-          instance.config.inferenceEnabled &&
-          instance.config.inferenceHostId === hostId &&
-          instance.config.inferenceKey === key,
-      );
-      if (!active || !isInferenceProviderConfig(active.instance?.config)) return null;
-      const route = active.instance.config;
-      const pool = (yield* read).routePools?.find((entry) => entry.driver === active.driver);
+        const route = current.providerInstances[instanceId]?.config;
+        return isInferenceProviderConfig(route) &&
+          route.inferenceEnabled &&
+          route.inferenceHostId === hostId &&
+          route.inferenceKey === key &&
+          isProviderInstanceEnabledInAnyScope(current, instanceId)
+          ? Option.some({ driver: candidateDriver, route })
+          : Option.none();
+      });
+      if (Option.isNone(active)) return null;
+      const { driver: activeDriver, route } = active.value;
+      const pool = (yield* read).routePools?.find((entry) => entry.driver === activeDriver);
       if (!pool || pool.primary.hostId !== hostId || pool.primary.key !== key) {
         const target = yield* authorize(key, hostId, driver);
         return target ? [{ ...target, models: route.inferenceModels }] : null;
@@ -1597,17 +1593,18 @@ const make = Effect.gen(function* () {
         : includeAll
           ? [pool.primary, ...pool.alternates]
           : [pool.primary];
+      if (matching.length === 0) return [];
       const candidates = yield* Effect.forEach(
-        matching.length ? matching : [pool.primary],
-        (candidate) => Cache.get(routeProbes, { candidate, driver: active.driver }),
+        matching,
+        (candidate) => Cache.get(routeProbes, { candidate, driver: activeDriver }),
         { concurrency: "unbounded" },
       );
       const now = yield* Clock.currentTimeMillis;
       const available = candidates.flatMap((candidate, index) => {
         if (!candidate) return [];
-        const host = (matching.length ? matching : [pool.primary])[index]!;
+        const host = matching[index]!;
         const models = candidate.models.filter(
-          (slug) => (routeFailures.get(`${active.driver}\0${host.hostId}\0${slug}`) ?? 0) <= now,
+          (slug) => (routeFailures.get(`${activeDriver}\0${host.hostId}\0${slug}`) ?? 0) <= now,
         );
         return models.length && (model === undefined || models.includes(model))
           ? [{ ...candidate, hostId: host.hostId, models }]
@@ -2043,7 +2040,7 @@ const make = Effect.gen(function* () {
                     ...(linked && connection ? { inferenceConnection: connection } : {}),
                   },
                 },
-                result: preserve,
+                result: alternates,
               };
             }),
           );
@@ -2054,7 +2051,7 @@ const make = Effect.gen(function* () {
               {
                 driver,
                 primary: candidate,
-                alternates: updated.result ? (existing?.alternates ?? []) : [],
+                alternates: updated.result,
               },
             ],
           });

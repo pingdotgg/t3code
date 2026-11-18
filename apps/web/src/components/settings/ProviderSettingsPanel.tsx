@@ -1598,6 +1598,9 @@ function InferenceProxySetting({
     environmentLabel,
   );
   const usingProxy = accountHostId !== null;
+  async function enable(preferredHostId?: EnvironmentId) {
+    if (await run(driver, preferredHostId)) setLocalSetup(false);
+  }
   const host = accountHostId === environmentId ? environmentLabel : route?.inferenceHostLabel;
   const accountBehavior = !INFERENCE_HARNESSES[driver].replacesAccounts
     ? "Its own logins keep working."
@@ -1646,7 +1649,7 @@ function InferenceProxySetting({
             disabled={disabled || !canConnect || pending || disabling}
             onCheckedChange={async (enabled) => {
               if (enabled) {
-                await run(driver, route?.inferenceHostId);
+                await enable(route?.inferenceHostId);
                 return;
               }
               setDisabling(true);
@@ -1659,6 +1662,8 @@ function InferenceProxySetting({
               if (result._tag === "Failure") {
                 const failure = squashAtomCommandFailure(result);
                 setDisableError(failure instanceof Error ? failure.message : String(failure));
+              } else {
+                setLocalSetup(false);
               }
             }}
           />
@@ -1670,7 +1675,7 @@ function InferenceProxySetting({
           driver={driver}
           hostLabel={environmentLabel}
           enableLocalHosting
-          onAccountsChanged={() => void run(driver, environmentId)}
+          onAccountsChanged={() => void enable(environmentId)}
         />
       )}
     </>

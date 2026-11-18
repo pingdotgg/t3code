@@ -32,10 +32,7 @@ createServer((request, response) => {
 `;
 
 const fakeCodex = `#!/usr/bin/env node
-if (process.argv.includes("--version")) {
-  console.log("codex-cli 0.167.0");
-  process.exit(0);
-}
+if (!process.argv.includes("app-server")) process.exit(1);
 const replies = {
   initialize: { userAgent: "codex-cli/0.167.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: process.platform },
   "account/read": { account: null, requiresOpenaiAuth: false },
@@ -135,12 +132,18 @@ test(
       const routing = screen.getByRole("switch", /^(Use CLI proxy|Inference routing)$/i);
       await routing.tap();
       await expect(routing).toBeChecked();
-      await expect(browser.locator(`[data-model-slug="${sol}"]`)).toBeVisible();
+      const details = browser.locator("[data-provider-detail]");
+      const solRow = browser.locator(`[data-model-slug="${sol}"]`);
+      const astraRow = browser.locator(`[data-model-slug="${astra}"]`);
+      await expect(details.getByText("v0.167.0", { exact: true })).toBeVisible();
+      await expect(details.getByText("Available", { exact: true })).toBeVisible();
+      await expect(solRow).toBeVisible();
 
       await NodeFSP.writeFile(modelsFile, JSON.stringify([sol, astra]));
       await screen.getByRole("button", /refresh provider status|checked just now/i).tap();
-      await expect(browser.locator(`[data-model-slug="${astra}"]`)).toBeVisible();
-      await expect(browser.locator(`[data-model-slug="${sol}"]`)).toBeVisible();
+      await expect(astraRow).toBeVisible();
+      await expect(solRow).toBeVisible();
+      await astraRow.scrollIntoView();
       await app.screenshot("hosted-models-after-refresh");
     } finally {
       await server.stop();
