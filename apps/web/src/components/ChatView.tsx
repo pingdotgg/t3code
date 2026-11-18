@@ -3435,6 +3435,7 @@ export default function ChatView(props: ChatViewProps) {
                           preferNewTerminal: true,
                           rememberAsLastInvoked: false,
                           providerInstanceId: selectedProviderEntry.instanceId,
+                          env: { T3CODE_TERMINAL_SHELL: "/bin/sh" },
                         },
                       );
                       if (!ran)

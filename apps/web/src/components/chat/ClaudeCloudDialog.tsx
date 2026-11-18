@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,19 +35,35 @@ export function ClaudeCloudDialog({
   platform: ExecutionEnvironmentPlatformOs;
   onRun: (command: string) => Promise<void>;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [session, setSession] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const config = decodeClaudeSettings(
-    settings.providerInstances[provider.instanceId]?.config ?? {},
-  );
+  const instance = settings.providerInstances[provider.instanceId];
+  const config = decodeClaudeSettings(instance?.config ?? {});
   const binaryPath = Option.isSome(config) ? config.value.binaryPath : null;
   const submit = async () => {
     if (busy) return;
     if (binaryPath === null) {
-      setError("Invalid Claude instance settings. Check the provider configuration.");
+      setError(gt("Invalid Claude instance settings. Check the provider configuration."));
+      return;
+    }
+    if (instance?.environment?.some((variable) => typeof variable.value !== "string")) {
+      setError(gt("Claude Cloud cannot use secret references in terminal environment variables."));
+      return;
+    }
+    if (
+      instance?.environment?.some(
+        (variable) => variable.name === "T3CODE_TERMINAL_SHELL" && variable.value !== "/bin/sh",
+      )
+    ) {
+      setError(
+        gt(
+          "Claude Cloud requires a POSIX shell. Remove the terminal shell override from this provider.",
+        ),
+      );
       return;
     }
     setError(null);
@@ -57,13 +74,15 @@ export function ClaudeCloudDialog({
       setOpen(false);
       setMessage("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not open the cloud terminal.");
+      setError(cause instanceof Error ? cause.message : gt("Could not open the cloud terminal."));
     }
     setBusy(false);
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="ghost" size="sm" />}>Claude Cloud</DialogTrigger>
+      <DialogTrigger render={<Button variant="ghost" size="sm" />}>
+        <T>Claude Cloud</T>
+      </DialogTrigger>
       <DialogPopup>
         <form
           className="flex min-h-0 flex-col"
@@ -73,31 +92,37 @@ export function ClaudeCloudDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>Claude Cloud</DialogTitle>
+            <DialogTitle>
+              <T>Claude Cloud</T>
+            </DialogTitle>
             <DialogDescription>
-              Start a new task or send a follow-up using the selected Claude account.
+              <T>Start a new task or send a follow-up using the selected Claude account.</T>
             </DialogDescription>
           </DialogHeader>
 
           <DialogPanel>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                New tasks use the current repository. Claude may clone its pushed branch or upload
-                tracked files. The local conversation is not transferred.
+                <T>
+                  New tasks use the current repository. Claude may clone its pushed branch or upload
+                  tracked files. The local conversation is not transferred.
+                </T>
               </p>
               <div className="space-y-2">
-                <label htmlFor="claude-cloud-session">Existing cloud session (optional)</label>
+                <label htmlFor="claude-cloud-session">
+                  <T>Existing cloud session (optional)</T>
+                </label>
                 <Input
                   id="claude-cloud-session"
                   value={session}
                   onChange={(event) => setSession(event.target.value)}
-                  placeholder="Session ID or https://claude.ai/code/…"
+                  placeholder={gt("Session ID or https://claude.ai/code/…")}
                   disabled={busy}
                 />
               </div>
               <div className="space-y-2">
                 <label htmlFor="claude-cloud-message">
-                  {session.trim() ? "Follow-up message" : "Task"}
+                  {session.trim() ? gt("Follow-up message") : gt("Task")}
                 </label>
                 <Input
                   id="claude-cloud-message"
@@ -109,9 +134,11 @@ export function ClaudeCloudDialog({
                 />
               </div>
               <p className="text-sm text-muted-foreground">
-                The terminal shows the session link or delivery receipt. Check progress and replies
-                in Claude. Save the link before closing the terminal: closing deletes its history
-                but does not stop the cloud task.
+                <T>
+                  The terminal shows the session link or delivery receipt. Check progress and
+                  replies in Claude. Save the link before closing the terminal: closing deletes its
+                  history but does not stop the cloud task.
+                </T>
               </p>
               {error ? (
                 <p role="alert" className="text-sm text-destructive">
@@ -122,10 +149,14 @@ export function ClaudeCloudDialog({
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={busy || !message.trim()}>
-              {busy ? "Opening terminal…" : session.trim() ? "Send follow-up" : "Launch in cloud"}
+              {busy
+                ? gt("Opening terminal…")
+                : session.trim()
+                  ? gt("Send follow-up")
+                  : gt("Launch in cloud")}
             </Button>
           </DialogFooter>
         </form>

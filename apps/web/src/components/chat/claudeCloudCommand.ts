@@ -1,3 +1,4 @@
+import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
 import type { ExecutionEnvironmentPlatformOs } from "@t3tools/contracts";
 
 export function claudeCloudSessionId(value: string): string | null {
@@ -47,7 +48,7 @@ export function claudeCloudCommand(input: {
     : ["--cloud", message];
   const command = `${executable} ${args.map(quote).join(" ")}`;
   // Shells like dash read in canonical mode, where Linux drops input past 4,096 bytes per line.
-  if (new TextEncoder().encode(command).length >= 4096) {
+  if (new TextEncoder().encode(projectScriptTerminalInput(command)).length > 4096) {
     throw new Error("Shorten the task or message to fit on one terminal line (about 4,000 bytes).");
   }
   return command;
