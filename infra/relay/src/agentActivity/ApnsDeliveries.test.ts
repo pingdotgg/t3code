@@ -157,6 +157,7 @@ function layerFor(input: {
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
+  readonly activityListFails?: boolean;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -172,10 +173,15 @@ function layerFor(input: {
           upsert: () => Effect.void,
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
-          listForUser: () =>
-            input.activityStates !== undefined
-              ? Effect.succeed([...input.activityStates])
-              : Effect.succeed([state]),
+          listForUser: ({ userId }) =>
+            input.activityListFails
+              ? Effect.fail(
+                  new AgentActivityRows.AgentActivityRowListPersistenceError({
+                    userId,
+                    cause: "database unavailable",
+                  }),
+                )
+              : Effect.succeed([...(input.activityStates ?? [state])]),
           getForUserThread: ({ environmentId, threadId }) =>
             Effect.succeed(
               (input.currentActivityStates ?? input.activityStates ?? [state]).find(
@@ -1020,11 +1026,12 @@ describe("ApnsDeliveries", () => {
   });
 
   it.effect.each([
-    { offRow: "shown", running: 0 },
-    { offRow: "hidden past the row limit", running: 4 },
+    { offRow: "shown", running: 0, activityListFails: false },
+    { offRow: "hidden past the row limit", running: 4, activityListFails: false },
+    { offRow: "shown, current rows unreadable", running: 0, activityListFails: true },
   ])(
     "rebuilds a queued card without an environment turned off since ($offRow), keeping its alert",
-    ({ running }) => {
+    ({ running, activityListFails }) => {
       const requests: HttpClientRequest.HttpClientRequest[] = [];
       const markedDeliveries: Array<
         Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
@@ -1061,6 +1068,12 @@ describe("ApnsDeliveries", () => {
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
         yield* deliveries.processSignedJob(yield* signed);
+        if (activityListFails) {
+          // Skipped rather than sent with the queued activeCount; the registration replay repaints.
+          expect(requests).toEqual([]);
+          expect(markedDeliveries).toEqual([]);
+          return;
+        }
         expect(markedDeliveries[0]?.aggregate?.activities).toMatchObject([
           { environmentId: state.environmentId, phase: "waiting_for_approval" },
           ...others.map(() => ({ environmentId: state.environmentId, phase: "running" })),
@@ -1093,6 +1106,7 @@ describe("ApnsDeliveries", () => {
               },
             ],
             activityStates,
+            activityListFails,
             execute: (request) =>
               Effect.sync(() => {
                 requests.push(request);
