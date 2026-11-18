@@ -39,7 +39,8 @@ export function BrowserBar(props: {
 
   if (props.compact && draft === null) {
     return (
-      <TopArea band={band} surface={surface} ink={ink} hairline>
+      // Not the band: a compact bar is only as tall as its pill, under whatever top inset remains.
+      <TopArea band={null} surface={surface} ink={ink} hairline>
         <View className="items-center pb-1.5 pt-0.5">
           <Pressable
             accessibilityRole="button"
