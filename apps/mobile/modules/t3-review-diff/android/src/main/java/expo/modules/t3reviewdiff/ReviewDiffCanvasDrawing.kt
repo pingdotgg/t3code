@@ -221,6 +221,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   private var measuredContentWidth = 0
   private var asciiCharacterWidth = 0f
   private var asciiFixedPitch = false
+  private var wordDiffLefts = FloatArray(0)
 
   fun tokensChangeWidth(
     previous: Map<String, List<DiffToken>>,
@@ -332,31 +333,58 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
       return textPaint.measureText(row.text.ifEmpty { row.content })
     }
-    return codeWidth(row.content, tokens, 0, Int.MAX_VALUE, style)
+    val lines = CodeWrapLayout.NONE.lines(row)
+    return forEachCodePiece(row, tokens, style, lines) { text, start, end, _, _, _, _ ->
+      textPaint.measureText(text, start, end)
+    }
   }
 
-  /** Width of code columns [from, to), measured with drawCode's run boundaries and fonts. */
-  private fun codeWidth(
-    content: String,
+  /** Row width, highlights and drawCode share these drawText pieces so their positions agree. */
+  private inline fun forEachCodePiece(
+    row: DiffRow,
     tokens: List<DiffToken>?,
-    from: Int,
-    to: Int,
-    style: DiffStyle
+    style: DiffStyle,
+    lines: CodeLines,
+    piece: (
+      text: String,
+      start: Int,
+      end: Int,
+      tokenStart: Int,
+      x: Float,
+      line: Int,
+      note: Boolean
+    ) -> Float
   ): Float {
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
-    var width = 0f
-    var column = 0
-    for (run in runs) {
-      val start = max(from, column) - column
-      val end = min(to, column + run.content.length) - column
-      if (start < end) {
-        configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-        width += textPaint.measureText(run.content, start, end)
+    val noteStart = row.noteStart ?: Int.MAX_VALUE
+    var line = 0
+    var x = 0f
+    var tokenStart = 0
+    val runCount = if (tokens.isNullOrEmpty()) 1 else tokens.size
+    for (index in 0 until runCount) {
+      val run = tokens?.getOrNull(index)
+      val text = run?.content ?: row.content
+      var start = 0
+      while (start < text.length) {
+        while (line + 1 < lines.starts.size && lines.starts[line + 1] <= tokenStart + start) {
+          line += 1
+          x = 0f
+        }
+        val note = tokenStart + start >= noteStart
+        var end = min(text.length, lines.end(line, Int.MAX_VALUE) - tokenStart)
+        if (!note) end = min(end, noteStart - tokenStart)
+        if (start == 0 || tokenStart + start == noteStart) {
+          configureCodePaint(
+            if (note) theme.warningText else run?.color ?: theme.text,
+            run?.fontStyle ?: 0,
+            style,
+          )
+        }
+        x += piece(text, start, end, tokenStart, x, line, note)
+        start = end
       }
-      column += run.content.length
-      if (column >= to) break
+      tokenStart += text.length
     }
-    return width
+    return x
   }
 
   fun lineNumberColor(change: String): Int = when (change) {
@@ -392,29 +420,48 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     lines: CodeLines,
     style: DiffStyle
   ) {
-    if (lines.nativeLayout != null) return
-    if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
+    val changed = row.change == "add" || row.change == "delete"
+    if (lines.nativeLayout != null || row.wordDiffRanges.isEmpty() || !changed) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     backgroundPaint.color = withAlpha(color, 71)
+    configureCodePaint(theme.text, 0, style)
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
-    row.wordDiffRanges.forEach { range ->
-      lines.starts.forEachIndexed { line, lineStart ->
-        val start = max(range.start, lineStart)
-        val end = min(range.end, lines.end(line, Int.MAX_VALUE))
-        if (end <= start) return@forEachIndexed
-        val left = codeX + codeWidth(row.content, tokens, lineStart, start, style)
-        val width = codeWidth(row.content, tokens, start, end, style)
-        val right = left + max(2f * density, width)
-        val lineTop = highlightTop + line * lines.height
-        canvas.drawRoundRect(
-          RectF(left, lineTop, right, lineTop + highlightHeight),
-          3f * density,
-          3f * density,
-          backgroundPaint,
-        )
+    if (wordDiffLefts.size < row.wordDiffRanges.size) {
+      wordDiffLefts = FloatArray(row.wordDiffRanges.size)
+    }
+    val lefts = wordDiffLefts
+    val lastEnd = row.wordDiffRanges.maxOf { it.end }
+    forEachCodePiece(row, tokens, style, lines) { text, start, end, tokenStart, x, line, _ ->
+      val pieceX = codeX + x
+      val advance = textPaint.measureText(text, start, end)
+
+      // Inside a piece an edge keeps its kerning and clusters, as drawText shapes the whole piece;
+      // the piece's end is where drawCode starts the next one.
+      fun edge(at: Int) = if (at == end) {
+        pieceX + advance
+      } else {
+        pieceX + textPaint.getRunAdvance(text, start, end, start, end, false, at)
       }
+      row.wordDiffRanges.forEachIndexed { index, range ->
+        val left = max(range.start, lines.starts[line]) - tokenStart
+        val right = min(range.end, lines.end(line, Int.MAX_VALUE)) - tokenStart
+        if (right <= left) return@forEachIndexed
+        if (left in start until end) lefts[index] = edge(left)
+        if (right in start + 1..end) {
+          val lineTop = highlightTop + line * lines.height
+          val rightX = max(lefts[index] + 2f * density, edge(right))
+          canvas.drawRoundRect(
+            RectF(lefts[index], lineTop, rightX, lineTop + highlightHeight),
+            3f * density,
+            3f * density,
+            backgroundPaint,
+          )
+        }
+      }
+      if (tokenStart + end >= lastEnd) return
+      advance
     }
   }
 
@@ -436,35 +483,19 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       canvas.restore()
       return
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
-    var line = 0
-    var x = codeX
-    var column = 0
-    splitAtNote(runs, row.noteStart).forEach { (run, note) ->
-      configureCodePaint(
-        if (note) theme.warningText else run.color ?: theme.text,
-        run.fontStyle,
-        style,
-      )
-      var start = 0
-      while (start < run.content.length) {
-        while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
-          line += 1
-          x = codeX
-        }
-        val end = min(run.content.length, lines.end(line, Int.MAX_VALUE) - column)
-        val lineBaseline = baseline + line * lines.height
-        if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
-          lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
-        ) {
-          val segmentWidth = textPaint.measureText(run.content, start, end)
-          fillNote(canvas, note, x, x + segmentWidth, lineBaseline)
-          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += segmentWidth
-        }
-        start = end
+    forEachCodePiece(row, tokens, style, lines) { text, start, end, _, x, line, note ->
+      val lineBaseline = baseline + line * lines.height
+      if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
+        lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
+      ) {
+        val left = codeX + x
+        val segmentWidth = textPaint.measureText(text, start, end)
+        fillNote(canvas, note, left, left + segmentWidth, lineBaseline)
+        canvas.drawText(text, start, end, left, lineBaseline, textPaint)
+        segmentWidth
+      } else {
+        0f
       }
-      column += run.content.length
     }
   }
 
@@ -570,26 +601,5 @@ private object ReviewDiffTypefaces {
     "medium", "semibold", "semi-bold" -> medium
     "bold", "heavy", "black" -> bold
     else -> regular
-  }
-}
-
-/** Splits color runs where a cut line's note starts; the flag marks the note's runs. */
-private fun splitAtNote(runs: List<DiffToken>, noteStart: Int?): List<Pair<DiffToken, Boolean>> {
-  if (noteStart == null) return runs.map { it to false }
-  return buildList {
-    var offset = 0
-    for (run in runs) {
-      val end = offset + run.content.length
-      when {
-        end <= noteStart -> add(run to false)
-        offset >= noteStart -> add(run to true)
-        else -> {
-          val cut = noteStart - offset
-          add(run.copy(content = run.content.substring(0, cut)) to false)
-          add(run.copy(content = run.content.substring(cut)) to true)
-        }
-      }
-      offset = end
-    }
   }
 }
