@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -46,14 +47,19 @@ export function WorktreeBaseBranchPicker({
   id?: string;
   "aria-label"?: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const trimmedQuery = query.trim();
-  const branches = usePaginatedBranches({
-    environmentId,
-    cwd,
-    query: sanitizeNewRefName(trimmedQuery),
-  });
+  const branches = usePaginatedBranches(
+    {
+      environmentId,
+      cwd,
+      query: sanitizeNewRefName(trimmedQuery),
+    },
+    messages,
+  );
   const selectedRefQuery = useEnvironmentQuery(
     environmentId && cwd && value
       ? vcsEnvironment.listRefs({
@@ -68,13 +74,16 @@ export function WorktreeBaseBranchPicker({
   const label =
     emptyLabel !== undefined
       ? value || emptyLabel
-      : resolveBranchTriggerLabel({
-          activeWorktreePath: null,
-          effectiveEnvMode: "worktree",
-          resolvedActiveBranch: value || null,
-          resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
-          startFromOrigin,
-        });
+      : resolveBranchTriggerLabel(
+          {
+            activeWorktreePath: null,
+            effectiveEnvMode: "worktree",
+            resolvedActiveBranch: value || null,
+            resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
+            startFromOrigin,
+          },
+          messages,
+        );
   const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
   const defaultRefName = branches.refs.find((branch) => branch.isDefault)?.name;
   const customRefItemValue =
@@ -88,14 +97,20 @@ export function WorktreeBaseBranchPicker({
   ];
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText = !cwd
-    ? "Choose a project to list its branches."
+    ? gt("Choose a project to list its branches.")
     : (branches.error ??
       (branches.isPending && branches.data === null
-        ? "Loading refs..."
+        ? gt("Loading refs...")
         : branches.isFetchingNextPage
-          ? "Loading more refs..."
+          ? gt("Loading more refs...")
           : hasNextPage
-            ? `Showing ${branches.refs.length} of ${branches.data?.totalCount} refs`
+            ? gt(
+                "{total, plural, one {Showing {shown} of {total} refs} other {Showing {shown} of {total} refs}}",
+                {
+                  shown: branches.refs.length,
+                  total: String(branches.data?.totalCount),
+                },
+              )
             : null));
   const handleOpenChange = (next: boolean) => {
     setOpen(next);

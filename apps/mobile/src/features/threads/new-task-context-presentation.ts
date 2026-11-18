@@ -1,6 +1,10 @@
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { resolveSendEnvMode } from "@t3tools/shared/projectSettings";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { ComposerDraftWorkspaceSelection } from "../../state/use-composer-drafts";
 
 type WorkspaceMode = "local" | "worktree";
@@ -15,14 +19,17 @@ export function resolveNewTaskWorkspaceSelection(input: {
   return input.isGitRepo ? selection : { mode, branch: null, worktreePath: null };
 }
 
-export function resolveNewTaskWorkspaceLabel(input: {
-  readonly workspaceMode: WorkspaceMode;
-  readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+export function resolveNewTaskWorkspaceLabel(
+  input: {
+    readonly workspaceMode: WorkspaceMode;
+    readonly worktreePath: string | null;
+  },
+  resolve: MessageResolver = m,
+): string {
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return resolve(msg("New worktree"));
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath ? resolve(msg("Current worktree")) : resolve(msg("Current checkout"));
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {
@@ -83,18 +90,30 @@ export function resolveWorktreeSwitchBranch(input: {
   return input.worktreeBaseBranch === "" ? input.selectedBranch : null;
 }
 
-export function resolveNewTaskBranchLabel(input: {
-  readonly branchName: string | null;
-  readonly startFromOrigin: boolean;
-  readonly workspaceMode: WorkspaceMode;
-  readonly pullRequestReference?: string;
-}): string {
+export function resolveNewTaskBranchLabel(
+  input: {
+    readonly branchName: string | null;
+    readonly startFromOrigin: boolean;
+    readonly workspaceMode: WorkspaceMode;
+    readonly pullRequestReference?: string;
+  },
+  resolve: MessageResolver = m,
+): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
     const parsed = sourceControlClients.parseChangeRequestUrl(input.pullRequestReference);
-    if (parsed) return `From ${parsed.definition.changeRequest.shortLabel} #${parsed.link.number}`;
+    if (parsed)
+      return resolve(
+        msg(
+          "{term, select, mr {From MR #{number}} cr {From change request #{number}} other {From PR #{number}}}",
+          {
+            term: changeRequestTermKind(parsed.definition.changeRequest),
+            number: parsed.link.number,
+          },
+        ),
+      );
   }
   if (!input.branchName) {
-    return "Choose branch";
+    return resolve(msg("Choose branch"));
   }
 
   if (input.workspaceMode === "local") {
@@ -102,7 +121,9 @@ export function resolveNewTaskBranchLabel(input: {
   }
 
   // Only the server can determine a local branch's configured remote.
-  return input.startFromOrigin ? `From ${input.branchName} (remote)` : `From ${input.branchName}`;
+  return input.startFromOrigin
+    ? resolve(msg("From {branchName} (remote)", { branchName: input.branchName }))
+    : resolve(msg("From {branchName}", { branchName: input.branchName }));
 }
 
 export function shouldCheckoutNewTaskBranch(input: {

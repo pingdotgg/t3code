@@ -1,6 +1,8 @@
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, MessageId, ProjectId } from "@t3tools/contracts";
 
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../i18n/messages";
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import {
   isQueuedThreadCreationSendable,
@@ -45,12 +47,15 @@ function composerDraftHasUserContent(draft: ComposerDraft): boolean {
   return draft.text.trim().length > 0 || draft.attachments.length > 0;
 }
 
-function draftTitle(draft: ComposerDraft): string {
+function draftTitle(draft: ComposerDraft, resolve: MessageResolver): string {
   if (draft.text.trim().length > 0) {
     return deriveThreadTitleFromPrompt(draft.text);
   }
-  const count = draft.attachments.length;
-  return count === 1 ? "1 attachment" : `${count} attachments`;
+  return resolve(
+    msg("{count, plural, one {{count} attachment} other {{count} attachments}}", {
+      count: draft.attachments.length,
+    }),
+  );
 }
 
 /** A project's new-task defaults, as useNewTaskProjectDefaults resolves them. */
@@ -119,11 +124,15 @@ export function isQueuedCreationSending(
   );
 }
 
-export function buildPendingNewTasks(input: {
-  readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
-  readonly drafts: Readonly<Record<string, ComposerDraft>>;
-  readonly sendGate: ThreadOutboxSendGate;
-}): ReadonlyArray<PendingNewTask> {
+/** Render callers pass `useMessages()` so draft titles follow a language switch. */
+export function buildPendingNewTasks(
+  input: {
+    readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
+    readonly drafts: Readonly<Record<string, ComposerDraft>>;
+    readonly sendGate: ThreadOutboxSendGate;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<PendingNewTask> {
   const tasks: PendingNewTask[] = [];
   for (const message of input.queuedMessages) {
     // Listing a creation already being sent would flash an "Unsent" row.
@@ -155,7 +164,7 @@ export function buildPendingNewTasks(input: {
       projectId: draft.project.projectId,
       projectTitle: undefined,
       projectCwd: undefined,
-      title: draftTitle(draft),
+      title: draftTitle(draft, resolve),
       createdAt: draft.project.createdAt,
       draftKey,
       draft,
