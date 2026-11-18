@@ -79,6 +79,11 @@ const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
   truncated: Schema.Boolean,
+  held: Schema.optional(
+    Schema.Literal(true).annotate({
+      description: "Held after a failure or Stop until a user resumes the queue.",
+    }),
+  ),
 });
 const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {

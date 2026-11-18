@@ -362,7 +362,7 @@ export const layerExecutor: Layer.Layer<
                   Effect.gen(function* () {
                     if (
                       !isProviderTurnControlError(error) ||
-                      (!error.turnCompleted && !error.steerDeclined) ||
+                      (!error.turnCompleted && !error.steerDeclined && !error.turnFailed) ||
                       effect.request.type !== "provider-turn.steer"
                     ) {
                       return yield* error;
@@ -376,11 +376,13 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // A failed turn holds the queue, so its undelivered steer waits there too.
+                    const followsRun = error.steerDeclined === true || error.turnFailed === true;
                     // Notifications must be queued messages.
                     const queued =
                       message.delegatedCompletion !== undefined ||
                       message.notification !== undefined ||
-                      error.steerDeclined === true;
+                      followsRun;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -388,9 +390,8 @@ export const layerExecutor: Layer.Layer<
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,
-                        ...(error.steerDeclined ? { steerFollowUpOfRunId: run.id } : {}),
-                        ...(error.steerDeclined &&
-                        effect.request.steerFollowUpAfterRunOrdinal !== undefined
+                        ...(followsRun ? { steerFollowUpOfRunId: run.id } : {}),
+                        ...(followsRun && effect.request.steerFollowUpAfterRunOrdinal !== undefined
                           ? {
                               steerFollowUpAfterRunOrdinal:
                                 effect.request.steerFollowUpAfterRunOrdinal,

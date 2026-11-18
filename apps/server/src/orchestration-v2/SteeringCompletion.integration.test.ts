@@ -2759,6 +2759,197 @@ it.effect("queues a restart sent into a provider turn that failed before its run
   }),
 );
 
+// regression: #22423 a steer accepted into a turn that then fails is left on the failed run
+it.effect.each([
+  { offered: false, title: "before it reaches the provider" },
+  { offered: true, title: "after the provider took it unread" },
+] as const)("re-sends a steer whose provider turn fails $title", ({ offered }) =>
+  Effect.gen(function* () {
+    const providerEvents: { queue?: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event> } = {};
+    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      `steer-after-failed-${offered ? "offered" : "unoffered"}`,
+      false,
+      true,
+      Effect.void,
+      true,
+      undefined,
+      (turn) =>
+        offered
+          ? Queue.offer(providerEvents.queue!, {
+              type: "steer.updated",
+              driver,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              messageId: turn.message.messageId,
+              status: "pending",
+            }).pipe(Effect.asVoid)
+          : Effect.fail(
+              new ProviderAdapter.ProviderAdapterSteerRunError({
+                driver,
+                providerThreadId: turn.providerThread.id,
+                providerTurnId: turn.providerTurnId,
+              }),
+            ),
+    );
+    providerEvents.queue = events;
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const first = started[0]!;
+      const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+      const messageId = MessageId.make("message:steer-into-failed");
+      const steerPending = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.type === "user_message" &&
+            event.payload.messageId === messageId &&
+            event.payload.status === "pending",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const queuedMessageId = MessageId.make("message:queued-before-steer");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("queued-before-steer"),
+        threadId,
+        messageId: queuedMessageId,
+        text: "queued first",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("steer-into-failed"),
+        threadId,
+        messageId,
+        text: "follow up",
+        attachments: [],
+        dispatchMode: { type: "steer_active", targetRunId: first.runId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      if (offered) {
+        yield* worker.drain();
+        yield* Fiber.join(steerPending);
+      }
+      const turnFailed = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider-turn.updated" &&
+            event.payload.id === turn.id &&
+            event.payload.status === "failed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const failedAt = yield* DateTime.now;
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: { ...turn, status: "failed", completedAt: failedAt },
+      });
+      yield* Fiber.join(turnFailed);
+      yield* worker.drain().pipe(Effect.ignore);
+
+      const runEnded = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            event.payload.status === "failed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      // The failure holds the queue; the re-sent steer joins it behind the message sent first.
+      const resent = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            (event.type === "run.created" || event.type === "run.updated") &&
+            event.payload.userMessageId === messageId &&
+            event.payload.id !== first.runId &&
+            event.payload.status === "queued" &&
+            event.payload.queueHeld === true,
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      if (offered) {
+        yield* Queue.offer(events, {
+          type: "steer.updated",
+          driver,
+          threadId,
+          runId: first.runId,
+          messageId,
+          status: "cancelled",
+        });
+      }
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.id,
+        runOrdinal: first.runOrdinal,
+        failureItemOrdinal: 100,
+        status: "failed",
+        failure: {
+          class: "provider_error",
+          message: "Provider process exited",
+          code: null,
+          retryable: null,
+        },
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(runEnded);
+      yield* Fiber.join(resent);
+      yield* worker.drain().pipe(Effect.ignore);
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.runs
+          .filter((run) => run.id !== first.runId)
+          .toSorted((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0))
+          .map((run) => [run.userMessageId, run.status, run.queueHeld]),
+        [
+          [queuedMessageId, "queued", true],
+          [messageId, "queued", true],
+        ],
+      );
+      assert.equal(started.length, 1);
+
+      // A retried steer effect re-dispatching from the message's new run must not run it twice.
+      const resentRun = projection.runs.find((run) => run.userMessageId === messageId)!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("steer-follow-up-again"),
+        threadId,
+        messageId,
+        steerFollowUpOfRunId: resentRun.id,
+        text: "follow up",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.filter(
+          (run) => run.userMessageId === messageId,
+        ).length,
+        1,
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
   Effect.gen(function* () {
     const interruptReached = yield* Deferred.make<void>();

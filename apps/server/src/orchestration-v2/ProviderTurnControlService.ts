@@ -41,6 +41,7 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
+    turnFailed: Schema.optional(Schema.Boolean),
     steerDeclined: Schema.optional(Schema.Boolean),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
@@ -172,6 +173,7 @@ export const layer: Layer.Layer<
             operation: "steer",
             providerTurnId: input.providerTurnId,
             turnCompleted: providerTurn.status === "completed",
+            turnFailed: providerTurn.status === "failed",
             cause: "The provider turn ended before the steering message was delivered.",
           });
         }
@@ -504,6 +506,7 @@ export const layer: Layer.Layer<
                     operation: "steer",
                     providerTurnId: input.providerTurnId,
                     turnCompleted: status === "completed",
+                    turnFailed: status === "failed",
                     cause,
                   });
                 }),

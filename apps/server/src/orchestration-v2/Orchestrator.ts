@@ -6846,6 +6846,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
         source === undefined ||
+        // Already re-sent as its own run; a second follow-up would run it twice.
+        source.userMessageId === command.messageId ||
         command.dispatchMode.type !== "queue_after_active" ||
         !projection.messages.some(
           (message) => message.id === command.messageId && message.runId === source.id,
@@ -7540,7 +7542,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    // A steer re-sent after its run failed joins the queue that failure held, in send order.
+    const heldSteerSourceRun =
+      activeRun === undefined &&
+      command.steerFollowUpOfRunId !== undefined &&
+      projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        ? projection.runs.find((run) => run.id === command.steerFollowUpOfRunId)
+        : undefined;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? heldSteerSourceRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -15822,6 +15831,66 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : dispatch;
   });
 
+  /** Steers a failed turn took but never read are sent again, each as its own run. */
+  const resendUndeliveredSteers = Effect.fn("Orchestrator.resendUndeliveredSteers")(function* (
+    failedRun: OrchestrationV2Run,
+  ) {
+    const threadId = failedRun.threadId;
+    const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["user_message"],
+      turnItemRunIds: [failedRun.id],
+    });
+    const undelivered = turnItems.flatMap((item) =>
+      item.type === "user_message" &&
+      item.messageId !== failedRun.userMessageId &&
+      (item.status === "pending" || item.status === "cancelled")
+        ? [item.messageId]
+        : [],
+    );
+    if (undelivered.length === 0) return;
+    const { messages, runs } = yield* projectionStore.getThreadRecords(
+      threadId,
+      ["messages", "runs"],
+      { messageIds: undelivered },
+    );
+    for (const message of messages) {
+      if (
+        message.runId !== failedRun.id ||
+        message.delegatedCompletion !== undefined ||
+        isBufferedProviderNotification(message)
+      )
+        continue;
+      yield* dispatchWithReceipt({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:system:steer-after-failure:${message.id}`),
+        threadId,
+        messageId: message.id,
+        steerFollowUpOfRunId: failedRun.id,
+        // Keep send order: after every run that existed when the steer was sent.
+        steerFollowUpAfterRunOrdinal: Math.max(
+          0,
+          ...runs
+            .filter((candidate) =>
+              DateTime.isLessThanOrEqualTo(candidate.requestedAt, message.createdAt),
+            )
+            .map((candidate) => candidate.ordinal),
+        ),
+        text: message.text,
+        ...(message.context ? { context: message.context } : {}),
+        attachments: message.attachments,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: message.createdBy,
+        creationSource: message.creationSource,
+        ...(message.notification === undefined ? {} : { notification: message.notification }),
+        ...(message.scheduledTaskId === undefined
+          ? {}
+          : { scheduledTaskId: message.scheduledTaskId }),
+        ...(message.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+        ...(message.linkedSender === undefined ? {} : { linkedSender: message.linkedSender }),
+      });
+    }
+  });
+
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
@@ -15867,6 +15936,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
             ),
           );
+        // After the queue decides, so a released queue keeps its order ahead of the steer.
+        if (run.status === "failed") {
+          yield* resendUndeliveredSteers(run).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to re-send steers dropped by a failed run", {
+                threadId,
+                runId: run.id,
+                cause,
+              }),
+            ),
+          );
+        }
       }
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId !== undefined) {
