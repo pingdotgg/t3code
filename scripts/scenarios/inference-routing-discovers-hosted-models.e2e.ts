@@ -157,7 +157,7 @@ test(
       await astraRow.scrollIntoView();
       await app.screenshot("hosted-models-after-refresh");
 
-      await app.open("/");
+      await browser.keyboard.press("Escape");
       await screen.getByRole("button", "New thread", { exact: true }).tap();
       await screen.getByRole("option", /Hosted models/).tap();
       await expect(browser).toHaveURL(/\/draft\//);
@@ -165,6 +165,8 @@ test(
       const picker = browser.locator("[data-chat-provider-model-picker]");
       const astraOption = screen.getByRole("option", /gpt-6\.2-astra/i);
       const openPicker = async () => {
+        await expect(picker).toBeVisible();
+        await expect(screen.getByRole("button", "Environment disconnected")).toBeHidden();
         await picker.tap();
         await screen.getByPlaceholder("Search models...").fill("6.2");
       };
