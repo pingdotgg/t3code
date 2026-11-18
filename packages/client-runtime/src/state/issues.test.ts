@@ -126,6 +126,37 @@ describe("createIssueCommentPager", () => {
       registry.dispose();
     }
   });
+
+  it("stops loading once a refresh ends, even while the page it dropped is still in flight", async () => {
+    const detail = Atom.make(
+      AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
+    );
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    const page = AsyncResult.success<IssueCommentsPage>({
+      comments: [comment("older")],
+      nextCursor: null,
+    });
+    try {
+      const stale = Promise.withResolvers<typeof page>();
+      const abandoned = pager.loadOlder(registry, () => stale.promise);
+      await pager.refresh(registry, async () => {});
+      expect(registry.get(pager.view)).toMatchObject({ loadingOlder: false, canLoadOlder: true });
+
+      const fresh = Promise.withResolvers<typeof page>();
+      const current = pager.loadOlder(registry, () => fresh.promise);
+      stale.resolve(page);
+      await abandoned;
+      expect(registry.get(pager.view).loadingOlder).toBe(true);
+      fresh.resolve(page);
+      await current;
+      expect(registry.get(pager.view)).toMatchObject({ loadingOlder: false, nextCursor: null });
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
 });
 
 describe("createMergedIssueCandidatesAtoms", () => {
