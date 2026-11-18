@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, other {{started} 件のレビューガイドを開始しようとしました。{failed} 件失敗しました}}",
   "672850007e49cfb6": "{started, plural, other {{started} 件のレビューガイドを開始しました}}",
   "5dce4a54eaffeccf": "{started, plural, other {{started} 件のレビューガイドを開始しようとしました}}",
-  "83570ea312582bc8": "{kilobytes} KB（約 {characters} 文字）",
+  "c62d732adb53f0ab": "{kilobytes} KB（約 {characters, number} 文字）",
   "420bea546d5f8802": "スレッドをコピーしました",
   "2efb2dd3bf170f67": "スレッドをコピーできませんでした",
   "6c03545936b55e0b": "PR のリンクをコピーしました",

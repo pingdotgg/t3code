@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, other {尝试开始 {started} 份审查导览，{failed} 份失败}}",
   "672850007e49cfb6": "{started, plural, other {已开始 {started} 份审查导览}}",
   "5dce4a54eaffeccf": "{started, plural, other {尝试开始 {started} 份审查导览}}",
-  "83570ea312582bc8": "{kilobytes} KB（约 {characters} 个字符）",
+  "c62d732adb53f0ab": "{kilobytes} KB（约 {characters, number} 个字符）",
   "420bea546d5f8802": "已复制会话",
   "2efb2dd3bf170f67": "无法复制会话",
   "6c03545936b55e0b": "已复制 PR 链接",
@@ -3234,8 +3234,8 @@
     },
     "。"
   ],
-  "ab73b90398e6771b": [
-    "较短的粘贴内容会作为文字进入消息。非拉丁文字和表情符号每个字符占用更多字节，因此会更早达到上限。使用硬件键盘时，按 ",
+  "ac88b5819c86bc5b": [
+    "较短的粘贴内容在消息容纳得下时会作为文字进入消息。非拉丁文字和表情符号每个字符占用更多字节，因此会更早达到上限。使用硬件键盘时，按 ",
     {
       "i": 1,
       "k": "_gt_value_1",

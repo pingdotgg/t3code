@@ -108,8 +108,8 @@ export function SettingsFollowUpRouteScreen() {
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         <T>
-          Shorter pastes go into the message as text. Non-Latin text and emoji use more bytes per
-          character, so they reach the limit sooner. With a hardware keyboard, press{" "}
+          Shorter pastes go into the message as text when they fit. Non-Latin text and emoji use
+          more bytes per character, so they reach the limit sooner. With a hardware keyboard, press{" "}
           <Var>{PASTE_AS_TEXT_SHORTCUT}</Var> to paste a long block as text instead.
         </T>
       </Text>

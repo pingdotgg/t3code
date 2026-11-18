@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tentative de lancer {started} guide de revue, {failed} en échec} other {Tentative de lancer {started} guides de revue, {failed} en échec}}",
   "672850007e49cfb6": "{started, plural, one {{started} guide de revue lancé} other {{started} guides de revue lancés}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tentative de lancer {started} guide de revue} other {Tentative de lancer {started} guides de revue}}",
-  "83570ea312582bc8": "{kilobytes} Ko (~{characters} caractères)",
+  "c62d732adb53f0ab": "{kilobytes} Ko (~{characters, number} caractères)",
   "420bea546d5f8802": "Fil copié",
   "2efb2dd3bf170f67": "Échec de la copie du fil",
   "6c03545936b55e0b": "Lien de la PR copié",

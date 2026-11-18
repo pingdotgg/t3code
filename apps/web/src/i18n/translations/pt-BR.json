@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tentou iniciar {started} guia de revisão, {failed} com falha} other {Tentou iniciar {started} guias de revisão, {failed} com falha}}",
   "672850007e49cfb6": "{started, plural, one {Iniciou {started} guia de revisão} other {Iniciou {started} guias de revisão}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tentou iniciar {started} guia de revisão} other {Tentou iniciar {started} guias de revisão}}",
-  "83570ea312582bc8": "{kilobytes} KB (~{characters} caracteres)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} caracteres)",
   "420bea546d5f8802": "Thread copiada",
   "2efb2dd3bf170f67": "Falha ao copiar a thread",
   "6c03545936b55e0b": "Link do PR copiado",

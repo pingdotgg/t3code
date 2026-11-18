@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tried to start {started} review guide, {failed} failed} other {Tried to start {started} review guides, {failed} failed}}",
   "672850007e49cfb6": "{started, plural, one {Started {started} review guide} other {Started {started} review guides}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tried to start {started} review guide} other {Tried to start {started} review guides}}",
-  "83570ea312582bc8": "{kilobytes} KB (~{characters} chars)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} chars)",
   "420bea546d5f8802": "Thread copied",
   "2efb2dd3bf170f67": "Failed to copy thread",
   "6c03545936b55e0b": "PR link copied",
@@ -3238,8 +3238,8 @@
     },
     " while sending."
   ],
-  "ab73b90398e6771b": [
-    "Shorter pastes go into the message as text. Non-Latin text and emoji use more bytes per character, so they reach the limit sooner. With a hardware keyboard, press",
+  "ac88b5819c86bc5b": [
+    "Shorter pastes go into the message as text when they fit. Non-Latin text and emoji use more bytes per character, so they reach the limit sooner. With a hardware keyboard, press",
     " ",
     {
       "i": 1,

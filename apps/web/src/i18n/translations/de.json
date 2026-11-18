@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Versucht, {started} Review-Leitfaden zu starten, {failed} fehlgeschlagen} other {Versucht, {started} Review-Leitfäden zu starten, {failed} fehlgeschlagen}}",
   "672850007e49cfb6": "{started, plural, one {{started} Review-Leitfaden gestartet} other {{started} Review-Leitfäden gestartet}}",
   "5dce4a54eaffeccf": "{started, plural, one {Versucht, {started} Review-Leitfaden zu starten} other {Versucht, {started} Review-Leitfäden zu starten}}",
-  "83570ea312582bc8": "{kilobytes} KB (~{characters} Zeichen)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} Zeichen)",
   "420bea546d5f8802": "Thread kopiert",
   "2efb2dd3bf170f67": "Thread konnte nicht kopiert werden",
   "6c03545936b55e0b": "PR-Link kopiert",

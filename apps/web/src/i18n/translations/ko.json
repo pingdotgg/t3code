@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, other {검토 가이드 {started}개 시작 시도함, {failed}개 실패}}",
   "672850007e49cfb6": "{started, plural, other {검토 가이드 {started}개 시작함}}",
   "5dce4a54eaffeccf": "{started, plural, other {검토 가이드 {started}개 시작 시도함}}",
-  "83570ea312582bc8": "{kilobytes} KB(약 {characters}자)",
+  "c62d732adb53f0ab": "{kilobytes} KB(약 {characters, number}자)",
   "420bea546d5f8802": "스레드 복사됨",
   "2efb2dd3bf170f67": "스레드를 복사하지 못했습니다",
   "6c03545936b55e0b": "PR 링크 복사됨",

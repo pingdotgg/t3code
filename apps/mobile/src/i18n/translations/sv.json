@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Försökte starta {started} granskningsguide, {failed} misslyckades} other {Försökte starta {started} granskningsguider, {failed} misslyckades}}",
   "672850007e49cfb6": "{started, plural, one {Startade {started} granskningsguide} other {Startade {started} granskningsguider}}",
   "5dce4a54eaffeccf": "{started, plural, one {Försökte starta {started} granskningsguide} other {Försökte starta {started} granskningsguider}}",
-  "83570ea312582bc8": "{kilobytes} kB (~{characters} tecken)",
+  "c62d732adb53f0ab": "{kilobytes} kB (~{characters, number} tecken)",
   "420bea546d5f8802": "Tråden kopierades",
   "2efb2dd3bf170f67": "Det gick inte att kopiera tråden",
   "6c03545936b55e0b": "PR-länken kopierades",
@@ -3238,8 +3238,8 @@
     },
     " när du skickar."
   ],
-  "ab73b90398e6771b": [
-    "Kortare inklistringar hamnar som text i meddelandet. Icke-latinsk text och emojier tar fler byte per tecken och når gränsen därför tidigare. Med ett fysiskt tangentbord trycker du på ",
+  "ac88b5819c86bc5b": [
+    "Kortare inklistringar hamnar som text i meddelandet om de får plats. Icke-latinsk text och emojier tar fler byte per tecken och når gränsen därför tidigare. Med ett fysiskt tangentbord trycker du på ",
     {
       "i": 1,
       "k": "_gt_value_1",

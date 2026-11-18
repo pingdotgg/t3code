@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Intentó iniciar {started} guía de revisión, {failed} con errores} other {Intentó iniciar {started} guías de revisión, {failed} con errores}}",
   "672850007e49cfb6": "{started, plural, one {Inició {started} guía de revisión} other {Inició {started} guías de revisión}}",
   "5dce4a54eaffeccf": "{started, plural, one {Intentó iniciar {started} guía de revisión} other {Intentó iniciar {started} guías de revisión}}",
-  "83570ea312582bc8": "{kilobytes} KB (~{characters} caracteres)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} caracteres)",
   "420bea546d5f8802": "Hilo copiado",
   "2efb2dd3bf170f67": "No se pudo copiar el hilo",
   "6c03545936b55e0b": "Enlace de la PR copiado",
@@ -3232,8 +3232,8 @@
     },
     " al enviar."
   ],
-  "ab73b90398e6771b": [
-    "Los pegados más cortos entran en el mensaje como texto. El texto no latino y los emojis ocupan más bytes por carácter, así que alcanzan el límite antes. Con un teclado físico, pulsa ",
+  "ac88b5819c86bc5b": [
+    "Los pegados más cortos entran en el mensaje como texto si caben. El texto no latino y los emojis ocupan más bytes por carácter, así que alcanzan el límite antes. Con un teclado físico, pulsa ",
     {
       "i": 1,
       "k": "_gt_value_1",

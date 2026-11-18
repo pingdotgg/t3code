@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tentative de lancer {started} guide de revue, {failed} en échec} other {Tentative de lancer {started} guides de revue, {failed} en échec}}",
   "672850007e49cfb6": "{started, plural, one {{started} guide de revue lancé} other {{started} guides de revue lancés}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tentative de lancer {started} guide de revue} other {Tentative de lancer {started} guides de revue}}",
-  "83570ea312582bc8": "{kilobytes} Ko (~{characters} caractères)",
+  "c62d732adb53f0ab": "{kilobytes} Ko (~{characters, number} caractères)",
   "420bea546d5f8802": "Fil copié",
   "2efb2dd3bf170f67": "Échec de la copie du fil",
   "6c03545936b55e0b": "Lien de la PR copié",
@@ -3232,8 +3232,8 @@
     },
     " pendant l’envoi."
   ],
-  "ab73b90398e6771b": [
-    "Les collages plus courts sont insérés dans le message sous forme de texte. Les textes non latins et les émojis occupent plus d’octets par caractère et atteignent donc la limite plus tôt. Avec un clavier physique, appuyez sur ",
+  "ac88b5819c86bc5b": [
+    "Les collages plus courts sont insérés dans le message sous forme de texte s’ils y tiennent. Les textes non latins et les émojis occupent plus d’octets par caractère et atteignent donc la limite plus tôt. Avec un clavier physique, appuyez sur ",
     {
       "i": 1,
       "k": "_gt_value_1",

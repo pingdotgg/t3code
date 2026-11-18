@@ -306,7 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Intentó iniciar {started} guía de revisión, {failed} con errores} other {Intentó iniciar {started} guías de revisión, {failed} con errores}}",
   "672850007e49cfb6": "{started, plural, one {Inició {started} guía de revisión} other {Inició {started} guías de revisión}}",
   "5dce4a54eaffeccf": "{started, plural, one {Intentó iniciar {started} guía de revisión} other {Intentó iniciar {started} guías de revisión}}",
-  "83570ea312582bc8": "{kilobytes} KB (~{characters} caracteres)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} caracteres)",
   "420bea546d5f8802": "Hilo copiado",
   "2efb2dd3bf170f67": "No se pudo copiar el hilo",
   "6c03545936b55e0b": "Enlace de la PR copiado",
