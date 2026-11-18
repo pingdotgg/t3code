@@ -50,6 +50,7 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -666,6 +667,15 @@ export function IssueDetailPanel({
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>
           </PullRequestDetailTitleRow>
+
+          {detailQuery.error !== null && !detailQuery.isPending ? (
+            <div className="mt-2">
+              <Alert variant="error">
+                <AlertTitle>{gt("Could not refresh this issue")}</AlertTitle>
+                <AlertDescription>{detailQuery.error}</AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
 
           {editing === "title" ? (
             <form
