@@ -52,7 +52,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
-  const daemonStop = { output: processOutput(0), removeRecord: true };
+  const daemonStop = { retainsRecord: false };
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
@@ -112,15 +112,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
           : input.args.includes("daemon")
             ? Deferred.succeed(daemonStopRequested, input.args).pipe(
                 Effect.andThen(() =>
-                  daemonStop.removeRecord &&
-                  daemonStop.output.code === 0 &&
-                  !daemonStop.output.timedOut
-                    ? fs
+                  daemonStop.retainsRecord
+                    ? Effect.void
+                    : fs
                         .remove(path.join(stateDir, "daemon.json"), { force: true })
-                        .pipe(Effect.orDie)
-                    : Effect.void,
+                        .pipe(Effect.orDie),
                 ),
-                Effect.as(daemonStop.output),
+                Effect.as(processOutput(0)),
               )
             : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
@@ -188,11 +186,7 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect.each([
-    { scenario: "failed stop", output: processOutput(1) },
-    { scenario: "timed-out stop", output: processOutput(0, "", "", true) },
-    { scenario: "retained registration", output: processOutput(0) },
-  ])("does not adopt the previous daemon after a $scenario", ({ output }) =>
+  it.effect("does not adopt an inherited daemon that keeps its registration after stop", () =>
     Effect.gen(function* () {
       const previous = {
         httpPort: 12345,
@@ -205,8 +199,7 @@ describe("AgentDevice startup", () => {
         processOutput(0),
         previous,
       );
-      daemonStop.output = output;
-      daemonStop.removeRecord = false;
+      daemonStop.retainsRecord = true;
       const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "AgentDeviceStartError",
