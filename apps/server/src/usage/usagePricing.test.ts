@@ -75,6 +75,14 @@ describe("usage pricing", () => {
     });
   });
 
+  it("falls back to the display model when the rate model is unlisted", () => {
+    const table = parseRateTable({ "example-model": rate(1e-6, 0.1e-6) });
+    const unlisted = { ...record("example-model"), rateModel: "reseller/example-model" };
+
+    expect(priceUsage(table, unlisted)).toEqual(priceUsage(table, record("example-model")));
+    expect(cacheSavingsUsd(table, unlisted)).toBeCloseTo(0.9);
+  });
+
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
     const table = parseRateTable({});
     const overrides = createOverrideRateTable({

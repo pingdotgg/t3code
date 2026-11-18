@@ -89,6 +89,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       width = 300;
       height = 150;
       value = "";
+      children: TerminalTestElement[] = [];
       private readonly captures = new Set<number>();
 
       setAttribute() {}
@@ -96,6 +97,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         for (const child of children) child.parentElement = this;
       }
       replaceChildren(...children: TerminalTestElement[]) {
+        this.children = children;
         this.append(...children);
       }
       remove() {
@@ -105,6 +107,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         return context;
       }
       focus() {
+        fakeDocument.activeElement = this;
         this.dispatchEvent(new Event("focus"));
       }
       setPointerCapture(pointerId: number) {
@@ -142,10 +145,12 @@ describe("GhosttyTerminalSurface visibility", () => {
         actualBoundingBoxDescent: 3,
       }),
     };
-    vi.stubGlobal("document", {
+    const fakeDocument = {
+      activeElement: null as TerminalTestElement | null,
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
-    });
+    };
+    vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal(
       "window",
       Object.assign(new EventTarget(), {
@@ -244,6 +249,8 @@ describe("GhosttyTerminalSurface visibility", () => {
             cursor: { r: 255, g: 255, b: 255 },
           },
           onData,
+          onBinary() {},
+          onReply: onData,
           onResize() {},
           onSelectionChange() {},
           beforeKey: () => false,
@@ -284,6 +291,39 @@ describe("GhosttyTerminalSurface visibility", () => {
       "\x1b[F",
     ]);
     expect(surface.hasSelection()).toBe(false);
+  });
+
+  it("copies on Ctrl+Shift+C when a non-Latin layout reports another letter on KeyC", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    Object.assign(surface.input, { select() {} });
+    const execCommand = vi.fn(() => true);
+    Object.assign(document, { execCommand });
+    surface.write("SELECTED_OUTPUT");
+    surface.selectAll();
+    // Russian layout: Cyrillic Es (U+0421) on the physical C key.
+    key(surface, "С", "KeyC", { ctrlKey: true, shiftKey: true });
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
+  it("skips middle-click selection paste when the desktop turned primary paste off", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("echo hi");
+    surface.selectAll();
+    const pasteFromClipboard = vi.spyOn(surface, "pasteFromClipboard");
+
+    let primaryPasteEnabled = false;
+    Object.assign(window, { desktopBridge: { getPrimaryPasteEnabled: () => primaryPasteEnabled } });
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).not.toHaveBeenCalled();
+
+    primaryPasteEnabled = true;
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).toHaveBeenCalledOnce();
   });
 
   it("leaves modified history keys with alternate-screen applications", async () => {
@@ -365,6 +405,39 @@ describe("GhosttyTerminalSurface visibility", () => {
       "\x1b[97;1:2u",
       "\x1b[97;1:3u",
     ]);
+  });
+
+  it("reports focus transitions only while DEC 1004 is enabled", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    const blur = () => surface.input.dispatchEvent(new Event("blur"));
+    const reports = () => harness.onData.mock.calls.map(([data]) => data);
+
+    surface.write("\x1b[?1004h");
+    surface.focus();
+    surface.focus();
+    blur();
+    blur();
+    expect(reports()).toEqual(["\x1b[I", "\x1b[O"]);
+
+    harness.onData.mockClear();
+    surface.write("\x1b[?1004l");
+    surface.focus();
+    blur();
+    expect(reports()).toEqual([]);
+  });
+
+  it("reports the blur of an input focused while the surface was still loading", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const pending = harness.create();
+    harness.mount.children[1]?.focus();
+    const surface = await pending;
+
+    surface.write("\x1b[?1004h");
+    surface.input.dispatchEvent(new Event("blur"));
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[O"]);
   });
 
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
@@ -702,7 +775,9 @@ describe("GhosttyTerminalSurface visibility", () => {
         return core;
       });
       let currentVisible = !visible;
+      const onReply = vi.fn();
       const pending = harness.create({
+        onReply,
         get visible() {
           return currentVisible;
         },
@@ -716,7 +791,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.snapshot).toHaveBeenCalledTimes(visible ? 1 : 0);
       if (!visible) expect(harness.paint).not.toHaveBeenCalled();
       surface.write("ready\x1b[5n");
-      expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+      expect(onReply).toHaveBeenCalledWith("\x1b[0n");
+      expect(harness.onData).not.toHaveBeenCalled();
       if (!visible) {
         expect(harness.frames.size).toBe(0);
         surface.setVisible(true);
@@ -900,6 +976,8 @@ describe("terminalLinkAtPositionWithRange", () => {
 
 describe("isTerminalCopyShortcut", () => {
   const event = (overrides: Partial<Parameters<typeof isTerminalCopyShortcut>[0]> = {}) => ({
+    altKey: false,
+    code: "KeyC",
     ctrlKey: false,
     key: "c",
     metaKey: false,
@@ -983,19 +1061,24 @@ describe("isTerminalCompositionKey", () => {
 
 describe("application mouse reporting", () => {
   it("drops repeated motion reports until another mouse action resets the cell", () => {
-    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
-    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+    const data = "\u001b[<35;8;4M";
+    const report = { data, binary: false };
+    const first = resolveTerminalMouseData("motion", report, null);
+    expect(first).toEqual({ send: true, nextMotionData: report });
 
-    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
-    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+    const duplicate = resolveTerminalMouseData("motion", report, first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: report });
 
-    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
-    expect(press).toEqual({ send: true, nextMotionData: "" });
+    const press = resolveTerminalMouseData("press", report, duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: null });
+    expect(resolveTerminalMouseData("motion", report, press.nextMotionData).send).toBe(true);
 
-    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
-      send: true,
-      nextMotionData: "\u001b[<35;8;4M",
-    });
+    const legacy = { data: "\x1b[M@\x80$", binary: true };
+    const utf8 = { ...legacy, binary: false };
+    const legacyMotion = resolveTerminalMouseData("motion", legacy, null);
+    const utf8Motion = resolveTerminalMouseData("motion", utf8, legacyMotion.nextMotionData);
+    expect(utf8Motion.send).toBe(true);
+    expect(resolveTerminalMouseData("motion", legacy, utf8Motion.nextMotionData).send).toBe(true);
   });
 });
 

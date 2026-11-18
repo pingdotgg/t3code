@@ -7,6 +7,8 @@ import {
 import { copySorted } from "@t3tools/shared/Array";
 import { isSlashCommandText, modelSelectionsEqual } from "@t3tools/shared/model";
 import { mergeQueuedMessages } from "@t3tools/shared/queuedMessageMerge";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -45,7 +47,7 @@ export interface ThreadQueueWorkflowState {
   readonly sendEachBlockedReason: string | null;
 }
 
-const SEND_NOT_NOW_REASON = "The current turn can't take messages right now.";
+const SEND_NOT_NOW_REASON = msg("The current turn can't take messages right now.");
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
@@ -115,14 +117,14 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   if (resolveActiveThreadRun(projection) !== null) return false;
   if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
 
-  // Detaching a stopped session removes it from the projection, but its native
-  // provider thread remains available for the next turn's portable handoff.
+  // Detaching a stopped session removes it from the projection. The server still
+  // hands off from saved app history, which needs the source provider thread but
+  // not its native ref.
   return projection.providerThreads.some(
     (thread) =>
       thread.id === projection.thread.activeProviderThreadId &&
       thread.appThreadId === projection.thread.id &&
-      thread.providerInstanceId === projection.thread.modelSelection.instanceId &&
-      thread.nativeThreadRef !== null,
+      thread.providerInstanceId === projection.thread.modelSelection.instanceId,
   );
 }
 
@@ -142,7 +144,10 @@ export function getUserQueuedThreadRuns(
   );
 }
 
-export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
+export function deriveThreadQueueWorkflowState(
+  projection: Projection,
+  resolve: MFunctionType = mFallback,
+): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
@@ -178,7 +183,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       return {
         run,
         // A queued guest message shows the guest's words; the agent still gets the attributed text.
-        text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+        text: message?.context?.guest?.text ?? message?.text ?? resolve(msg("Queued message")),
         attachments: message?.attachments ?? [],
         messageId: run.userMessageId,
         ...(message?.context ? { context: message.context } : {}),
@@ -210,6 +215,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canPromoteToSteer,
     promoteSkipsCompaction,
     capabilities,
+    resolve,
   });
 
   return {
@@ -220,13 +226,13 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canPromoteToSteer,
     promoteSkipsCompaction,
     sendAsOneBlockedReason: !queueIsContiguous
-      ? "A notification is waiting between these messages."
+      ? resolve(msg("A notification is waiting between these messages."))
       : merged._tag === "Blocked"
         ? merged.reason
         : canSendNow || promoteSkipsCompaction
           ? null
           : !canPromoteToSteer
-            ? SEND_NOT_NOW_REASON
+            ? resolve(SEND_NOT_NOW_REASON)
             : capabilities?.supportsSteeringByInterruptRestart === true
               ? null
               : steerEachBlockedReason,
@@ -244,12 +250,15 @@ function resolveSteerEachBlockedReason(input: {
   readonly canPromoteToSteer: boolean;
   readonly promoteSkipsCompaction: boolean;
   readonly capabilities: ProviderSession["capabilities"]["turns"] | undefined;
+  readonly resolve: MFunctionType;
 }): string | null {
-  const { activeRun, capabilities } = input;
-  if (!input.canPromoteToSteer || activeRun === null) return SEND_NOT_NOW_REASON;
-  if (input.promoteSkipsCompaction) return "Send them as one to skip the compaction.";
+  const { activeRun, capabilities, resolve } = input;
+  if (!input.canPromoteToSteer || activeRun === null) return resolve(SEND_NOT_NOW_REASON);
+  if (input.promoteSkipsCompaction) return resolve(msg("Send them as one to skip the compaction."));
   if (capabilities?.supportsActiveSteering !== true) {
-    return "This agent restarts its turn for every message. Send them as one instead.";
+    return resolve(
+      msg("This agent restarts its turn for every message. Send them as one instead."),
+    );
   }
   const joinsRunningTurn = ({ run, message, attachments }: QueuedThreadRun) =>
     run.freshContext !== true &&
@@ -258,7 +267,7 @@ function resolveSteerEachBlockedReason(input: {
     (attachments.length === 0 || capabilities.activeSteeringAcceptsAttachments !== false);
   return input.queuedRuns.every(joinsRunningTurn)
     ? null
-    : "Some queued messages can't join the current turn.";
+    : resolve(msg("Some queued messages can't join the current turn."));
 }
 
 export function canForkProjectedAssistantItem(input: {
