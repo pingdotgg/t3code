@@ -209,7 +209,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
-  agentId = "claude-acp",
+  agentId: string | Record<string, unknown> = "claude-acp",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -251,7 +251,9 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
+    settings: yield* decodeAcpRegistryAdapterSettings(
+      typeof agentId === "string" ? { agentId } : agentId,
+    ),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
@@ -287,7 +289,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -1994,6 +1996,81 @@ describe("AcpRegistryAdapterV2", () => {
       const continuation = yield* session.until((event) => event.type === "turn.terminal");
       assert.include(JSON.stringify(continuation), "Agent 1 finished");
       assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // regression: #38599 Hermes replies on its own when a background process it started exits
+  it.effect("does not drop Hermes' reply after a background process finishes", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["process-exit"]);
+      const sessionId = "hermes-session";
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "hermes-agent", version: "0.23.1" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Started it in the background." },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "The background command printed DONE" },
+            }),
+            label: "process-exit",
+          },
+          update({ sessionUpdate: "session_info_update", title: "after completion reply" }),
+        ],
+        gate,
+        true,
+        { source: "local", commandPath: "hermes", commandArgs: ["acp"] },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(foreground.at(-1)), '"status":"completed"');
+      gate.release("process-exit");
+      const wake = yield* session.throughMarker("after completion reply");
+      assert.isTrue(
+        session.offers.length > 0 || JSON.stringify(wake).includes("printed DONE"),
+        "the completion reply is shown or opens a continuation run",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
