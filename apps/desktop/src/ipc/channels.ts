@@ -148,3 +148,10 @@ export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-lo
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
 
 export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";
+
+export const COMPUTER_HOST_PREPARE_CHANNEL = "desktop:computer-host-prepare";
+export const COMPUTER_HOST_FRAME_CHANNEL = "desktop:computer-host-frame";
+export const COMPUTER_HOST_DISCONNECT_CHANNEL = "desktop:computer-host-disconnect";
+export const COMPUTER_HOST_ANSWER_CHANNEL = "desktop:computer-host-answer";
+export const COMPUTER_HOST_CALL_CHANNEL = "desktop:computer-host-call";
+export const COMPUTER_PERMISSIONS_CHANNEL = "desktop:computer-permissions";

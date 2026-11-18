@@ -92,6 +92,7 @@ export default defineConfig({
         "src/snapShot/GlobalShiftShortcutWorker.ts",
         "src/snapShot/RegionSnapShotWorker.ts",
         "src/snapShot/SnapShotAccessibilityWorker.ts",
+        "src/computer/ComputerHostWorker.ts",
       ],
       clean: false,
       deps: {
