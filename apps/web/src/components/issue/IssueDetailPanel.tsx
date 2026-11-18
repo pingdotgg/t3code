@@ -38,7 +38,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { m } from "~/i18n/messages";
@@ -493,6 +493,8 @@ export function IssueDetailPanel({
   } | null>(null);
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // Counts refreshes, so a page asked for before one is not laid over the read that follows it.
+  const refreshes = useRef(0);
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
@@ -535,12 +537,14 @@ export function IssueDetailPanel({
 
   const loadOlder = async () => {
     if (nextCursor === null || loadingOlder) return;
+    const asked = refreshes.current;
     setLoadingOlder(true);
     const result = await loadComments({
       environmentId,
       input: { ...reference, cursor: nextCursor },
     });
     setLoadingOlder(false);
+    if (asked !== refreshes.current) return;
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
       return;
@@ -681,6 +685,7 @@ export function IssueDetailPanel({
               disabled={detailQuery.isPending}
               onClick={() => {
                 // Older pages are cached under the cursor, which a refresh can hand back unchanged.
+                refreshes.current += 1;
                 setOlder(null);
                 detailQuery.refresh();
               }}
