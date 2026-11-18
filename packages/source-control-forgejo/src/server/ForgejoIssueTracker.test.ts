@@ -331,7 +331,6 @@ describe("ForgejoIssueTracker", () => {
         scope: "acme/web",
         state: "open",
         involvement: "all",
-        viewer: "julius",
         labels: ["bug", "p1"],
         assignee: "theo",
         sort: "created",
