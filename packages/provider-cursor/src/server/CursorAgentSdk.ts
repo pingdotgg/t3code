@@ -137,6 +137,11 @@ export interface CursorAgentSdkSession {
    * run only from its first checkpoint on; before that the conversation lacks the run's request.
    */
   readonly runCheckpointed?: (runId?: string) => Effect.Effect<boolean, CursorAgentSdkRunnerError>;
+  /**
+   * Rewinds the conversation to just before the run after `runId`, as `cursor-agent` /rewind does.
+   * The open agent keeps its old conversation in memory, so reopen it before the next send.
+   */
+  readonly rewindAfterRun?: (runId: string) => Effect.Effect<void, CursorAgentSdkRunnerError>;
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
 }
 
@@ -275,6 +280,15 @@ export type CursorAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "agent.messages.list";
         readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.rewind";
+        readonly agentId: string;
+        readonly afterRunId: string;
       };
     }
   | {
@@ -834,6 +848,62 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             },
             catch: (cause) => runnerError(cause, "agent.run.get"),
           }),
+        rewindAfterRun: (runId) =>
+          log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: { type: "agent.rewind", agentId: agent.agentId, afterRunId: runId },
+          }).pipe(
+            Effect.andThen(
+              Effect.tryPromise({
+                try: async () => {
+                  const { store, checkpointStore } = await storeView();
+                  const runs: Array<RunRecord> = [];
+                  let cursor: string | undefined;
+                  do {
+                    const page = await store.listRuns(
+                      agent.agentId,
+                      cursor === undefined ? {} : { cursor },
+                    );
+                    runs.push(...page.items);
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
+                  const kept = runs.find((candidate) => candidate.runId === runId);
+                  if (kept === undefined) {
+                    throw new Error(`Cursor agent ${agent.agentId} has no run ${runId}.`);
+                  }
+                  const unwound = runs
+                    .filter((candidate) => candidate.turnNumber > kept.turnNumber)
+                    .toSorted((a, b) => a.turnNumber - b.turnNumber)[0];
+                  if (unwound === undefined) return;
+                  const anchor = unwound.startCheckpointRef?.blobId;
+                  if (anchor === undefined) {
+                    throw new Error(`Cursor run ${unwound.runId} has no starting checkpoint.`);
+                  }
+                  const blobStore = await checkpointStore.getBlobStore(agent.agentId);
+                  const getBlob =
+                    typeof blobStore === "object" && blobStore !== null
+                      ? Reflect.get(blobStore, "getBlob")
+                      : undefined;
+                  if (typeof getBlob !== "function") {
+                    throw new Error("Cursor's checkpoint store cannot read blobs.");
+                  }
+                  const bytes: unknown = await getBlob.call(
+                    blobStore,
+                    undefined,
+                    Buffer.from(anchor, "hex"),
+                  );
+                  if (!(bytes instanceof Uint8Array)) {
+                    throw new Error(`Cursor checkpoint ${anchor} is missing.`);
+                  }
+                  // Checkpoints are content-addressed, so re-saving the anchor's bytes moves the
+                  // agent's head back to that exact root, like cursor-agent's latestRootBlobId reset.
+                  await checkpointStore.saveCheckpoint(agent.agentId, { toBinary: () => bytes });
+                },
+                catch: (cause) => runnerError(cause, "agent.rewind"),
+              }),
+            ),
+          ),
         close: log({
           direction: "outgoing",
           stage: "decoded",

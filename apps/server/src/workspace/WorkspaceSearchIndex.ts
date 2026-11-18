@@ -526,13 +526,12 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
       maxOutputBytes: 16 * 1024 * 1024,
     })
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return new Set<string>();
-  return new Set(
-    result.stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0)
-      .map((entry) => trimDirectorySeparator(toPosixPath(entry, hostIsWindows))),
-  );
+  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return [];
+  // Folders keep their trailing `/`.
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => toPosixPath(entry, hostIsWindows));
 });
 
 function mixedItemPath(item: MixedItem): string {
@@ -624,7 +623,50 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // so content searches do not wait for it; git grep answers until it is ready.
   let contentIndexPending = variant === "content";
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+
+  /** The nearest `.ignore` with a pattern matching `relativePath` itself decides. */
+  const makeIgnoreFileDecider = () => {
+    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
+    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
+      directory: string,
+    ) {
+      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
+      const contents = yield* fileSystem
+        .readFileString(path.join(cwd, directory, ".ignore"))
+        .pipe(Effect.option);
+      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
+      ignoreFiles.set(directory, file);
+      return file;
+    });
+    return Effect.fn("WorkspaceSearchIndex.decideByIgnoreFile")(function* (
+      relativePath: string,
+      isFolder: boolean,
+    ) {
+      const segments = relativePath.split("/");
+      for (let ancestor = segments.length - 1; ancestor >= 0; ancestor -= 1) {
+        const directory = segments.slice(0, ancestor).join("/");
+        const file = yield* readIgnoreFile(directory);
+        const relative = directory ? relativePath.slice(directory.length + 1) : relativePath;
+        const decision = file?.decide(relative, isFolder);
+        if (decision) return decision;
+      }
+      return undefined;
+    });
+  };
+
+  // Like ripgrep and fff, a `.ignore` that re-includes a path overrules Git's ignore rules for it.
+  const loadIgnoredPaths = Effect.fn("WorkspaceSearchIndex.loadIgnoredPaths")(function* () {
+    const decide = makeIgnoreFileDecider();
+    const ignored = new Set<string>();
+    for (const entry of yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows)) {
+      const relativePath = trimDirectorySeparator(entry);
+      if ((yield* decide(relativePath, entry.endsWith("/"))) !== "included") {
+        ignored.add(relativePath);
+      }
+    }
+    return ignored;
+  });
+  let ignoredPaths = yield* loadIgnoredPaths();
   if (variant === "paths") {
     yield* waitForIndexReady(
       cwd,
@@ -713,32 +755,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // fff leaves out what `.ignore` files exclude, which git cannot evaluate; the nearest
   // `.ignore` that matches a path or one of its folders decides, as in decideByIgnoreFiles.
   const makeIgnoreFileFilter = () => {
-    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
-    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
-      directory: string,
-    ) {
-      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
-      const contents = yield* fileSystem
-        .readFileString(path.join(cwd, directory, ".ignore"))
-        .pipe(Effect.option);
-      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
-      ignoreFiles.set(directory, file);
-      return file;
-    });
+    const decide = makeIgnoreFileDecider();
     return Effect.fn("WorkspaceSearchIndex.isExcludedByIgnoreFiles")(function* (
       relativePath: string,
     ) {
       const segments = relativePath.split("/");
       for (let depth = 1; depth <= segments.length; depth += 1) {
         const candidate = segments.slice(0, depth).join("/");
-        for (let ancestor = depth - 1; ancestor >= 0; ancestor -= 1) {
-          const directory = segments.slice(0, ancestor).join("/");
-          const file = yield* readIgnoreFile(directory);
-          const relative = directory ? candidate.slice(directory.length + 1) : candidate;
-          const decision = file?.decide(relative, depth < segments.length);
-          if (decision === "ignored") return true;
-          if (decision === "included") break;
-        }
+        if ((yield* decide(candidate, depth < segments.length)) === "ignored") return true;
       }
       return false;
     });
@@ -1159,7 +1183,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+    ignoredPaths = yield* loadIgnoredPaths();
     invalidateSymlinkScan();
   });
 

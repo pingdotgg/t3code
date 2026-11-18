@@ -2,6 +2,7 @@ import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon, GitBranchPlusIcon } from "lucide-react";
 import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import { T, useGT, useMessages } from "gt-react";
 
 import {
   resolveEnvModeLabel,
@@ -51,6 +52,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
+  const gt = useGT();
+  const m = useMessages();
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
@@ -58,7 +61,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   );
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const envModeItems = [
-    ...WORKSPACE_MODES.map((entry) => ({ value: entry.mode, label: entry.label })),
+    ...WORKSPACE_MODES.map((entry) => ({ value: entry.mode, label: m(entry.label) })),
     ...(showPreviousWorktree && previousWorktreeLabel
       ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
       : []),
@@ -85,8 +88,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         )}
         <ComposerContextLabel>
           {forceNewWorktree
-            ? resolveEnvModeLabel("worktree")
-            : resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)}
+            ? resolveEnvModeLabel("worktree", m)
+            : resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode, m)}
         </ComposerContextLabel>
       </span>
     );
@@ -96,9 +99,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <TooltipTrigger render={lockedRow} />
         <TooltipPopup>
           {forceNewWorktree
-            ? "Each model starts in its own worktree."
+            ? gt("Each model starts in its own worktree.")
             : (activeWorktreePath ??
-              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
+              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode, m))}
         </TooltipPopup>
       </Tooltip>
     );
@@ -123,7 +126,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             <ComposerSelectControl
               size="xs"
               className="min-w-0 shrink"
-              aria-label="Workspace"
+              aria-label={gt("Workspace")}
               data-composer-shortcut="composer.workspace"
               data-composer-context-control
               onMouseDownCapture={stopContextMenuMouseDown}
@@ -136,7 +139,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
-          {WORKSPACE_MODES.find((entry) => entry.mode === workspaceMode)?.description}
+          {m(WORKSPACE_MODES.find((entry) => entry.mode === workspaceMode)!.description)}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
@@ -146,7 +149,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         className="w-[min(21rem,calc(100vw-2rem))]"
       >
         <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
+          <SelectGroupLabel>
+            <T>Workspace</T>
+          </SelectGroupLabel>
           {WORKSPACE_MODES.map((entry) => (
             <SelectItem key={entry.mode} value={entry.mode}>
               <WorkspaceModeItemContent mode={entry.mode} />
@@ -170,15 +175,16 @@ function WorkspaceModeIcon({ mode }: { mode: WorkspaceMode }) {
 }
 
 export function WorkspaceModeItemContent({ mode }: { mode: WorkspaceMode }) {
+  const m = useMessages();
   return (
     <span className="flex items-start gap-1.5">
       <span className="pt-0.75">
         <WorkspaceModeIcon mode={mode} />
       </span>
       <span className="flex min-w-0 flex-col">
-        <span>{resolveWorkspaceModeLabel(mode)}</span>
+        <span>{resolveWorkspaceModeLabel(mode, m)}</span>
         <span className="text-muted-foreground text-xs">
-          {WORKSPACE_MODES.find((entry) => entry.mode === mode)?.description}
+          {m(WORKSPACE_MODES.find((entry) => entry.mode === mode)!.description)}
         </span>
       </span>
     </span>

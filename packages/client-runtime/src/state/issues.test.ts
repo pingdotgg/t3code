@@ -1,7 +1,20 @@
-import type { IssueComment, IssueListEntry, IssueTrackerKind, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  IssueTrackerKind,
+  ProjectId,
+  type IssueComment,
+  type IssueListEntry,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { issueEntryKey, mergeIssueListPage, prependIssueComments } from "./issues.ts";
+import {
+  createMergedIssueCandidatesAtoms,
+  issueEntryKey,
+  mergeIssueListPage,
+  prependIssueComments,
+} from "./issues.ts";
 
 function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListEntry {
   return {
@@ -67,5 +80,54 @@ describe("prependIssueComments", () => {
     const current = [comment("c3"), comment("c4")];
     const older = [comment("c1"), comment("c2"), comment("c3")];
     expect(prependIssueComments(current, older).map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
+  });
+});
+
+describe("createMergedIssueCandidatesAtoms", () => {
+  it("retries only failed scopes that are not already reloading", () => {
+    const registry = AtomRegistry.make();
+    const target = (scope: string) => ({
+      environmentId: EnvironmentId.make("issues"),
+      input: {
+        projectId: ProjectId.make(scope),
+        tracker: IssueTrackerKind.make("github"),
+        host: "github.com",
+        scope,
+      },
+    });
+    const targets = [target("acme/healthy"), target("acme/flaky")];
+    const requests: string[] = [];
+    const candidates = Atom.family((scope: string) =>
+      Atom.make(
+        Effect.suspend(() => {
+          requests.push(scope);
+          if (scope === "acme/healthy") {
+            return Effect.succeed({ labels: [], assignees: [], truncated: false });
+          }
+          return requests.length === 2 ? Effect.fail("Repository unavailable") : Effect.never;
+        }),
+      ),
+    );
+    const merged = createMergedIssueCandidatesAtoms(
+      (t) => candidates(t.input.scope),
+      () => "Repository unavailable",
+    );
+    const view = merged.atom(targets);
+    const unmount = registry.mount(view);
+    try {
+      expect(registry.get(view)).toMatchObject({
+        error: "Repository unavailable",
+        isPending: false,
+      });
+
+      merged.retry(registry, targets);
+      expect(registry.get(view).isPending).toBe(true);
+      merged.retry(registry, targets);
+
+      expect(requests).toEqual(["acme/healthy", "acme/flaky", "acme/flaky"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
   });
 });
