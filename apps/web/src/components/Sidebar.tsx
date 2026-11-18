@@ -272,6 +272,7 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { SidebarThreadLinkHighlight } from "./sidebar/SidebarThreadLinkHighlight";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -2998,7 +2999,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}
-        className="min-h-full"
+        className="relative min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
@@ -3721,6 +3722,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             </TooltipProvider>
           ) : null}
         </SidebarGroup>
+        <SidebarThreadLinkHighlight
+          containerRef={sidebarContentRef}
+          dragging={dragState !== null}
+          projectGroups={projectGroups}
+        />
       </SidebarContent>
       <SidebarChromeFooter />
     </SidebarFolderDrop>

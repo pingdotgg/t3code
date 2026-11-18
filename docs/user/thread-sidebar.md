@@ -247,7 +247,7 @@ thread** from its long-press menu on mobile.
 When a message contains a thread chip, both threads list each other under
 **Lineage** in thread details.
 Rolling back the turn that sent the chip removes the link. Only threads on the
-same machine are listed.
+same machine are listed. Hover or focus a thread in the sidebar to see the threads it's linked to.
 
 ## Inspect agent work
 

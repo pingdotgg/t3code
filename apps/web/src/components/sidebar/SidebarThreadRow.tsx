@@ -1345,6 +1345,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 role="button"
                 tabIndex={0}
                 data-sidebar-row={threadKey}
+                data-sidebar-thread
+                data-sidebar-row-content
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
@@ -1551,6 +1553,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               role="button"
               tabIndex={0}
               data-sidebar-row={threadKey}
+              data-sidebar-thread
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}
@@ -1565,6 +1568,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           }
         >
           <div
+            data-sidebar-row-content
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
               metaLineEmpty && "h-auto",
