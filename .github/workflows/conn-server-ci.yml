@@ -11,16 +11,20 @@ on:
       - .github/workflows/conn-server-checks.yml
   push:
     branches:
-      - main
       - "sync/**"
     paths: *paths
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: conn-server-ci-${{ github.event.pull_request.number || github.sha }}
+  group: conn-server-ci-${{ github.event_name == 'workflow_run' && format('after-ci-{0}', github.run_id) || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -41,6 +45,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.source_sha }}
           sparse-checkout: |
             /apps/conn-server/
           sparse-checkout-cone-mode: false
@@ -88,7 +93,7 @@ jobs:
           path: apps/conn-server/target/x86_64-unknown-linux-musl/release/conn-server
           retention-days: 1
       - name: Save Cargo on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'workflow_run' && inputs.source_sha != '' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |

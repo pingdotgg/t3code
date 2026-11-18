@@ -49,6 +49,11 @@ jobs:
             /.github/scripts/ci-changes.cjs
             /.github/workflows/ci.yml
             /.github/scripts/ci-check.test.cjs
+            /.github/scripts/conn-server-after-ci.cjs
+            /.github/scripts/conn-server-after-ci.test.cjs
+            /.github/workflows/conn-server-after-ci.yml
+            /.github/workflows/conn-server-checks.yml
+            /.github/workflows/conn-server-ci.yml
             /.github/scripts/web-test.cjs
             /.github/scripts/web-test.test.cjs
             /.github/actions/ci-changes/
@@ -63,6 +68,10 @@ jobs:
 
       - name: Test CI scripts
         run: node --test .github/scripts/ci-check.test.cjs .github/scripts/web-test.test.cjs
+
+      - name: Test deferred Conn Server checks
+        if: github.repository == 'nckrtl/conn'
+        run: node --test .github/scripts/conn-server-after-ci.test.cjs
 
   # Lint and the desktop build each get a runner so they run side by side.
   # Typecheck shares the build's install. Lint always runs: it formats every

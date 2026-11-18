@@ -81,9 +81,11 @@ and `README.md` apply there. It is not a pnpm workspace package, and Conn's buil
 and mobile apps do not use it. Its tools read the contract, the web client and `apps/server`
 from this tree.
 
-- **Checks.** Pull requests and `main`/`sync/**` pushes share each workflow's path filter.
-  `conn-server-ci.yml` checks changes to `apps/conn-server` or its workflow;
-  `conn-server-checks.yml` also checks `apps/server`, `apps/web` and `packages`.
+- **Checks.** Pull requests and `sync/**` pushes trigger the Conn Server workflows directly.
+  Main pushes run them after the first completion of CI, using the original push range for
+  path selection and the pushed SHA for checkout and results. Both workflows cover
+  `apps/conn-server` and both workflow files. `conn-server-checks.yml` also covers
+  `apps/server`, `apps/web` and `packages`. Both workflows support manual runs.
 - **The nightly sync follows it** (Nick, 2026-11-16; this replaces the 2026-11-15 skip). On
   its `sync/*` branch, after the merge, the sync runs `apps/conn-server/tools/follow-conn.sh
   --capture`. It ports the upstream server changes in scope, as the T3 server makes them:

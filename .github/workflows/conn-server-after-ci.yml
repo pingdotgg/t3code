@@ -1,0 +1,148 @@
+name: Conn Server after CI
+run-name: Conn Server after CI for ${{ github.event.workflow_run.head_sha }}
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select Conn Server checks for ${{ github.event.workflow_run.head_sha }}
+    # GitHub can give workflow_run a privileged token even for an untrusted PR.
+    if: >-
+      github.repository == 'nckrtl/conn' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
+      github.event.workflow_run.run_attempt == 1
+    permissions:
+      contents: read
+      checks: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.select.outputs.source_sha }}
+      checks: ${{ steps.select.outputs.checks }}
+      musl: ${{ steps.select.outputs.musl }}
+    steps:
+      - name: Checkout trusted selector
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+      - name: Select from the original push range
+        id: select
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+            const { select } = require("./.github/scripts/conn-server-after-ci.cjs");
+            const diff = (before, after) => {
+              execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", before, after]);
+              return execFileSync("git", ["diff", "--no-renames", "--name-only", "-z", before, after], {
+                encoding: "utf8",
+              }).split("\0").slice(0, 300);
+            };
+            await select({ github, context, core, diff });
+
+  checks:
+    name: Conn Server groups for ${{ needs.select.outputs.source_sha }}
+    needs: select
+    if: needs.select.outputs.checks == 'true'
+    uses: ./.github/workflows/conn-server-checks.yml
+    with:
+      source_sha: ${{ needs.select.outputs.source_sha }}
+
+  musl:
+    name: Conn Server musl for ${{ needs.select.outputs.source_sha }}
+    needs: select
+    if: needs.select.outputs.musl == 'true'
+    uses: ./.github/workflows/conn-server-ci.yml
+    with:
+      source_sha: ${{ needs.select.outputs.source_sha }}
+
+  result:
+    name: Publish results for ${{ needs.select.outputs.source_sha }}
+    needs: [select, checks, musl]
+    if: ${{ always() && needs.select.result == 'success' && needs.select.outputs.checks == 'true' }}
+    # Serialize the lookup and write, even when several attempts reach this job out of order.
+    concurrency:
+      group: conn-server-publish-${{ github.event.workflow_run.id }}
+      queue: max
+    permissions:
+      checks: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      # The workflow_run check suite is on the current default tip, which can
+      # differ from the tested commit. Publish the canonical result on that SHA.
+      - name: Report on the triggering push
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          SOURCE_SHA: ${{ needs.select.outputs.source_sha }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          MUSL_SELECTED: ${{ needs.select.outputs.musl }}
+          MUSL_RESULT: ${{ needs.musl.result }}
+        with:
+          script: |
+            const source = context.payload.workflow_run;
+            const { SOURCE_SHA, GITHUB_RUN_NUMBER, GITHUB_RUN_ATTEMPT } = process.env;
+            const elapsed = Math.round((Date.now() - Date.parse(source.created_at)) / 1000);
+            const runNumber = Number(GITHUB_RUN_NUMBER);
+            const attempt = Number(GITHUB_RUN_ATTEMPT);
+            const results = [["checks", "Conn Server checks", process.env.CHECKS_RESULT]];
+            if (process.env.MUSL_SELECTED === "true") {
+              results.push(["musl", "Linux musl release build", process.env.MUSL_RESULT]);
+            }
+            const existing = await github.paginate(github.rest.checks.listForRef, {
+              ...context.repo,
+              ref: SOURCE_SHA,
+              filter: "all",
+              per_page: 100,
+            });
+            const reports = results.map(([gate, name, result]) => {
+              const externalId = `conn-server-after-ci:${source.id}:${gate}`;
+              const check = existing.find((candidate) =>
+                candidate.app?.slug === "github-actions" &&
+                candidate.head_sha === SOURCE_SHA &&
+                candidate.name === name &&
+                candidate.external_id === externalId
+              );
+              if (!check) return { externalId, name, result };
+              const version = check.output.summary.match(/, publisher (\d+)\.(\d+)\)\.$/);
+              if (!version) throw new Error(`Missing publisher version for check ${check.id}`);
+              const order = Number(version[1]) - runNumber || Number(version[2]) - attempt;
+              return { externalId, name, result, check, order };
+            });
+            // A newer partial publication also supersedes older attempts for the missing gate.
+            if (reports.some(({ order }) => order > 0)) {
+              core.info("A newer attempt already published for this source run.");
+              return;
+            }
+
+            for (const { externalId, name, result, check, order } of reports) {
+              const summary = `${result}; ${elapsed}s elapsed from push (CI run ${source.id}, publisher ${runNumber}.${attempt}).`;
+              const report = {
+                ...context.repo,
+                name,
+                external_id: externalId,
+                status: "completed",
+                conclusion: result === "success" ? "success" : "failure",
+                details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/attempts/${attempt}`,
+                output: { title: name, summary },
+              };
+              if (!check) {
+                await github.rest.checks.create({ ...report, head_sha: SOURCE_SHA });
+              } else if (order < 0) {
+                await github.rest.checks.update({ ...report, check_run_id: check.id });
+              }
+              const published = order === 0 ? check.output.summary : summary;
+              core.info(`${name}: ${published}`);
+              await core.summary.addRaw(`**${name}** — ${published}`, true).write();
+            }

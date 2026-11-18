@@ -6,7 +6,15 @@ it fails a check. No step calls a model.
 
 ## When the checks run
 
-Both workflows use the same paths for pull requests and pushes to `main` or `sync/**`:
+Pull requests and `sync/**` pushes trigger both workflows directly when their path filters
+match. Both workflows also support manual runs.
+
+After the first completion of CI for a main push, `conn-server-after-ci.yml` applies the same
+filters to the original push range. It runs the selected workflows at the pushed SHA even
+if CI failed. Companion results are published on that SHA. A companion retry updates the
+same report for each gate of that source CI run.
+
+The path filters are:
 
 - `conn-server-ci.yml` (production musl build): `apps/conn-server/**` and both workflow files.
 - `conn-server-checks.yml` (`tools/check.sh`, including monorepo comparisons):
@@ -14,9 +22,8 @@ Both workflows use the same paths for pull requests and pushes to `main` or `syn
 
 `conn-server-checks.yml` builds release and debug comparison binaries in parallel, shares
 them as one-day artifacts, and runs four comparison groups. Rust validation runs in parallel with the build;
-all groups run the canary. PRs only restore caches;
-only pushes to main save Rust and pnpm caches.
-`Conn Server checks` remains the final required check and fails if any group fails or skips.
+all groups run the canary. Only companion jobs for main pushes save Rust and pnpm caches.
+The final `Conn Server checks` gate fails if any group fails or skips.
 Each check has a timeout that stops its process group; each CI job also has a time limit.
 The nightly sync waits for the workflows triggered by its changes before it merges.
 

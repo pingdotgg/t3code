@@ -1,7 +1,7 @@
 name: Conn Server checks
 
 # Every model-free Conn Server check against this tree's server, web client and packages.
-# Pull requests and main/sync pushes use the same inputs; generated drift fails the job.
+# Main checks are called after CI. Generated drift fails the job on every trigger.
 
 on:
   pull_request:
@@ -14,9 +14,13 @@ on:
       - .github/workflows/conn-server-ci.yml
   push:
     branches:
-      - main
       - "sync/**"
     paths: *paths
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       cold:
@@ -28,7 +32,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: conn-server-checks-${{ github.event.pull_request.number || github.sha }}
+  group: conn-server-checks-${{ github.event_name == 'workflow_run' && format('after-ci-{0}', github.run_id) || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -64,6 +68,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.source_sha }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -128,7 +133,7 @@ jobs:
           retention-days: 1
 
       - name: Save Cargo on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'workflow_run' && inputs.source_sha != '' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -139,7 +144,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Save pnpm store on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.profile == 'release' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'workflow_run' && inputs.source_sha != '' && github.ref == 'refs/heads/main' && matrix.profile == 'release' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/pnpm/store
@@ -153,6 +158,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.source_sha }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -209,7 +215,7 @@ jobs:
         working-directory: apps/conn-server
         run: tools/check.sh --group rust
       - name: Save Cargo on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'workflow_run' && inputs.source_sha != '' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -232,6 +238,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.source_sha }}
           sparse-checkout: |
             /*
             !/.repos/
