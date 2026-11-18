@@ -2,15 +2,20 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
+import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
 
+import type { LayoutDragContentSource } from "../layout/layoutDrag";
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+} from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -20,6 +25,13 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const dragSources = vi.hoisted(() => [] as LayoutDragContentSource[]);
+vi.mock(import("../layout/layoutDrag"), async (original) => ({
+  ...(await original()),
+  beginLayoutContentDrag: (_event, source) => {
+    dragSources.push(source);
+  },
+}));
 vi.mock(import("mdast-util-from-markdown"), async (original) => {
   const actual = await original();
   return {
@@ -161,6 +173,7 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
+  dragSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -526,6 +539,49 @@ describe("ChatMarkdown workspace file opens", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
   });
+
+  it("resolves each dragged file link on its own, and a click does not cancel it", async () => {
+    setup();
+    const lookups = new Map<string, (value: unknown) => void>();
+    workspaceSearch.mockImplementation(
+      ({ input }: { input: { query: string } }) =>
+        new Promise((resolve) => lookups.set(input.query, resolve)),
+    );
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderText(
+      "[A](physics/notes/a.md) and [B](physics/notes/b.md) and [Other](/elsewhere/c.md:9)",
+      { cwd: "/school/physics", threadRef },
+    );
+    const [first, second, other] = screen.container.querySelectorAll("a");
+    for (const link of [first!, second!]) {
+      link.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+      );
+    }
+    const resolves = dragSources.map((source) =>
+      source.kind === "surface" ? source.resolve?.() : undefined,
+    );
+    expect(resolves).toHaveLength(2);
+    await vi.waitFor(() => expect(lookups.size).toBe(2));
+
+    await act(async () => other!.click());
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/c.md", 9);
+    for (const [query, resolve] of lookups) {
+      resolve(
+        AsyncResult.success({
+          entries: [{ path: `notes/${query.endsWith("b.md") ? "b" : "a"}.md`, kind: "file" }],
+          truncated: false,
+        }),
+      );
+    }
+
+    expect(await Promise.all(resolves)).toEqual([
+      expect.objectContaining({ relativePath: expect.stringContaining("notes/a.md") }),
+      expect.objectContaining({ relativePath: expect.stringContaining("notes/b.md") }),
+    ]);
+  });
 });
 
 describe("ChatMarkdown skill chips", () => {
@@ -702,6 +758,44 @@ describe("ChatMarkdown copy", () => {
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
+
+  it.each([
+    { text: "   Plan\nnext" },
+    { text: "Plan\n            Deep\n                        Deeper" },
+    { text: "Plan\n\tTabbed\n \t Mixed" },
+    { text: "- item\n    more\n      deeper\n- next" },
+    { text: "Plan\n   Step one\n        Detail a", from: "Step one" },
+  ])(
+    "copies and selects user lines the same whether their typed indentation shows: $text",
+    async (copy) => {
+      setup();
+      const copied = async (extraRemarkPlugins: typeof CHAT_USER_MARKDOWN_REMARK_PLUGINS) => {
+        await using screen = await renderText(copy.text, {
+          className: "user-message-markdown",
+          lineBreaks: true,
+          parseRawHtml: false,
+          extraRemarkPlugins,
+        });
+        const range = document.createRange();
+        range.selectNodeContents(screen.container);
+        if (copy.from) {
+          const walker = document.createTreeWalker(screen.container, NodeFilter.SHOW_TEXT);
+          let line = walker.nextNode();
+          while (line && !line.textContent!.includes(copy.from)) line = walker.nextNode();
+          // Start mid-line, three characters into the line's text.
+          range.setStart(line!, line!.textContent!.indexOf(copy.from) + 3);
+        }
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // A drag or anything else that reads the selection gets its text, not the copy payload.
+        return { payload: chatMarkdownClipboardPayload(selection), selected: selection.toString() };
+      };
+      const shown = await copied(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+      // The user pipeline as it was before typed indentation was shown.
+      expect(shown).toEqual(await copied([[remarkGfm, { singleTilde: false }]]));
+    },
+  );
 
   it("copies part of inline code without prose escapes", async () => {
     setup();

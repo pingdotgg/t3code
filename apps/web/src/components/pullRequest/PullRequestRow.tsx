@@ -1,6 +1,7 @@
 import { EyeIcon, SearchIcon, TriangleAlertIcon, UserRoundXIcon } from "lucide-react";
 import type { PullRequestAction } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { T, Var } from "gt-react";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import {
   PullRequestSpeedActions,
@@ -117,7 +118,7 @@ export function PullRequestRowLabels({
  */
 export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix = "") {
   if (entry.state !== "open") return null;
-  const checks = (label: string, toneClassName = "text-muted-foreground") =>
+  const checks = (label: ReactNode, toneClassName = "text-muted-foreground") =>
     entry.checksState === undefined ? null : (
       <PullRequestChecksPopover
         checksState={entry.checksState}
@@ -126,18 +127,26 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
           ...pullRequestPanelReference({ ...entry, host: entry.host.toLowerCase() }),
           allowStale: false,
         }}
-        label={<span className={cn("truncate", toneClassName)}>{prefix + label}</span>}
+        label={
+          <span className={cn("truncate", toneClassName)}>
+            {prefix}
+            {label}
+          </span>
+        }
       />
     );
   if (entry.checksState === "failing") {
-    return checks("Checks failing", "text-destructive-foreground");
+    return checks(<T>Checks failing</T>, "text-destructive-foreground");
   }
   if (entry.mergeability === "conflicting") {
     return (
       <span className="flex min-w-0 items-center gap-1.25 text-warning-foreground">
         <TriangleAlertIcon aria-hidden className="size-3 shrink-0" />
         <span className="truncate">
-          {prefix}Conflicts with {entry.baseBranch}
+          {prefix}
+          <T>
+            Conflicts with <Var>{entry.baseBranch}</Var>
+          </T>
         </span>
       </span>
     );
@@ -146,7 +155,10 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
     return (
       <span className="flex min-w-0 items-center gap-1.25 text-destructive-foreground">
         <UserRoundXIcon aria-hidden className="size-3 shrink-0" />
-        <span className="truncate">{prefix}Changes requested</span>
+        <span className="truncate">
+          {prefix}
+          <T>Changes requested</T>
+        </span>
       </span>
     );
   }
@@ -154,7 +166,8 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
     return (
       <span className="flex items-center gap-1.25">
         <PullRequestGlyph.draft aria-hidden className="size-3 shrink-0" />
-        {prefix}Draft
+        {prefix}
+        <T context="pull request state">Draft</T>
       </span>
     );
   }
@@ -162,20 +175,32 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
     return (
       <span className="flex min-w-0 items-center gap-1.25 text-warning-foreground">
         <EyeIcon aria-hidden className="size-3 shrink-0" />
-        <span className="truncate">{prefix}Your review</span>
+        <span className="truncate">
+          {prefix}
+          <T>Your review</T>
+        </span>
       </span>
     );
   }
-  if (entry.checksState === "pending") return checks("Checks running");
-  if (entry.reviewDecision === "review-required") return <span>{prefix}Review required</span>;
+  if (entry.checksState === "pending") return checks(<T>Checks running</T>);
+  if (entry.reviewDecision === "review-required")
+    return (
+      <span>
+        {prefix}
+        <T>Review required</T>
+      </span>
+    );
   if (entry.reviewDecision === "approved") {
     return (
-      checks("Ready to merge", "text-success-foreground") ?? (
-        <span className="text-success-foreground">{prefix}Approved</span>
+      checks(<T>Ready to merge</T>, "text-success-foreground") ?? (
+        <span className="text-success-foreground">
+          {prefix}
+          <T context="review state">Approved</T>
+        </span>
       )
     );
   }
-  return checks("Checks passing");
+  return checks(<T>Checks passing</T>);
 }
 
 /**
@@ -338,13 +363,17 @@ function PullRequestRowImpl({
                       <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-micro" />
                     }
                   >
-                    <span className="sr-only">matched in the description</span>
+                    <span className="sr-only">
+                      <T>matched in the description</T>
+                    </span>
                     <SearchIcon aria-hidden className="size-3 shrink-0" />
                     <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                      matched in the description
+                      <T>matched in the description</T>
                     </span>
                   </TooltipTrigger>
-                  <TooltipPopup side="top">Matched in the description</TooltipPopup>
+                  <TooltipPopup side="top">
+                    <T>Matched in the description</T>
+                  </TooltipPopup>
                 </Tooltip>
               ) : null}
               {showProvider ? (

@@ -14,12 +14,12 @@ import {
 } from "./composerEventScope";
 import { ComposerFooterModeControls, ComposerPermissionsSection } from "./ComposerFooterControls";
 import {
+  resolveRuntimeModeOption,
   resolveRuntimeModeOptions,
-  runtimeModeConfig,
   runtimeModeOptions,
 } from "./runtimeModeConfig";
 
-const options = runtimeModeOptions.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
+const options = runtimeModeOptions.map((mode) => resolveRuntimeModeOption(mode));
 
 // Mirrors the overflow menu, which holds the Permissions section.
 function OverflowMenu() {
@@ -158,7 +158,7 @@ it("opens on the checked permission when composer.mode marked the trigger", asyn
 function PermissionsChip() {
   const [mode, setMode] = useState<RuntimeMode>("approval-required");
   return (
-    <div data-slot="composer-shell">
+    <div data-slot="composer-host">
       <button type="button" data-composer-shortcut="composer.effort composer.mode">
         Model
       </button>

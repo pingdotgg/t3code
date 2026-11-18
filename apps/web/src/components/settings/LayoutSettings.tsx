@@ -15,6 +15,7 @@ import {
   type LayoutSettings as LayoutSettingsValue,
   type LayoutTemplate,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   ArrowRightToLineIcon,
   Columns2Icon,
@@ -58,7 +59,7 @@ import {
   SettingsSection,
   useSettingsSearchTarget,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 interface PlacementOption<Value extends string> {
   value: Value;
@@ -67,40 +68,46 @@ interface PlacementOption<Value extends string> {
 }
 
 const TERMINAL_OPTIONS: ReadonlyArray<PlacementOption<LayoutTerminalPlacement>> = [
-  { value: "attached-below", label: "Below the chat", icon: PanelBottomIcon },
-  { value: "new-tab", label: "In a new tab", icon: SquarePlusIcon },
-  { value: "new-column", label: "In a new column", icon: Columns2Icon },
+  { value: "attached-below", label: msg("Below the chat"), icon: PanelBottomIcon },
+  { value: "new-tab", label: msg("In a new tab"), icon: SquarePlusIcon },
+  { value: "new-column", label: msg("In a new column"), icon: Columns2Icon },
 ];
 
 const SIDE_PANE_OPTIONS: ReadonlyArray<PlacementOption<LayoutSidePanePlacement>> = [
-  { value: "beside-chat", label: "Beside the chat", icon: Columns2Icon },
-  { value: "new-tab", label: "In a new tab", icon: SquarePlusIcon },
-  { value: "new-column", label: "At the end of the strip", icon: ArrowRightToLineIcon },
+  { value: "beside-chat", label: msg("Beside the chat"), icon: Columns2Icon },
+  { value: "new-tab", label: msg("In a new tab"), icon: SquarePlusIcon },
+  { value: "new-column", label: msg("At the end of the strip"), icon: ArrowRightToLineIcon },
 ];
 
 const NEW_TAB_OPTIONS: ReadonlyArray<PlacementOption<LayoutNewTabPosition>> = [
-  { value: "after-current", label: "After the current tab", icon: PlusIcon },
-  { value: "end", label: "At the end", icon: ArrowRightToLineIcon },
+  { value: "after-current", label: msg("After the current tab"), icon: PlusIcon },
+  { value: "end", label: msg("At the end"), icon: ArrowRightToLineIcon },
 ];
 
 const SIDE_PANE_OPENS_ON_OPTIONS: ReadonlyArray<PlacementOption<LayoutSidePaneOpensOn>> = [
-  { value: "last-used", label: "Last used", icon: HistoryIcon },
-  { value: "diff", label: "Diff", icon: FileDiffIcon },
-  { value: "files", label: "Files", icon: FolderTreeIcon },
-  { value: "browser", label: "Browser", icon: GlobeIcon },
-  { value: "pull-request", label: "Pull request", icon: PullRequestGlyph.pullRequest },
+  {
+    value: "last-used",
+    label: msg("Last used", { $context: "the side pane opens on its last used tab" }),
+    icon: HistoryIcon,
+  },
+  { value: "diff", label: msg("Diff"), icon: FileDiffIcon },
+  { value: "files", label: msg("Files"), icon: FolderTreeIcon },
+  { value: "browser", label: msg("Browser"), icon: GlobeIcon },
+  { value: "pull-request", label: msg("Pull request"), icon: PullRequestGlyph.pullRequest },
 ];
 
 const WHEN_NO_ROOM_OPTIONS: ReadonlyArray<PlacementOption<LayoutWhenNoRoom>> = [
-  { value: "shrink-then-scroll", label: "Shrink, then scroll", icon: Columns3Icon },
-  { value: "always-shrink", label: "Always shrink", icon: FoldHorizontalIcon },
-  { value: "always-scroll", label: "Always scroll", icon: ArrowRightToLineIcon },
+  { value: "shrink-then-scroll", label: msg("Shrink, then scroll"), icon: Columns3Icon },
+  { value: "always-shrink", label: msg("Always shrink"), icon: FoldHorizontalIcon },
+  { value: "always-scroll", label: msg("Always scroll"), icon: ArrowRightToLineIcon },
 ];
 
 /** Undo steps kept during this visit. */
 const UNDO_LIMIT = 20;
 
 export function LayoutSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const layout = useClientLayoutSettings();
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -153,11 +160,15 @@ export function LayoutSettings() {
           stripPreview={previewingNoRoom ? layout.whenNoRoom : null}
         />
       </section>
-      <SettingsSection title="Behavior">
+      <SettingsSection title={gt("Behavior", { $context: "layout settings section" })}>
         <PlacementRow
           {...searchableSetting("layout-terminal-placement")}
-          title="Terminal"
-          description={`Where ${terminalKey ?? "the terminal shortcut"} opens it.`}
+          title={gt("Terminal")}
+          description={
+            terminalKey
+              ? gt("Where {shortcut} opens it.", { shortcut: terminalKey })
+              : gt("Where the terminal shortcut opens it.")
+          }
           value={layout.terminalPlacement}
           defaultValue={DEFAULT_LAYOUT_SETTINGS.terminalPlacement}
           options={TERMINAL_OPTIONS}
@@ -165,8 +176,14 @@ export function LayoutSettings() {
         />
         <PlacementRow
           {...searchableSetting("layout-side-pane-placement")}
-          title="Side pane"
-          description={`Where ${sidePaneKey ?? "the side pane shortcut"} opens diffs, files, the browser and PRs.`}
+          title={gt("Side pane")}
+          description={
+            sidePaneKey
+              ? gt("Where {shortcut} opens diffs, files, the browser and PRs.", {
+                  shortcut: sidePaneKey,
+                })
+              : gt("Where the side pane shortcut opens diffs, files, the browser and PRs.")
+          }
           value={layout.sidePanePlacement}
           defaultValue={DEFAULT_LAYOUT_SETTINGS.sidePanePlacement}
           options={SIDE_PANE_OPTIONS}
@@ -174,8 +191,12 @@ export function LayoutSettings() {
         />
         <PlacementRow
           {...searchableSetting("layout-side-pane-opens-on")}
-          title="Side pane opens on"
-          description={`The tab ${sidePaneKey ?? "the side pane"} shows first.`}
+          title={gt("Side pane opens on")}
+          description={
+            sidePaneKey
+              ? gt("The tab {shortcut} shows first.", { shortcut: sidePaneKey })
+              : gt("The tab the side pane shows first.")
+          }
           value={layout.sidePaneOpensOn}
           defaultValue={DEFAULT_LAYOUT_SETTINGS.sidePaneOpensOn}
           options={SIDE_PANE_OPENS_ON_OPTIONS}
@@ -183,8 +204,12 @@ export function LayoutSettings() {
         />
         <PlacementRow
           {...searchableSetting("layout-new-tab-position")}
-          title="New tabs"
-          description={`Where ${newTabKey ?? "a new tab"} adds a tab.`}
+          title={gt("New tabs")}
+          description={
+            newTabKey
+              ? gt("Where {shortcut} adds a tab.", { shortcut: newTabKey })
+              : gt("Where a new tab adds a tab.")
+          }
           value={layout.newTabPosition}
           defaultValue={DEFAULT_LAYOUT_SETTINGS.newTabPosition}
           options={NEW_TAB_OPTIONS}
@@ -193,8 +218,8 @@ export function LayoutSettings() {
         {scrollingWorkspaces ? (
           <PlacementRow
             {...searchableSetting("layout-when-no-room")}
-            title="When it doesn't fit"
-            description="What happens when a new pane has no room."
+            title={gt("When it doesn't fit")}
+            description={gt("What happens when a new pane has no room.")}
             value={layout.whenNoRoom}
             defaultValue={DEFAULT_LAYOUT_SETTINGS.whenNoRoom}
             options={WHEN_NO_ROOM_OPTIONS}
@@ -217,15 +242,19 @@ export function LayoutSettings() {
 function TrackpadSection() {
   const enabled = useClientSettings((settings) => settings.layoutThreeFingerSwipe === true);
   const settingsHydrated = useClientSettingsHydrated();
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   return (
-    <SettingsSection title="Trackpad">
+    <SettingsSection title={gt("Trackpad")}>
       <SettingsRow
         {...searchableSetting("layout-three-finger-swipe")}
-        title="Three-finger swipe"
-        description='One flick moves one column, or one workspace up or down. In System Settings › Trackpad › More Gestures, set "Swipe between pages" to three fingers.'
+        title={gt("Three-finger swipe")}
+        description={gt(
+          'One flick moves one column, or one workspace up or down. In System Settings › Trackpad › More Gestures, set "Swipe between pages" to three fingers.',
+        )}
         control={
           <Switch
-            aria-label="Three-finger swipe"
+            aria-label={gt("Three-finger swipe")}
             checked={enabled}
             disabled={!settingsHydrated}
             onCheckedChange={(layoutThreeFingerSwipe) =>
@@ -250,6 +279,7 @@ function YourLayoutHeader({
   onUndo: () => void;
   onReset: () => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const { id, title } = searchableSetting("layout-template");
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(id);
   return (
@@ -267,11 +297,11 @@ function YourLayoutHeader({
       <div className="-me-2 flex shrink-0 items-center gap-1">
         <Button size="standard" variant="ghost-muted" disabled={!canUndo} onClick={onUndo}>
           <Undo2Icon aria-hidden />
-          Undo
+          <T>Undo</T>
         </Button>
         <Button size="standard" variant="ghost-muted" disabled={!canReset} onClick={onReset}>
           <RotateCcwIcon aria-hidden />
-          Reset
+          <T>Reset</T>
         </Button>
       </div>
     </div>
@@ -298,6 +328,8 @@ function PlacementRow<Value extends string>({
   /** Called while the row is pointed at, focused or its menu is open. */
   onPreviewChange?: (active: boolean) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [open, setOpen] = useState(false);
@@ -324,7 +356,10 @@ function PlacementRow<Value extends string>({
       description={description}
       resetAction={
         value !== defaultValue ? (
-          <SettingResetButton label={title} onClick={() => onChange(defaultValue)} />
+          <SettingResetButton
+            ariaLabel={gt("Reset {setting} to default", { setting: title })}
+            onClick={() => onChange(defaultValue)}
+          />
         ) : null
       }
       control={
@@ -345,7 +380,7 @@ function PlacementRow<Value extends string>({
                 return (
                   <span className="flex items-center gap-2">
                     <Icon aria-hidden className="size-3.5 text-muted-foreground" />
-                    {option.label}
+                    {m(option.label)}
                   </span>
                 );
               }}
@@ -354,7 +389,7 @@ function PlacementRow<Value extends string>({
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {options.map((option) => (
               <SelectItem key={option.value} value={option.value}>
-                {option.label}
+                {m(option.label)}
               </SelectItem>
             ))}
           </SelectPopup>

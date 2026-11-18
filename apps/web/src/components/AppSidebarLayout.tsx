@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, useGT, useMessages } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -86,6 +87,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { CLOSED_SIDEBAR_CONTROLS_SURFACE_CLASS } from "../workspaceTitlebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -343,6 +345,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
+  const gt = useGT();
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -425,6 +428,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
       ref={appShellCommandsRef}
       className={cn(
         "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        CLOSED_SIDEBAR_CONTROLS_SURFACE_CLASS,
         mobileSidebarSheetMounted && "hidden",
       )}
       // Sits on the window chrome, so it takes the black chrome tokens too.
@@ -450,12 +454,14 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                     "pointer-events-auto",
                     isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                   )}
-                  aria-label="Toggle main sidebar"
+                  aria-label={gt("Toggle main sidebar")}
                 />
               }
             />
             <TooltipPopup side="bottom">
-              Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+              {shortcutLabel
+                ? gt("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
+                : gt("Toggle main sidebar")}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -491,8 +497,16 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
 }
 
 const NAVIGATION_HISTORY_BUTTONS = {
-  back: { label: "Back", command: "navigation.back", Icon: ArrowLeftIcon },
-  forward: { label: "Forward", command: "navigation.forward", Icon: ArrowRightIcon },
+  back: {
+    label: msg("Back", { $context: "browser navigation" }),
+    command: "navigation.back",
+    Icon: ArrowLeftIcon,
+  },
+  forward: {
+    label: msg("Forward", { $context: "browser navigation" }),
+    command: "navigation.forward",
+    Icon: ArrowRightIcon,
+  },
 } as const;
 
 // Next to the sidebar toggle on the chrome row (pen fiPPG, iZJUf). On the web
@@ -505,9 +519,12 @@ function NavigationHistoryButton({
   direction: HistoryDirection;
   onStageBackdrop: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canNavigate = useCanNavigateHistory(direction);
-  const { label, command, Icon } = NAVIGATION_HISTORY_BUTTONS[direction];
+  const { label: labelMessage, command, Icon } = NAVIGATION_HISTORY_BUTTONS[direction];
+  const label = m(labelMessage);
   const shortcutLabel = shortcutLabelForCommand(keybindings, command);
 
   return (
@@ -529,8 +546,7 @@ function NavigationHistoryButton({
         <Icon className="size-4 text-sidebar-toggle" strokeWidth={2.25} />
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        {label}
-        {shortcutLabel ? ` (${shortcutLabel})` : ""}
+        {shortcutLabel ? gt("{label} ({shortcut})", { label, shortcut: shortcutLabel }) : label}
       </TooltipPopup>
     </Tooltip>
   );
@@ -552,7 +568,8 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
-  const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  const gt = useGT();
+  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -677,7 +694,7 @@ export function AppSidebarLayout({
                 data-app-sidebar=""
                 {...sidebarArea}
                 role="navigation"
-                aria-label={isOnDesignSystem ? "Design system" : "Threads"}
+                aria-label={isOnDesignSystem ? gt("Design system") : gt("Threads")}
                 // Light, black chrome paints the sidebar with the dark tokens (index.css).
                 data-chrome-scope=""
                 resizable={{

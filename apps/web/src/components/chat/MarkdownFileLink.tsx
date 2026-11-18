@@ -8,11 +8,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuSource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useGT } from "gt-react";
 import { FolderIcon } from "lucide-react";
 
 import { contextMenuSourceOf } from "../../contextMenuSource";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { fileSurface } from "../../rightPanelStore";
 import { shouldOpenMarkdownFileLinkInEditor } from "../../markdown-links";
 import type { markdownFileCopyPaths } from "../../markdownFileHostPath";
 import { documentChipKindForFileName } from "../../pierre-icons";
@@ -44,6 +47,7 @@ interface MarkdownFileLinkProps {
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
   resolveDragPath: () => Promise<string>;
+  resolvePanelPath: (panelPath: string) => string | Promise<string>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -69,6 +73,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   threadRef,
   onOpen,
   onOpenInPanel,
+  resolvePanelPath,
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
@@ -77,6 +82,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   resolveCopyPaths,
   resolveDragPath,
 }: MarkdownFileLinkProps) {
+  const gt = useGT();
   const nativeDrag = useNativeFileDrag(environmentId, resolveDragPath);
   const handleOpenInEditor = () => {
     if (!onOpen) {
@@ -96,8 +102,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Unable to open file"),
+            description: error instanceof Error ? error.message : gt("An error occurred."),
           }),
         );
       } catch (cause) {
@@ -108,8 +114,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: gt("Unable to open file"),
+            description: cause instanceof Error ? cause.message : gt("An error occurred."),
           }),
         );
       }
@@ -146,8 +152,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Unable to open file in browser"),
+            description: error instanceof Error ? error.message : gt("An error occurred."),
           }),
         );
       } catch (cause) {
@@ -158,8 +164,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: gt("Unable to open file in browser"),
+            description: cause instanceof Error ? cause.message : gt("An error occurred."),
           }),
         );
       }
@@ -184,8 +190,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to reveal file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Unable to reveal file"),
+            description: error instanceof Error ? error.message : gt("An error occurred."),
           }),
         );
       } catch (cause) {
@@ -196,8 +202,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to reveal file",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
+            title: gt("Unable to reveal file"),
+            description: cause instanceof Error ? cause.message : gt("An error occurred."),
           }),
         );
       }
@@ -205,12 +211,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   };
 
   const handleCopy = (resolveValue: () => Promise<string>, title: string) => {
+    const failureTitle =
+      title === "Relative path"
+        ? gt("Failed to copy relative path")
+        : gt("Failed to copy full path");
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Failed to copy ${title.toLowerCase()}`,
-          description: "Clipboard API unavailable.",
+          title: failureTitle,
+          description: gt("Clipboard API unavailable."),
         }),
       );
       return;
@@ -234,8 +244,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Failed to copy ${title.toLowerCase()}`,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: failureTitle,
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         }),
       );
     });
@@ -252,10 +262,10 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       const copyItems = markdownFileCopyMenuItems({ targetPath, workspaceRelativePath });
       const clicked = await api.contextMenu.show(
         [
-          ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
+          ...(onOpenMedia ? ([{ id: "preview-media", label: gt("Preview media") }] as const) : []),
           ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
           ...(onOpenInBrowser
-            ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+            ? ([{ id: "open-in-browser", label: gt("Open in integrated browser") }] as const)
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
           ...copyItems.map(({ id, label }) => ({ id, label })),
@@ -325,6 +335,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
+  const layoutDragThreadRef =
+    threadRef && panelPath && !useBrowserPrimaryAction && !nativeDrag.draggable ? threadRef : null;
 
   return (
     <Tooltip>
@@ -335,7 +347,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               {...nativeDrag}
               kind={chipKind}
               dir="ltr"
-              render={<a href={href} />}
+              render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -352,6 +364,16 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 handleOpenInFilePreview();
               }}
               onContextMenu={handleContextMenu}
+              onPointerDown={(event) => {
+                if (!layoutDragThreadRef || !panelPath) return;
+                beginLayoutContentDrag(event, {
+                  kind: "surface",
+                  threadRef: layoutDragThreadRef,
+                  surface: fileSurface(panelPath, line ?? null, 0),
+                  resolve: async () =>
+                    fileSurface(await resolvePanelPath(panelPath), line ?? null, 0),
+                });
+              }}
             >
               <FileTagChipContent
                 icon={
@@ -371,7 +393,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               kind={chipKind}
               dir="ltr"
               render={<button type="button" />}
-              aria-label={`File options for ${label}`}
+              aria-label={gt("File options for {label}", { label })}
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
@@ -419,6 +441,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.isAppBundle === next.isAppBundle &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
+    previous.resolvePanelPath === next.resolvePanelPath &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&

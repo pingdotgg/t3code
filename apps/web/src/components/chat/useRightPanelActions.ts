@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AuthTerminalOperateScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
@@ -122,8 +125,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open browser",
-            description: error.message,
+            title: m(msg("Unable to open browser")),
+            description: errorDisplayMessage(error, m) ?? error.message,
           }),
         );
       }
@@ -233,7 +236,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const browserBesideAvailable = canOperatePreview && browserAvailable;
   const diffBesideAvailable = isServerThread && isGitRepo;
   const projectBesideAvailable = activeProject !== null;
-  // Also what the header's "+" offers after a new thread.
   const besideAvailable = (() => {
     const available = new Set<LayoutBesideKind>();
     if (diffBesideAvailable) available.add("diff");
@@ -252,7 +254,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   ) => {
     if (activeThreadRef === null) return;
     const targetPaneId = paneId === undefined ? layoutPane.paneId : paneId;
-    // The palette and the "+" menu open the surface as a tab of their pane.
+    // The palette opens the surface as a tab of its pane.
     if (targetPaneId !== null) {
       requestLayoutSurfacePlacement(activeThreadRef, { kind: "pane", paneId: targetPaneId });
     }
@@ -309,8 +311,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   return {
     shortcuts,
-    besideAvailable,
-    openBesideStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,

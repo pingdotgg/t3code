@@ -12,8 +12,14 @@ import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
+import { T, useMessages, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
-import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useState,
+  type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
@@ -26,7 +32,8 @@ import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
+import { readThreadPullRequestSurface, useOpenPrLink } from "../../lib/openPullRequestLink";
 import {
   linkedPullRequestSnapshotStatus,
   prStatusIndicator,
@@ -39,6 +46,7 @@ function ThreadDetailsPrLinkRow({
   environmentId,
   link,
   onOpen,
+  onPress,
   onActed,
   onStopWatching,
   composerTarget,
@@ -46,10 +54,12 @@ function ThreadDetailsPrLinkRow({
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
+  onPress: (event: ReactPointerEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
 }) {
+  const m = useMessages();
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
@@ -67,16 +77,25 @@ function ThreadDetailsPrLinkRow({
       pr={pr}
       number={link.number}
       reference={link}
-      status={prStatusIndicator(pr, linked?.sourceControlProvider)}
+      status={prStatusIndicator(pr, linked?.sourceControlProvider, m)}
       project={project}
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
-      openAriaLabel={link.url}
       onOpen={onOpen}
+      onPress={onPress}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />
   );
+}
+
+function beginPullRequestLinkDrag(
+  event: ReactPointerEvent<HTMLElement>,
+  threadRef: ScopedThreadRef,
+  url: string,
+) {
+  const surface = readThreadPullRequestSurface(threadRef, url);
+  if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
 }
 
 function ThreadDetailsPrRows({
@@ -129,6 +148,7 @@ function ThreadDetailsPrRows({
               environmentId={row.environmentId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
+              onPress={(event) => beginPullRequestLinkDrag(event, threadRef, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
               composerTarget={row.composerTarget}
@@ -150,7 +170,13 @@ function ThreadDetailsPrRows({
         ) : (
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         )}
-        {expanded ? "Show less" : `Show ${restCount} more`}
+        {expanded ? (
+          <T>Show less</T>
+        ) : (
+          <T>
+            Show <Var>{restCount}</Var> more
+          </T>
+        )}
       </ThreadDetailsControl>
     </>
   );
@@ -208,8 +234,8 @@ export function ThreadDetailsThreadPrRows({
       status={displayed.status}
       project={rowProject}
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
-      openAriaLabel={url}
       onOpen={(event) => openPrLink(event, url)}
+      onPress={(event) => beginPullRequestLinkDrag(event, threadRef, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />

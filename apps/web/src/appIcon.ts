@@ -4,10 +4,15 @@ import {
   appIconFileName,
   resolveAppIconId,
 } from "@t3tools/shared/appIcons";
+import { msg } from "gt-react";
 
 /** "Default" first, showing the build's own icon. */
 export const APP_ICON_OPTIONS = [
-  { id: DEFAULT_APP_ICON, label: "Default", src: "/apple-touch-icon.png" },
+  {
+    id: DEFAULT_APP_ICON,
+    label: msg("Default", { $context: "app icon option" }),
+    src: "/apple-touch-icon.png",
+  },
   ...APP_ICONS.map(({ id, label }) => ({
     id,
     label,

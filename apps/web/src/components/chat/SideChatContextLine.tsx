@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -17,6 +18,7 @@ export function SideChatContextLine({
   readonly open?: (() => void) | undefined;
   readonly handoff: HandoffEndpoints | null;
 }) {
+  const gt = useGT();
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const modelLabel = (endpoint: HandoffEndpoints["from"][number]) => {
@@ -36,10 +38,14 @@ export function SideChatContextLine({
       className="flex min-w-0 items-center gap-1 py-2 text-meta text-muted-foreground"
       data-side-chat-context
     >
-      <span className="shrink-0">Context from</span>
+      <span className="shrink-0">
+        {gt("Context from", {
+          $context: "divider label; the parent thread title follows as a link",
+        })}
+      </span>
       <span className="min-w-0 truncate">
         {open ? (
-          <InlineButton tone="muted" aria-label="Open parent thread" onClick={open}>
+          <InlineButton tone="muted" aria-label={gt("Open parent thread")} onClick={open}>
             {title}
           </InlineButton>
         ) : (

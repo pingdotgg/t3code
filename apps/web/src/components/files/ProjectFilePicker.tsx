@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { FileSearchIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
+
+import type { MessageResolver } from "~/i18n/messages";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -35,7 +38,6 @@ function FilePickerShortcutHint() {
 
 // The shortcut takes the esc key's place at the field's end, on the same lines.
 const FILE_PICKER_INPUT_PROPS = {
-  placeholder: "Search files…",
   startAddon: <FileSearchIcon className="text-icon-muted" />,
   endAddon: <FilePickerShortcutHint />,
 } as const;
@@ -63,26 +65,35 @@ function HighlightedFuzzyText(props: {
   return <span className="text-muted-foreground">{parts}</span>;
 }
 
-function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
+function getEmptyStateMessage(
+  query: string,
+  error: string | null,
+  isPending: boolean,
+  resolve: MessageResolver,
+): string {
   if (error) return error;
   const isSearching = query.trim().length > 0;
-  if (isPending) return isSearching ? "Searching workspace files…" : "Indexing workspace files…";
-  return isSearching ? "No matching files." : "No files found.";
+  if (isPending)
+    return isSearching
+      ? resolve(msg("Searching workspace files…"))
+      : resolve(msg("Indexing workspace files…"));
+  return isSearching ? resolve(msg("No matching files.")) : resolve(msg("No files found."));
 }
 
 function EmptyProjectFilePicker(props: { readonly escapeLabel: string }) {
+  const gt = useGT();
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={gt("File picker")}
       escapeLabel={props.escapeLabel}
-      footerActionLabel="Open file"
-      inputProps={{ ...FILE_PICKER_INPUT_PROPS, disabled: true }}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ ...FILE_PICKER_INPUT_PROPS, disabled: true, placeholder: gt("Search files…") }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-body text-muted-foreground">
-        Open a project to search its files.
+        <T>Open a project to search its files.</T>
       </div>
     </CommandPaletteContent>
   );
@@ -90,6 +101,8 @@ function EmptyProjectFilePicker(props: { readonly escapeLabel: string }) {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(
@@ -97,6 +110,8 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     target.cwd,
     query,
     PROJECT_FILE_PICKER_RESULT_LIMIT,
+    undefined,
+    messages,
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -141,7 +156,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     },
   }));
 
-  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending);
+  const emptyStateMessage = getEmptyStateMessage(query, result.error, result.isPending, messages);
   // `autoHighlight="always"` highlights the first row without reporting it, so
   // a stale or cleared value falls back to that row.
   const activeItemValue = items.some((item) => item.value === highlightedItemValue)
@@ -150,11 +165,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={gt("File picker")}
       autoHighlight="always"
       escapeLabel={props.escapeLabel}
-      footerActionLabel="Open file"
-      inputProps={FILE_PICKER_INPUT_PROPS}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ ...FILE_PICKER_INPUT_PROPS, placeholder: gt("Search files…") }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);

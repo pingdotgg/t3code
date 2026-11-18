@@ -10,7 +10,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { GitForkIcon, PlusIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { GitForkIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   Fragment,
   memo,
@@ -28,9 +29,8 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import type { ContextMenuItem } from "@t3tools/contracts";
-import type { LayoutBesideKind } from "../../layout/layoutActions";
-import { beginLayoutTabDrag } from "../../layout/layoutDrag";
+import { beginLayoutContentDrag, beginLayoutTabDrag } from "../../layout/layoutDrag";
+import { THREAD_TERMINAL_SURFACE_ID } from "../../layout/layoutModel";
 import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -43,11 +43,7 @@ import {
   PaneNotch,
   PaneTabButton,
 } from "../PaneNotch";
-import { Button, ContentButton } from "../ui/button";
-import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
-import { surfaceShortcutActionForKey } from "../RightPanelTabs";
-import { SURFACE_LAUNCHER_ENTRIES, SurfaceMenuItems, surfaceMenuActions } from "../SurfaceLauncher";
-import { useBrowserDefaults } from "~/browser/browserDefaults";
+import { ContentButton } from "../ui/button";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { GuestShareIndicator } from "./GuestShareControls";
@@ -56,6 +52,7 @@ import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
+  LayoutNewTabButton,
   LayoutPaneTabStrip,
   LayoutTabCloseButton,
   ParentThreadLinkLabel,
@@ -88,16 +85,11 @@ interface ChatHeaderProps {
    * tabs truncate before they run under them. Unset keeps the default room.
    */
   trailingInset?: number | null | undefined;
-  /** Opens a new thread in this project as a new tab of the pane. */
-  onNewThreadInProject: () => void;
-  /** What the "+" menu can open beside the chat after a new thread. */
-  besideAvailable: ReadonlySet<LayoutBesideKind>;
-  onOpenBeside: (kind: LayoutBesideKind, paneId?: string | null, browserProfileId?: string) => void;
-  newTabShortcutLabel?: string | null | undefined;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
   /** The chat's terminal pane while hidden (cmd+J): its notch offers it back. */
   hiddenTerminal?: HiddenTerminalChip | null | undefined;
+  onNewSideChat?: (() => void) | undefined;
 }
 
 export interface HiddenTerminalChip {
@@ -116,12 +108,6 @@ function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
-const OPEN_BESIDE_MENU: ContextMenuItem<LayoutBesideKind>[] = [
-  { id: "browser", label: "Browser", icon: "globe" },
-  { id: "terminal", label: "Terminal", icon: "terminal" },
-  { id: "files", label: "Files", icon: "folder" },
-  { id: "diff", label: "Diff", icon: "file-diff" },
-];
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
@@ -133,26 +119,13 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenThread,
   rightPanelOpen,
   trailingInset,
-  onNewThreadInProject,
-  besideAvailable,
-  onOpenBeside,
-  newTabShortcutLabel,
   onOpenProjectSettings,
   onFindInThread,
   hiddenTerminal,
+  onNewSideChat,
 }: ChatHeaderProps) {
-  // Right-click "+" for a terminal, browser, files or diff beside the chat (pen HQTgu).
-  const openBesideMenu = (event: React.MouseEvent) => {
-    const api = readLocalApi();
-    const items = OPEN_BESIDE_MENU.filter((item) => besideAvailable.has(item.id));
-    if (!api || items.length === 0) return;
-    event.preventDefault();
-    // The header's own menu would replace this one.
-    event.stopPropagation();
-    void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((kind) => {
-      if (kind) onOpenBeside(kind);
-    });
-  };
+  const gt = useGT();
+  const messages = useMessages();
   const { tabId: layoutTabId } = useLayoutPane();
   // Drag the tab out of its notch to split (pen T5Hy0Q).
   const handleTabPointerDown = (event: React.PointerEvent) => {
@@ -170,7 +143,7 @@ export const ChatHeader = memo(function ChatHeader({
   const runLayoutMenuAction = (id: string) => {
     if (layoutTabId !== null && isLayoutTabMenuId(id)) runLayoutTabMenuAction(id, layoutTabId);
   };
-  const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
+  const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   const canOperateThread = useEnvironmentScope(
@@ -234,7 +207,7 @@ export const ChatHeader = memo(function ChatHeader({
       originalTitle: renamingTitle ?? activeThreadTitle,
     });
     if (resolution.action === "reject-empty") {
-      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
       return;
     }
     if (resolution.action === "noop") return;
@@ -246,8 +219,8 @@ export const ChatHeader = memo(function ChatHeader({
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Failed to rename thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Failed to rename thread"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         });
       }
     });
@@ -260,6 +233,7 @@ export const ChatHeader = memo(function ChatHeader({
     canShareWithGuest,
     leadingItems: layoutMenuItems,
     onLeadingAction: runLayoutMenuAction,
+    onNewSideChat,
   });
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
@@ -294,7 +268,7 @@ export const ChatHeader = memo(function ChatHeader({
               ? [
                   {
                     id: "project-settings",
-                    label: "Project settings",
+                    label: gt("Project settings"),
                     icon: "settings",
                     separatorBefore: layoutItems.length > 0,
                   },
@@ -344,7 +318,7 @@ export const ChatHeader = memo(function ChatHeader({
     ? `${activeProjectName} / ${activeThreadTitle}`
     : activeThreadTitle;
   const tabTooltip = ghostShown
-    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title)
+    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title, messages)
     : plainTooltip;
   // The parent's own tab, when it leads this one in the strip, becomes the back link.
   const parentTabId =
@@ -394,7 +368,7 @@ export const ChatHeader = memo(function ChatHeader({
               <input
                 autoFocus
                 dir="auto"
-                aria-label="Thread title"
+                aria-label={gt("Thread title")}
                 className="min-w-24 max-w-full bg-transparent outline-none [field-sizing:content]"
                 defaultValue={renamingTitle}
                 onBlur={(event) => {
@@ -424,7 +398,7 @@ export const ChatHeader = memo(function ChatHeader({
                       <PaneTabButton
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         type="button"
-                        aria-label={`Thread actions for ${activeThreadTitle}`}
+                        aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                         aria-haspopup="menu"
                         onClick={openMenuFromTitle}
                         onAuxClick={handleTabAuxClick}
@@ -479,6 +453,13 @@ export const ChatHeader = memo(function ChatHeader({
                         "cursor-pointer text-left text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
                       )}
                       onClick={hiddenTerminal.onShow}
+                      onPointerDown={(event) =>
+                        beginLayoutContentDrag(event, {
+                          kind: "surface",
+                          threadRef: scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
+                          surface: { id: THREAD_TERMINAL_SURFACE_ID, kind: "thread-terminal" },
+                        })
+                      }
                     />
                   }
                 >
@@ -489,37 +470,38 @@ export const ChatHeader = memo(function ChatHeader({
                       hiddenTerminal.running && "text-success-foreground",
                     )}
                   />
-                  <span className="min-w-0 truncate">Terminal</span>
+                  <span className="min-w-0 truncate">
+                    <T>Terminal</T>
+                  </span>
                 </TooltipTrigger>
                 <TooltipPopup side="bottom">
-                  Show the terminal
-                  {hiddenTerminal.shortcutLabel ? ` (${hiddenTerminal.shortcutLabel})` : ""}
+                  {hiddenTerminal.shortcutLabel
+                    ? gt("Show the terminal ({shortcut})", {
+                        shortcut: hiddenTerminal.shortcutLabel,
+                      })
+                    : gt("Show the terminal")}
                   <br />
                   {activeThreadTitle}
                   <br />
-                  {hiddenTerminal.running ? "Process running" : "Idle"}
+                  {hiddenTerminal.running ? gt("Process running") : gt("Idle")}
                 </TooltipPopup>
               </Tooltip>
             </span>
           ) : null}
         </LayoutPaneTabStrip>
-        {activeProject ? (
-          <NewTabMenu
-            projectName={activeProjectName ?? activeProject.title}
-            newTabShortcutLabel={newTabShortcutLabel}
-            besideAvailable={besideAvailable}
-            onNewThread={onNewThreadInProject}
-            onOpenBeside={onOpenBeside}
-            onContextMenu={openBesideMenu}
-          />
-        ) : null}
+        {layoutTabId !== null ? <LayoutNewTabButton tabId={layoutTabId} /> : null}
         {renamingTitle === null && activeThreadLinkOrigin ? (
           <Tooltip>
             <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-              From {activeThreadLinkOrigin}
+              <T>
+                From <Var>{activeThreadLinkOrigin}</Var>
+              </T>
             </TooltipTrigger>
             <TooltipPopup side="top">
-              Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+              <T>
+                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                environment.
+              </T>
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -529,84 +511,12 @@ export const ChatHeader = memo(function ChatHeader({
   );
 });
 
-/**
- * The notch's "+": choose a new thread (N) or what to open beside the chat,
- * by click or by letter while the menu is open. cmd+T still opens a new
- * thread without it.
- */
-function NewTabMenu(props: {
-  projectName: string;
-  newTabShortcutLabel: string | null | undefined;
-  besideAvailable: ReadonlySet<LayoutBesideKind>;
-  onNewThread: () => void;
-  onOpenBeside: (kind: LayoutBesideKind, paneId?: string | null, browserProfileId?: string) => void;
-  onContextMenu: (event: ReactMouseEvent) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const browserProfiles = useBrowserDefaults().profiles;
-  const actions = surfaceMenuActions({
-    onNewThread: props.onNewThread,
-    surfaces: Object.fromEntries(
-      SURFACE_LAUNCHER_ENTRIES.map((item) => [
-        item.kind,
-        {
-          available: props.besideAvailable.has(item.kind),
-          onClick: () => props.onOpenBeside(item.kind),
-        },
-      ]),
-    ),
-  });
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const action = surfaceShortcutActionForKey(actions, event.nativeEvent);
-    if (!action) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setOpen(false);
-    action.onClick();
-  };
-  return (
-    <Menu open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button
-                  variant="bare"
-                  size="icon-xs"
-                  data-pane-notch-add=""
-                  aria-label={`New tab in ${props.projectName}`}
-                  onContextMenu={props.onContextMenu}
-                />
-              }
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">
-          New tab in {props.projectName}
-          {props.newTabShortcutLabel ? ` (${props.newTabShortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" side="bottom" sideOffset={6} onKeyDownCapture={handleKeyDown}>
-        <SurfaceMenuItems
-          actions={actions}
-          browserProfiles={browserProfiles}
-          onAddBrowserInProfile={(profileId) => props.onOpenBeside("browser", undefined, profileId)}
-          onClose={() => setOpen(false)}
-        />
-      </MenuPopup>
-    </Menu>
-  );
-}
-
 /** Sets the parent's back link apart from the child tabs after it. */
 function ParentThreadLinkSeparator() {
   return <Separator orientation="vertical" className="mx-0.5 h-4" />;
 }
 
-/** A subagent thread's way back to its parent when the parent has no tab in this pane. */
+/** A subagent thread's way back to its parent when it has no tab in this pane. */
 function ParentThreadLink({
   link,
   onOpenThread,
@@ -614,6 +524,7 @@ function ParentThreadLink({
   readonly link: { threadId: ThreadId; title: string };
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const gt = useGT();
   return (
     <span className={LAYOUT_TAB_SLOT_CLASS}>
       <Tooltip>
@@ -622,15 +533,21 @@ function ParentThreadLink({
             <ContentButton
               variant="tab"
               type="button"
-              aria-label={`Back to parent thread: ${link.title}`}
+              aria-label={gt("Open parent thread: {title}", { title: link.title })}
               onClick={() => onOpenThread(link.threadId)}
+              onPointerDown={(event) =>
+                beginLayoutContentDrag(event, {
+                  kind: "thread",
+                  threadRef: scopeThreadRef(environmentId, link.threadId),
+                })
+              }
             />
           }
         >
           <ParentThreadLinkLabel title={link.title} />
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {`${link.title}\nParent thread`}
+          {`${link.title}\n${gt("Parent thread")}`}
         </TooltipPopup>
       </Tooltip>
     </span>

@@ -1,12 +1,13 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { observeResize } from "../../lib/observeResize";
-import { usePullRequestsSupported } from "../../state/environments";
+import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   useSidebarStageBackdropVariant,
@@ -25,7 +26,10 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { useOpenLayoutPage } from "../../layout/pageNavigation";
+import { readIssueListPreferences } from "../issue/issueListPreferences";
+import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
@@ -60,9 +64,10 @@ export function SidebarBrandWidthProbe({
 }
 
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  const gt = useGT();
   return (
     <Link
-      aria-label="T3 Code home"
+      aria-label={gt("T3 Code home")}
       className={cn(
         "pointer-events-auto relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring [-webkit-app-region:no-drag] focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white light:text-foreground" : "text-foreground",
@@ -84,7 +89,8 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70 light:text-muted-foreground" : "text-muted-foreground",
         )}
       >
-        Code
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product wordmark */}
+        {"Code"}
       </span>
     </span>
   );
@@ -97,6 +103,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
+  const gt = useGT();
 
   return (
     // The sidebar's share of the window chrome row, not a padded SidebarHeader.
@@ -114,7 +121,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         <SidebarTrigger
           variant={backdropVariant ? "media-navigation" : "ghost"}
           className="relative top-auto translate-y-0"
-          aria-label="Toggle main sidebar"
+          aria-label={gt("Toggle main sidebar")}
         />
       </div>
       <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5 md:hidden">
@@ -154,13 +161,20 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  onPointerDown,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  onPointerDown?: ((event: ReactPointerEvent) => void) | undefined;
 }) {
   return (
-    <SidebarHeaderIconButton label={label} size="footer" onClick={onClick}>
+    <SidebarHeaderIconButton
+      label={label}
+      size="footer"
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+    >
       {icon}
     </SidebarHeaderIconButton>
   );
@@ -170,11 +184,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const openLayoutPage = useOpenLayoutPage();
+  const gt = useGT();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -183,6 +199,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handlePullRequestsClick = () => {
     closeMobileSidebar();
     void openLayoutPage("pull-requests");
+  };
+  const handleIssuesClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: readIssueListPreferences() });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -208,28 +228,40 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           <SidebarMenuItem className="min-w-0 flex-1">
             <SidebarMenuButton size="control" onClick={handleBackClick}>
               <ArrowLeftIcon />
-              <span>Back</span>
+              <span>
+                <T>Back</T>
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         ) : (
-          // Keep the three utilities in the design's compact, icon-only row.
+          // Keep the utilities in the design's compact, icon-only row.
           <SidebarMenuItem className="shrink-0">
             <div className="flex gap-1">
               <SidebarUtilityItem
                 icon={<SettingsIcon className="size-4" />}
-                label="Settings"
+                label={gt("Settings")}
                 onClick={handleSettingsClick}
               />
               {pullRequestsSupported ? (
                 <SidebarUtilityItem
                   icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                  label="Pull Requests"
+                  label={gt("Pull requests")}
                   onClick={handlePullRequestsClick}
+                  onPointerDown={(event) =>
+                    beginLayoutContentDrag(event, { kind: "pull-requests" })
+                  }
+                />
+              ) : null}
+              {issuesSupported ? (
+                <SidebarUtilityItem
+                  icon={<IssueGlyph.issue className="size-4" />}
+                  label={gt("Issues", { $context: "sidebar link to the list of issues" })}
+                  onClick={handleIssuesClick}
                 />
               ) : null}
               <SidebarUtilityItem
                 icon={<ChartNoAxesColumnIcon className="size-4" />}
-                label="Usage"
+                label={gt("Usage")}
                 onClick={handleUsageClick}
               />
             </div>

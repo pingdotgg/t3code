@@ -1,14 +1,15 @@
 import { SURFACE_STYLES, type SurfaceStyle } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { Button, ContentButton } from "../ui/button";
 
 const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
-  "gradient-rim": "Standard",
-  flat: "Flat",
-  "soft-gradient": "Soft",
-  "aqua-gloss-full": "Gloss",
-  "aqua-blue": "Accent gloss",
-  "gradient-rim-everywhere": "Outline",
+  "gradient-rim": msg("Standard", { $context: "surface style" }),
+  flat: msg("Flat", { $context: "surface style" }),
+  "soft-gradient": msg("Soft", { $context: "surface style" }),
+  "aqua-gloss-full": msg("Gloss", { $context: "surface style" }),
+  "aqua-blue": msg("Accent gloss", { $context: "surface style" }),
+  "gradient-rim-everywhere": msg("Outline", { $context: "surface style" }),
 };
 
 /**
@@ -24,8 +25,14 @@ export function SurfaceStylePicker({
   readonly defaultValue: SurfaceStyle;
   readonly onChange: (style: SurfaceStyle) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
-    <div aria-label="Style" className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3" role="group">
+    <div
+      aria-label={gt("Style", { $context: "surface style picker" })}
+      className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3"
+      role="group"
+    >
       {SURFACE_STYLES.map((style) => {
         const isActive = style === value;
         return (
@@ -45,19 +52,21 @@ export function SurfaceStylePicker({
                 inert
               >
                 <Button render={<span />} size="sm">
-                  Approve
+                  {gt("Approve", { $context: "sample button in a style preview" })}
                 </Button>
                 <Button render={<span />} size="sm" variant="secondary">
-                  Button
+                  {gt("Button", { $context: "sample button in a style preview" })}
                 </Button>
               </span>
               {/* px-3 like the theme cards above, so names in a column share one line. */}
               <span className="flex flex-col items-start gap-1.5 border-t border-divider px-3 py-3 sm:flex-row sm:items-center">
                 <span className="min-w-0 flex-1 text-label text-foreground max-sm:wrap-anywhere sm:truncate">
-                  {SURFACE_STYLE_LABELS[style]}
+                  {m(SURFACE_STYLE_LABELS[style])}
                 </span>
                 {style === defaultValue ? (
-                  <span className="shrink-0 text-meta text-dim-foreground">Default</span>
+                  <span className="shrink-0 text-meta text-dim-foreground">
+                    {gt("Default", { $context: "marks the default choice" })}
+                  </span>
                 ) : null}
               </span>
             </span>

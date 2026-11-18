@@ -1,6 +1,7 @@
 import { FileWarning, RotateCw } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { T, useGT } from "gt-react";
 import {
   Empty,
   EmptyContent,
@@ -128,10 +129,11 @@ export function FileRenderedViewToggle(props: {
   readonly rendered: boolean;
   readonly onRenderedChange: (rendered: boolean) => void;
 }) {
+  const gt = useGT();
   const { mode } = props;
   return (
     <ToggleGroup
-      aria-label="File view"
+      aria-label={gt("File view")}
       className="shrink-0"
       value={[props.rendered ? "rendered" : "source"]}
       onValueChange={(value) => {
@@ -142,30 +144,32 @@ export function FileRenderedViewToggle(props: {
       <ToggleGroupItem
         aria-label={
           mode === "mermaid"
-            ? "Show rendered diagram"
+            ? gt("Show rendered diagram")
             : mode === "markdown"
-              ? "Show rendered markdown"
+              ? gt("Show rendered markdown")
               : mode === "table"
-                ? "Show table"
-                : "Show rendered page"
+                ? gt("Show table")
+                : gt("Show rendered page")
         }
         value="rendered"
       >
-        {mode === "table" ? "Table" : "Preview"}
+        {mode === "table"
+          ? gt("Table", { $context: "view mode, rendered table" })
+          : gt("Preview", { $context: "view mode, rendered file" })}
       </ToggleGroupItem>
       <ToggleGroupItem
         aria-label={
           mode === "mermaid"
-            ? "Show Mermaid source"
+            ? gt("Show Mermaid source")
             : mode === "markdown"
-              ? "Show markdown source"
+              ? gt("Show markdown source")
               : mode === "table"
-                ? "Show source"
-                : "Show HTML source"
+                ? gt("Show source")
+                : gt("Show HTML source")
         }
         value="source"
       >
-        Source
+        {gt("Source", { $context: "view mode, file source" })}
       </ToggleGroupItem>
     </ToggleGroup>
   );
@@ -183,10 +187,11 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
 }
 
 export function FileSurfaceLoading(props: { readonly className?: string }) {
+  const gt = useGT();
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label={gt("Loading file")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
         props.className,
@@ -228,17 +233,18 @@ export function FileSurfaceFailure(props: {
   readonly title?: string;
   readonly onRetry?: () => void;
 }) {
+  const gt = useGT();
   return (
     <FileSurfaceState
       role="alert"
       icon={<FileWarning />}
-      title={props.title ?? "Can't open this file"}
+      title={props.title ?? gt("Can't open this file")}
       description={props.message}
       action={
         props.onRetry ? (
           <Button type="button" variant="secondary" size="sm" onClick={props.onRetry}>
             <RotateCw />
-            Try again
+            <T>Try again</T>
           </Button>
         ) : undefined
       }

@@ -508,29 +508,81 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    the notch's end, so it only paints while the strip's right edge holds it. */
 [data-pane-cut$="notch"] {
   display: none;
+  overflow: clip;
 }
 
-[data-pane-cut="end-notch"] {
+[data-pane-cut="start-after-notch"] {
+  --pane-cut-center: 100% 100%;
+}
+
+[data-pane-cut="end-before-notch"] {
+  --pane-cut-center: 0 100%;
+}
+
+:is(
+  [data-pane-cut="end-notch"],
+  [data-pane-cut="start-after-notch"],
+  [data-pane-cut="end-before-notch"]
+) {
   &::before {
     content: none;
   }
 
   & > span {
     position: sticky;
-    right: 0;
     flex: none;
     container-type: scroll-state;
   }
 
   & > span > span {
     display: block;
-    visibility: hidden;
   }
+}
+
+:is([data-pane-cut="end-notch"], [data-pane-cut="end-before-notch"]) > span {
+  right: 0;
+}
+
+[data-pane-cut="start-after-notch"] > span {
+  left: 0;
+}
+
+[data-pane-cut="end-notch"] > span > span {
+  visibility: hidden;
+}
+
+:is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) > span > span {
+  opacity: 0;
+  transition: opacity var(--panel-animation-duration, 150ms) ease-out;
 }
 
 @container scroll-state(stuck: right) {
   [data-pane-cut="end-notch"] > span > span {
     visibility: visible;
+  }
+
+  [data-pane-cut="end-before-notch"] > span > span {
+    opacity: 1;
+  }
+}
+
+@container scroll-state(stuck: left) {
+  [data-pane-cut="start-after-notch"] > span > span {
+    opacity: 1;
+  }
+}
+
+@media (width >= 48rem) {
+  :root:not(.black-chrome)
+    [data-slot="sidebar"][data-variant="inset"][data-state="collapsed"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id][data-pane-notched]
+    > [data-pane-cut="start-after-notch"] {
+    left: 0;
+
+    & > span > span {
+      transition: none;
+    }
   }
 }
 
@@ -557,6 +609,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-layout-pane-id][data-pane-notched]
       > [data-pane-cut="end-notch"] {
       right: calc(anchor(--pane-notch right) + 1rem);
+    }
+
+    .black-chrome
+      [data-slot="sidebar"][data-variant="inset"]
+      ~ [data-slot="sidebar-inset"]
+      [data-layout-pane-id][data-pane-notched]
+      > :is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) {
+      display: none;
     }
   }
 }
@@ -1970,7 +2030,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 
 @utility live-activity-focus-aligned {
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
-  margin-left: var(--live-activity-focus-width);
+  margin-inline-start: var(--live-activity-focus-width);
 }
 
 @property --assistant-citation-highlight-opacity {
@@ -3696,8 +3756,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --merged-foreground: oklch(from var(--merged) max(l, 0.75) c h);
 }
 
-/* Preserve the default pill; other styles inherit their card's pill recipe. */
-:root:is(
+/* Preserve the default pill; other styles and named themes inherit their card's pill recipe. */
+:root:not([data-theme-id]:not([data-theme-id=""])):is(
     :not([data-surface-style]),
     [data-surface-style="gradient-rim"],
     [data-surface-style="flat"]
@@ -3713,7 +3773,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 
 :root {
   @variant light {
-    &:is(
+    &:not([data-theme-id]:not([data-theme-id=""])):is(
         :not([data-surface-style]),
         [data-surface-style="gradient-rim"],
         [data-surface-style="flat"]
@@ -4940,6 +5000,11 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   }
 }
 
+/* Thread titles otherwise read a theme's text color, which is dark on a light theme. */
+:root.black-chrome [data-app-sidebar]:where([data-chrome-scope], [data-chrome-scope] *) {
+  --sidebar-thread-title-foreground: #f1f3f7;
+}
+
 /* Light surfaces the default theme derives from its chrome color keep the
    light value outside the chrome scope. */
 :root.black-chrome:not([data-theme-id]:not([data-theme-id=""])) {
@@ -5438,6 +5503,14 @@ body {
 
 .chat-markdown.user-message-markdown ol {
   list-style-type: decimal;
+}
+
+/* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
+   pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
+   Not selectable, so a selection, a drag or a copy carries the text as it did before. */
+.chat-markdown.user-message-markdown [data-leading-whitespace] {
+  white-space: pre-wrap;
+  user-select: none;
 }
 
 .chat-markdown li + li {
@@ -6373,6 +6446,23 @@ body {
    where it fades. An unfocused pane keeps the shape with a quieter rim.
    [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
    slides to the active tab. Light, black chrome keeps the notch instead. */
+@property --pane-lit-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-end {
+  syntax: "*";
+  inherits: false;
+}
+
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
   --pane-join-fill: var(--background);
@@ -6577,8 +6667,26 @@ body {
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
       top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
     }
+    & [data-layout-pane-id] > [data-pane-cut$="notch"] {
+      --pane-lit-start: inherit;
+      --pane-lit-end: inherit;
+      --pane-lit-panel-start: inherit;
+      --pane-lit-panel-end: inherit;
+      --pane-lit-from: min(var(--pane-lit-start, 100000px), var(--pane-lit-panel-start, 100000px));
+      --pane-lit-to: max(var(--pane-lit-end, -100000px), var(--pane-lit-panel-end, -100000px));
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="start-notch"] {
+      right: max(var(--pane-cut), calc(100% - var(--pane-lit-from)));
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="start-after-notch"] {
+      left: max(0px, var(--pane-lit-to));
+    }
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-notch"] {
+      left: max(var(--pane-cut), var(--pane-lit-to));
       right: 0;
+    }
+    & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-before-notch"] {
+      right: max(0px, calc(100% - var(--pane-lit-from)));
     }
 
     & [data-pane-notch=""] [data-pane-join] {

@@ -1,10 +1,12 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 
 import {
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
+import type { MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
@@ -21,15 +23,15 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
 }
 
 /** Feed times read "3h ago"; build days from a prerelease version read "today" or "2d ago". */
-function formatReleaseAge(releasedAt: string, nowMs: number): string {
+function formatReleaseAge(releasedAt: string, nowMs: number, resolve: MessageResolver): string {
   const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releasedAt);
-  if (!day) return formatRelativeTimeLabel(releasedAt, nowMs);
+  if (!day) return formatRelativeTimeLabel(releasedAt, nowMs, resolve);
   const now = new Date(nowMs);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round(
     (today - Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]))) / 86_400_000,
   );
-  return days <= 0 ? "today" : `${days}d ago`;
+  return days <= 0 ? resolve(msg("today")) : resolve(msg("{days}d ago", { days }));
 }
 
 function ReleaseLink({
@@ -65,6 +67,8 @@ export function SidebarUpdateReleaseNotes({
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   if (state.releaseNotes.length === 0) {
@@ -80,13 +84,13 @@ export function SidebarUpdateReleaseNotes({
         {state.status === "available" ? (
           <div>
             <div className="whitespace-nowrap text-sm leading-5 font-medium">
-              Update ready to download
+              <T>Update ready to download</T>
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
                 <span className="flex flex-col items-start gap-0.5">
                   <span>{state.availableVersion}</span>
-                  {releasedAt ? <span>{formatReleaseAge(releasedAt, now)}</span> : null}
+                  {releasedAt ? <span>{formatReleaseAge(releasedAt, now, m)}</span> : null}
                 </span>
               </div>
             ) : null}
@@ -102,8 +106,11 @@ export function SidebarUpdateReleaseNotes({
           const linkLabel =
             releaseNote.stats ??
             (omittedItemCount === 0
-              ? "View release on GitHub"
-              : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
+              ? gt("View release on GitHub")
+              : gt(
+                  "{count, plural, one {{count} more change on GitHub} other {{count} more changes on GitHub}}",
+                  { count: omittedItemCount },
+                ));
 
           const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
           return (
@@ -114,14 +121,20 @@ export function SidebarUpdateReleaseNotes({
                     <span className="flex flex-col items-start gap-0.5">
                       <span>{releaseNote.version}</span>
                       {releaseNote.releasedAt ? (
-                        <span>{formatReleaseAge(releaseNote.releasedAt, now)}</span>
+                        <span>{formatReleaseAge(releaseNote.releasedAt, now, m)}</span>
                       ) : null}
                     </span>
                   </h3>
                 )
               ) : (
                 <h3 className="mb-2 text-meta text-strong-foreground">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
+                  {index === 0 ? (
+                    <T>What's changed</T>
+                  ) : (
+                    <T>
+                      Changes in <Var>{releaseNote.version}</Var>
+                    </T>
+                  )}
                 </h3>
               )}
               {releaseNote.intro ? (
@@ -160,7 +173,10 @@ export function SidebarUpdateReleaseNotes({
         {state.omittedReleaseCount > 0 ? (
           <div className="mt-3">
             <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
-              {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
+              {gt(
+                "{count, plural, one {{count} older release on GitHub} other {{count} older releases on GitHub}}",
+                { count: state.omittedReleaseCount },
+              )}
             </ReleaseLink>
           </div>
         ) : null}

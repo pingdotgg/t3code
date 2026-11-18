@@ -1,7 +1,9 @@
 import { useEffect, useId, useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import { useNowMinute } from "../hooks/useNowMinute";
+import type { MessageResolver } from "../i18n/messages";
 import {
   localSnoozeDate,
   localSnoozeTime,
@@ -65,30 +67,45 @@ export function CustomSnoozeDialogHost() {
 type DurationParts = { readonly days: number; readonly hours: number; readonly minutes: number };
 
 const DURATION_FIELDS = [
-  { key: "days", label: "Days" },
-  { key: "hours", label: "Hours" },
-  { key: "minutes", label: "Minutes" },
+  {
+    key: "days",
+    label: msg("Days"),
+    decrementLabel: msg("Fewer days"),
+    incrementLabel: msg("More days"),
+  },
+  {
+    key: "hours",
+    label: msg("Hours"),
+    decrementLabel: msg("Fewer hours"),
+    incrementLabel: msg("More hours"),
+  },
+  {
+    key: "minutes",
+    label: msg("Minutes"),
+    decrementLabel: msg("Fewer minutes"),
+    incrementLabel: msg("More minutes"),
+  },
 ] as const;
 
 function durationMinutes(parts: DurationParts): number {
   return parts.days * 24 * 60 + parts.hours * 60 + parts.minutes;
 }
 
-/** "today at 6:12 PM", "tomorrow at 9:00 AM", or "on Mon, Sep 29 at 9:00 AM". */
-function formatReturnTime(wake: Date, now: Date): string {
+/** "Returns today at 6:12 PM", "… tomorrow at 9:00 AM", or "… on Mon, Sep 29 at 9:00 AM". */
+function formatReturnTime(wake: Date, now: Date, resolve: MessageResolver): string {
   const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   const dayOffset = Math.round(
     (new Date(wake).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000,
   );
-  if (dayOffset === 0) return `today at ${time}`;
-  if (dayOffset === 1) return `tomorrow at ${time}`;
+  if (dayOffset === 0) return resolve(msg("Returns today at {time}", { time }));
+  if (dayOffset === 1) return resolve(msg("Returns tomorrow at {time}", { time }));
   const day = wake.toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
     ...(wake.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
   });
-  return `on ${day} at ${time}`;
+  return resolve(msg("Returns on {day} at {time}", { day, time }));
 }
 
 /** The current time, refreshed each minute while mounted so a live label never goes stale. */
@@ -98,6 +115,8 @@ function useMinuteClock(): Date {
 }
 
 function CustomSnoozeDialog() {
+  const gt = useGT();
+  const messages = useMessages();
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -133,8 +152,8 @@ function CustomSnoozeDialog() {
             if (!snoozedUntil) {
               setError(
                 mode === "date"
-                  ? "Choose a valid date and time in the future."
-                  : "Enter a positive duration.",
+                  ? gt("Choose a valid date and time in the future.")
+                  : gt("Enter a positive duration."),
               );
               return;
             }
@@ -142,13 +161,17 @@ function CustomSnoozeDialog() {
           }}
         >
           <DialogHeader>
-            <DialogTitle>Custom snooze</DialogTitle>
-            <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
+            <DialogTitle>
+              <T>Custom snooze</T>
+            </DialogTitle>
+            <DialogDescription>
+              <T>Choose when snoozed threads return to your inbox.</T>
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
               <ToggleGroup
-                aria-label="Schedule type"
+                aria-label={gt("Schedule type")}
                 className="w-full *:flex-1"
                 value={[mode]}
                 onValueChange={(next) => {
@@ -157,14 +180,20 @@ function CustomSnoozeDialog() {
                   setError(null);
                 }}
               >
-                <Toggle value="duration">Snooze for</Toggle>
-                <Toggle value="date">Date and time</Toggle>
+                <Toggle value="duration">
+                  <T>Snooze for</T>
+                </Toggle>
+                <Toggle value="date">
+                  <T>Date and time</T>
+                </Toggle>
               </ToggleGroup>
               <div className="flex flex-col gap-4">
                 {mode === "date" ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="flex min-w-0 flex-col gap-2">
-                      <Label htmlFor={`${id}-date`}>Date</Label>
+                      <Label htmlFor={`${id}-date`}>
+                        <T context="calendar date">Date</T>
+                      </Label>
                       <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
                         <PopoverTrigger
                           render={
@@ -183,7 +212,7 @@ function CustomSnoozeDialog() {
                           })}
                           <CalendarIcon className="size-4 text-muted-foreground" />
                         </PopoverTrigger>
-                        <PopoverPopup align="start" aria-label="Choose snooze date">
+                        <PopoverPopup align="start" aria-label={gt("Choose snooze date")}>
                           <Calendar
                             mode="single"
                             required
@@ -201,7 +230,7 @@ function CustomSnoozeDialog() {
                       </Popover>
                     </div>
                     <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-time`}>
-                      Time
+                      <T context="time of day">Time</T>
                       <Input
                         nativeInput
                         id={`${id}-time`}
@@ -219,7 +248,9 @@ function CustomSnoozeDialog() {
                 ) : (
                   <div className="flex flex-col gap-4">
                     <fieldset className="flex min-w-0 flex-col gap-1.5">
-                      <legend className="mb-1.5 text-muted-foreground text-label">Duration</legend>
+                      <legend className="mb-1.5 text-muted-foreground text-label">
+                        <T>Duration</T>
+                      </legend>
                       <div className="grid grid-cols-3 gap-2">
                         {DURATION_FIELDS.map((field) => (
                           <NumberField
@@ -238,19 +269,15 @@ function CustomSnoozeDialog() {
                             }}
                           >
                             <NumberFieldGroup>
-                              <NumberFieldDecrement
-                                aria-label={`Fewer ${field.label.toLowerCase()}`}
-                              />
-                              <NumberFieldInput aria-label={field.label} />
-                              <NumberFieldIncrement
-                                aria-label={`More ${field.label.toLowerCase()}`}
-                              />
+                              <NumberFieldDecrement aria-label={messages(field.decrementLabel)} />
+                              <NumberFieldInput aria-label={messages(field.label)} />
+                              <NumberFieldIncrement aria-label={messages(field.incrementLabel)} />
                             </NumberFieldGroup>
                             <label
                               htmlFor={`${id}-${field.key}`}
                               className="text-dim-foreground text-meta"
                             >
-                              {field.label}
+                              {messages(field.label)}
                             </label>
                           </NumberField>
                         ))}
@@ -262,8 +289,8 @@ function CustomSnoozeDialog() {
                         className="size-3.5 shrink-0 text-muted-foreground"
                       />
                       {wakeAt
-                        ? `Returns ${formatReturnTime(new Date(wakeAt), now)}`
-                        : "Set a duration longer than zero."}
+                        ? formatReturnTime(new Date(wakeAt), now, messages)
+                        : gt("Set a duration longer than zero.")}
                     </p>
                   </div>
                 )}
@@ -290,13 +317,13 @@ function CustomSnoozeDialog() {
               }}
             >
               <Settings2Icon />
-              Edit snooze options
+              <T>Edit snooze options</T>
             </Button>
             <Button size="standard" type="button" variant="secondary" onClick={() => finish(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button size="standard" type="submit">
-              Snooze
+              <T context="verb">Snooze</T>
               <SubmitKbd />
             </Button>
           </DialogFooter>

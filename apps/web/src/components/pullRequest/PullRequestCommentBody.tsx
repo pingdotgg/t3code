@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useId, useRef, useState, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -33,6 +34,7 @@ export function PullRequestCommentBody({
   /** Lets the collapsed body grow past its minimum height, never below it. */
   collapsedHeight?: number;
 }) {
+  const gt = useGT();
   const maxHeight = Math.max(variant === "description" ? 64 : 240, collapsedHeight);
   const [expanded, setExpanded] = useState(revealCount > 0);
   const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
@@ -86,7 +88,11 @@ export function PullRequestCommentBody({
               setExpanded(!expanded);
             }}
           >
-            {expanded ? "Show less" : variant === "description" ? "Read more" : "Show full comment"}
+            {expanded
+              ? gt("Show less")
+              : variant === "description"
+                ? gt("Read more")
+                : gt("Show full comment")}
           </InlineButton>
         </div>
       ) : null}

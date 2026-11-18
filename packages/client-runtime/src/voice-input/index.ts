@@ -6,6 +6,7 @@ export {
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
+  type VoiceInputErrorCode,
   type VoiceInputPhase,
   type VoiceInputState,
   type VoiceRecorder,

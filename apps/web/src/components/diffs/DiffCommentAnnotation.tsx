@@ -1,4 +1,6 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
+import { reviewCommentRangeText } from "~/lib/composerContextRecords";
 import { Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -51,13 +53,15 @@ interface DiffCommentAnnotationProps {
   stateLabel?: string | undefined;
 }
 
-/** Comments written here are the reader's own; there is no other author to name. */
-const LOCAL_AUTHOR = "You";
-
 /** A relative time that moves on by itself, once a minute, instead of freezing at "just now". */
 function RelativeCommentTime({ createdAt }: { createdAt: string }) {
   const now = useNowMinute();
-  return <span className="shrink-0">{formatElapsedDurationLabel(createdAt, Date.parse(now))}</span>;
+  const messages = useMessages();
+  return (
+    <span className="shrink-0">
+      {formatElapsedDurationLabel(createdAt, Date.parse(now), messages)}
+    </span>
+  );
 }
 
 /** Avatar, author, then a range or time, and the comment's state at the far end. */
@@ -70,15 +74,18 @@ export function CommentCardHead({
   stateLabel?: ReactNode;
   action?: ReactNode;
 }) {
+  const gt = useGT();
+  // Comments written here are the reader's own; there is no other author to name.
+  const localAuthor = gt("You", { $context: "author of the user's own message" });
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       <span
         aria-hidden="true"
         className="flex size-4 shrink-0 items-center justify-center rounded-full bg-merged text-micro leading-none text-white"
       >
-        {LOCAL_AUTHOR.charAt(0)}
+        {localAuthor.charAt(0)}
       </span>
-      <span className="shrink-0 text-meta text-foreground">{LOCAL_AUTHOR}</span>
+      <span className="shrink-0 text-meta text-foreground">{localAuthor}</span>
       {meta ? (
         <span className="min-w-0 truncate text-caption text-dim-foreground">{meta}</span>
       ) : null}
@@ -112,8 +119,8 @@ export function DiffCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
-  placeholder = "Add a comment…",
-  submitLabel = "Comment",
+  placeholder,
+  submitLabel,
   pending = false,
   secondaryAction,
   focusOnMount = true,
@@ -121,6 +128,8 @@ export function DiffCommentAnnotation({
   createdAt,
   stateLabel,
 }: DiffCommentAnnotationProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
@@ -145,7 +154,13 @@ export function DiffCommentAnnotation({
       >
         <div className="px-2.5 pt-2">
           <CommentCardHead
-            meta={createdAt ? <RelativeCommentTime createdAt={createdAt} /> : rangeLabel}
+            meta={
+              createdAt ? (
+                <RelativeCommentTime createdAt={createdAt} />
+              ) : (
+                reviewCommentRangeText(rangeLabel, messages)
+              )
+            }
             stateLabel={stateLabel}
             action={
               onDelete ? (
@@ -153,7 +168,7 @@ export function DiffCommentAnnotation({
                   <Button
                     variant="ghost-muted"
                     size="icon-xs"
-                    aria-label="Delete comment"
+                    aria-label={gt("Delete comment")}
                     onClick={onDelete}
                   >
                     <Trash2 className="size-3" />
@@ -193,7 +208,10 @@ export function DiffCommentAnnotation({
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <CommentCardHead meta={rangeLabel} stateLabel={stateLabel} />
+      <CommentCardHead
+        meta={reviewCommentRangeText(rangeLabel, messages)}
+        stateLabel={stateLabel}
+      />
       <PullRequestMarkdownTextarea
         ref={textareaRef}
         completionScope={completionScope}
@@ -202,8 +220,10 @@ export function DiffCommentAnnotation({
         size="sm"
         value={speech?.displayText ?? displayedText}
         dir={textDirection(displayedText)}
-        placeholder={placeholder}
-        aria-label={`Comment on lines ${rangeLabel}`}
+        placeholder={placeholder ?? gt("Add a comment…")}
+        aria-label={gt("Comment on lines {rangeLabel}", {
+          rangeLabel: reviewCommentRangeText(rangeLabel, messages),
+        })}
         onValueChange={onTextChange ?? setLocalDraftText}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
@@ -222,10 +242,12 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="flex flex-wrap items-center gap-1">
-        <span className="mr-auto text-micro text-dim-foreground">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-micro text-dim-foreground">
+          <T>⌘/Ctrl Enter to send</T>
+        </span>
         {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
         {secondaryAction ? (
           <Button
@@ -247,7 +269,7 @@ export function DiffCommentAnnotation({
           disabled={speech?.preparing || pending || (!speech?.blocksSubmission && !trimmedText)}
           onClick={() => submit(speech, onComment)}
         >
-          {submitLabel}
+          {submitLabel ?? gt("Comment", { $context: "verb, submit button" })}
         </Button>
       </div>
     </div>

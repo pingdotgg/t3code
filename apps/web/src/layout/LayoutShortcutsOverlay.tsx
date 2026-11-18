@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { evaluateWhenNode, resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   Columns2Icon,
   LayersIcon,
@@ -106,27 +107,31 @@ interface MenuRow {
 /** The hold menu's three groups (pen WbSUY qlbwh). */
 const MENU_GROUPS: ReadonlyArray<{ label: string; rows: ReadonlyArray<MenuRow> }> = [
   {
-    label: "Open",
+    label: msg("Open", { $context: "shortcut group, things to open" }),
     rows: [
       {
         icon: TerminalSquareIcon,
-        label: "Terminal",
+        label: msg("Terminal"),
         keys: [{ key: "t", command: "terminal.toggle" }],
       },
       {
         icon: Columns2Icon,
-        label: "Side pane: diff, files, browser",
+        label: msg("Side pane: diff, files, browser"),
         keys: [{ key: "b", command: "rightPanel.toggle" }],
       },
-      { icon: LayoutGridIcon, label: "Overview", keys: [{ key: "o", command: "layout.overview" }] },
+      {
+        icon: LayoutGridIcon,
+        label: msg("Overview", { $context: "zoomed-out view of every workspace" }),
+        keys: [{ key: "o", command: "layout.overview" }],
+      },
     ],
   },
   {
-    label: "Move around",
+    label: msg("Move around"),
     rows: [
       {
         icon: MoveHorizontalIcon,
-        label: "Focus the next pane",
+        label: msg("Focus the next pane"),
         keys: [
           { key: "arrowleft", command: "layout.focusLeft" },
           { key: "arrowright", command: "layout.focusRight" },
@@ -134,7 +139,7 @@ const MENU_GROUPS: ReadonlyArray<{ label: string; rows: ReadonlyArray<MenuRow> }
       },
       {
         icon: LayersIcon,
-        label: "Next, previous workspace",
+        label: msg("Next, previous workspace"),
         keys: [
           { key: "u", command: "layout.focusWorkspaceDown" },
           { key: "i", command: "layout.focusWorkspaceUp" },
@@ -143,19 +148,19 @@ const MENU_GROUPS: ReadonlyArray<{ label: string; rows: ReadonlyArray<MenuRow> }
     ],
   },
   {
-    label: "Arrange",
+    label: msg("Arrange", { $context: "shortcut group, arranging panes" }),
     rows: [
       {
         icon: Maximize2Icon,
-        label: "Fill the window",
+        label: msg("Fill the window"),
         keys: [{ key: "f", command: "layout.fill" }],
       },
       {
         icon: RulerIcon,
-        label: "Width: ⅓ ½ ⅔",
+        label: msg("Width: ⅓ ½ ⅔"),
         keys: [{ key: "r", command: "layout.cycleColumnWidth" }],
       },
-      { icon: XIcon, label: "Close the tab", keys: [{ key: "w", command: "tab.close" }] },
+      { icon: XIcon, label: msg("Close the tab"), keys: [{ key: "w", command: "tab.close" }] },
     ],
   },
 ];
@@ -210,6 +215,7 @@ function runHeldCommand(keybindings: ResolvedKeybindingsConfig, command: Keybind
  */
 export function LayoutKeyboard() {
   useLayoutKeyboardCommands();
+  const gt = useGT();
   const mode = useOverlayStore((state) => state.mode);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the held-modifier timer and keyboard subscriptions while the layout host is mounted.
@@ -335,7 +341,7 @@ export function LayoutKeyboard() {
         }}
       >
         <DialogPopup
-          aria-label="Keyboard shortcuts"
+          aria-label={gt("Keyboard shortcuts")}
           showCloseButton={false}
           className="max-w-190"
           // The scroller is the sheet's one tab stop. Tab lands there and stays,
@@ -359,21 +365,25 @@ export function LayoutKeyboard() {
 
 /** Pen F1nBI: one window-centered, three-column map while the modifier is held. */
 function LayoutHoldMenu() {
+  const gt = useGT();
+  const messages = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const mac = isMacPlatform(navigator.platform);
   const holdLabel = mac ? "⌥⌘" : "Ctrl+Alt";
   const groups = SHEET_LAYOUT_GROUPS.slice(0, 3)
     .map((group, index) => ({
-      label: group.label,
+      label: messages(group.label),
       rows: [
         ...group.rows,
-        ...(index === 0 ? [{ label: "New tab", commands: ["tab.new" as const] }] : []),
+        ...(index === 0 ? [{ label: msg("New tab"), commands: ["tab.new" as const] }] : []),
       ].flatMap((row) => {
         const shortcuts = row.commands
           .filter((command) => scrollingWorkspaces || !isScrollingWorkspaceCommand(command))
           .flatMap((command) => shortcutsFor(keybindings, command).slice(0, 1));
-        return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
+        return shortcuts.length > 0
+          ? [{ label: messages(row.label), chords: chordsFor(shortcuts) }]
+          : [];
       }),
     }))
     .filter((group) => group.rows.length > 0);
@@ -382,19 +392,32 @@ function LayoutHoldMenu() {
     <div className="pointer-events-none fixed inset-0 z-110 flex items-center justify-center bg-black/50 p-2">
       <div
         role="dialog"
-        aria-label="Layout keys"
+        aria-label={gt("Layout keys")}
         data-layout-hold-menu=""
         className="flex max-h-[calc(100dvh-1rem)] w-170 max-w-full flex-col gap-4 overflow-y-auto rounded-pane p-5 surface-popover kbd-in-popover"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-label text-strong-foreground">Layout shortcuts</span>
+            <span className="text-label text-strong-foreground">
+              <T>Layout shortcuts</T>
+            </span>
             <span className="flex items-center gap-1.5 text-meta text-strong-foreground">
-              Mod is <Kbd>{holdLabel}</Kbd>
+              <T>
+                Mod is{" "}
+                <Kbd>
+                  <Var>{holdLabel}</Var>
+                </Kbd>
+              </T>
             </span>
           </div>
           <span className="flex shrink-0 items-center gap-1.5 text-caption text-dim-foreground">
-            Release <Kbd>{holdLabel}</Kbd> to close
+            <T>
+              Release{" "}
+              <Kbd>
+                <Var>{holdLabel}</Var>
+              </Kbd>{" "}
+              to close
+            </T>
           </span>
         </div>
         <ShortcutGrid groups={groups} compact />
@@ -410,63 +433,75 @@ const SHEET_LAYOUT_GROUPS: ReadonlyArray<{
   rows: ReadonlyArray<{ label: string; commands: ReadonlyArray<KeybindingCommand> }>;
 }> = [
   {
-    label: "Focus and move",
+    label: msg("Focus and move"),
     rows: [
       {
-        label: "Focus a pane",
+        label: msg("Focus a pane"),
         commands: ["layout.focusLeft", "layout.focusUp", "layout.focusRight", "layout.focusDown"],
       },
       {
-        label: "Move the pane",
+        label: msg("Move the pane"),
         commands: ["layout.moveLeft", "layout.moveUp", "layout.moveRight", "layout.moveDown"],
       },
       {
-        label: "First / last column",
+        label: msg("First / last column"),
         commands: ["layout.focusFirstColumn", "layout.focusLastColumn"],
       },
     ],
   },
   {
-    label: "Columns",
+    label: msg("Columns", { $context: "shortcut group" }),
     rows: [
-      { label: "Cycle ⅓ ½ ⅔", commands: ["layout.cycleColumnWidth"] },
-      { label: "Fill the window", commands: ["layout.fill"] },
-      { label: "Center it", commands: ["layout.centerColumn"] },
-      { label: "Pull in / push out", commands: ["layout.pullLeft", "layout.pullRight"] },
+      { label: msg("Cycle ⅓ ½ ⅔"), commands: ["layout.cycleColumnWidth"] },
+      { label: msg("Fill the window"), commands: ["layout.fill"] },
+      { label: msg("Center it"), commands: ["layout.centerColumn"] },
+      { label: msg("Pull in / push out"), commands: ["layout.pullLeft", "layout.pullRight"] },
     ],
   },
   {
-    label: "Workspaces",
+    label: msg("Workspaces", { $context: "shortcut group, sets of panes" }),
     rows: [
-      { label: "Switch", commands: ["layout.focusWorkspaceDown", "layout.focusWorkspaceUp"] },
       {
-        label: "Send the pane there",
+        label: msg("Switch", { $context: "verb, switch workspaces" }),
+        commands: ["layout.focusWorkspaceDown", "layout.focusWorkspaceUp"],
+      },
+      {
+        label: msg("Send the pane there"),
         commands: ["layout.moveToWorkspaceDown", "layout.moveToWorkspaceUp"],
       },
       {
-        label: "Move the workspace",
+        label: msg("Move the workspace"),
         commands: ["layout.moveWorkspaceDown", "layout.moveWorkspaceUp"],
       },
-      { label: "Overview", commands: ["layout.overview"] },
+      {
+        label: msg("Overview", { $context: "zoomed-out view of every workspace" }),
+        commands: ["layout.overview"],
+      },
     ],
   },
   {
-    label: "Tabs and panes",
+    label: msg("Tabs and panes"),
     rows: [
-      { label: "New tab", commands: ["tab.new"] },
-      { label: "Close tab", commands: ["tab.close"] },
-      { label: "Next / previous tab", commands: ["tab.next", "tab.previous"] },
-      { label: "New pane right / below", commands: ["layout.splitRight", "layout.splitDown"] },
+      { label: msg("New tab"), commands: ["tab.new"] },
+      { label: msg("Close tab"), commands: ["tab.close"] },
+      { label: msg("Next / previous tab"), commands: ["tab.next", "tab.previous"] },
+      {
+        label: msg("New pane right / below"),
+        commands: ["layout.splitRight", "layout.splitDown"],
+      },
     ],
   },
 ];
 
 /** Areas for every other shortcut, by command prefix. */
 const SHEET_AREAS: ReadonlyArray<{ label: string; prefixes: ReadonlyArray<string> }> = [
-  { label: "Chat and threads", prefixes: ["chat.", "thread.", "navigation.", "sidebar."] },
-  { label: "Composer", prefixes: ["composer.", "modelPicker."] },
-  { label: "Panels", prefixes: ["terminal.", "rightPanel.", "threadPanel.", "diff.", "preview."] },
-  { label: "Everything else", prefixes: [""] },
+  { label: msg("Chat and threads"), prefixes: ["chat.", "thread.", "navigation.", "sidebar."] },
+  { label: msg("Composer"), prefixes: ["composer.", "modelPicker."] },
+  {
+    label: msg("Panels", { $context: "shortcut group" }),
+    prefixes: ["terminal.", "rightPanel.", "threadPanel.", "diff.", "preview."],
+  },
+  { label: msg("Everything else"), prefixes: [""] },
 ];
 
 /** One chord per modifier set, keys after it: ⌥⌘ ← ↑ → ↓. */
@@ -484,17 +519,20 @@ function chordsFor(shortcuts: ReadonlyArray<KeybindingShortcut>) {
 }
 
 function LayoutShortcutSheet() {
+  const messages = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const mac = isMacPlatform(navigator.platform);
   const firstOf = (command: KeybindingCommand) => shortcutsFor(keybindings, command).slice(0, 1);
   const layoutGroups = SHEET_LAYOUT_GROUPS.map((group) => ({
-    label: group.label,
+    label: messages(group.label),
     rows: group.rows.flatMap((row) => {
       const shortcuts = row.commands
         .filter((command) => scrollingWorkspaces || !isScrollingWorkspaceCommand(command))
         .flatMap(firstOf);
-      return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
+      return shortcuts.length > 0
+        ? [{ label: messages(row.label), chords: chordsFor(shortcuts) }]
+        : [];
     }),
   })).filter((group) => group.rows.length > 0);
   const shown = new Set(
@@ -508,7 +546,7 @@ function LayoutShortcutSheet() {
       shortcutsFor(keybindings, command).length > 0,
   );
   const areas = SHEET_AREAS.map((area, index) => ({
-    label: area.label,
+    label: messages(area.label),
     rows: others
       .filter((command) => {
         const match = SHEET_AREAS.findIndex((candidate) =>
@@ -516,7 +554,10 @@ function LayoutShortcutSheet() {
         );
         return match === index;
       })
-      .map((command) => ({ label: commandLabel(command), chords: chordsFor(firstOf(command)) })),
+      .map((command) => ({
+        label: commandLabel(command, messages),
+        chords: chordsFor(firstOf(command)),
+      })),
   })).filter((area) => area.rows.length > 0);
   const cycle = firstOf("layout.cycleColumnWidth")[0];
 
@@ -524,17 +565,26 @@ function LayoutShortcutSheet() {
     <div className="flex flex-col gap-5 p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-label text-strong-foreground">Keyboard shortcuts</h2>
+          <h2 className="text-label text-strong-foreground">
+            <T>Keyboard shortcuts</T>
+          </h2>
           {cycle ? (
             <span className="flex items-center gap-1.5 text-meta text-strong-foreground">
-              Layout Mod is <Kbd>{modifierLabel(cycle)}</Kbd>
+              <T>
+                Layout Mod is{" "}
+                <Kbd>
+                  <Var>{modifierLabel(cycle)}</Var>
+                </Kbd>
+              </T>
             </span>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5 text-meta text-dim-foreground">
-          <span>Press</span>
-          <Kbd>Esc</Kbd>
-          <span>to close</span>
+          <T>
+            <span>Press</span>
+            <Kbd>Esc</Kbd>
+            <span>to close</span>
+          </T>
         </div>
       </div>
       <ShortcutGrid groups={layoutGroups} />
@@ -542,7 +592,7 @@ function LayoutShortcutSheet() {
       <ShortcutGrid groups={areas} />
       {mac ? null : (
         <p className="text-meta text-dim-foreground">
-          Off macOS, Ctrl takes the place of ⌘ and Alt+Shift moves focus.
+          <T>Off macOS, Ctrl takes the place of ⌘ and Alt+Shift moves focus.</T>
         </p>
       )}
     </div>

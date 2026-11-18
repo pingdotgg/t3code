@@ -1,4 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
 import { prepareFocusReturn } from "./components/ui/focus-return";
@@ -82,6 +85,20 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       tag: "path",
       attrs: {
         d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
+      },
+    },
+  ],
+  "messages-square": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
+      },
+    },
+    {
+      tag: "path",
+      attrs: {
+        d: "M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1",
       },
     },
   ],
@@ -482,8 +499,10 @@ export function showContextMenuFallback<T extends string>(
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
       menu.dataset.contextMenu = "true";
+      // Theme CSS styles menus through this documented hook, like the component menus.
+      menu.dataset.slot = "menu-popup";
       menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? m(msg("Context menu")));
       menu.tabIndex = -1;
 
       // Size to the content and scroll only past the viewport; clampMenuPosition

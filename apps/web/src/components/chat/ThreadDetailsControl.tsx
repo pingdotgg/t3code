@@ -16,6 +16,7 @@ import { ChevronRightIcon } from "lucide-react";
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
   heading:
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- class names, not copy
     "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left text-caption text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
   usage:
     "col-span-full col-start-1 row-start-1 grid min-w-0 grid-cols-subgrid items-center rounded-md text-left text-meta text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",

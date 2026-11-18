@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -38,7 +39,6 @@ import { NoProjectChip } from "./NoProjectChip";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_ENTRIES = [] as const;
-const NO_PROJECT_REASON = "Add a project first";
 const noop = () => {};
 // This page opens no terminal, preview or side pane, so only focus decides how Enter resolves.
 const getNoProjectsShortcutContext = (eventTarget: EventTarget | null): ShortcutMatchContext => ({
@@ -63,6 +63,7 @@ export function NoProjectsComposer({
   readonly onStartWithoutProject: (() => void) | null;
   readonly startUnavailableReason: string | null;
 }) {
+  const gt = useGT();
   const navigate = useNavigate();
   const settings = useEnvironmentSettings(environmentId);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -182,7 +183,9 @@ export function NoProjectsComposer({
           isSendBusy={false}
           canResume={false}
           sendDisabledReason={
-            onStartWithoutProject === null ? (startUnavailableReason ?? NO_PROJECT_REASON) : null
+            onStartWithoutProject === null
+              ? (startUnavailableReason ?? gt("Add a project first"))
+              : null
           }
           isPreparingWorktree={false}
           bannerItems={[]}

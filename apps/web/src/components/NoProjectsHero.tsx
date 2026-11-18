@@ -1,5 +1,6 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT, useMessages } from "gt-react";
 import {
   DownloadIcon,
   FolderPlusIcon,
@@ -31,34 +32,42 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
  * hero's place list with nothing in it but the ways to get a project.
  */
 export function NoProjectsHero() {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, scratchUnavailableReason, startScratchThread } =
     useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
-  const scratchOffReason = scratchUnavailableReason(primaryEnvironmentId);
+  const scratchOffReason = scratchUnavailableReason(primaryEnvironmentId, messages);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
 
   return (
-    <NewThreadPane addDisabledReason="Add a project first">
+    <NewThreadPane addDisabledReason={gt("Add a project first")}>
       {/* Like a draft: the list centered above the composer docked at the bottom. */}
       <div className="flex min-h-0 flex-1 flex-col justify-end pt-1.5 [container:draft-hero/size] sm:pt-2">
         <div className="chat-composer-lane scrollbar-gutter-both flex min-h-0 w-full flex-1 items-center overflow-y-auto py-4 [@container_draft-hero_(max-height:440px)]:hidden">
           <div className="mx-auto flex w-full max-w-110 flex-col">
-            <h1 className="sr-only">Add a project to start</h1>
-            <div role="list" aria-label="Projects" className="flex flex-col gap-0.5">
-              <DraftProjectGroupLabel>No projects yet</DraftProjectGroupLabel>
+            <h1 className="sr-only">
+              <T>Add a project to start</T>
+            </h1>
+            <div role="list" aria-label={gt("Projects")} className="flex flex-col gap-0.5">
+              <DraftProjectGroupLabel>{gt("No projects yet")}</DraftProjectGroupLabel>
               <DraftProjectRow
                 icon={<FolderPlusIcon className="size-4 shrink-0 text-foreground" />}
-                label="Add project…"
-                detail="Open a folder or clone a repository"
+                label={gt("Add project…")}
+                detail={gt("Open a folder or clone a repository")}
                 onSelect={openAddProject}
               />
               <DraftProjectRow
                 icon={<DownloadIcon className="size-4 shrink-0 text-foreground" />}
-                label="Import conversations…"
-                detail="Continue from Claude Code, Codex or Pi"
+                label={gt("Import conversations…")}
+                detail={gt("Continue from {claude}, {codex} or {pi}", {
+                  claude: "Claude Code",
+                  codex: "Codex",
+                  pi: "Pi",
+                })}
                 onSelect={() => void navigate({ to: "/welcome" })}
               />
               {scratchTargetEnvironmentId === null && scratchOffReason === null ? null : (
@@ -68,8 +77,8 @@ export function NoProjectsHero() {
                     icon={
                       <MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />
                     }
-                    label="No project"
-                    detail={scratchOffReason ?? "Its own folder, no git"}
+                    label={gt("No project")}
+                    detail={scratchOffReason ?? gt("Its own folder, no git")}
                     disabled={scratchTargetEnvironmentId === null}
                     shortcut={
                       scratchTargetEnvironmentId === null
@@ -125,9 +134,10 @@ function NewThreadPane({
   readonly addDisabledReason: string;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <SidebarInset
-      {...workspaceAreaProps("home", 1, "Home")}
+      {...workspaceAreaProps("home", 1, gt("Home"))}
       role="main"
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
@@ -142,12 +152,12 @@ function NewThreadPane({
             <PaneNotch>
               <div className={PANE_TAB_CLASS}>
                 <SquarePenIcon aria-hidden className="size-3.5 shrink-0" />
-                New thread
+                <T>New thread</T>
               </div>
               {/* A draft's "+" and details toggle, with nothing to act on yet. */}
               <Tooltip>
                 <TooltipTrigger render={<span data-pane-notch-add="" className="flex shrink-0" />}>
-                  <Button variant="bare" size="icon-xs" disabled aria-label="New tab">
+                  <Button variant="bare" size="icon-xs" disabled aria-label={gt("New tab")}>
                     <PlusIcon />
                   </Button>
                 </TooltipTrigger>
@@ -161,7 +171,7 @@ function NewThreadPane({
               threadPanelPresentation="inline"
               threadPanelShortcutLabel={null}
               onToggleThreadPanel={() => {}}
-              disabledReason="No thread yet"
+              disabledReason={gt("No thread yet")}
             />
           </ChatPaneHeaderControls>
         </WorkspacePageHeader>

@@ -1,4 +1,5 @@
 import * as DateTime from "effect/DateTime";
+import { msg } from "gt-react";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -49,6 +50,7 @@ import {
 import {
   idleCompactionOf,
   isCompactionCommandMessage,
+  isOrchestrationV2WorkActive,
   type MessageId,
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2Notification,
@@ -66,16 +68,17 @@ import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentatio
 import { commandRunsTests, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
-import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { m, type MessageResolver } from "../../i18n/messages";
+import { collectToolFilePaths } from "@t3tools/shared/toolActivity";
 import {
-  collectToolFilePaths,
+  dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
-} from "@t3tools/shared/toolActivity";
+} from "@t3tools/shared/toolActivityCopy";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { formatWorkingDuration } from "./TimelineWorkGroupRows.logic";
 import {
   EMPTY_SLASH_COMMAND_CATALOG,
@@ -106,16 +109,20 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   );
 }
 
-function singleToolCallLabel(entry: WorkLogEntry): string {
-  if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
-  const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
+function singleToolCallLabel(entry: WorkLogEntry, resolve: MessageResolver): string {
+  if (entry.itemType === "reasoning") {
+    return entry.detail?.trim().replace(/\s+/g, " ") || resolve(msg("Thought"));
+  }
+  const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed", resolve);
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
   const title =
-    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
+    item?.type === "dynamic_tool"
+      ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
+      : null;
   if (title) return title;
-  if (entry.itemType === "web_search") return entry.toolTitle ?? "Web search";
-  return workEntryDisplayLabel(entry, undefined);
+  if (entry.itemType === "web_search") return entry.toolTitle ?? resolve(msg("Web search"));
+  return workEntryDisplayLabel(entry, undefined, resolve);
 }
 
 function workEntryToolDataRecord(entry: WorkLogEntry): Record<string, unknown> | undefined {
@@ -143,13 +150,18 @@ function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefin
   );
 }
 
-export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+/** Components pass `useMessages()` so the label follows a language switch. */
+export function workEntryDisplayLabel(
+  entry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+  resolve: MessageResolver = m,
+) {
   if (entry.itemType === "system_notice") return entry.label;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;
   }
-  const toolPresentation = resolveWorkEntryToolPresentation(entry);
+  const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
   const action = toolGroupAction(entry);
@@ -157,18 +169,20 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     const searchLabel =
       entry.itemType === "file_search"
         ? entry.label
-        : formatSearchToolLabel(workEntryToolDataRecord(entry));
+        : formatSearchToolLabel(workEntryToolDataRecord(entry), resolve);
     if (searchLabel) return searchLabel;
   }
   const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
   if (action === "read" && readPaths[0]) {
-    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
+    return formatReadToolLabel(readPaths[0], readPaths.length - 1, resolve);
   }
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
   const item = entry.structuredPayload;
   const title =
-    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
+    item?.type === "dynamic_tool"
+      ? dynamicToolTitle(item.toolName, item.input, item.title, resolve)
+      : null;
   if (title) return title;
   const compactDetail = entry.detail?.trim();
   const detailIsSearchOutput =
@@ -181,10 +195,15 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
     return entry.changedFiles!.length === 1
       ? path
-      : `${path} +${entry.changedFiles!.length - 1} more`;
+      : resolve(
+          msg("{count, plural, one {{path} +{count} more} other {{path} +{count} more}}", {
+            path,
+            count: entry.changedFiles!.length - 1,
+          }),
+        );
   }
   if (action === "read" && !entry.viewedImagePath) {
-    return "Read file";
+    return resolve(msg("Read file"));
   }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
@@ -200,19 +219,11 @@ export function threadReadTargetId(entry: Pick<WorkLogEntry, "structuredPayload"
   return typeof threadId === "string" && threadId.trim().length > 0 ? threadId.trim() : null;
 }
 
-const THREAD_READ_OBJECT = " a T3 thread";
-
 export function threadReadTargetTitle(
   shell: Pick<ThreadShell, "title" | "archivedAt" | "deletedAt"> | null,
 ) {
   if (!shell || shell.archivedAt !== null || shell.deletedAt !== null) return null;
   return shell.title.trim() || null;
-}
-
-export function threadReadLabelPrefix(label: string) {
-  return label.endsWith(THREAD_READ_OBJECT)
-    ? `${label.slice(0, -THREAD_READ_OBJECT.length)} thread`
-    : null;
 }
 
 export function workEntryReadOutput(
@@ -243,41 +254,55 @@ export function workEntryReadOutput(
   return null;
 }
 
+/** Components pass `useMessages()` so the label follows a language switch. */
 export function liveWorkEntryLabel(
   entry: WorkLogEntry,
   workspaceRoot: string | undefined,
   active: boolean,
+  resolve: MessageResolver = m,
 ) {
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   if (entry.itemType === "reasoning") {
     return (
       entry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+      (status === "inProgress" ? resolve(msg("Thinking")) : resolve(msg("Thought")))
     );
   }
-  const toolPresentation = resolveWorkEntryToolPresentation({
-    ...entry,
-    toolLifecycleStatus: status,
-  });
+  const toolPresentation = resolveWorkEntryToolPresentation(
+    { ...entry, toolLifecycleStatus: status },
+    undefined,
+    resolve,
+  );
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) {
-    return `${commandEntryVerb(entry.toolLifecycleStatus, active)} ${commandProgramName(command) ?? "command"}`;
+    const program = commandProgramName(command);
+    if (program == null) {
+      return resolve(
+        status === "inProgress"
+          ? msg("Running command")
+          : status === "failed"
+            ? msg("Failed command")
+            : status === "declined"
+              ? msg("Declined command")
+              : status === "stopped"
+                ? msg("Stopped command")
+                : msg("Ran command"),
+      );
+    }
+    return resolve(
+      status === "inProgress"
+        ? msg("Running {program}", { program })
+        : status === "failed"
+          ? msg("Failed {program}", { program })
+          : status === "declined"
+            ? msg("Declined {program}", { program })
+            : status === "stopped"
+              ? msg("Stopped {program}", { program })
+              : msg("Ran {program}", { program }),
+    );
   }
-  return workEntryDisplayLabel(entry, workspaceRoot);
-}
-
-function commandEntryVerb(lifecycleStatus: WorkLogEntry["toolLifecycleStatus"], active: boolean) {
-  const status = liveActivityToolStatus(lifecycleStatus, active);
-  return status === "inProgress"
-    ? "Running"
-    : status === "failed"
-      ? "Failed"
-      : status === "declined"
-        ? "Declined"
-        : status === "stopped"
-          ? "Stopped"
-          : "Ran";
+  return workEntryDisplayLabel(entry, workspaceRoot, resolve);
 }
 
 export function workEntryIsVisibleInGroup(
@@ -646,6 +671,8 @@ type MessagesTimelineRowContent =
       active: boolean;
       /** Replaces "Context compacted" when T3 Code compacted without being asked. */
       title?: string;
+      /** The compaction finished, so `title` names it. */
+      compacted?: true;
       failed?: true;
       /** The provider's reason, when a failed compaction gave one. */
       failure?: string;
@@ -1252,6 +1279,7 @@ function deriveMainTurnFolds(input: {
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   retainedAssistantReplyEntryIds: ReadonlySet<string>;
+  resolve: MessageResolver;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1420,14 +1448,15 @@ function deriveMainTurnFolds(input: {
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+    const { resolve } = input;
+    const duration = elapsedMs !== null ? formatDuration(elapsedMs, resolve) : null;
     const label = isLatestInterruptedTurn
       ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
+        ? resolve(msg("You stopped after {duration}", { duration }))
+        : resolve(msg("You stopped this response"))
       : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+        ? resolve(msg("Worked for {duration}", { duration }))
+        : resolve(msg("Worked"));
 
     // The top row keeps the whole turn's time, steers included. Work after a
     // steer folds under its own row below that steer, keyed apart from the run
@@ -1459,7 +1488,12 @@ function deriveMainTurnFolds(input: {
         createdAt: steer.createdAt,
         hiddenEntryIds: segmentHiddenIds(entries),
         entryIds: new Set(entries.map((entry) => entry.id)),
-        label: segmentMs !== null ? `Continued for ${formatDuration(segmentMs)}` : "Continued",
+        label:
+          segmentMs !== null
+            ? resolve(
+                msg("Continued for {duration}", { duration: formatDuration(segmentMs, resolve) }),
+              )
+            : resolve(msg("Continued")),
         ...MAIN_FOLD_ENDING,
       });
     }
@@ -1483,6 +1517,7 @@ function deriveTurnFolds(input: {
   retainedAssistantReplyEntryIds: ReadonlySet<string>;
   /** Hide all keeps main: a reply with nothing to expand gets no duration row. */
   durationRowForBareReply: boolean;
+  resolve: MessageResolver;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   const usageLimitedRunIds = usageLimitedTimelineRunIds(input.timelineEntries);
@@ -1709,7 +1744,7 @@ function deriveTurnFolds(input: {
       : isLatestInterruptedTurn || interruptedRunIds.has(runId)
         ? "stopped"
         : "worked";
-    const label = turnFoldLabel(ending, elapsedMs);
+    const label = turnFoldLabel(ending, elapsedMs, input.resolve);
     // The checkpoint diff is what the changed-files card shows; provider
     // counts are the fallback for turns without a checkpoint.
     const checkpoint = readyCheckpointByRunId.get(runId);
@@ -1737,17 +1772,29 @@ function deriveTurnFolds(input: {
   return foldsByAnchorEntryId;
 }
 
-function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string {
+function turnFoldLabel(
+  ending: TurnFoldEnding,
+  elapsedMs: number | null,
+  resolve: MessageResolver,
+): string {
   const duration = elapsedMs !== null ? formatWorkingDuration(elapsedMs) : null;
   switch (ending) {
     case "stopped":
-      return duration ? `Stopped at ${duration}` : "Stopped";
+      return duration
+        ? resolve(msg("Stopped at {duration}", { duration }))
+        : resolve(msg("Stopped", { $context: "how a turn ended" }));
     case "failed":
-      return duration ? `Failed after ${duration}` : "Failed";
+      return duration
+        ? resolve(msg("Failed after {duration}", { duration }))
+        : resolve(msg("Failed", { $context: "how a turn ended" }));
     case "limited":
-      return duration ? `Limited at ${duration}` : "Limited";
+      return duration
+        ? resolve(msg("Limited at {duration}", { duration }))
+        : resolve(msg("Limited", { $context: "how a turn ended, usage limit reached" }));
     case "worked":
-      return duration ? `Worked for ${duration}` : "Worked";
+      return duration
+        ? resolve(msg("Worked for {duration}", { duration }))
+        : resolve(msg("Worked"));
   }
 }
 
@@ -2128,6 +2175,7 @@ function deriveTimelineTurnFolds(
       runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
       liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
       retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
+      resolve: m,
     });
   }
   return deriveTurnFolds({
@@ -2142,33 +2190,37 @@ function deriveTimelineTurnFolds(
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
     durationRowForBareReply: input.toolCallVisibility !== "hideAll",
+    resolve: m,
   });
 }
 
-export function deriveMessagesTimelineRows(input: {
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
-  latestRun?: TimelineLatestRun | null;
-  runningRunId?: RunId | null;
-  expandedRunIds?: ReadonlySet<RunId>;
-  expandedAttemptIds?: ReadonlySet<RunAttemptId>;
-  expandedWorkGroupIds?: ReadonlySet<string>;
-  isWorking: boolean;
-  /** Native subagent work has no app run; runless entries form the live response. */
-  runlessWorkActive?: boolean;
-  activeTurnStartedAt?: string | null;
-  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
-  supportsConversationRollback: boolean;
-  threadStartCheckpointAvailable?: boolean;
-  availableRevertTurnCounts?: ReadonlySet<number> | undefined;
-  worktreeSetup?: WorktreeSetupSnapshot | null;
-  toolCallVisibility?: ToolCallVisibility;
-  revealedMessageId?: MessageId | null;
-  /** Commands and skills of the thread's provider, for telling a command from a path. */
-  slashCommands?: SlashCommandCatalog;
-  /** Labs: the redesign's turn folds. Off keeps main's. */
-  turnWorkFold?: boolean;
-}): MessagesTimelineRow[] {
+export function deriveMessagesTimelineRows(
+  input: {
+    timelineEntries: ReadonlyArray<TimelineEntry>;
+    pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
+    latestRun?: TimelineLatestRun | null;
+    runningRunId?: RunId | null;
+    expandedRunIds?: ReadonlySet<RunId>;
+    expandedAttemptIds?: ReadonlySet<RunAttemptId>;
+    expandedWorkGroupIds?: ReadonlySet<string>;
+    isWorking: boolean;
+    /** Native subagent work has no app run; runless entries form the live response. */
+    runlessWorkActive?: boolean;
+    activeTurnStartedAt?: string | null;
+    turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+    supportsConversationRollback: boolean;
+    threadStartCheckpointAvailable?: boolean;
+    availableRevertTurnCounts?: ReadonlySet<number> | undefined;
+    worktreeSetup?: WorktreeSetupSnapshot | null;
+    toolCallVisibility?: ToolCallVisibility;
+    revealedMessageId?: MessageId | null;
+    /** Commands and skills of the thread's provider, for telling a command from a path. */
+    slashCommands?: SlashCommandCatalog;
+    /** Labs: the redesign's turn folds. Off keeps main's. */
+    turnWorkFold?: boolean;
+  },
+  resolve: MessageResolver = m,
+): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();
   for (const entry of timelineEntries) {
@@ -2248,6 +2300,7 @@ export function deriveMessagesTimelineRows(input: {
             runlessWorkActive,
             liveSubagentEntryIds,
             retainedAssistantReplyEntryIds: retainedAssistantReplyIds,
+            resolve,
           })
         : deriveTurnFolds({
             timelineEntries: timelineEntries,
@@ -2260,6 +2313,7 @@ export function deriveMessagesTimelineRows(input: {
             liveSubagentEntryIds,
             retainedAssistantReplyEntryIds: retainedAssistantReplyIds,
             durationRowForBareReply: input.toolCallVisibility !== "hideAll",
+            resolve,
           });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const turnFoldExpanded = (fold: TurnFold) =>
@@ -2418,9 +2472,9 @@ export function deriveMessagesTimelineRows(input: {
   const compactionTitle = (runId: RunId | null | undefined, entryId: string) => {
     if (runId == null) return undefined;
     const reason = compactionRuns.get(runId);
-    if (reason !== undefined) return IDLE_COMPACTION_TITLES[reason];
+    if (reason !== undefined) return resolve(IDLE_COMPACTION_TITLES[reason]);
     const age = resumeCompactionAgeByEntryId.get(entryId);
-    return age ? `Context compacted after ${age} idle` : undefined;
+    return age ? resolve(msg("Context compacted after {age} idle", { age })) : undefined;
   };
   const activeCompactionEntry = timelineEntries.find(
     (entry): entry is Extract<TimelineEntry, { kind: "work" }> =>
@@ -2598,7 +2652,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: supersededFold.createdAt,
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
-        label: "Superseded attempt",
+        label: resolve(msg("Superseded attempt")),
         expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
       });
     }
@@ -2629,14 +2683,23 @@ export function deriveMessagesTimelineRows(input: {
       const reason = compactionRunId == null ? undefined : compactionRuns.get(compactionRunId);
       const failed = compaction?.type === "compaction" && compaction.status === "failed";
       const failure = failed ? compaction.summary?.trim() || undefined : undefined;
+      const compacted =
+        !(active && reason) &&
+        compaction?.type === "compaction" &&
+        compaction.status !== "failed" &&
+        compaction.status !== "cancelled" &&
+        compaction.status !== "interrupted" &&
+        !isOrchestrationV2WorkActive(compaction.status);
       nextRows.push({
         kind: "context-compaction",
         id: timelineEntry.id,
         ...(title ? { title } : {}),
+        ...(compacted ? { compacted: true } : {}),
         ...(failed ? { failed: true } : {}),
         ...(failure ? { failure } : {}),
         createdAt: timelineEntry.createdAt,
-        label: active && reason ? IDLE_COMPACTING_LABELS[reason] : timelineEntry.entry.label,
+        label:
+          active && reason ? resolve(IDLE_COMPACTING_LABELS[reason]) : timelineEntry.entry.label,
         tokenCounts:
           compaction?.type === "compaction" ? contextCompactionTokenCounts(compaction) : null,
         active,
@@ -2744,8 +2807,8 @@ export function deriveMessagesTimelineRows(input: {
             isExpandedToolGroup: false,
             displayLabel:
               toolGroupAction(singleEntry) === "edit"
-                ? summarizeToolGroup(visibleGroupedEntries).summary
-                : singleToolCallLabel(singleEntry),
+                ? summarizeToolGroup(visibleGroupedEntries, resolve).summary
+                : singleToolCallLabel(singleEntry, resolve),
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
@@ -2781,7 +2844,7 @@ export function deriveMessagesTimelineRows(input: {
             summary:
               singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
                 ? singleEntry.label
-                : summarizeToolGroup(visibleGroupedEntries).summary,
+                : summarizeToolGroup(visibleGroupedEntries, resolve).summary,
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
@@ -2886,9 +2949,9 @@ export function deriveMessagesTimelineRows(input: {
           createdAt: timelineEntry.createdAt,
           label: pending
             ? reason
-              ? IDLE_COMPACTING_LABELS[reason]
-              : "Compacting context"
-            : "Context compaction",
+              ? resolve(IDLE_COMPACTING_LABELS[reason])
+              : resolve(msg("Compacting context"))
+            : resolve(msg("Context compaction")),
           tokenCounts: null,
           active: pending,
         });
@@ -3004,7 +3067,7 @@ export function deriveMessagesTimelineRows(input: {
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: activeTurnStartedAt,
         // The working line never counts or names subagents.
-        ...(waitingOn > 0 ? { label: "Waiting on subagents" } : {}),
+        ...(waitingOn > 0 ? { label: resolve(msg("Waiting on subagents")) } : {}),
       });
     }
   }
@@ -3993,12 +4056,13 @@ function isStreamingThoughtUpdate(previous: WorkLogEntry, next: WorkLogEntry): b
 export function deriveMessagesTimelineRowsWithState(
   input: MessagesTimelineRowsInput,
   previous: MessagesTimelineRowsProjection | null = null,
+  resolve: MessageResolver = m,
 ): MessagesTimelineRowsProjection {
   return {
     input,
     rows:
       (previous === null ? null : replaceStreamingMessageRows(input, previous)) ??
-      deriveMessagesTimelineRows(input),
+      deriveMessagesTimelineRows(input, resolve),
   };
 }
 
@@ -4219,11 +4283,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 }
 
 /** The working bar's short name for a pending approval, like "Approve git push". */
-export function pendingApprovalSlotLabel(approval: {
-  readonly requestKind: string;
-  readonly detail?: string | undefined;
-  readonly appName?: string | undefined;
-}): string {
+export function pendingApprovalSlotLabel(
+  approval: {
+    readonly requestKind: string;
+    readonly detail?: string | undefined;
+    readonly appName?: string | undefined;
+  },
+  resolve: MessageResolver = m,
+): string {
   switch (approval.requestKind) {
     case "command": {
       const words = (approval.detail ?? "")
@@ -4232,16 +4299,20 @@ export function pendingApprovalSlotLabel(approval: {
         .filter((word) => word.length > 0 && !/^[A-Z_][A-Z0-9_]*=/u.test(word))
         .slice(0, 2)
         .join(" ");
-      return words ? `Approve ${words}` : "Approve command";
+      return words
+        ? resolve(msg("Approve {command}", { command: words }))
+        : resolve(msg("Approve command"));
     }
     case "file-read":
-      return "Approve file read";
+      return resolve(msg("Approve file read"));
     case "file-change":
-      return "Approve file change";
+      return resolve(msg("Approve file change"));
     case "mcp-elicitation":
-      return approval.appName ? `Approve ${approval.appName}` : "Approve app access";
+      return approval.appName
+        ? resolve(msg("Approve {app}", { app: approval.appName }))
+        : resolve(msg("Approve app access"));
     default:
-      return "Approve permission";
+      return resolve(msg("Approve permission"));
   }
 }
 

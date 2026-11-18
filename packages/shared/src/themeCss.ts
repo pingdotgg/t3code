@@ -8,12 +8,16 @@ const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
 const URL_OR_STRING =
   /url\((?![ \t\n\f\r]*["'])[^)]*|url\([ \t\n\f\r]*("[^"\n\r\f]*"|'[^'\n\r\f]*')|"[^"\n\r\f]*"|'[^'\n\r\f]*'/gi;
 
-function fetchesByText(code: string): boolean {
-  const outsideStrings = code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
+/** The code with its strings removed, keeping `url(` where a quoted url() can load a file. */
+function withoutStrings(code: string): string {
+  return code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
     if (urlString !== undefined) return /^["'](?:data:|#)/i.test(urlString) ? "" : "url(";
     return token.startsWith('"') || token.startsWith("'") ? "" : token;
   });
-  return FETCHES_BY_STRING.test(outsideStrings) || URL_NOT_LOCAL.test(outsideStrings);
+}
+
+function fetchesOutsideStrings(code: string): boolean {
+  return FETCHES_BY_STRING.test(code) || URL_NOT_LOCAL.test(code);
 }
 
 /**
@@ -22,13 +26,13 @@ function fetchesByText(code: string): boolean {
  * so every value that still has a backslash is refused.
  */
 export function themeCssValueFetches(value: string): boolean {
-  return value.includes("\\") || fetchesByText(value);
+  return value.includes("\\") || fetchesOutsideStrings(withoutStrings(value));
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return /@import/i.test(code) || fetchesByText(code);
+  const code = withoutStrings(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+  return /@import/i.test(code) || fetchesOutsideStrings(code);
 }
 
 /**
@@ -39,9 +43,19 @@ export const THEME_CSS_HOOKS = [
   { selector: '[data-slot="sidebar"]', styles: "app sidebar" },
   { selector: '[data-slot="sidebar-inner"]', styles: "sidebar surface" },
   { selector: "[data-thread-item]", styles: "sidebar thread row" },
+  { selector: '[data-thread-item] [aria-current="page"]', styles: "the open thread's row" },
+  { selector: '[data-slot="sidebar-footer"]', styles: "sidebar footer" },
   {
     selector: '[data-slot="project-monogram"]',
     styles: "project icon with letters; its svg holds the tile",
+  },
+  { selector: "[data-layout-pane-id]", styles: "pane" },
+  { selector: "[data-layout-pane-focused]", styles: "the focused pane" },
+  { selector: "[data-layout-tab-strip]", styles: "a pane's tab strip" },
+  { selector: "[data-layout-pane-tab]", styles: "pane tab" },
+  {
+    selector: "[data-layout-pane-tab][data-joined]",
+    styles: "the tab whose content the pane shows",
   },
   { selector: "[data-chat-header]", styles: "chat header" },
   { selector: '[data-workspace-area="conversation"]', styles: "chat area, behind the messages" },
@@ -52,17 +66,22 @@ export const THEME_CSS_HOOKS = [
   { selector: '[data-message-role="assistant"]', styles: "assistant message row" },
   { selector: ".chat-markdown", styles: "assistant text" },
   { selector: ".chat-markdown-codeblock", styles: "code block" },
+  { selector: "[data-markdown-table]", styles: "table in assistant text" },
   { selector: "[data-chat-composer-form]", styles: "composer" },
   { selector: '[data-slot="composer-host"]', styles: "composer card" },
   { selector: ".composer-tiptap", styles: "composer text" },
+  { selector: '[data-slot="composer-tray-row"]', styles: "row under the composer's text box" },
   { selector: "[data-thread-details-card]", styles: "thread details card" },
+  { selector: "[data-thread-find-bar]", styles: "find in thread bar" },
   { selector: "[data-thread-terminal-drawer]", styles: "terminal drawer" },
   { selector: "[data-settings-page-scroll]", styles: "settings page" },
   { selector: '[data-slot="button"]', styles: "button" },
   { selector: '[data-slot="input"]', styles: "text input" },
+  { selector: '[data-slot="input-control"]', styles: "text input frame, around the input" },
   { selector: '[data-slot="switch"]', styles: "switch" },
   { selector: '[data-slot="select-trigger"]', styles: "select" },
   { selector: '[data-slot="dialog-popup"]', styles: "dialog" },
+  { selector: '[data-slot="command-dialog-popup"]', styles: "command palette and file picker" },
   { selector: '[data-slot="popover-popup"]', styles: "popover" },
   { selector: '[data-slot="menu-popup"]', styles: "menu" },
   { selector: '[data-slot="tooltip-popup"]', styles: "tooltip" },

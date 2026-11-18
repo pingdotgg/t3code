@@ -4,6 +4,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import {
   useEffect,
@@ -44,6 +45,7 @@ import {
   type LayoutTab,
   type LayoutViewport,
   type LayoutWorkspace,
+  isBlankLayoutWorkspace,
 } from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { observeResize } from "../lib/observeResize";
@@ -278,15 +280,29 @@ function closeHintHeight(): number {
 }
 
 function OverviewCloseHint() {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const closeKey = shortcutLabelForCommand(keybindings, "layout.overview");
   // The layout focus keys move the selection too ("Alt+Shift+Left" reads as
   // "Alt+Shift+arrows"); a rebinding off the arrows is left unnamed.
   const focusKey = shortcutLabelForCommand(keybindings, "layout.focusLeft");
   const focusModifiers = focusKey?.endsWith("Left") ? focusKey.slice(0, -"Left".length) : null;
-  const focusArrows = focusModifiers
-    ? `${focusModifiers}${focusModifiers.endsWith("+") ? "" : " "}arrows`
+  const focusPrefix = focusModifiers
+    ? `${focusModifiers}${focusModifiers.endsWith("+") ? "" : " "}`
     : null;
+  const hint =
+    focusPrefix !== null
+      ? closeKey
+        ? gt(
+            "hjkl, arrows or {modifiers}arrows to move, Enter to open, {closeKey} or Esc to close",
+            { modifiers: focusPrefix, closeKey },
+          )
+        : gt("hjkl, arrows or {modifiers}arrows to move, Enter to open, Esc to close", {
+            modifiers: focusPrefix,
+          })
+      : closeKey
+        ? gt("hjkl or arrows to move, Enter to open, {closeKey} or Esc to close", { closeKey })
+        : gt("hjkl or arrows to move, Enter to open, Esc to close");
   return createPortal(
     <div
       // Its own row of window chrome (black chrome tokens too), above the stage,
@@ -297,8 +313,7 @@ function OverviewCloseHint() {
       className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex h-(--workspace-chrome-row-height) items-center justify-center bg-(--app-chrome-background) text-meta text-dim-foreground motion-safe:transition-opacity motion-safe:starting:opacity-0"
       style={overviewZoomTransition()}
     >
-      {focusArrows ? `hjkl, arrows or ${focusArrows}` : "hjkl or arrows"} to move, Enter to open,{" "}
-      {closeKey ? `${closeKey} or ` : ""}Esc to close
+      {hint}
     </div>,
     document.body,
   );
@@ -435,7 +450,8 @@ export function selectOverviewStage(
   // An empty workspace only shows while it is the focused one.
   const rows = layout.workspaces
     .filter(
-      (workspace) => workspace.columns.length > 0 || workspace.id === layout.focusedWorkspaceId,
+      (workspace) =>
+        !isBlankLayoutWorkspace(workspace) || workspace.id === layout.focusedWorkspaceId,
     )
     .map((workspace, index) => ({
       workspace,
@@ -1071,6 +1087,7 @@ export function OverviewStageOverlay({
   stage: OverviewStageLayout;
   phase: OverviewPhase;
 }) {
+  const gt = useGT();
   const choose = useChooseOverviewTab();
   const { rows, scale, gap } = stage;
   const [drag, setDrag] = useState<OverviewDrag | null>(null);
@@ -1205,7 +1222,7 @@ export function OverviewStageOverlay({
     <div
       data-layout-overview=""
       role="dialog"
-      aria-label="Workspaces overview"
+      aria-label={gt("Workspaces overview")}
       className={cn("absolute inset-0", !open && "pointer-events-none")}
     >
       {rows.map((row) => {
@@ -1352,7 +1369,7 @@ function NewWorkspaceLine({ style }: { style: React.CSSProperties }) {
       <div className="h-1 w-[min(700px,80%)] rounded-full bg-strong-foreground" />
       <div className="absolute flex h-6.5 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta text-background shadow-lg">
         <PlusIcon aria-hidden className="size-3.25" />
-        New workspace
+        <T>New workspace</T>
       </div>
     </div>
   );
