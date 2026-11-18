@@ -5,13 +5,25 @@ import { codexAuthDeliveryUrl, readCodexAuthDelivery } from "@t3tools/shared/cod
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { receiveCodexAuthCallback, cancelCodexAuthCallback } from "./CodexAuthCallback.ts";
 
+// Holds every probe socket until all ports are read, so one call never returns the same port twice.
+async function freePorts(count: number) {
+  const servers = Array.from({ length: count }, () => NodeHttp.createServer());
+  await Promise.all(
+    servers.map((server) => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))),
+  );
+  const ports = servers.map((server) => {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("address");
+    return address.port;
+  });
+  await Promise.all(
+    servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
+  return ports;
+}
 async function freePort() {
-  const server = NodeHttp.createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("address");
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return address.port;
+  const [port] = await freePorts(1);
+  return port!;
 }
 function request(port: number, state = "a".repeat(43)) {
   const url = new URL("https://auth.openai.com/api/accounts/authorize");
@@ -37,18 +49,27 @@ function callback(authorizationUrl: string) {
 }
 
 describe("desktop Codex callback helper", () => {
-  it("binds before opening sign-in, ignores a foreign response, and returns only the code callback", async () => {
+  it("binds before opening sign-in, ignores a foreign response, and returns only the code callback", async ({
+    onTestFinished,
+  }) => {
     const authorizationUrl = request(await freePort());
     const expected = callback(authorizationUrl);
-    const received = await receiveCodexAuthCallback(authorizationUrl, async () => {
+    const opening = Promise.withResolvers<boolean>();
+    onTestFinished(() => opening.resolve(true));
+    const checkResponse = async () => {
       const invalid = new URL(expected);
       invalid.searchParams.set("state", "foreign");
       expect((await fetch(invalid)).status).toBe(400);
       const response = await fetch(expected);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.text()).not.toContain("test-code");
-      return true;
+    };
+    let responseChecked!: Promise<void>;
+    const received = await receiveCodexAuthCallback(authorizationUrl, () => {
+      responseChecked = checkResponse();
+      return responseChecked.then(() => opening.promise);
     });
+    await responseChecked;
     expect(received).toBe(expected);
   });
   it("returns hosted web to the exact instance and environment without putting the code in its query", async () => {
@@ -61,38 +82,57 @@ describe("desktop Codex callback helper", () => {
       instanceId: ProviderInstanceId.make("work"),
       flowId: "flow-one",
     };
+    const openBrowser = async () => {
+      const response = await fetch(expected, { redirect: "manual" });
+      expect(response.status).toBe(303);
+      const delivery = response.headers.get("location")!;
+      expect(new URL(delivery).searchParams.has("code")).toBe(false);
+      expect(readCodexAuthDelivery(delivery)?.callbackUrl).toBe(expected);
+      expect(readCodexAuthDelivery(delivery)?.returnUrl).toBe(input.returnUrl);
+      return true;
+    };
+    let opening!: Promise<boolean>;
     await receiveCodexAuthCallback(
       authorizationUrl,
-      async () => {
-        const response = await fetch(expected, { redirect: "manual" });
-        expect(response.status).toBe(303);
-        const delivery = response.headers.get("location")!;
-        expect(new URL(delivery).searchParams.has("code")).toBe(false);
-        expect(readCodexAuthDelivery(delivery)?.callbackUrl).toBe(expected);
-        expect(readCodexAuthDelivery(delivery)?.returnUrl).toBe(input.returnUrl);
-        return true;
-      },
+      () => (opening = openBrowser()),
       (url) => codexAuthDeliveryUrl(input, url),
     );
+    await opening;
   });
-  it("cancels and releases its listener so exact-port reauthorization can run again", async () => {
-    const authorizationUrl = request(await freePort());
-    await expect(
-      receiveCodexAuthCallback(authorizationUrl, async () => {
-        cancelCodexAuthCallback(authorizationUrl);
-        return true;
-      }),
-    ).rejects.toThrow("cancelled");
-    expect(
-      await receiveCodexAuthCallback(authorizationUrl, async () => {
-        await fetch(callback(authorizationUrl));
-        return true;
-      }),
-    ).toBe(callback(authorizationUrl));
+  it("cancels and releases its listener so exact-port reauthorization can run again", async ({
+    onTestFinished,
+    signal,
+  }) => {
+    for (const external of [false, true]) {
+      const authorizationUrl = request(await freePort());
+      const abort = new AbortController();
+      const opening = Promise.withResolvers<boolean>();
+      onTestFinished(() => opening.resolve(true));
+      await expect(
+        receiveCodexAuthCallback(
+          authorizationUrl,
+          async () => {
+            if (external) abort.abort();
+            else cancelCodexAuthCallback(authorizationUrl);
+            return opening.promise;
+          },
+          undefined,
+          abort.signal,
+        ),
+      ).rejects.toThrow("cancelled");
+      if (signal.aborted) return;
+      expect(
+        await receiveCodexAuthCallback(authorizationUrl, async () => {
+          await fetch(callback(authorizationUrl));
+          return true;
+        }),
+      ).toBe(callback(authorizationUrl));
+    }
   });
   it("allows two accounts to complete independently", async () => {
-    const a = request(await freePort(), "a".repeat(43));
-    const b = request(await freePort(), "c".repeat(43));
+    const [portA, portB] = await freePorts(2);
+    const a = request(portA!, "a".repeat(43));
+    const b = request(portB!, "c".repeat(43));
     const openedA = Promise.withResolvers<void>();
     const openedB = Promise.withResolvers<void>();
     const receiveA = receiveCodexAuthCallback(a, async () => {

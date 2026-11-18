@@ -42,6 +42,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
+import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -601,7 +602,7 @@ export function BranchToolbarBranchSelector({
     : resolveDefaultWorktreeBaseBranch(refs);
 
   const projectCloneDone = useProjectClone(activeProjectRef)?.phase === "done";
-  const refreshRefsAfterClone = useEffectEvent(() => {
+  const refreshStaleRefs = useEffectEvent(() => {
     if (branchCwd === null) return;
     void refreshLocalStatusForPicker({
       environmentId,
@@ -610,8 +611,18 @@ export function BranchToolbarBranchSelector({
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs listed while the project was cloning are empty; reload them past the server's snapshot when the clone finishes
   useEffect(() => {
-    if (projectCloneDone) refreshRefsAfterClone();
+    if (projectCloneDone) refreshStaleRefs();
   }, [projectCloneDone]);
+  // A checkout made outside T3 Code, such as a clone finishing, leaves refs listed before it.
+  const statusBranch = branchStatusQuery.data?.refName ?? null;
+  const refreshRefsMissingStatusBranch = useEffectEvent((branch: string | null) => {
+    if (isInitialBranchesLoadPending || branch === null) return;
+    if (branchByName.get(branch)?.current !== true) refreshStaleRefs();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads refs from the server once per branch live status reports that they do not list as checked out
+  useEffect(() => {
+    refreshRefsMissingStatusBranch(statusBranch);
+  }, [statusBranch]);
 
   // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;
@@ -688,6 +699,7 @@ export function BranchToolbarBranchSelector({
     branchStatusQuery.data?.sourceControlProvider,
   );
   const openPrLink = useOpenPrLink(threadRef);
+  const linkedIssues = serverThread?.issues ?? [];
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
@@ -872,6 +884,22 @@ export function BranchToolbarBranchSelector({
             branchPr={branchPr}
             branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
             onActed={() => branchStatusQuery.refresh()}
+          />
+        ) : null}
+        {displayMode === "panel" ? (
+          <ThreadDetailsIssueRows
+            links={linkedIssues}
+            onOpenLink={(event, link) => {
+              event.stopPropagation();
+              useRightPanelStore.getState().openIssue(threadRef, {
+                projectId: link.projectId,
+                tracker: link.tracker,
+                host: link.host,
+                scope: link.scope,
+                key: link.key,
+                url: link.url,
+              });
+            }}
           />
         ) : null}
       </div>
