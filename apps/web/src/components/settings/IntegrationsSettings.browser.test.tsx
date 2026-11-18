@@ -61,6 +61,7 @@ const environments: EnvironmentPresentation[] = [
       enabled: true,
     },
     connection: { phase: "connected", error: null, traceId: null },
+    refusedRouteIds: [],
     serverConfig: config,
   },
 ];

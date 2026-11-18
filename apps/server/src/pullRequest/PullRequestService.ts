@@ -1084,6 +1084,21 @@ export const make = Effect.gen(function* () {
                     };
                   }
                 }
+                const owner =
+                  publicHost ?? sourceControlDefinitions.findByRepositoryKey(referenceKey);
+                const readable = owner === undefined ? null : registry.get(owner.kind);
+                if (
+                  readable !== null &&
+                  !readable.readsPublicHostWithoutCheckout &&
+                  readable.servesHost?.(host) !== false
+                ) {
+                  // Without repository keys, any checkout on the host routes the read.
+                  return yield* new PullRequestUnavailableError(
+                    readable.repositoryKey === undefined
+                      ? { reason: "repository-without-project", host }
+                      : { reason: "repository-without-project", repository },
+                  );
+                }
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
