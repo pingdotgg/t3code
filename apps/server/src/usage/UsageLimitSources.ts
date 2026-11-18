@@ -9,6 +9,7 @@ import {
   settingsSecretLiteral,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
+  type UsageLimitSourceAccount,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
@@ -45,13 +46,39 @@ export class UsageLimitSources extends Context.Service<
 const ROUTE_READ_INTERVAL = Duration.seconds(30);
 const MAX_ROUTES_PER_SOURCE = 200;
 
+interface SessionRoute {
+  readonly accountId: string;
+  readonly endpoint: string | undefined;
+  readonly identity: string;
+}
+
+function routeIdentity(account: UsageLimitSourceAccount): string {
+  const fingerprint = account.usageLimits.credentialFingerprint;
+  // Without a listed login or fingerprint, a route cannot survive another account reading.
+  return JSON.stringify([
+    account.driver,
+    account.email,
+    account.workspaceId,
+    fingerprint,
+    account.email || account.workspaceId || fingerprint ? null : account.usageLimits.checkedAt,
+  ]);
+}
+
 function withSessionIds(
   snapshots: ReadonlyArray<UsageLimitSourceSnapshot>,
-  routes: ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, string>>,
+  routes: ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, SessionRoute>>,
 ): ReadonlyArray<UsageLimitSourceSnapshot> {
   return snapshots.map((source) => {
     const sessionIdsByAccount = new Map<string, string[]>();
-    for (const [sessionId, accountId] of routes.get(source.id) ?? []) {
+    for (const [sessionId, route] of routes.get(source.id) ?? []) {
+      const account = source.accounts.find((account) => account.id === route.accountId);
+      if (
+        !account ||
+        source.endpoint !== route.endpoint ||
+        routeIdentity(account) !== route.identity
+      )
+        continue;
+      const accountId = route.accountId;
       const sessionIds = sessionIdsByAccount.get(accountId);
       if (sessionIds) sessionIds.push(sessionId);
       else sessionIdsByAccount.set(accountId, [sessionId]);
@@ -126,9 +153,9 @@ export const make = Effect.gen(function* () {
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const readsRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
   // Per source, provider session id to hub account id, oldest route first.
-  const routesRef = yield* Ref.make<ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, string>>>(
-    new Map(),
-  );
+  const routesRef = yield* Ref.make<
+    ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, SessionRoute>>
+  >(new Map());
   const readManagementKey = Effect.fn("UsageLimitSources.readManagementKey")(function* (
     config: UsageLimitSourceConfig,
   ) {
@@ -210,7 +237,7 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
+    yield* publish(keepLastGoodReadings(yield* Ref.get(readsRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -250,6 +277,7 @@ export const make = Effect.gen(function* () {
     const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
       ([, config]) => config.enabled && config.threadAccounts,
     );
+    const snapshots = yield* Ref.get(readsRef);
     const reads = yield* Effect.forEach(
       entries,
       ([id, config]) =>
@@ -265,12 +293,19 @@ export const make = Effect.gen(function* () {
       { concurrency: 4 },
     );
     yield* Ref.update(routesRef, (previous) => {
-      const next = new Map<UsageLimitSourceId, ReadonlyMap<string, string>>();
+      const next = new Map<UsageLimitSourceId, ReadonlyMap<string, SessionRoute>>();
       for (const [id, routes] of reads) {
         const routed = new Map(previous.get(id));
+        const source = snapshots.find((source) => source.id === id);
         for (const { sessionId, accountId } of routes) {
+          const account = source?.accounts.find((account) => account.id === accountId);
+          if (!source || !account) continue;
           routed.delete(sessionId);
-          routed.set(sessionId, accountId);
+          routed.set(sessionId, {
+            accountId,
+            endpoint: source.endpoint,
+            identity: routeIdentity(account),
+          });
         }
         next.set(id, new Map([...routed].slice(-MAX_ROUTES_PER_SOURCE)));
       }

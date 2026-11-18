@@ -9,6 +9,8 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -412,6 +414,8 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
 it.effect("reads routed sessions from opted-in hubs, even with no client open", () =>
   Effect.gen(function* () {
     const queueReads: string[] = [];
+    let refused = false;
+    let email = "account@example.com";
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         expect(request.headers.authorization).toBe("Bearer key");
@@ -427,13 +431,25 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              files: [{ id: "claude-a.json", auth_index: "a", provider: "claude" }],
+              files: [
+                {
+                  id: "claude-a.json",
+                  auth_index: "a",
+                  provider: "claude",
+                  email,
+                },
+              ],
             }),
           );
         }
         return HttpClientResponse.fromWeb(
           request,
-          Response.json({ status_code: 200, body: JSON.stringify({}) }),
+          Response.json({
+            status_code: refused ? 429 : 200,
+            body: JSON.stringify({
+              five_hour: { utilization: 12, resets_at: "2099-01-01T00:00:00Z" },
+            }),
+          }),
         );
       }),
     );
@@ -452,6 +468,14 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
       ["observed", [undefined]],
     ]);
 
+    email = "replacement@example.com";
+    yield* sources.refresh;
+    const replaced = yield* sources.current;
+    expect(replaced[0]?.accounts[0]?.sessionIds).toBeUndefined();
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
+
+    refused = true;
     // Switching Thread accounts off drops the routes on that refresh, not on the next queue read.
     const settings = yield* ServerSettings.ServerSettingsService;
     yield* settings.updateSettings({
@@ -467,6 +491,7 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
     });
     yield* sources.refresh;
     const afterOff = yield* sources.current;
+    expect(afterOff[0]?.accounts[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
     expect(afterOff.find((source) => source.id === "routed")?.accounts[0]?.sessionIds).toBe(
       undefined,
     );
@@ -509,6 +534,9 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
 
 it.effect("drops a queue read that lands after Thread accounts was switched off", () =>
   Effect.gen(function* () {
+    const completed = yield* Deferred.make<void>();
+    const clock = yield* Clock.Clock;
+    let returned = false;
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const http = HttpClient.make((request) => {
@@ -516,6 +544,11 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
       if (url.pathname.endsWith("/usage-queue")) {
         return Deferred.succeed(started, undefined).pipe(
           Effect.andThen(Deferred.await(release)),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              returned = true;
+            }),
+          ),
           Effect.as(
             HttpClientResponse.fromWeb(
               request,
@@ -537,6 +570,14 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
     });
     const sources = yield* UsageLimitSources.make.pipe(
       Effect.provideService(HttpClient.HttpClient, http),
+      Effect.provideService(Clock.Clock, {
+        ...clock,
+        sleep: (duration) =>
+          (returned && Duration.equals(duration, Duration.seconds(30))
+            ? Deferred.succeed(completed, undefined)
+            : Effect.void
+          ).pipe(Effect.andThen(clock.sleep(duration))),
+      }),
     );
     yield* sources.refresh;
     yield* TestClock.adjust("30 seconds");
@@ -556,9 +597,8 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
     });
     yield* sources.refresh;
     yield* Deferred.succeed(release, undefined);
-    yield* TestClock.adjust("0 seconds");
-    // The next queue interval is registered only after the late read finishes publishing.
-    expect(yield* TestClock.sleeps).toContain(60_000);
+    // The next queue interval starts only after the late read finishes publishing.
+    yield* Deferred.await(completed);
 
     const snapshots = yield* sources.current;
     expect(snapshots[0]?.accounts[0]?.sessionIds).toBe(undefined);
