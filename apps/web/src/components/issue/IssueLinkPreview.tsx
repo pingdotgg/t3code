@@ -1,5 +1,6 @@
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import type { EnvironmentId, IssueDetail, IssueRef } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { useRef, useState, type ComponentPropsWithoutRef, type ReactElement } from "react";
 
 import { RelativeTime } from "~/components/RelativeTime";
@@ -101,7 +102,12 @@ function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
         <span className="min-w-0 truncate">{authorLabel}</span>
         <span aria-hidden>·</span>
         <span className="shrink-0">
-          opened <RelativeTime timestamp={detail.createdAt} />
+          <T>
+            opened{" "}
+            <Var>
+              <RelativeTime timestamp={detail.createdAt} />
+            </Var>
+          </T>
         </span>
       </div>
     </div>
