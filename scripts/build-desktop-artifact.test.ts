@@ -30,6 +30,7 @@ import {
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
   resolveLocalSigningIdentity,
+  resolveLocalSigningHash,
   createBuildConfig,
   DESKTOP_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
@@ -54,6 +55,7 @@ import {
   stageBrowserSecret,
   validateLinuxPackagedPayload,
   validateMacPackagedPayload,
+  verifyLocalMacSignature,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
   WindowsPrimaryNativeProbeError,
@@ -645,8 +647,31 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "Example (ABCDEFGHIJ)",
     );
     assert.strictEqual(resolveLocalSigningIdentity("T3 Code Local"), "T3 Code Local");
-    assert.strictEqual(resolveLocalSigningIdentity("Developer ID Application:"), undefined);
+    assert.throws(
+      () => resolveLocalSigningIdentity("Developer ID Application:"),
+      /not a valid code-signing identity/,
+    );
     assert.strictEqual(resolveLocalSigningIdentity("  "), undefined);
+    assert.strictEqual(resolveLocalSigningIdentity(undefined), undefined);
+    const hash = "A".repeat(40);
+    const otherHash = "B".repeat(40);
+    const identities = `  1) ${hash} "Developer ID Application: Example (ABCDEFGHIJ)"
+  2) ${otherHash} "T3 Code Local"
+     2 valid identities found`;
+    assert.strictEqual(resolveLocalSigningHash("Example (ABCDEFGHIJ)", identities), hash);
+    assert.strictEqual(resolveLocalSigningHash(hash, identities), hash);
+    assert.strictEqual(resolveLocalSigningHash(hash, identities + identities), hash);
+    assert.strictEqual(resolveLocalSigningHash("T3 Code Local", identities), otherHash);
+    assert.throws(() => resolveLocalSigningHash("T3 Code", identities));
+    assert.throws(() => resolveLocalSigningHash("valid identities", identities));
+    assert.throws(() =>
+      resolveLocalSigningHash(
+        "T3 Code Local",
+        identities +
+          `
+  3) ${hash} "T3 Code Local"`,
+      ),
+    );
   });
 
   it("stages only the externals of both bundles in merged packages", () => {
@@ -1438,6 +1463,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fixture = yield* makePackagedAppFixture({});
         yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
+        yield* verifyLocalMacSignature(fixture.stageDistDir, "A".repeat(40), false).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+          ),
+        );
+        const error = yield* verifyLocalMacSignature(
+          fixture.stageDistDir,
+          "A".repeat(40),
+          false,
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(mockProcess(1))),
+          ),
+          Effect.flip,
+        );
+        assert.instanceOf(error, BuildCommandFailedError);
       }),
     ),
   );
