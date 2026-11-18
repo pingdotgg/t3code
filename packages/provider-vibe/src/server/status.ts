@@ -195,7 +195,21 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
             defaultAgent: config.defaultAgent ?? undefined,
             installed: true,
           } satisfies VibeProbeResult;
-        }),
+        }).pipe(
+          Effect.catchTags({
+            VibeAppServerRequestError: (error) =>
+              error.code === "unauthorized"
+                ? Effect.succeed({
+                    version: serverInfo.version,
+                    auth: authFromAccount({ status: "unauthorized" }),
+                    usageLimits: undefined,
+                    models: [...FALLBACK_MODELS],
+                    defaultAgent: undefined,
+                    installed: true,
+                  } satisfies VibeProbeResult)
+                : Effect.fail(error),
+          }),
+        ),
     ),
   ).pipe(
     Effect.timeoutOption(resolveProviderProbeTimeoutMs("vibe", PROBE_TIMEOUT_MS, environment)),
