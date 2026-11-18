@@ -63,7 +63,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <div
       className={cn(
-        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
+        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3 md:group-data-[side=right]:wco:pr-(--workspace-native-controls-inset)",
         isElectron && "drag-region",
       )}
     >
@@ -99,9 +99,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 export function SidebarBrandWidthProbe({
   isElectron,
+  side = "left",
   onWidthChange,
 }: {
   isElectron: boolean;
+  side?: "left" | "right";
   onWidthChange: (width: number) => void;
 }) {
   const observeWidth = (probe: HTMLDivElement) => {
@@ -113,10 +115,18 @@ export function SidebarBrandWidthProbe({
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
+      className={cn(
+        "pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3",
+        side === "right" && "wco:pr-(--workspace-native-controls-inset)",
+      )}
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
+      <div
+        className={cn(
+          "flex gap-1",
+          side === "right" ? "ml-3" : "ml-[var(--workspace-titlebar-content-left)]",
+        )}
+      >
         <SidebarBrandMark onBackdrop={false} />
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
       </div>
@@ -173,7 +183,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label={gt("T3 Code home")}
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex md:group-data-[side=right]:ml-3",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"

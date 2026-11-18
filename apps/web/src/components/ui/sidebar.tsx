@@ -2,7 +2,12 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { T, useGT } from "gt-react";
-import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
+import {
+  PanelLeftCloseIcon,
+  PanelLeftIcon,
+  PanelRightCloseIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -35,6 +40,7 @@ const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 const SIDEBAR_TITLEBAR_CONTROL_SIZE = "max-sm:[--workspace-titlebar-control-size:--spacing(8)]";
 
 type SidebarContextProps = {
+  side: "left" | "right";
   state: ResponsiveSidebarState;
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -189,6 +195,7 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
 
 function SidebarProvider({
   defaultOpen = true,
+  side = "left",
   storageKey,
   className,
   style,
@@ -196,6 +203,7 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
+  side?: "left" | "right";
   storageKey?: string;
 }) {
   const isMobile = useMediaQuery(SIDEBAR_MOBILE_QUERY);
@@ -217,6 +225,7 @@ function SidebarProvider({
   const state = resolveSidebarState({ isMobile, open, openMobile });
 
   const contextValue: SidebarContextProps = {
+    side,
     isMobile,
     open,
     openMobile,
@@ -377,7 +386,10 @@ function Sidebar({
   return (
     <SidebarInstanceContext value={instanceContextValue}>
       <div
-        className="group peer hidden text-sidebar-foreground md:block"
+        className={cn(
+          "group peer hidden text-sidebar-foreground md:block",
+          side === "right" && "order-last",
+        )}
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-collapsible-mode={collapsible}
         inert={offcanvasCollapsed}
@@ -427,8 +439,16 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, side } = useSidebar();
   const isOpen = useSidebarVisibility();
+  const Icon =
+    side === "right"
+      ? isOpen
+        ? PanelRightCloseIcon
+        : PanelRightIcon
+      : isOpen
+        ? PanelLeftCloseIcon
+        : PanelLeftIcon;
 
   return (
     <Button
@@ -447,7 +467,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
+      <Icon className="size-4" />
       <span className="sr-only">
         <T>Toggle Sidebar</T>
       </span>
@@ -625,7 +645,9 @@ function SidebarRail({
           />
         }
       />
-      <TooltipPopup side="right">{railTitle}</TooltipPopup>
+      <TooltipPopup side={sidebarInstance?.side === "right" ? "left" : "right"}>
+        {railTitle}
+      </TooltipPopup>
     </Tooltip>
   );
 }
