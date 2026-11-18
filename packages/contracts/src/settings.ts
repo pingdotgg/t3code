@@ -824,6 +824,9 @@ export const IDLE_COMPACTION_MODES = [
   { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
   { value: "off", label: "Never" },
 ] as const;
+export const AgentMessagePolicy = Schema.Literals(["allow", "block"]);
+export type AgentMessagePolicy = typeof AgentMessagePolicy.Type;
+
 export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
 export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 
@@ -1585,6 +1588,10 @@ export const ServerSettings = Schema.Struct({
   t3ContextHandoff: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   t3SideChatContext: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   t3RestartNote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** `block` refuses `t3_thread_send` from a thread outside the target's delegation tree and from linked environments. */
+  agentMessagePolicy: AgentMessagePolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed("allow" as const)),
+  ),
   /** Each off stops Claude Code adding that item to what the model receives, in sessions opened afterwards. */
   claudeInstructionFiles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   claudeAutoMemory: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2042,6 +2049,7 @@ export const ServerSettingsPatch = Schema.Struct({
   t3ContextHandoff: Schema.optionalKey(Schema.Boolean),
   t3SideChatContext: Schema.optionalKey(Schema.Boolean),
   t3RestartNote: Schema.optionalKey(Schema.Boolean),
+  agentMessagePolicy: Schema.optionalKey(AgentMessagePolicy),
   claudeInstructionFiles: Schema.optionalKey(Schema.Boolean),
   claudeAutoMemory: Schema.optionalKey(Schema.Boolean),
   claudeGitContext: Schema.optionalKey(Schema.Boolean),

@@ -120,6 +120,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { capNotificationDetail } from "../orchestration-v2/ContextHandoffDelivery.ts";
 import * as DelegationPolicy from "./DelegationPolicy.ts";
 import { hiddenModelMessage, hiddenModelSlugs, visibleProviderModels } from "./ModelVisibility.ts";
 import {
@@ -245,6 +246,8 @@ export class OrchestratorMcpService extends Context.Service<
 >()("t3/mcp/OrchestratorMcpService") {}
 
 export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
+
+export const AGENT_MESSAGES_BLOCKED = "The owner has blocked messages from other threads";
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
@@ -1439,6 +1442,27 @@ const make = Effect.gen(function* () {
     return yield* threadManagement
       .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
       .pipe(Effect.mapError(threadManagementFailure));
+  });
+
+  /** The top of a thread's delegation tree: forks and side chats start their own. */
+  const delegationRoot = Effect.fn("OrchestratorMcpService.delegationRoot")(function* (
+    thread: Pick<OrchestrationV2ThreadShell, "id" | "lineage">,
+  ) {
+    let current = thread;
+    const seen = new Set<ThreadId>();
+    while (
+      current.lineage.relationshipToParent === "subagent" &&
+      current.lineage.parentThreadId !== null &&
+      !seen.has(current.id)
+    ) {
+      seen.add(current.id);
+      const parent = yield* threadManagement
+        .getThreadShell(current.lineage.parentThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (parent === null) break;
+      current = parent;
+    }
+    return current.id;
   });
 
   const loadScopedThread = Effect.fn("OrchestratorMcpService.loadScopedThread")(function* <
@@ -3725,6 +3749,46 @@ const make = Effect.gen(function* () {
 
       const mode = input.mode ?? "auto";
       const key = yield* requestKey(input.clientRequestId);
+      // Messages inside a delegation tree are how delegation works; only outsiders are subject to the policy.
+      const blocking =
+        (yield* serverSettings.getSettings.pipe(Effect.orDie)).agentMessagePolicy === "block";
+      const outsider = !blocking
+        ? undefined
+        : parent === undefined
+          ? scope.client?.linked === true
+            ? (scope.client.senderThread?.title ?? scope.client.label)
+            : undefined
+          : parent.thread.id !== target.thread.id &&
+              (yield* delegationRoot(parent.thread)) !== (yield* delegationRoot(target.thread))
+            ? parent.thread.title
+            : undefined;
+      if (outsider !== undefined) {
+        yield* threadManagement
+          .dispatch({
+            type: "thread.notice.record",
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "thread-send-blocked",
+            }),
+            threadId: target.thread.id,
+            notification: {
+              source: { kind: "system" },
+              outcome: "cancelled",
+              summary: `T3 Code blocked a message from ${outsider} (other threads are blocked in Settings)`,
+              detail: capNotificationDetail(input.message),
+            },
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to record the blocked message: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return yield* failure("thread_not_sendable", AGENT_MESSAGES_BLOCKED);
+      }
       const messageId = stableOperationMessageId({
         scope,
         requestKey: key,

@@ -3172,6 +3172,233 @@ describe("OrchestratorMcpService provider resolution", () => {
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect(
+    "blocks t3_thread_send from outside the target's delegation tree when the owner says so",
+    () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          {
+            instanceId: codexInstanceId,
+            driver,
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+            planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+            openSession: () => Effect.die("No thread starts: the effect worker is off."),
+          },
+        ]);
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-message-policy" },
+          layerRegistry,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerSettings = ServerSettings.layerTest({
+          providerInstances: { [codexInstanceId]: { driver: "codex", enabled: true } },
+          agentMessagePolicy: "block",
+        });
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+          Layer.provideMerge(layerSettings),
+        );
+        const layerTest = layerOrchestratorService.pipe(
+          Layer.provideMerge(layerThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              layerRegistry,
+              layerSettings,
+              providerRegistryLayer([
+                providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+              ]),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              unusedDelegationPolicyLayer,
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
+          ),
+        );
+        const modelSelection = { instanceId: codexInstanceId, model: "gpt-5.4" };
+        const policyProjectId = ProjectId.make("project:mcp-message-policy");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const startThread = Effect.fnUntraced(function* (name: string) {
+            const threadId = ThreadId.make(`thread:policy-${name}`);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`policy:${name}:create`),
+              threadId,
+              projectId: policyProjectId,
+              title: `Policy ${name}`,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`policy:${name}:start`),
+              threadId,
+              messageId: MessageId.make(`policy:${name}:message`),
+              text: "Work",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+            return threadId;
+          });
+          const delegate = Effect.fnUntraced(function* (parentThreadId: ThreadId, name: string) {
+            const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+            yield* orchestrator.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(`policy:delegate:${name}`),
+              parentThreadId,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              task: `Task ${name}`,
+              completionWake: "settled_only",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            return (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.at(-1)!
+              .childThreadId!;
+          });
+          const root = yield* startThread("root");
+          const unrelated = yield* startThread("unrelated");
+          const child = yield* delegate(root, "child");
+          const sibling = yield* delegate(root, "sibling");
+          const grandchild = yield* delegate(child, "grandchild");
+
+          // The lineage the gate walks, as real delegation records it.
+          const lineageOf = (threadId: ThreadId) =>
+            orchestrator
+              .getThreadProjection(threadId)
+              .pipe(Effect.map((projection) => projection.thread.lineage));
+          assert.deepInclude(yield* lineageOf(child), {
+            parentThreadId: root,
+            relationshipToParent: "subagent",
+          });
+          assert.deepInclude(yield* lineageOf(grandchild), {
+            parentThreadId: child,
+            relationshipToParent: "subagent",
+            rootThreadId: root,
+          });
+          assert.deepInclude(yield* lineageOf(root), {
+            parentThreadId: null,
+            relationshipToParent: null,
+          });
+
+          const from = (threadId: ThreadId): McpInvocationScope => ({
+            environmentId: EnvironmentId.make("environment:mcp-message-policy"),
+            requestNamespace: `provider-session:${threadId}`,
+            thread: {
+              threadId,
+              providerSessionId: `provider-session:${threadId}`,
+              providerInstanceId: codexInstanceId,
+            },
+            client: undefined,
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          });
+          const linked: McpInvocationScope = {
+            environmentId: EnvironmentId.make("environment:mcp-message-policy"),
+            requestNamespace: "client:linked",
+            thread: undefined,
+            client: {
+              sessionId: "linked",
+              label: "Other machine",
+              access: "full-access",
+              linked: true,
+              senderThread: {
+                environmentId: EnvironmentId.make("environment:other-machine"),
+                threadId: ThreadId.make("thread:remote-sender"),
+                title: "Remote lead",
+              },
+            },
+            capabilities: new Set(["orchestration"]),
+            issuedAt: 1,
+          };
+          let sends = 0;
+          const blocked = (scope: McpInvocationScope, threadId: ThreadId, message = "hello") =>
+            service
+              .sendToThread(scope, { threadId, message, clientRequestId: `send-${(sends += 1)}` })
+              .pipe(
+                Effect.result,
+                Effect.map(
+                  (result) =>
+                    result._tag === "Failure" &&
+                    result.failure.message === OrchestratorMcpService.AGENT_MESSAGES_BLOCKED,
+                ),
+              );
+          const notices = (threadId: ThreadId) =>
+            orchestrator
+              .getThreadProjection(threadId)
+              .pipe(
+                Effect.map((projection) =>
+                  projection.turnItems.flatMap((item) =>
+                    item.type === "notification" && item.runId === null
+                      ? [{ summary: item.summary, detail: item.detail }]
+                      : [],
+                  ),
+                ),
+              );
+
+          for (const [sender, target] of [
+            [root, child],
+            [child, root],
+            [root, grandchild],
+            [grandchild, root],
+            [child, sibling],
+            [unrelated, unrelated],
+          ] as const) {
+            const sent = yield* service
+              .sendToThread(from(sender), { threadId: target, message: "hello" })
+              .pipe(Effect.result);
+            assert.equal(sent._tag, "Success", `${sender} to ${target}`);
+          }
+          assert.deepEqual(yield* notices(root), []);
+
+          const before = yield* orchestrator.getThreadProjection(root);
+          assert.isTrue(yield* blocked(from(unrelated), root, "Stop what you are doing"));
+          assert.isTrue(yield* blocked(from(unrelated), grandchild));
+          assert.isTrue(yield* blocked(linked, root, "From another machine"));
+          const after = yield* orchestrator.getThreadProjection(root);
+          assert.deepEqual(
+            after.runs.map((run) => [run.id, run.status]),
+            before.runs.map((run) => [run.id, run.status]),
+          );
+          assert.lengthOf(after.messages, before.messages.length);
+          assert.deepEqual(yield* notices(root), [
+            {
+              summary:
+                "T3 Code blocked a message from Policy unrelated (other threads are blocked in Settings)",
+              detail: "Stop what you are doing",
+            },
+            {
+              summary:
+                "T3 Code blocked a message from Remote lead (other threads are blocked in Settings)",
+              detail: "From another machine",
+            },
+          ]);
+
+          yield* settings.updateSettings({ agentMessagePolicy: "allow" });
+          assert.isFalse(yield* blocked(from(unrelated), root));
+          assert.isFalse(yield* blocked(linked, root));
+          assert.lengthOf(yield* notices(root), 2);
+        }).pipe(Effect.provide(layerTest));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect.each(["local", "remote"] as const)(
     "a blocking %s delegation cancelled mid-wait wakes its parent like an async task",
     (placement) =>
