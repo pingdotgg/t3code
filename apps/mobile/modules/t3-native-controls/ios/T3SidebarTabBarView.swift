@@ -11,7 +11,11 @@ private final class WorkspaceTabBar: UITabBar {
     let candidates = identified.isEmpty ? tabButtons(in: self) { _ in true } : identified
     // Pressing a tab adds a magnified copy of the row for the glass lens, without identifiers.
     // Sizing compose from it leaves compose enlarged until the bar lays out again.
-    let buttons = candidates.filter { convert($0.bounds, from: $0).size == $0.bounds.size }
+    // The copy is many points larger; the tolerance only absorbs conversion rounding.
+    let buttons = candidates.filter {
+      let size = convert($0.bounds, from: $0).size
+      return abs(size.width - $0.bounds.width) < 1 && abs(size.height - $0.bounds.height) < 1
+    }
     let row = buttons.reduce(CGRect.null) { $0.union(convert($1.bounds, from: $1)) }
     if !row.isNull { onContentLayout?(row) }
   }
@@ -36,7 +40,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private let composeButton = UIButton(type: .system)
   private lazy var tabBarTrailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
   private var itemsByTab: [String: UITabBarItem] = [:]
-  var tabs = ["threads", "pullRequests", "usage", "settings"] {
+  var tabs = ["threads", "pullRequests", "issues", "usage", "settings"] {
     didSet { if tabs != oldValue { updateItems() } }
   }
   var selectedTab = "threads" { didSet { updateSelection() } }
@@ -52,6 +56,9 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
       composeButton.isHidden = !showsCompose
       tabBarTrailing.constant = showsCompose ? (compact ? -64 : -76) : 0
       setNeedsLayout()
+      // JS moves this view's edge by the same amount, so the bar keeps its frame and won't lay
+      // itself out; compose is placed only from that layout.
+      tabBar.setNeedsLayout()
     }
   }
   var appearance = "light" {
@@ -102,10 +109,11 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   private func prepareItems() {
     let iconBundle = Bundle(for: Self.self).url(forResource: "T3NativeControlIcons", withExtension: "bundle").flatMap(Bundle.init(url:))
     let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
-    let labels = ["threads": "Chats", "pullRequests": "PRs", "usage": "Usage", "settings": "Settings"]
+    let labels = ["threads": "Chats", "pullRequests": "PRs", "issues": "Issues", "usage": "Usage", "settings": "Settings"]
+    let issueIcon = UIImage(named: "issue", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
     let symbols = ["threads": "text.bubble", "usage": "chart.bar.xaxis", "settings": "gearshape"]
     for (tab, label) in labels {
-      let icon = tab == "pullRequests" ? pullRequestIcon : UIImage(systemName: symbols[tab] ?? "circle")
+      let icon = tab == "pullRequests" ? pullRequestIcon : tab == "issues" ? issueIcon : UIImage(systemName: symbols[tab] ?? "circle")
       let item = UITabBarItem(title: nil, image: tabIcon(icon), tag: 0)
       item.accessibilityLabel = label
       item.accessibilityIdentifier = "workspace-tab-\(tab)"
