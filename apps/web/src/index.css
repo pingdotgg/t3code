@@ -6439,6 +6439,11 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --strip-fade-start-shown {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
 
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
@@ -6534,7 +6539,7 @@ body {
       opacity: 0;
     }
     & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {
-      --strip-fade-start: 0px;
+      --strip-fade-start-shown: 0;
     }
     & [data-pane-bar-corner="end"] {
       inset-inline-end: 0;
@@ -6564,7 +6569,10 @@ body {
         var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)) *
           var(--strip-overflowing-start, 0)
       );
-      --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
+      --strip-fade-start: calc(
+        min(1.5rem, var(--strip-overflow-start, 0px)) * var(--strip-fade-start-shown)
+      );
+      transition: --strip-fade-start-shown var(--panel-animation-duration, 150ms) ease-out;
       --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
       --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
       mask-image: linear-gradient(
