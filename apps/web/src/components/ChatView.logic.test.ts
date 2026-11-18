@@ -52,6 +52,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 
 import type { Thread } from "../types";
 import { DraftId, hydrateImagesFromPersisted, useComposerDraftStore } from "../composerDraftStore";
