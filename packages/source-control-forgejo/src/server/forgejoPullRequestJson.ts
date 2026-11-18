@@ -68,6 +68,22 @@ export const ForgejoPullRequest = Schema.Struct({
   labels: Schema.NullOr(Schema.Array(ForgejoLabel)),
   requested_reviewers: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
 });
+export const ForgejoTimelineEvent = Schema.Struct({ type: Schema.String });
+
+/**
+ * Forgejo's pull request reply never says whether auto-merge is scheduled; only the timeline
+ * records each schedule and cancellation, so the latest of the two decides.
+ */
+export function forgejoAutoMergeScheduled(
+  events: ReadonlyArray<typeof ForgejoTimelineEvent.Type>,
+): boolean {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const type = events[index]?.type;
+    if (type === "pull_scheduled_merge") return true;
+    if (type === "pull_cancel_scheduled_merge") return false;
+  }
+  return false;
+}
 export const ForgejoComment = Schema.Struct({
   id: Schema.Int,
   body: Schema.String,

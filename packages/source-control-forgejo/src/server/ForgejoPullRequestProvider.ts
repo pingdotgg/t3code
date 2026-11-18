@@ -2,7 +2,12 @@ import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3to
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestAction,
+  PullRequestCapabilities,
+  PullRequestMergeMethod,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
@@ -24,7 +29,9 @@ import {
   ForgejoStatus,
   ForgejoLabel,
   ForgejoReaction,
+  ForgejoTimelineEvent,
   FORGEJO_REACTIONS,
+  forgejoAutoMergeScheduled,
   forgejoChangeRequest,
   forgejoActor,
   forgejoComment,
@@ -61,6 +68,15 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
 };
+/** Merging, and scheduling or cancelling a merge, need write access; the author's own edits do not. */
+const WRITE_ACTIONS: ReadonlySet<PullRequestAction> = new Set([
+  "merge",
+  "update-branch",
+  "enable-auto-merge",
+  "disable-auto-merge",
+]);
+/** Timeline rows read before giving up on finding the latest auto-merge event. */
+const TIMELINE_LIMIT = 500;
 const USER_SEARCH_LIMIT = 50;
 const ForgejoUserSearch = Schema.Struct({
   data: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
@@ -218,9 +234,7 @@ export const make = Effect.gen(function* () {
     const active = !repo.archived;
     return {
       actions: active
-        ? CAPABILITIES.actions.filter((action) =>
-            action === "merge" || action === "update-branch" ? canWrite : canEdit,
-          )
+        ? CAPABILITIES.actions.filter((action) => (WRITE_ACTIONS.has(action) ? canWrite : canEdit))
         : [],
       comment: active && (!pr.is_locked || canWrite),
       resolve: false,
@@ -281,6 +295,57 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
     return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
+  });
+  /** Undefined when the timeline is too long to reach its end, or the server has none to read. */
+  const readAutoMerge = (input: ProviderRepositoryRef & { readonly number: number }) =>
+    page(
+      { ...input, path: `${issuePath(input)}/timeline` },
+      ForgejoTimelineEvent,
+      TIMELINE_LIMIT,
+    ).pipe(
+      Effect.map(({ items, truncated }) =>
+        truncated ? undefined : forgejoAutoMergeScheduled(items),
+      ),
+      Effect.catchTags({
+        PullRequestProviderError: (error) =>
+          Effect.logWarning("could not read Forgejo auto-merge state", { error }).pipe(
+            Effect.as(undefined),
+          ),
+      }),
+    );
+  /** Forgejo's merge endpoint both merges and, with `merge_when_checks_succeed`, schedules one. */
+  const merge = Effect.fn("ForgejoPullRequestProvider.merge")(function* (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly mergeMethod?: PullRequestMergeMethod | undefined;
+    },
+    whenChecksSucceed: boolean,
+  ) {
+    const deleteBranch = (yield* getRepo(input)).default_delete_branch_after_merge ?? false;
+    yield* write({
+      ...input,
+      path: `${pullPath(input)}/merge`,
+      method: "POST",
+      body: {
+        Do:
+          input.mergeMethod === "fast-forward"
+            ? "fast-forward-only"
+            : (input.mergeMethod ?? "merge"),
+        delete_branch_after_merge: deleteBranch,
+        ...(whenChecksSucceed ? { merge_when_checks_succeed: true } : {}),
+      },
+    }).pipe(
+      Effect.catchTags({
+        // Forgejo merges before deleting the branch, so a refused deletion still merged.
+        PullRequestProviderError: (error) =>
+          deleteBranch
+            ? getPull(input).pipe(
+                Effect.mapError(() => error),
+                Effect.flatMap((pr) => (pr.merged ? Effect.void : Effect.fail(error))),
+              )
+            : Effect.fail(error),
+      }),
+    );
   });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
@@ -364,9 +429,14 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const checks = yield* readChecks(input, pr);
+      const summary = forgejoChangeRequest(pr);
+      const [checks, autoMergeEnabled] = yield* Effect.all(
+        [readChecks(input, pr), summary.state === "open" ? readAutoMerge(input) : Effect.undefined],
+        { concurrency: 2 },
+      );
       return {
-        ...forgejoChangeRequest(pr),
+        ...summary,
+        ...(autoMergeEnabled === undefined ? {} : { autoMergeEnabled }),
         headSha: pr.head.sha,
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
@@ -538,32 +608,11 @@ export const make = Effect.gen(function* () {
     runAction: (input) => {
       switch (input.action) {
         case "merge":
-          return Effect.gen(function* () {
-            const deleteBranch = (yield* getRepo(input)).default_delete_branch_after_merge ?? false;
-            yield* write({
-              ...input,
-              path: `${pullPath(input)}/merge`,
-              method: "POST",
-              body: {
-                Do:
-                  input.mergeMethod === "fast-forward"
-                    ? "fast-forward-only"
-                    : (input.mergeMethod ?? "merge"),
-                delete_branch_after_merge: deleteBranch,
-              },
-            }).pipe(
-              Effect.catchTags({
-                // Forgejo merges before deleting the branch, so a refused deletion still merged.
-                PullRequestProviderError: (error) =>
-                  deleteBranch
-                    ? getPull(input).pipe(
-                        Effect.mapError(() => error),
-                        Effect.flatMap((pr) => (pr.merged ? Effect.void : Effect.fail(error))),
-                      )
-                    : Effect.fail(error),
-              }),
-            );
-          });
+          return merge(input, false);
+        case "enable-auto-merge":
+          return merge(input, true);
+        case "disable-auto-merge":
+          return write({ ...input, path: `${pullPath(input)}/merge`, method: "DELETE" });
         case "close":
         case "reopen":
           return request({

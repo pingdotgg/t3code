@@ -137,18 +137,23 @@ const fastForwardOnlySettings = {
   default_merge_style: "fast-forward-only",
 };
 const fastForwardOnlyProvider = (
-  writes: Array<{ path: string; body: unknown }>,
+  writes: Array<{ path: string; body: unknown; method?: string }>,
   mergeSettings: object = fastForwardOnlySettings,
+  timeline: ReadonlyArray<{ type: string }> = [],
 ) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
-          const [path] = input.path.split("?");
+          const [path, query] = input.path.split("?");
           const reply = (value: unknown) =>
             Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
           if (input.method === "POST") {
             writes.push({ path: input.path, body: input.body });
+            return reply("");
+          }
+          if (input.method === "DELETE") {
+            writes.push({ path: input.path, body: input.body, method: "DELETE" });
             return reply("");
           }
           switch (path) {
@@ -181,6 +186,9 @@ const fastForwardOnlyProvider = (
               });
             case "repos/maria/project/branches/main":
               return reply({});
+            case "repos/maria/project/issues/3/timeline":
+              // Without a `link` header the provider pages until one comes back empty.
+              return reply(new URLSearchParams(query).get("page") === "1" ? timeline : []);
             default:
               return reply([]);
           }
@@ -222,5 +230,77 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
         body: { Do: "fast-forward-only", delete_branch_after_merge: false },
       },
     ]);
+  }),
+);
+
+it.effect("schedules a squash merge for when checks succeed", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    const provider = yield* fastForwardOnlyProvider(writes, {});
+    yield* provider.runAction({
+      ...fastForwardOnly,
+      action: "enable-auto-merge",
+      mergeMethod: "squash",
+    });
+    assert.deepStrictEqual(writes, [
+      {
+        path: "repos/maria/project/pulls/3/merge",
+        body: { Do: "squash", delete_branch_after_merge: false, merge_when_checks_succeed: true },
+      },
+    ]);
+  }),
+);
+
+it.effect("cancels a scheduled merge", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; body: unknown; method?: string }> = [];
+    const provider = yield* fastForwardOnlyProvider(writes, {});
+    yield* provider.runAction({ ...fastForwardOnly, action: "disable-auto-merge" });
+    assert.deepStrictEqual(writes, [
+      { path: "repos/maria/project/pulls/3/merge", body: undefined, method: "DELETE" },
+    ]);
+  }),
+);
+
+it.effect("reads auto-merge state from the latest timeline schedule event", () =>
+  Effect.gen(function* () {
+    const autoMerge = (timeline: ReadonlyArray<{ type: string }>) =>
+      fastForwardOnlyProvider([], {}, timeline).pipe(
+        Effect.flatMap((provider) => provider.getChangeRequest(fastForwardOnly)),
+        Effect.map((detail) => detail.autoMergeEnabled),
+      );
+    assert.strictEqual(yield* autoMerge([]), false);
+    assert.strictEqual(
+      yield* autoMerge([{ type: "comment" }, { type: "pull_scheduled_merge" }, { type: "label" }]),
+      true,
+    );
+    assert.strictEqual(
+      yield* autoMerge([{ type: "pull_scheduled_merge" }, { type: "pull_cancel_scheduled_merge" }]),
+      false,
+    );
+  }),
+);
+
+it.effect("offers auto-merge only to viewers who can merge", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], {});
+    assert.includeMembers(
+      [...provider.capabilities.actions],
+      ["enable-auto-merge", "disable-auto-merge"],
+    );
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    assert.includeMembers(
+      [...detail.viewerPermissions.actions],
+      ["enable-auto-merge", "disable-auto-merge"],
+    );
+    // The author without push access can still close their pull request but not merge it.
+    const author = yield* fastForwardOnlyProvider([], {
+      permissions: { push: false, admin: false },
+    });
+    const authorActions = (yield* author.getChangeRequest(fastForwardOnly)).viewerPermissions
+      .actions;
+    assert.include([...authorActions], "close");
+    assert.notInclude([...authorActions], "enable-auto-merge");
+    assert.notInclude([...authorActions], "disable-auto-merge");
   }),
 );
