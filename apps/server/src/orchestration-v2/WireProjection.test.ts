@@ -228,6 +228,45 @@ describe("orchestration V2 wire projection", () => {
       output: { content: [{ type: "image", mimeType: "image/png" }] },
     });
     expect(item.output.content[0]?.source.data).toBe(data);
+
+    const t3McpApp = {
+      attachmentId: "app-html",
+      server: "repro",
+      tool: "chart",
+      resourceUri: "ui://repro/chart",
+    };
+    const text = { type: "text", text: "Rendered chart" };
+    const appItem = {
+      ...item,
+      toolName: "repro.chart",
+      output: {
+        t3McpApp,
+        result: { content: [text, { type: "image", mimeType: "image/png", data }] },
+      },
+    };
+    expect(projectTurnItemForDetail(appItem)).toMatchObject({
+      output: { t3McpApp, result: { content: [text, { type: "image", mimeType: "image/png" }] } },
+    });
+    const largeOutput = projectTurnItemForDetail(appItem);
+    expect(
+      JSON.stringify(largeOutput.type === "dynamic_tool" ? largeOutput.output : null),
+    ).not.toContain(data);
+
+    const smallApp = {
+      t3McpApp,
+      result: { content: [text, { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }] },
+    };
+    expect(projectTurnItemForDetail({ ...appItem, output: smallApp })).toMatchObject({
+      output: smallApp,
+    });
+
+    const forged = projectTurnItemForDetail({
+      ...appItem,
+      output: { t3McpApp: { ...t3McpApp, resourceUri: data }, result: { content: [text] } },
+    });
+    expect(
+      JSON.stringify(forged.type === "dynamic_tool" ? forged.output : null).length,
+    ).toBeLessThan(270_000);
   });
 
   it("keeps image markers when the rest of a tool output is too large to send", () => {

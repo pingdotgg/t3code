@@ -1,6 +1,8 @@
 import type { RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../i18n/messages";
 
 import { decodeHtmlEntities, markdownHtmlTags } from "./markdownDocument";
 
@@ -25,7 +27,10 @@ const SUMMARY = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i;
  * Tags inside code, or a fold opened inline in a paragraph, stay Markdown. A fold whose
  * closing tag has not streamed yet runs to the end.
  */
-export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
+export function splitMarkdownDetails(
+  markdown: string,
+  resolve: MessageResolver = m,
+): ReadonlyArray<MarkdownDetailsSegment> {
   if (!/<details\b/i.test(markdown)) return [{ kind: "markdown", markdown, sourceOffset: 0 }];
 
   const folds: Array<OpenFold & { end: number; closeTagLength: number }> = [];
@@ -86,7 +91,8 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
     const label = summary ? decodeHtmlEntities(summary[1]!.replace(/<[^>]*>/g, "")).trim() : "";
     segments.push({
       kind: "details",
-      summary: label || "Details",
+      summary:
+        label || resolve(msg("Details", { $context: "fallback summary of a collapsed section" })),
       body,
       open: fold.open,
       sourceOffset: fold.start,

@@ -39,6 +39,7 @@ import * as ConnectHttp from "./http.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const DESKTOP_BOOTSTRAP_TOKEN = "test-desktop-bootstrap-token";
 const NON_LOOPBACK_ORIGIN = "http://172.24.162.233:3773";
@@ -79,6 +80,7 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
+  Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
   Layer.provide(EnvironmentKeys.layer),
   Layer.provide(
     Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeedNone }),

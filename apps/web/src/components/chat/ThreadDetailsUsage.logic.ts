@@ -9,8 +9,8 @@ import type {
 import {
   collectProviderUsageLimits,
   environmentAccountKeyResolver,
-  limitsNotice,
 } from "@t3tools/shared/usageLimits";
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
 export interface ThreadDetailsLimits {
   readonly limits: ServerProviderUsageLimits;

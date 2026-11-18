@@ -182,8 +182,11 @@ pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
 directory is stopped for the repair and started again afterwards, also when
 the repair fails. Quit a server you started by hand, or the desktop app, first:
-the repair refuses to touch a database that is in use. Use `--base-dir` for a
-different data directory.
+the repair refuses to touch a database that is in use, and names the server
+process that holds it when it can tell. While the repair runs, a server started
+for the same data directory, for example by a desktop app connecting over SSH,
+is refused until the repair ends. Use `--base-dir` for a different data
+directory.
 
 The repair's time grows with the size of the whole database, not only the
 space it reclaims, and can exceed an hour on a large database or a slow disk;
@@ -196,4 +199,7 @@ once next to the database for its write-ahead log.
 If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
 still kept next to the current one so you can roll back. `t3 doctor` offers to
 delete it, but never selects that repair for you and `--fix` skips it: once it
-is gone, a version before 0.1.0 starts with no threads or settings.
+is gone, a version before 0.1.0 starts with no threads or settings. It does
+not offer to delete it while any project or thread you have not deleted is
+missing from the current database, so the old file stays available for
+recovery.
