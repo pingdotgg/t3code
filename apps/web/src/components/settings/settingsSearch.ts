@@ -738,8 +738,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: [
       msg(
-        "locale translation english deutsch german español spanish français french português portuguese brasil brazilian chinese 中文 traditional 繁體中文 台灣 japanese 日本語 korean 한국어 russian русский swedish svenska sprache idioma langue 语言 語言 言語 언어 язык",
+        "locale translation english deutsch german español spanish français french português portuguese brasil brazilian chinese 中文 japanese 日本語 korean 한국어 russian русский swedish svenska sprache idioma langue 语言 言語 언어 язык",
       ),
+      "traditional 繁體中文 台灣 語言",
     ],
   },
   {
