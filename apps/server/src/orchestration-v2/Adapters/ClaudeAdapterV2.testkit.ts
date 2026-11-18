@@ -1323,7 +1323,7 @@ function mcpServerStatusForReplay(status: McpServerStatus): McpServerStatus {
   }
 }
 
-async function recordMessagesUntilTurnResult(input: {
+export async function recordMessagesUntilTurnResult(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
@@ -1352,9 +1352,13 @@ async function recordMessagesUntilTurnResult(input: {
       (toolName) => status !== undefined && !status.readToolNames.has(toolName),
     );
     if (status !== undefined && unread.length > 0) {
-      // Appended together after the read, so permission entries recorded meanwhile cannot split the pair.
+      // Replay asks for status before it reaches permission prompts answered during the read,
+      // so the pair goes where the read started, ahead of anything recorded meanwhile.
+      const readAt = input.entries.length;
       const statuses = (await status.read()).map(mcpServerStatusForReplay);
-      input.entries.push(
+      input.entries.splice(
+        readAt,
+        0,
         {
           type: "expect_outbound",
           label: "query.mcp_server_status",
