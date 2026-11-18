@@ -1,3 +1,5 @@
+import { T, useGT } from "gt-react-native";
+
 import { Button } from "./Button";
 import * as Dialog from "./Dialog";
 import { createContext, useContext, useEffect, useEffectEvent } from "react";
@@ -29,6 +31,7 @@ function PdfDocumentPreview(props: {
   readonly source: ResolvedFilePreviewDocument;
   readonly onRequestClose: () => void;
 }) {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const media = useMediaActions(props.source.actionsSource);
   const save = media.actions.find((action) => action.id === "save");
@@ -45,13 +48,13 @@ function PdfDocumentPreview(props: {
       >
         <SheetHeader
           presentation="inline"
-          title={props.source.name ?? "PDF"}
+          title={props.source.name ?? gt("PDF")}
           onClose={props.onRequestClose}
           actions={
             save
               ? [
                   {
-                    accessibilityLabel: "Save or share",
+                    accessibilityLabel: gt("Save or share"),
                     icon: "square.and.arrow.up",
                     disabled: save.disabled,
                     loading: media.sharing,
@@ -72,14 +75,15 @@ function DocumentPreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
+  const gt = useGT();
   const { uri, name } = props.source;
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else
       Dialog.alert(
-        "Could not open document",
-        "A compatible viewer must be installed. Check your connection and try again.",
+        gt("Could not open document"),
+        gt("A compatible viewer must be installed. Check your connection and try again."),
       );
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the attachment in an external viewer and aborts the open on cleanup
@@ -109,12 +113,14 @@ function DocumentPreview(props: {
     <Modal transparent animationType="fade" onRequestClose={props.onRequestClose}>
       <View className="flex-1 items-center justify-center bg-backdrop p-6">
         <View className="w-full max-w-sm gap-4 rounded-2xl bg-sheet-solid p-6">
-          <Text className="font-t3-semibold text-foreground">Opening document…</Text>
+          <Text className="font-t3-semibold text-foreground">
+            <T>Opening document…</T>
+          </Text>
           <Text className="text-foreground-muted" numberOfLines={2}>
-            {name ?? "Document"}
+            {name ?? gt("Document")}
           </Text>
           <View className="items-end">
-            <Button label="Cancel" tone="text" onPress={props.onRequestClose} />
+            <Button label={gt("Cancel")} tone="text" onPress={props.onRequestClose} />
           </View>
         </View>
       </View>
@@ -132,14 +138,15 @@ const ImagePreviewContext = createContext<ImagePreviewProps | null>(null);
 function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   const props = useContext(ImagePreviewContext)!;
   const source = props.source.images[header.imageIndex];
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const mediaActions = useMediaActions(source?.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
       <MediaPreviewHeader
-        title={source?.name ?? "Image"}
+        title={source?.name ?? gt("Image")}
         media={mediaActions}
-        closeAccessibilityLabel="Close image"
+        closeAccessibilityLabel={gt("Close image")}
         onClose={props.onRequestClose}
       />
     </View>

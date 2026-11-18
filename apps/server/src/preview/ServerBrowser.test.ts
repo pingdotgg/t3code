@@ -421,7 +421,13 @@ const desktopRenders = (tabId: string) => {
 /** When set, a desktop that has not attached a tab waits for it the way the real channel does. */
 let desktopAttachesLate = false;
 let desktopAttachWaiting = Promise.withResolvers<void>();
-const shownDesktopTabs = new Set<string>();
+const shownDesktopTabs = new (class extends Set<string> {
+  override add(tabId: string) {
+    super.add(tabId);
+    desktopDetaches.emit("shown", tabId);
+    return this;
+  }
+})();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
@@ -509,6 +515,16 @@ const dependencies = Layer.mergeAll(
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
     isShown: (key) => shownDesktopTabs.has(key.tabId),
+    awaitShown: (key, timeout) =>
+      shownDesktopTabs.has(key.tabId)
+        ? Effect.succeed(true)
+        : Effect.callback<boolean>((resume) => {
+            const onShown = (tabId: string) => {
+              if (tabId === key.tabId) resume(Effect.succeed(true));
+            };
+            desktopDetaches.on("shown", onShown);
+            return Effect.sync(() => desktopDetaches.off("shown", onShown));
+          }).pipe(Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.succeed(false) })),
     loadFailure: (key) => desktopLoadFailures.get(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
@@ -2095,6 +2111,40 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
@@ -3299,6 +3349,45 @@ it.effect("preview_open reports a tab it shows as visible once the client attach
       });
 
       expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open reports a hidden desktop tab it reveals as visible", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const created = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(created.tabId!);
+      expect(created.visible).toBe(false);
+      // Like the desktop renderer, the docked panel reports the tab shown after the reveal arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        // The report crosses the client, the desktop main process and its pipe, so it lands a task later.
+        yield* Effect.yieldNow;
+        yield* Effect.sync(() => shownDesktopTabs.add(tabId));
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "open",
+        input: { open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+      expect(opened.tabs).toEqual([expect.objectContaining({ tabId, visible: true })]);
     }),
   ).pipe(Effect.provide(layer)),
 );

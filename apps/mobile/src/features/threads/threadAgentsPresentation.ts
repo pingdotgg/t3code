@@ -17,6 +17,9 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 const PROMPT_TITLE_LIMIT = 80;
 
@@ -52,11 +55,14 @@ export function subagentThreadTarget(
     : null;
 }
 
-function rowTitle(subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">): string {
+function rowTitle(
+  subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">,
+  resolve: MessageResolver,
+): string {
   const title = subagent.title?.trim();
   if (title) return formatSubagentDisplayTitle(title);
   const prompt = subagent.prompt.trim();
-  if (prompt.length === 0) return "Subagent";
+  if (prompt.length === 0) return resolve(msg("Subagent"));
   return prompt.length > PROMPT_TITLE_LIMIT
     ? `${prompt.slice(0, PROMPT_TITLE_LIMIT - 3)}...`
     : prompt;
@@ -69,23 +75,26 @@ function rowTone(status: OrchestrationV2Subagent["status"]): SubagentRowTone {
   return "stopped";
 }
 
-function rowStatusLabel(status: OrchestrationV2Subagent["status"]): string {
+function rowStatusLabel(
+  status: OrchestrationV2Subagent["status"],
+  resolve: MessageResolver,
+): string {
   switch (status) {
     case "pending":
     case "running":
-      return "Working";
+      return resolve(msg("Working", { $context: "agent status" }));
     case "waiting":
-      return "Waiting";
+      return resolve(msg("Waiting", { $context: "agent status" }));
     case "idle":
-      return "Idle";
+      return resolve(msg("Idle", { $context: "agent status" }));
     case "completed":
-      return "Completed";
+      return resolve(msg("Completed", { $context: "agent status" }));
     case "failed":
-      return "Failed";
+      return resolve(msg("Failed", { $context: "agent status" }));
     case "cancelled":
-      return "Cancelled";
+      return resolve(msg("Cancelled", { $context: "agent status" }));
     case "interrupted":
-      return "Interrupted";
+      return resolve(msg("Interrupted", { $context: "agent status" }));
   }
 }
 
@@ -95,12 +104,13 @@ export function resolveSubagentRowPresentation(
     "title" | "prompt" | "status" | "progress" | "result" | "childThreadId" | "remoteChild"
   >,
   canOpenRemote = false,
+  resolve: MessageResolver = m,
 ): SubagentRowPresentation {
   const live = isActiveSubagentStatus(subagent.status);
   return {
-    title: rowTitle(subagent),
+    title: rowTitle(subagent, resolve),
     detail: subagentDetailPreview(subagent),
-    statusLabel: rowStatusLabel(subagent.status),
+    statusLabel: rowStatusLabel(subagent.status, resolve),
     tone: rowTone(subagent.status),
     live,
     canOpenThread:
@@ -128,7 +138,10 @@ function railTone(members: ReadonlyArray<RuntimeSubagent>): WorkflowRailTone {
   return members.every((member) => member.status === "completed") ? "completed" : "stopped";
 }
 
-export function workflowRail(group: SubagentWorkflowGroup): ReadonlyArray<WorkflowRailItem> {
+export function workflowRail(
+  group: SubagentWorkflowGroup,
+  resolve: MessageResolver = m,
+): ReadonlyArray<WorkflowRailItem> {
   const items = group.phases.map((phase) => ({
     key: String(phase.index),
     title: phase.title,
@@ -137,7 +150,10 @@ export function workflowRail(group: SubagentWorkflowGroup): ReadonlyArray<Workfl
   if (group.unphasedMembers.length > 0) {
     items.push({
       key: "unphased",
-      title: items.length === 0 ? "Agents" : "Other",
+      title:
+        items.length === 0
+          ? resolve(msg("Agents"))
+          : resolve(msg("Other", { $context: "group of agents outside any workflow phase" })),
       members: group.unphasedMembers,
     });
   }
@@ -173,9 +189,10 @@ function capitalize(value: string): string {
 export function workflowMemberMetadata(
   member: Pick<RuntimeSubagent, "model" | "effort" | "speed">,
   provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  resolve: MessageResolver = m,
 ) {
   const model = member.model?.trim()
-    ? resolveSubagentMetadata({ model: member.model, provider }).modelLabel
+    ? resolveSubagentMetadata({ model: member.model, provider }, resolve).modelLabel
     : null;
   const slug = provider
     ? resolveSelectableModel(provider.driver, member.model, provider.models)
