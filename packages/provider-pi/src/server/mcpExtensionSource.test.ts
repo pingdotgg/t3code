@@ -52,6 +52,49 @@ async function loadHooks(
   return handlers;
 }
 
+describe("Pi runtime note", () => {
+  it("adds the note as a prompt section when Pi renders sections", async () => {
+    const bridge = await loadMcpBridge();
+    const hook = bridge.handlers.get("before_agent_start")!;
+    const sections: Record<string, string> = {};
+    const result = await hook(
+      { systemPrompt: "base", systemPromptOptions: { sections } },
+      { ui: { notify: assert.fail } },
+    );
+    assert.isUndefined(result);
+    assert.include(sections.t3_code_runtime, "running in T3 Code through the Pi harness.");
+  });
+
+  it.each([
+    {
+      name: "on Pi builds without prompt sections",
+      events: [
+        { systemPrompt: "base" },
+        { systemPrompt: "base", systemPromptOptions: {} },
+        { systemPrompt: "base", systemPromptOptions: { sections: null } },
+      ],
+    },
+    {
+      name: "when an earlier extension forces the system prompt",
+      events: [
+        {
+          systemPrompt: "forced",
+          systemPromptOptions: { sections: {}, forceSystemPrompt: "forced" },
+        },
+      ],
+    },
+  ])("appends the note $name", async ({ events }) => {
+    const bridge = await loadMcpBridge();
+    const hook = bridge.handlers.get("before_agent_start")!;
+    for (const event of events) {
+      const result = await hook(event, { ui: { notify: assert.fail } });
+      assert.isDefined(result);
+      assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n<runtime_info>`));
+      assert.include(result!.systemPrompt, "t3-code");
+    }
+  });
+});
+
 describe("Pi project trust", () => {
   it.each([
     { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
@@ -147,7 +190,7 @@ describe("Pi MCP tool exposure", () => {
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
     const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
-    assert.isUndefined(prompt);
+    assert.notInclude(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
     const aliases = [
