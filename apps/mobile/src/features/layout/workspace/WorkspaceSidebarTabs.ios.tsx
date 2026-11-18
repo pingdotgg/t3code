@@ -6,6 +6,7 @@ import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tab
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
+import { navigationTabOf } from "./workspace-tabs-state";
 
 const NativeSidebarTabBar = requireNativeView<
   ViewProps & {
@@ -40,7 +41,7 @@ export function WorkspaceSidebarTabs(props: {
       tabs={tabs}
       selectedTab={selectedNavigationTab(
         order,
-        workspace.state.selectedTab,
+        navigationTabOf(workspace.state.selectedTab),
         workspace.settingsOpen,
         hidden,
       )}

@@ -14,10 +14,11 @@ import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
+import { navigationTabOf, resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
 export const WORKSPACE_TAB_LABELS = {
   ...NAVIGATION_TAB_LABELS,
+  tasks: msg("Tasks", { $context: "navigation tab, Orbit tasks" }),
   ...(Platform.OS === "ios"
     ? {
         threads: msg("Chats", { $context: "navigation tab, list of chat threads" }),
@@ -43,7 +44,7 @@ export function useNavigationTabOrder() {
 
 export function useHiddenNavigationTabs() {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const selected = useWorkspaceTabs()?.state.selectedTab ?? "threads";
+  const selected = navigationTabOf(useWorkspaceTabs()?.state.selectedTab ?? "threads");
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   return [
     ...(navigationCustomizationAvailable()

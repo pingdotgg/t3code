@@ -20,6 +20,7 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { NavigationTab } from "./navigation-tab-order";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
+  navigationTabOf,
   workspaceTabForNativeSlot,
   workspaceUsesColumns,
 } from "./workspace-tabs-state";
@@ -173,7 +174,7 @@ export function WorkspaceNativeTabs(props: {
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
-  const selectedTab = workspace.state.selectedTab;
+  const selectedTab = navigationTabOf(workspace.state.selectedTab);
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
   const selectedScreenKey =
     selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!;

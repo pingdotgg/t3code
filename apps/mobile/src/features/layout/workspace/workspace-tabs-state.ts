@@ -11,7 +11,13 @@ export function resolveWorkspaceTabOrder(saved: readonly unknown[] | undefined) 
     : NAVIGATION_TAB_ORDER;
 }
 
-export type WorkspaceTab = NavigationTab;
+/** Conn: Tasks is a list tab of the iPhone bar only, outside the customizable tab order. */
+export type WorkspaceTab = NavigationTab | "tasks";
+/** The customizable tab a workspace tab shows as on bars without Tasks (iPad, Android). */
+export function navigationTabOf(tab: WorkspaceTab): NavigationTab {
+  return tab === "tasks" ? "threads" : tab;
+}
+
 /** Lists with their own search: the searchable tabs and the Settings list. */
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
@@ -41,6 +47,7 @@ function emptyTab(): WorkspaceTabState {
 /** The list a workspace page belongs to. */
 export function workspaceTabOf(routeName: string | undefined): WorkspaceTab {
   if (routeName === "Issue") return "issues";
+  if (routeName === "OrbitTask" || routeName === "OrbitSubtask") return "tasks";
   return routeName === "PullRequest" ? "pullRequests" : "threads";
 }
 
@@ -52,6 +59,7 @@ export function initialWorkspaceTabsState(
     selectionRevision: 0,
     tabs: {
       threads: emptyTab(),
+      tasks: emptyTab(),
       pullRequests: emptyTab(),
       issues: emptyTab(),
       usage: emptyTab(),

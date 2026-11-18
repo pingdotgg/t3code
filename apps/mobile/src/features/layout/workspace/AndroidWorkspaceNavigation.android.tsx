@@ -27,6 +27,7 @@ import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
+import { navigationTabOf } from "./workspace-tabs-state";
 
 // Matches RAIL_WIDTH in the native rail.
 export const ANDROID_WORKSPACE_RAIL_WIDTH = 72;
@@ -92,7 +93,7 @@ export function AndroidWorkspaceNavigation(props: {
     androidWorkspaceNavigationColors(colors, rail, floating);
   const selectedTab = selectedNavigationTab(
     order,
-    workspace.state.selectedTab,
+    navigationTabOf(workspace.state.selectedTab),
     root?.settingsOpen ?? false,
     hidden,
     rail ? 5 : 4,

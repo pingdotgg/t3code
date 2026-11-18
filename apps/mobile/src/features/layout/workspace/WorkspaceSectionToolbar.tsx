@@ -12,6 +12,7 @@ import {
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
+import { navigationTabOf } from "./workspace-tabs-state";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 const ISSUE_ICON = require("../../../../assets/icons/issue.png");
@@ -25,7 +26,7 @@ export function WorkspaceTabToolbarButtons() {
   const selectTab = useSelectWorkspaceTab();
   const selected = selectedNavigationTab(
     order,
-    workspace.state.selectedTab,
+    navigationTabOf(workspace.state.selectedTab),
     workspace.settingsOpen,
     hidden,
   );

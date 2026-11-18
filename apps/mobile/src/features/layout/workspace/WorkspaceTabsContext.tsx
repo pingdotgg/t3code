@@ -43,6 +43,8 @@ function resolveWorkspaceTabsSelection(
   state: WorkspaceTabsState,
   preferences: MobilePreferencesResult,
 ): WorkspaceTabsState {
+  // Conn: Tasks sits outside the customizable order; nothing hides it.
+  if (state.selectedTab === "tasks") return state;
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   const order = resolveWorkspaceTabOrder(saved?.navigationTabOrder);
   const hidden = [
@@ -63,6 +65,7 @@ function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
   const stored = Atom.make(initialWorkspaceTabsState(selectedTab));
   const scrollOffsets: Record<WorkspaceSearchTab, number> = {
     threads: 0,
+    tasks: 0,
     pullRequests: 0,
     issues: 0,
     usage: 0,

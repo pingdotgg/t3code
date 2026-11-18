@@ -1,6 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
-import { Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Pressable, View, useWindowDimensions } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -26,21 +26,17 @@ const SWITCHER_ITEM_WIDTH = 64;
 const TOOLBAR_RESERVED = 20 * 2 + 48 * 2 + 12 * 2;
 
 const SWITCHER_ITEMS = [
-  { key: "threads", label: "Threads", accessibilityLabel: "Threads", icon: "text.bubble" },
-  {
-    key: "pullRequests",
-    label: "Pulls",
-    accessibilityLabel: "Pull requests",
-    icon: PullRequestGlyph.pullRequest,
-  },
-  { key: "search", label: "Search", accessibilityLabel: "Search", icon: "magnifyingglass" },
+  { key: "threads", accessibilityLabel: "Threads", icon: "text.bubble" },
+  { key: "tasks", accessibilityLabel: "Tasks", icon: "checklist" },
+  { key: "pullRequests", accessibilityLabel: "Pull requests", icon: PullRequestGlyph.pullRequest },
+  { key: "search", accessibilityLabel: "Search", icon: "magnifyingglass" },
 ] as const;
 
 function switcherWidth(windowWidth: number) {
   return Math.min(SWITCHER_ITEM_WIDTH * SWITCHER_ITEMS.length, windowWidth - TOOLBAR_RESERVED);
 }
 
-/** Threads, Pulls and Search share one glass group in the toolbar. Usage is in Settings. */
+/** Threads, Tasks, Pulls and Search share one glass group of icons in the toolbar. Usage is in Settings. */
 function WorkspacePhoneSwitcher(props: {
   readonly width: number;
   readonly selectedTab: WorkspaceTab;
@@ -80,24 +76,13 @@ function WorkspacePhoneSwitcher(props: {
               borderRadius: (SWITCHER_HEIGHT - SWITCHER_PADDING * 2) / 2,
               alignItems: "center",
               justifyContent: "center",
-              gap: 1,
             }}
           >
             <SymbolView
               name={item.icon}
-              size={21}
-              tintColorClassName={selected ? "accent-focus" : "accent-icon"}
+              size={22}
+              tintColorClassName={selected ? "accent-foreground" : "accent-foreground-muted"}
             />
-            <Text
-              className={
-                selected
-                  ? "text-2xs font-t3-medium text-foreground"
-                  : "text-2xs font-t3-medium text-foreground-muted"
-              }
-              numberOfLines={1}
-            >
-              {item.label}
-            </Text>
           </Pressable>
         );
       })}
@@ -218,7 +203,11 @@ export function WorkspacePhoneBar(props: {
                       tab: selectedTab,
                     }),
                   placeholder:
-                    selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
+                    selectedTab === "pullRequests"
+                      ? "Search pull requests"
+                      : selectedTab === "tasks"
+                        ? "Search tasks"
+                        : "Search threads",
                   searchTextChangeId: "workspace-search-text",
                 }),
               ]

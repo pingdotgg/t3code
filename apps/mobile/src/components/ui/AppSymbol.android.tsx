@@ -112,6 +112,7 @@ import IconPlus from "@tabler/icons-react-native/IconPlus";
 import IconQrcode from "@tabler/icons-react-native/IconQrcode";
 import IconRefresh from "@tabler/icons-react-native/IconRefresh";
 import IconRobot from "@tabler/icons-react-native/IconRobot";
+import IconListCheck from "@tabler/icons-react-native/IconListCheck";
 import IconSearch from "@tabler/icons-react-native/IconSearch";
 import IconShare from "@tabler/icons-react-native/IconShare";
 import IconServer from "@tabler/icons-react-native/IconServer";
@@ -234,6 +235,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
   "list.number": IconListNumbers,
+  checklist: IconListCheck,
   "line.3.horizontal": IconMenu2,
   "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
