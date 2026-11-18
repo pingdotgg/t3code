@@ -66,6 +66,20 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   override func layoutSubviews() {
     super.layoutSubviews()
     webView?.frame = bounds
+    if let webView { applyIndicatorInsets(to: webView) }
+  }
+
+  override func safeAreaInsetsDidChange() {
+    super.safeAreaInsetsDidChange()
+    if let webView { applyIndicatorInsets(to: webView) }
+  }
+
+  /// The scroll indicator runs from under the bar to above the home indicator.
+  private func applyIndicatorInsets(to webView: WKWebView) {
+    let insets = UIEdgeInsets(top: topInset, left: 0, bottom: safeAreaInsets.bottom, right: 0)
+    if webView.scrollView.verticalScrollIndicatorInsets != insets {
+      webView.scrollView.verticalScrollIndicatorInsets = insets
+    }
   }
 
   func load(_ url: String) {
@@ -103,7 +117,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     let scrollView = webView.scrollView
     let atTop = scrollView.contentOffset.y <= -scrollView.contentInset.top + 1
     scrollView.contentInset.top = topInset
-    scrollView.verticalScrollIndicatorInsets.top = topInset
+    applyIndicatorInsets(to: webView)
     if atTop { scrollView.contentOffset.y = -topInset }
   }
 
@@ -129,12 +143,19 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 
   /// Reports how far the user has scrolled, in steps, enough for the bar to follow its direction.
   private func reportScroll(_ scrollView: UIScrollView) {
-    let offset = scrollView.contentOffset.y
+    // Rubber-banding past either end isn't scrolling, or the bounce back would flip the bar.
+    let top = -scrollView.adjustedContentInset.top
+    let bottom = max(
+      top,
+      scrollView.contentSize.height - scrollView.bounds.height
+        + scrollView.adjustedContentInset.bottom
+    )
+    let offset = min(max(scrollView.contentOffset.y, top), bottom)
     defer { lastOffsetY = offset }
-    // WebKit's own offset changes while loading, and the bar resizing, aren't the user scrolling.
+    // WebKit's own offset changes while loading aren't the user scrolling.
     let userScrolling = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
     if userScrolling { scrolledDistance = max(0, scrolledDistance + offset - lastOffsetY) }
-    if offset <= -scrollView.contentInset.top + 1 { scrolledDistance = 0 }
+    if offset <= top + 1 { scrolledDistance = 0 }
     let y = scrolledDistance
     guard abs(y - reportedScrollY) >= 24 || (y == 0 && reportedScrollY != 0) else { return }
     reportedScrollY = y
