@@ -109,6 +109,16 @@ describe("buildInitialCursorProviderSnapshot", () => {
       expect(provider.slashCommands).toEqual(enabled ? [COMPACT_SLASH_COMMAND] : []);
     }),
   );
+
+  // The SDK denies every approval prompt, so Supervised cannot ask (#38711).
+  it.effect("does not offer Supervised", () =>
+    Effect.gen(function* () {
+      const provider = yield* buildInitialCursorProviderSnapshot(baseCursorSettings);
+
+      expect(provider.supportedRuntimeModes).toBeDefined();
+      expect(provider.supportedRuntimeModes).not.toContain("approval-required");
+    }),
+  );
 });
 
 describe("buildCursorProviderSnapshot", () => {
