@@ -178,7 +178,7 @@ function RetentionControl({
       className="flex items-center gap-3"
       onBlur={(event) => {
         if (event.currentTarget.contains(event.relatedTarget)) return;
-        if (held && draft !== null) commit(draft);
+        if ((held || enabling === "draft") && draft !== null) commit(draft);
         else setEnabling((current) => (typeof current === "string" ? null : current));
       }}
     >
@@ -215,20 +215,18 @@ function RetentionControl({
               autoFocus={value === null}
               size={5}
               className="w-auto grow-0 text-right"
-              // Any typed or pasted edit replaces a held age: NumberField commits it on blur itself,
-              // and text it cannot parse yet must not leave the held age to be saved.
-              onChange={() => setHeld(false)}
+              // Any typed or pasted edit replaces a held age or an untouched draft: NumberField
+              // commits it on blur itself, and text it cannot parse yet must not be saved.
+              onChange={() => {
+                setHeld(false);
+                setEnabling((current) => (current === "draft" ? "edited" : current));
+              }}
               onPaste={() => setHeld(false)}
               onKeyDown={(event) => {
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key === "Enter") {
-                  // Blurring lets NumberField parse the visible text and commit it once. It
-                  // skips an unedited value, so an untouched draft is committed here.
-                  const input = event.currentTarget;
-                  const shown =
-                    draft !== null && input.value === new Intl.NumberFormat().format(draft);
-                  if (enabling === "draft" && shown) commit(draft);
-                  input.blur();
+                  // Leaving the row commits the age, as clicking elsewhere does.
+                  event.currentTarget.blur();
                 } else if (event.key === "Escape" && (held || typeof enabling === "string")) {
                   // An unhandled Escape closes the settings page.
                   event.preventDefault();
