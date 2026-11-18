@@ -1548,6 +1548,70 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("records a notice once at the end of the thread without starting a run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:notice");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("notice:create"),
+      threadId,
+      projectId: ProjectId.make("project:notice"),
+      title: "Notice",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("notice:start"),
+      threadId,
+      messageId: MessageId.make("message:notice"),
+      text: "Start",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const before = yield* projections.getThreadProjection(threadId);
+    const record = orchestrator.dispatch({
+      type: "thread.notice.record",
+      commandId: CommandId.make("notice:record"),
+      threadId,
+      notification: {
+        source: { kind: "system" },
+        outcome: "cancelled",
+        summary: "T3 Code did not wake the agent",
+        detail: "What the wake would have said",
+      },
+    });
+    yield* record;
+    yield* record;
+
+    const after = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(
+      after.runs.map((run) => [run.id, run.status]),
+      before.runs.map((run) => [run.id, run.status]),
+    );
+    assert.lengthOf(after.messages, before.messages.length);
+    const notices = after.turnItems.filter((item) => item.type === "notification");
+    assert.lengthOf(notices, 1);
+    assert.deepInclude(notices[0], {
+      runId: null,
+      nodeId: null,
+      status: "completed",
+      summary: "T3 Code did not wake the agent",
+      detail: "What the wake would have said",
+    });
+    assert.isAbove(notices[0]!.ordinal, Math.max(...before.turnItems.map((item) => item.ordinal)));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("wakes the parent once when its delegated task asks a question", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

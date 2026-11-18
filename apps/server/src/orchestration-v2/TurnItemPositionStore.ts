@@ -177,7 +177,9 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 appendStep: REALTIME_VOICE_ORDINAL_STEP,
                 ...(item.sourceOrder === "provider_anchored" ? { fixedOrdinal: item.ordinal } : {}),
               }
-            : item.type === "error" && item.failure.code === "voice_history_incomplete"
+            : (item.type === "error" && item.failure.code === "voice_history_incomplete") ||
+                // A notice with no run would otherwise sort ahead of the thread's first run.
+                (item.type === "notification" && item.runId === null)
               ? { appendAfterLatest: true }
               : {}),
           // Queued steers keep their submission order until their run starts (see Orchestrator).

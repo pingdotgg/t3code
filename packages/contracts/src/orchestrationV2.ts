@@ -4095,6 +4095,16 @@ export const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  /**
+   * Records a notification on a thread without starting a turn. Internal so only server
+   * services can put a row in a thread that no agent or user wrote.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.notice.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    notification: OrchestrationV2Notification,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
