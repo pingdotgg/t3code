@@ -202,6 +202,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           .authorizeDpopHttp({
             expectedEnvironmentId: input.prepared.environmentId,
             ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+            ...(input.prepared.target._tag === "RelayConnectionTarget"
+              ? {}
+              : { directHttpBaseUrl: httpBaseUrl }),
           })
           .pipe(
             Effect.mapError(

@@ -582,6 +582,120 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  const LAN = "http://192.168.1.10:3773/";
+  it.effect.each([
+    {
+      name: "a connect",
+      responses: () => [accessToken("lan-minted"), websocketTicket("t")],
+      run: (remote: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]) =>
+        remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          directEndpoint: { httpBaseUrl: LAN, wsBaseUrl: "ws://192.168.1.10:3773/" },
+        }),
+      // The second read follows the cloud call, which can outlast a network change.
+      calls: [
+        ".well-known/t3/environment",
+        ".well-known/t3/environment",
+        "oauth/token",
+        "api/auth/websocket-ticket/rpc",
+      ],
+    },
+    {
+      name: "an HTTP request",
+      responses: () => [accessToken("lan-minted")],
+      run: (remote: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]) =>
+        remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID, directHttpBaseUrl: LAN }),
+      calls: [".well-known/t3/environment", "oauth/token"],
+    },
+  ])("mints the token of $name on a learned direct address at that address", (row) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ expiresAtEpochMs: 0 }),
+        descriptor: DESCRIPTOR,
+        responses: row.responses(),
+      });
+
+      yield* Effect.gen(function* () {
+        yield* row.run(yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual(
+        row.calls.map((path) => `${LAN}${path}`),
+      );
+      expect((yield* Ref.get(harness.proofInputs))[0]).toMatchObject({
+        method: "POST",
+        url: `${LAN}oauth/token`,
+      });
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toMatchObject({
+        accessToken: "lan-minted",
+        endpoint: ENDPOINT,
+      });
+    }),
+  );
+
+  it.effect("reports a failed token request on a learned direct address as a direct failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ descriptor: DESCRIPTOR, responses: [] });
+
+      const error = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID, directHttpBaseUrl: LAN })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(error).toMatchObject({ reason: "network", hop: "server", via: "direct" });
+    }),
+  );
+
+  it.effect("keeps a relay mint joinable while a direct mint for the same environment runs", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const bootstraps = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        descriptor: DESCRIPTOR,
+        responses: [accessToken("lan-minted"), accessToken("relay-minted")],
+        beforeBootstrap: Ref.getAndUpdate(bootstraps, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 0
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+          ),
+        ),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const relay = yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const direct = yield* remote.authorizeDpopHttp({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          directHttpBaseUrl: LAN,
+        });
+        expect(direct.httpAuthorization).toMatchObject({ accessToken: "lan-minted" });
+        // The direct mint cached its token; rejecting it sends this caller to the pending mint.
+        const joined = yield* remote
+          .authorizeDpopHttp({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            rejectedAccessToken: "lan-minted",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        for (const fiber of [relay, joined]) {
+          expect((yield* Fiber.join(fiber)).httpAuthorization).toMatchObject({
+            accessToken: "relay-minted",
+          });
+        }
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+    }),
+  );
+
   it.effect("sends no token to a direct address that answers as another machine", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -781,6 +895,36 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* Queue.take(puts);
         expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
+  it.effect("renews a learned direct route's live socket at that route's address", () =>
+    Effect.gen(function* () {
+      const puts = yield* Queue.unbounded<void>();
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ expiresAtEpochMs: 3_600_000 }),
+        descriptor: DESCRIPTOR,
+        responses: [accessToken("renewed")],
+        beforePut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .renewDpopBeforeExpiry({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            expiresAtEpochMs: 3_600_000,
+            directHttpBaseUrl: "http://192.168.1.10:3773/",
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(3_540_000);
+        yield* Queue.take(puts);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        "http://192.168.1.10:3773/.well-known/t3/environment",
+        "http://192.168.1.10:3773/oauth/token",
+      ]);
     }),
   );
 
