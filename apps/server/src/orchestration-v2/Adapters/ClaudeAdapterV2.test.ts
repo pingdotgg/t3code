@@ -11047,6 +11047,113 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each(["boundary", "failed", "interrupt"] as const)(
+    "holds a steer until Claude's auto-compaction settles: %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`claude-held-steer-${outcome}`),
+          text: "Keep orchestrating.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        });
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000038701",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // A "now" steer would abort the compaction, so it waits without blocking Stop.
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "agent",
+            creationSource: "mcp",
+            messageId: MessageId.make("held-steer"),
+            text: "Subagent finished.",
+            attachments: [],
+          },
+        });
+        assert.lengthOf(harness.offeredMessages, 1);
+
+        if (outcome === "interrupt") {
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId,
+          });
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+          assert.lengthOf(harness.offeredMessages, 1);
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "steer.updated" ? [event.status] : [],
+            ),
+            ["pending", "cancelled"],
+          );
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "system_notice" &&
+                event.turnItem.message?.includes("Subagent finished.") === true,
+            ),
+          );
+          return;
+        }
+        yield* harness.offerAndWait(
+          outcome === "boundary"
+            ? claudeSdkFrame({
+                type: "system",
+                subtype: "compact_boundary",
+                compact_metadata: { trigger: "auto", pre_tokens: 3000, post_tokens: 600 },
+                uuid: "00000000-0000-4000-8000-000000038702",
+                session_id: WAKE_NATIVE_SESSION,
+              })
+            : claudeSdkFrame({
+                type: "system",
+                subtype: "status",
+                status: null,
+                compact_result: "failed",
+                compact_error: "Compaction failed.",
+                uuid: "00000000-0000-4000-8000-000000038702",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+        );
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.include(
+          JSON.stringify(harness.offeredMessages[1]?.message.content),
+          "Subagent finished.",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("names the notebook a Claude NotebookEdit changed", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
