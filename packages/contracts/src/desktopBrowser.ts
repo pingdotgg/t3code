@@ -2,6 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+/** Where a desktop whose backend launcher drops the browser fds dials the channel instead. */
+export const DESKTOP_BROWSER_CHANNEL_PATH = "/api/desktop-browser-channel";
+
 const TabKey = {
   threadId: TrimmedNonEmptyString,
   tabId: TrimmedNonEmptyString,

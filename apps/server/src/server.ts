@@ -854,6 +854,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
+    DesktopBrowserChannel.routeLayer.pipe(Layer.provide(DesktopBrowserChannel.layer)),
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,

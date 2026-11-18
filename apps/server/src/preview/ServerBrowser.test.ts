@@ -535,6 +535,7 @@ const dependencies = Layer.mergeAll(
         }),
       ),
     pointer: () => Effect.void,
+    serve: () => Effect.void,
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,

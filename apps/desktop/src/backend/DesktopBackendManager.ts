@@ -32,6 +32,7 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
+import * as DesktopBrowserSocket from "../preview/DesktopBrowserSocket.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
@@ -563,6 +564,19 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ),
       Effect.forkScoped,
     );
+  }
+  if (
+    options.bootstrap.desktopBrowserSocket === true &&
+    options.bootstrap.desktopBootstrapSecret !== undefined &&
+    options.desktopBrowserStream !== undefined &&
+    options.onDesktopBrowserCommand !== undefined
+  ) {
+    yield* DesktopBrowserSocket.run({
+      httpBaseUrl: options.httpBaseUrl,
+      secret: options.bootstrap.desktopBootstrapSecret,
+      events: options.desktopBrowserStream,
+      onCommand: options.onDesktopBrowserCommand,
+    }).pipe(Effect.forkScoped);
   }
   if (options.captureOutput) {
     const outputContext = {

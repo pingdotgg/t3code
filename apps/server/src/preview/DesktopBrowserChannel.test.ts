@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import { expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as Socket from "effect/socket/Socket";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -110,4 +112,64 @@ it.live("closes a tab's relay connection when the desktop detaches the tab", () 
       ),
     ),
   ),
+);
+
+it.effect(
+  "a desktop without fds attaches its tabs over a socket, and loses them when it drops",
+  () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* Effect.gen(function* () {
+        const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+        const key = { threadId: "thread-1", tabId: "tab-1" };
+        const frames = yield* Queue.unbounded<string, Cause.Done>();
+        const commands = yield* Queue.unbounded<string>();
+        const socket = Socket.make({
+          reader: Effect.succeed({
+            pull: Queue.take(frames).pipe(
+              Effect.map((frame) => [frame] as const),
+              Effect.mapError(
+                () =>
+                  new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+              ),
+            ),
+            upgrade: () => Effect.void,
+          }),
+          writer: Effect.succeed({
+            write: (chunk) =>
+              typeof chunk === "string" ? Queue.offer(commands, chunk) : Effect.void,
+            writeAll: () => Effect.void,
+          }),
+        });
+        expect(channel.available).toBe(true);
+        const served = yield* channel.serve(socket).pipe(Effect.forkChild);
+
+        yield* Queue.offer(frames, JSON.stringify({ type: "attached", ...key }));
+        expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+        yield* channel.pointer(key, { phase: "move", x: 1, y: 2 });
+        expect(JSON.parse(yield* Queue.take(commands))).toEqual({
+          type: "pointer",
+          ...key,
+          phase: "move",
+          x: 1,
+          y: 2,
+        });
+
+        yield* Queue.end(frames);
+        yield* Fiber.join(served);
+        expect(yield* channel.isAttached(key)).toBe(false);
+      }).pipe(
+        Effect.provide(
+          DesktopBrowserChannel.layer.pipe(
+            Layer.provide(ServerConfig.layer({ ...config, desktopBrowserSocket: true })),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    ),
 );

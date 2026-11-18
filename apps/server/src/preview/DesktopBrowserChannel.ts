@@ -3,14 +3,19 @@
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
+  DESKTOP_BROWSER_CHANNEL_PATH,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
+  type DesktopBrowserEvent as DesktopBrowserEventType,
   type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
+import { isValidDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -19,6 +24,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import type * as Socket from "effect/socket/Socket";
+import * as Mac from "effect/crypto/Mac";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
@@ -27,6 +34,7 @@ import * as ServerConfig from "../config.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(DesktopBrowserEvent);
+const decodeEventLine = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(DesktopBrowserCommand));
 
 export interface DesktopTabKey {
@@ -58,6 +66,8 @@ export class DesktopBrowserChannel extends Context.Service<
     ) => Effect.Effect<void>;
     /** Never fails. A failed write means a broken channel; the next backend starts with no turns. */
     readonly turn: (threadId: string, active: boolean) => Effect.Effect<void>;
+    /** Carries the channel over a desktop's WebSocket until it closes. No-op with fds or no desktop. */
+    readonly serve: (socket: Socket.Socket) => Effect.Effect<void>;
   }
 >()("t3/preview/DesktopBrowserChannel") {}
 
@@ -66,7 +76,7 @@ const make = Effect.gen(function* () {
   const inputFd = config.desktopBrowserFd;
   const controlFd = config.desktopBrowserControlFd;
   const changes = yield* PubSub.unbounded<{ key: DesktopTabKey; attached: boolean }>();
-  const attachedTabs = new Set<string>();
+  const attachedTabs = new Map<string, DesktopTabKey>();
   // Missing reports protect desktop tabs until the renderer explicitly marks them hidden.
   const shownTabs = new Map<string, boolean>();
   const shownReports = yield* PubSub.unbounded<string>();
@@ -74,7 +84,9 @@ const make = Effect.gen(function* () {
   const inbound = new Map<string, Queue.Queue<string>>();
   const writeLock = yield* Semaphore.make(1);
 
-  if (inputFd === undefined || controlFd === undefined) {
+  const overSocket = config.desktopBrowserSocket === true;
+  const overFds = inputFd !== undefined && controlFd !== undefined;
+  if (!overSocket && !overFds) {
     return DesktopBrowserChannel.of({
       available: false,
       awaitAttached: Effect.fn("DesktopBrowserChannel.awaitAttached")(function () {
@@ -99,75 +111,113 @@ const make = Effect.gen(function* () {
         return Effect.succeed(false);
       }),
       loadFailure: () => undefined,
+      serve: Effect.fn("DesktopBrowserChannel.serve")(function () {
+        return Effect.void;
+      }),
     });
   }
 
+  // The desktop's socket once it dials in; commands sent before then have no tab to reach.
+  let socketWrite: ((line: string) => Effect.Effect<void, Socket.SocketError>) | null = null;
+  const write = (line: string): Effect.Effect<void, unknown> =>
+    overFds
+      ? writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))
+      : (socketWrite?.(line) ?? Effect.void);
   const command = (message: DesktopBrowserCommandType) =>
     writeLock.withPermits(1)(
       encodeCommand(message).pipe(
-        Effect.flatMap((line) => writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))),
+        Effect.flatMap(write),
         Effect.catchCause((cause) =>
           Effect.logWarning("desktop browser command failed", { cause }),
         ),
       ),
     );
 
-  // Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
-  const readable = yield* Effect.acquireRelease(
-    Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
-    (stream) => Effect.sync(() => stream.destroy()),
-  );
-  yield* NodeStream.fromReadable<Uint8Array, Error>({
-    evaluate: () => readable,
-    closeOnDone: true,
-    onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  }).pipe(
-    Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
-    Stream.mapEffect((value) => decodeEvent(value).pipe(Effect.option)),
-    Stream.runForEach((decoded) => {
-      if (Option.isNone(decoded)) return Effect.void;
-      const event = decoded.value;
-      const key = { threadId: event.threadId, tabId: event.tabId };
-      const id = keyOf(key);
-      switch (event.type) {
-        case "cdp": {
-          const queue = inbound.get(id);
-          return queue ? Queue.offer(queue, event.message).pipe(Effect.asVoid) : Effect.void;
-        }
-        case "attached":
-          attachedTabs.add(id);
-          return PubSub.publish(changes, { key, attached: true });
-        case "loadFailed":
-          loadFailures.set(id, {
-            url: event.url.slice(0, 2048),
-            code: event.code,
-            description: event.description,
-          });
-          return Effect.void;
-        case "detached": {
-          attachedTabs.delete(id);
-          shownTabs.delete(id);
-          loadFailures.delete(id);
-          const queue = inbound.get(id);
-          return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
-            Effect.andThen(PubSub.publish(changes, { key, attached: false })),
-          );
-        }
-        case "shown":
-          shownTabs.set(id, event.shown);
-          return event.shown ? PubSub.publish(shownReports, id) : Effect.void;
+  const receive = (event: DesktopBrowserEventType): Effect.Effect<void> => {
+    const key = { threadId: event.threadId, tabId: event.tabId };
+    const id = keyOf(key);
+    switch (event.type) {
+      case "cdp": {
+        const queue = inbound.get(id);
+        return queue ? Queue.offer(queue, event.message).pipe(Effect.asVoid) : Effect.void;
       }
-    }),
-    Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
-    Effect.ensuring(
-      Effect.sync(() => {
-        shownTabs.clear();
-        loadFailures.clear();
-      }),
-    ),
-    Effect.forkScoped,
+      case "attached":
+        attachedTabs.set(id, key);
+        return PubSub.publish(changes, { key, attached: true }).pipe(Effect.asVoid);
+      case "loadFailed":
+        loadFailures.set(id, {
+          url: event.url.slice(0, 2048),
+          code: event.code,
+          description: event.description,
+        });
+        return Effect.void;
+      case "detached": {
+        attachedTabs.delete(id);
+        shownTabs.delete(id);
+        loadFailures.delete(id);
+        const queue = inbound.get(id);
+        return (queue ? Queue.shutdown(queue) : Effect.void).pipe(
+          Effect.andThen(PubSub.publish(changes, { key, attached: false })),
+          Effect.asVoid,
+        );
+      }
+      case "shown":
+        shownTabs.set(id, event.shown);
+        return event.shown ? PubSub.publish(shownReports, id).pipe(Effect.asVoid) : Effect.void;
+    }
+  };
+
+  const serve = Effect.fn("DesktopBrowserChannel.serve")(
+    function* (socket: Socket.Socket) {
+      if (!overSocket) return;
+      const writer = yield* socket.writer;
+      const send = (line: string) => writer.write(line);
+      socketWrite = send;
+      const reader = yield* socket.reader;
+      const decoder = new TextDecoder();
+      yield* reader.pull.pipe(
+        Effect.flatMap((frames) =>
+          Effect.forEach(
+            frames,
+            (frame) =>
+              decodeEventLine(typeof frame === "string" ? frame : decoder.decode(frame)).pipe(
+                Effect.flatMap(receive),
+                Effect.ignore,
+              ),
+            { discard: true },
+          ),
+        ),
+        Effect.forever,
+        Effect.ignore,
+        // A dropped socket takes its tabs with it; the desktop announces them again when it redials.
+        Effect.ensuring(
+          Effect.suspend(() => {
+            if (socketWrite !== send) return Effect.void;
+            socketWrite = null;
+            return Effect.forEach(
+              [...attachedTabs.values()],
+              (key) => receive({ type: "detached", ...key }),
+              { discard: true },
+            );
+          }),
+        ),
+      );
+    },
+    Effect.scoped,
+    (effect) => Effect.ignore(effect),
   );
 
+  if (overFds) {
+    yield* readDescriptor(inputFd, receive).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          shownTabs.clear();
+          loadFailures.clear();
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }
   const endpoint = Effect.fn("DesktopBrowserChannel.endpoint")(function* (key: DesktopTabKey) {
     const id = keyOf(key);
     const secret = NodeCrypto.randomBytes(24).toString("base64url");
@@ -284,7 +334,57 @@ const make = Effect.gen(function* () {
     pointer: Effect.fn("DesktopBrowserChannel.pointer")(function (key, pointer) {
       return command({ type: "pointer", ...key, ...pointer });
     }),
+    serve,
   });
 });
 
+// Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
+const readDescriptor = Effect.fn("DesktopBrowserChannel.readDescriptor")(function* (
+  fd: number,
+  receive: (event: DesktopBrowserEventType) => Effect.Effect<void>,
+) {
+  const readable = yield* Effect.acquireRelease(
+    Effect.sync(() => new NodeNet.Socket({ fd, readable: true, writable: false })),
+    (stream) => Effect.sync(() => stream.destroy()),
+  );
+  yield* NodeStream.fromReadable<Uint8Array, Error>({
+    evaluate: () => readable,
+    closeOnDone: true,
+    onError: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  }).pipe(
+    Stream.pipeThroughChannel(Ndjson.decode({ ignoreEmptyLines: true })),
+    Stream.mapEffect((value) => decodeEvent(value).pipe(Effect.option)),
+    Stream.runForEach(Option.match({ onNone: () => Effect.void, onSome: receive })),
+    Effect.catchCause((cause) => Effect.logWarning("desktop browser channel stopped", { cause })),
+  );
+});
+
 export const layer = Layer.effect(DesktopBrowserChannel, make);
+
+/** Only the desktop that started this server holds the secret its token derives from. */
+export const routeLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const channel = yield* DesktopBrowserChannel;
+    const mac = yield* Mac.Mac;
+    const secret = config.desktopBootstrapSecret;
+    return HttpRouter.add(
+      "GET",
+      DESKTOP_BROWSER_CHANNEL_PATH,
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const token = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1];
+        const allowed =
+          config.desktopBrowserSocket === true &&
+          secret !== undefined &&
+          token !== undefined &&
+          (yield* isValidDesktopBootstrapToken(secret, token, yield* Clock.currentTimeMillis).pipe(
+            Effect.provideService(Mac.Mac, mac),
+          ));
+        if (!allowed) return HttpServerResponse.empty({ status: 401 });
+        yield* channel.serve(yield* request.upgrade);
+        return HttpServerResponse.empty();
+      }),
+    );
+  }),
+);
