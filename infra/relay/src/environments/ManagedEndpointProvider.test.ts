@@ -1288,14 +1288,24 @@ describe("ManagedEndpointProvider", () => {
   it.effect.each<{
     readonly when: string;
     readonly inactiveBefore: string;
-    readonly listed?: {
+    readonly listed: {
       readonly recoveryUsable: boolean;
       readonly at: "before-registration" | "after-registration";
     };
     readonly released: boolean;
   }>([
-    { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
-    { when: "before", inactiveBefore: "2026-06-02T00:05:00.000Z", released: true },
+    {
+      when: "after",
+      inactiveBefore: "2026-06-01T00:05:00.000Z",
+      listed: { recoveryUsable: true, at: "after-registration" },
+      released: false,
+    },
+    {
+      when: "before",
+      inactiveBefore: "2026-06-02T00:05:00.000Z",
+      listed: { recoveryUsable: true, at: "after-registration" },
+      released: true,
+    },
     {
       when: "after, with a replaced environment key",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
@@ -1332,7 +1342,7 @@ describe("ManagedEndpointProvider", () => {
           origin,
         });
         const listing =
-          listed?.at === "before-registration" ? beforeRegistration : yield* allocations.get(key);
+          listed.at === "before-registration" ? beforeRegistration : yield* allocations.get(key);
         expect(listing).not.toBeNull();
 
         expect(
@@ -1341,12 +1351,8 @@ describe("ManagedEndpointProvider", () => {
             expectedTunnelId: "tunnel-id",
             expectedStatus: "down",
             expectedInactiveBefore: inactiveBefore,
-            ...(listed === undefined || listing === null
-              ? {}
-              : {
-                  expectedRecoveryUsable: listed.recoveryUsable,
-                  expectedGeneration: listing.generation,
-                }),
+            expectedRecoveryUsable: listed.recoveryUsable,
+            ...(listing === null ? {} : { expectedGeneration: listing.generation }),
           }),
         ).toBe(released);
         expect(tunnelCalls.some((call) => call.operation === "delete")).toBe(released);
