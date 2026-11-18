@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import {
   cancelSpeechSynthesisModelDownload,
   downloadSpeechSynthesisModel,
@@ -7,14 +8,15 @@ import {
   getSpeechSynthesisModels,
   linkSpeechSynthesisModels,
   removeSpeechSynthesisModel,
-  setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   CloudSpeechProvider,
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
+  CLOUD_SPEECH_PROVIDER_NAMES,
   READ_ALOUD_LABELS,
+  type EnvironmentId,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
@@ -28,6 +30,7 @@ import { readAloudController } from "../../speech/readAloud";
 import {
   CheckIcon,
   DownloadIcon,
+  KeyRoundIcon,
   MonitorIcon,
   StarIcon,
   Trash2Icon,
@@ -48,89 +51,10 @@ import {
   SelectGroupLabel,
 } from "../ui/select";
 import { SettingsRow, SettingsSearchTarget, SettingsSection } from "./settingsLayout";
-import { SecretInput } from "./SecretInput";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useCloudRead } from "./CloudVoiceConfiguration";
+import { ReadAloudKeyDialog } from "./ReadAloudKeyDialog";
 import { SpeechProviderIcon } from "./SpeechProviderIcon";
-
-function ReadAloudKey({
-  prepared,
-  provider,
-  onSaved,
-}: {
-  prepared: PreparedConnection;
-  provider: CloudSpeechProvider;
-  onSaved: () => void;
-}) {
-  const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
-  const [configured, setConfigured] = useState<boolean | null>(null);
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read credential presence from the selected environment without exposing its secret.
-  useEffect(() => {
-    const controller = new AbortController();
-    void runEnvironmentSpeech(getCloudSpeechKeys(prepared), { signal: controller.signal }).then(
-      (keys) => setConfigured(Boolean(keys[provider])),
-      () => setConfigured(false),
-    );
-    return () => controller.abort();
-  }, [prepared, provider]);
-  const save = async (remove: boolean) => {
-    setBusy(true);
-    setError("");
-    try {
-      await runEnvironmentSpeech(
-        setCloudSpeechKey(prepared, provider, remove ? null : draft.trim()),
-      );
-      setDraft("");
-      setConfigured(!remove);
-      onSaved();
-    } catch {
-      setError("Could not save the API key. Check your connection and permissions.");
-    }
-    setBusy(false);
-  };
-  return (
-    <SettingsRow
-      title="API key"
-      description={
-        <>
-          {configured
-            ? "Uses the key already saved for dictation on this environment."
-            : "Stored on the selected environment and shared with dictation."}
-          {error && <span role="alert"> {error}</span>}
-        </>
-      }
-      control={
-        <div className="flex items-center gap-2">
-          <SecretInput
-            aria-label="Read-aloud API key"
-            value={draft}
-            configured={configured === true}
-            disabled={!canManage || busy}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <Button
-            size="sm"
-            disabled={!canManage || busy || configured === null || !draft.trim()}
-            onClick={() => void save(false)}
-          >
-            Save
-          </Button>
-          {configured && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canManage || busy}
-              onClick={() => void save(true)}
-            >
-              Remove
-            </Button>
-          )}
-        </div>
-      }
-    />
-  );
-}
 
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
@@ -351,6 +275,11 @@ export function ReadAloudSettingsSection() {
 
   const prepared = Option.getOrNull(usePreparedConnection(settings.environmentId));
   const [catalogVersion, setCatalogVersion] = useState(0);
+  // A hosted provider is confirmed in its key dialog before read aloud switches to it.
+  const [pendingCloud, setPendingCloud] = useState<{
+    readonly provider: CloudSpeechProvider;
+    readonly environmentId: EnvironmentId;
+  } | null>(null);
   const catalogKey = JSON.stringify([settings.environmentId, settings.provider]);
   const [catalogState, setCatalogState] = useState<{
     key: string;
@@ -420,6 +349,14 @@ export function ReadAloudSettingsSection() {
           name: modelEntry?.voiceNames?.[voice] ?? voice,
         }));
   const source = remote ? `${settings.provider}:${settings.environmentId}` : settings.provider;
+  const cloudProvider =
+    remote && settings.provider !== "local" ? (settings.provider as CloudSpeechProvider) : null;
+  const [keys] = useCloudRead(cloudProvider ? prepared : null, getCloudSpeechKeys);
+  const keyMissing =
+    cloudProvider !== null && AsyncResult.isSuccess(keys) && keys.value?.[cloudProvider] === false;
+  const pendingEnvironment = environments.find(
+    (entry) => entry.environmentId === pendingCloud?.environmentId,
+  );
   const selectedEnvironment = environments.find(
     (entry) => entry.environmentId === settings.environmentId,
   );
@@ -428,122 +365,179 @@ export function ReadAloudSettingsSection() {
       <SettingsSearchTarget id="read-aloud">
         <SettingsRow
           title="Speech provider"
-          description="Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment; a local model runs on it."
+          description={
+            keyMissing && cloudProvider ? (
+              <span className="text-destructive">
+                {selectedEnvironment?.label ?? "This environment"} has no{" "}
+                {CLOUD_SPEECH_PROVIDER_NAMES[cloudProvider]} API key. Add one with the key button.
+              </span>
+            ) : remote && error ? (
+              <span className="text-destructive">{error}</span>
+            ) : (
+              "Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment; a local model runs on it."
+            )
+          }
           control={
-            <Select
-              value={source}
-              onValueChange={(value) => {
-                if (!value) return;
-                if (value === "off" || value === "system")
-                  change({ provider: value, environmentId: null, model: "", voice: "" });
-                else {
-                  const [provider, ...rest] = value.split(":");
-                  const environment = environments.find(
-                    (entry) => entry.environmentId === rest.join(":"),
-                  );
-                  if (!environment) return;
-                  change({
-                    provider: provider as SpeechSynthesisProvider,
-                    environmentId: environment.environmentId,
-                    model: "",
-                    voice: "",
-                  });
-                }
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                aria-label="Read-aloud provider"
-                className="w-auto min-w-0 max-w-72"
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Select
+                value={source}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  if (value === "off" || value === "system")
+                    change({ provider: value, environmentId: null, model: "", voice: "" });
+                  else {
+                    const [provider, ...rest] = value.split(":");
+                    const environment = environments.find(
+                      (entry) => entry.environmentId === rest.join(":"),
+                    );
+                    if (!environment) return;
+                    if (provider === "local")
+                      change({
+                        provider: "local",
+                        environmentId: environment.environmentId,
+                        model: "",
+                        voice: "",
+                      });
+                    else
+                      setPendingCloud({
+                        provider: provider as CloudSpeechProvider,
+                        environmentId: environment.environmentId,
+                      });
+                  }
+                }}
               >
-                <SelectValue>
-                  <span className="flex min-w-0 items-center gap-2">
-                    {settings.provider === "local" ? (
-                      <MonitorIcon aria-hidden className="size-4" />
-                    ) : (
-                      <SpeechProviderIcon provider={settings.provider} />
-                    )}
-                    <span className="truncate">
-                      {settings.provider === "local"
-                        ? (selectedEnvironment?.label ?? "Chosen environment (unavailable)")
-                        : READ_ALOUD_LABELS[settings.provider]}
-                      {remote && settings.provider !== "local" && (
-                        <span className="text-muted-foreground">
-                          {" via "}
-                          {selectedEnvironment?.label ?? "unavailable environment"}
-                        </span>
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Read-aloud provider"
+                  className="w-auto min-w-0 max-w-72"
+                >
+                  <SelectValue>
+                    <span className="flex min-w-0 items-center gap-2">
+                      {settings.provider === "local" ? (
+                        <MonitorIcon aria-hidden className="size-4" />
+                      ) : (
+                        <SpeechProviderIcon provider={settings.provider} />
                       )}
+                      <span className="truncate">
+                        {settings.provider === "local"
+                          ? (selectedEnvironment?.label ?? "Chosen environment (unavailable)")
+                          : READ_ALOUD_LABELS[settings.provider]}
+                        {remote && settings.provider !== "local" && (
+                          <span className="text-muted-foreground">
+                            {" via "}
+                            {selectedEnvironment?.label ?? "unavailable environment"}
+                          </span>
+                        )}
+                      </span>
                     </span>
-                  </span>
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="off">
-                  <span className="flex items-center gap-2">
-                    <SpeechProviderIcon provider="off" />
-                    Off
-                  </span>
-                </SelectItem>
-                <SelectGroup>
-                  <SelectGroupLabel>On this device</SelectGroupLabel>
-                  <SelectItem value="system">
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="off">
                     <span className="flex items-center gap-2">
-                      <SpeechProviderIcon provider="system" />
-                      System voices
+                      <SpeechProviderIcon provider="off" />
+                      Off
                     </span>
                   </SelectItem>
-                </SelectGroup>
-                {environments.length > 0 && (
                   <SelectGroup>
-                    <SelectGroupLabel>On an environment</SelectGroupLabel>
-                    {environments.map((environment) => (
-                      <SelectItem
-                        key={environment.environmentId}
-                        value={`local:${environment.environmentId}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <MonitorIcon aria-hidden className="size-4" />
-                          {environment.label}
-                        </span>
-                      </SelectItem>
-                    ))}
+                    <SelectGroupLabel>On this device</SelectGroupLabel>
+                    <SelectItem value="system">
+                      <span className="flex items-center gap-2">
+                        <SpeechProviderIcon provider="system" />
+                        System voices
+                      </span>
+                    </SelectItem>
                   </SelectGroup>
-                )}
-                {environments.map((environment) => (
-                  <SelectGroup key={environment.environmentId}>
-                    <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
-                    {CloudSpeechProvider.literals.map((provider) => (
-                      <SelectItem
-                        key={provider}
-                        value={`${provider}:${environment.environmentId}`}
-                        aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                  {environments.length > 0 && (
+                    <SelectGroup>
+                      <SelectGroupLabel>On an environment</SelectGroupLabel>
+                      {environments.map((environment) => (
+                        <SelectItem
+                          key={environment.environmentId}
+                          value={`local:${environment.environmentId}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <MonitorIcon aria-hidden className="size-4" />
+                            {environment.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {environments.map((environment) => (
+                    <SelectGroup key={environment.environmentId}>
+                      <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
+                      {CloudSpeechProvider.literals.map((provider) => (
+                        <SelectItem
+                          key={provider}
+                          value={`${provider}:${environment.environmentId}`}
+                          aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <SpeechProviderIcon provider={provider} />
+                            {READ_ALOUD_LABELS[provider]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                  {remote && !selectedEnvironment && (
+                    <SelectItem value={source}>Chosen environment (unavailable)</SelectItem>
+                  )}
+                </SelectPopup>
+              </Select>
+              {cloudProvider && selectedEnvironment && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                        aria-label="Manage read-aloud key"
+                        onClick={() =>
+                          setPendingCloud({
+                            provider: cloudProvider,
+                            environmentId: selectedEnvironment.environmentId,
+                          })
+                        }
                       >
-                        <span className="flex items-center gap-2">
-                          <SpeechProviderIcon provider={provider} />
-                          {READ_ALOUD_LABELS[provider]}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ))}
-                {remote && !selectedEnvironment && (
-                  <SelectItem value={source}>Chosen environment (unavailable)</SelectItem>
-                )}
-              </SelectPopup>
-            </Select>
+                        <KeyRoundIcon aria-hidden className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup>Manage key</TooltipPopup>
+                </Tooltip>
+              )}
+            </div>
           }
         />
       </SettingsSearchTarget>
+      {pendingCloud && pendingEnvironment && (
+        <ReadAloudKeyDialog
+          key={`${pendingCloud.environmentId}:${pendingCloud.provider}`}
+          environment={pendingEnvironment}
+          provider={pendingCloud.provider}
+          active={
+            settings.provider === pendingCloud.provider &&
+            settings.environmentId === pendingCloud.environmentId
+          }
+          onEnable={() =>
+            change({
+              provider: pendingCloud.provider,
+              environmentId: pendingCloud.environmentId,
+              model: "",
+              voice: "",
+            })
+          }
+          close={() => {
+            setPendingCloud(null);
+            refreshCatalog();
+          }}
+        />
+      )}
       {settings.provider === "off" ? null : (
         <>
-          {remote && prepared && catalog.apiKeyProvider && (
-            <ReadAloudKey
-              key={`${prepared.environmentId}:${settings.provider}`}
-              prepared={prepared}
-              provider={catalog.apiKeyProvider}
-              onSaved={() => setCatalogVersion((value) => value + 1)}
-            />
-          )}
           {prepared && localModels.length > 0 && (
             <SettingsRow
               title="Models"
@@ -571,12 +565,7 @@ export function ReadAloudSettingsSection() {
               <LocalSpeechModelLink prepared={prepared} onChanged={refreshCatalog} />
             </SettingsRow>
           )}
-          {remote && error && (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
-          )}
-          {remote && !localModels.length && catalog.supportsModelSelection && (
+          {cloudProvider && catalog.supportsModelSelection && catalog.models.length > 0 && (
             <SettingsRow
               title="Speech model"
               description="Choose a speech model from the provider catalog."
@@ -605,7 +594,8 @@ export function ReadAloudSettingsSection() {
               }
             />
           )}
-          {(settings.provider === "system" || catalog.supportsVoiceSelection) && (
+          {(settings.provider === "system" ||
+            (catalog.supportsVoiceSelection && catalog.models.length > 0)) && (
             <SettingsRow
               title="Voice"
               description="An empty value uses the provider's default voice."

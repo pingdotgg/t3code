@@ -272,21 +272,24 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
   );
 });
 
-it("waits for the read-aloud key lookup before allowing a save", async () => {
-  let resolveKeys: (response: Response) => void = () => {};
-  const keys = new Promise<Response>((resolve) => {
-    resolveKeys = resolve;
+it("confirms a read-aloud provider in its key dialog, after the key lookup", async () => {
+  let finishLookup: () => void = () => {};
+  const lookup = new Promise<void>((resolve) => {
+    finishLookup = resolve;
   });
+  const writes: unknown[] = [];
   const previous = getClientSettings().readAloud;
-  await updateClientSettings({
-    readAloud: { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "xai", environmentId: id },
-  });
+  await updateClientSettings({ readAloud: DEFAULT_READ_ALOUD_SETTINGS });
   try {
     await withVoicePanel(
-      (url) => {
-        if (url.pathname === "/api/voice/cloud/keys") return keys;
+      (url, request, init) => {
+        if (url.pathname === "/api/voice/cloud/keys")
+          return lookup.then(() => Response.json({ openai: false, xai: false, openrouter: false }));
         if (url.pathname === "/api/voice/cloud/xai/key")
-          return Promise.resolve(new Response(null, { status: 204 }));
+          return new Request(request, init).json().then((body) => {
+            writes.push(body);
+            return new Response(null, { status: 204 });
+          });
         if (url.pathname === "/api/voice/synthesis/xai/models")
           return Promise.resolve(
             Response.json({
@@ -300,18 +303,28 @@ it("waits for the read-aloud key lookup before allowing a save", async () => {
         return null;
       },
       async (screen) => {
-        await screen.getByRole("textbox", { name: "Read-aloud API key" }).fill("test-speech-key");
-        const save = screen.getByRole("button", { name: "Save", exact: true });
-        await expect.element(save).toBeDisabled();
+        const provider = screen.getByRole("combobox", { name: "Read-aloud provider" });
+        const dialog = page.getByRole("dialog");
+        await provider.click();
+        await page.getByRole("option", { name: "Grok TTS via Laptop" }).click();
+        await dialog.getByRole("button", { name: "Cancel" }).click();
+        await expect.element(dialog).not.toBeInTheDocument();
+        await expect.element(provider).toHaveTextContent("Off");
+        await provider.click();
+        await page.getByRole("option", { name: "Grok TTS via Laptop" }).click();
+        await expect.element(dialog.getByText(/Checking for an API key/)).toBeVisible();
+        await expect
+          .element(dialog.getByLabelText("xAI API key", { exact: true }))
+          .not.toBeInTheDocument();
+        finishLookup();
+        await dialog.getByLabelText("xAI API key", { exact: true }).fill("test-speech-key");
+        await dialog.getByRole("button", { name: "Save and enable" }).click();
+        await expect.element(dialog).not.toBeInTheDocument();
+        expect(writes).toEqual([{ key: "test-speech-key" }]);
+        await expect.element(provider).toHaveTextContent("Grok TTS via Laptop");
         await expect
           .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
           .toHaveTextContent("Server default");
-        resolveKeys(Response.json({ openai: false, xai: false, openrouter: false }));
-        await expect.element(save).toBeEnabled();
-        await save.click();
-        await expect
-          .element(screen.getByRole("button", { name: "Remove", exact: true }))
-          .toBeVisible();
       },
     );
   } finally {
@@ -319,7 +332,7 @@ it("waits for the read-aloud key lookup before allowing a save", async () => {
   }
 });
 
-it("shows a catalog transport failure when model controls are unavailable", async () => {
+it("shows a catalog transport failure instead of empty model controls", async () => {
   const previous = getClientSettings().readAloud;
   await updateClientSettings({
     readAloud: { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "xai", environmentId: id },
@@ -332,10 +345,15 @@ it("shows a catalog transport failure when model controls are unavailable", asyn
           : null,
       async (screen) => {
         await expect
-          .element(screen.getByRole("alert"))
-          .toHaveTextContent(
-            "Could not load speech models. Check the selected environment and provider configuration.",
-          );
+          .element(
+            screen.getByText(
+              "Could not load speech models. Check the selected environment and provider configuration.",
+            ),
+          )
+          .toBeVisible();
+        await expect
+          .element(screen.getByRole("combobox", { name: "Read-aloud model" }))
+          .not.toBeInTheDocument();
       },
     );
   } finally {

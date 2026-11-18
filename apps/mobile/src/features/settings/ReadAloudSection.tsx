@@ -186,14 +186,17 @@ export function ReadAloudSection() {
         />
         {settings.provider !== "off" && (
           <>
-            {settings.provider !== "system" && catalog.supportsModelSelection && (
-              <ListActionRow
-                label="Speech model"
-                detail={selectedModel?.name || model || "Choose a model"}
-                onPress={() => setSheet("model")}
-              />
-            )}
-            {(settings.provider === "system" || catalog.supportsVoiceSelection) && (
+            {settings.provider !== "system" &&
+              catalog.supportsModelSelection &&
+              catalog.models.length > 0 && (
+                <ListActionRow
+                  label="Speech model"
+                  detail={selectedModel?.name || model || "Choose a model"}
+                  onPress={() => setSheet("model")}
+                />
+              )}
+            {(settings.provider === "system" ||
+              (catalog.supportsVoiceSelection && catalog.models.length > 0)) && (
               <ListActionRow
                 label="Voice"
                 detail={
