@@ -319,13 +319,17 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
             "t3-a",
           ],
         });
-        const launchFrom = Effect.fn(function* (repo: string, args: ReadonlyArray<string>) {
+        const launchFrom = Effect.fn(function* (
+          repo: string,
+          args: ReadonlyArray<string>,
+          launcher = command,
+        ) {
           const cwd = path.join(dir, repo);
           yield* fs.makeDirectory(path.join(cwd, ".git"), { recursive: true });
           const { stdout } = yield* Effect.promise(() =>
             exec(
               process.execPath,
-              [path.join(path.dirname(command), "agent-device-launcher.mjs"), ...args],
+              [path.join(path.dirname(launcher), "agent-device-launcher.mjs"), ...args],
               {
                 cwd,
               },
@@ -340,6 +344,19 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           "/b/App.app",
         ]);
         expect(installed).toBe(opened);
+        // A Simlock lease opened its claim from the thread's workspace, so its launcher runs there.
+        const workspace = path.join(dir, "workspace");
+        yield* fs.makeDirectory(workspace);
+        const leased = yield* bindAgentDeviceLauncher({
+          entryPath,
+          stateDir: dir,
+          session: "t3-lease",
+          targetArgs: ["--config", "/h.json", "--session", "t3-lease"],
+          cwd: workspace,
+        });
+        expect(
+          yield* launchFrom("coordinator", ["install", "com.example.app", "/b/App.app"], leased),
+        ).toBe(workspace);
       }).pipe(
         Effect.scoped,
         Effect.provideService(HostProcess.IsExecutable, false),

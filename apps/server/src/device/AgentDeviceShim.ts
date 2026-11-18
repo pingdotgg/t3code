@@ -153,8 +153,8 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
 
 /**
  * agent-device 0.21.36's flags whose value is a path. It ties a session's device claim to its cwd's
- * workspace and refuses install, push and the like from another, so the launcher runs it in its own
- * directory and resolves these, and path operands, against the caller's.
+ * workspace and refuses install, push and the like from another, so a bound launcher runs it in the
+ * directory that opened the session and resolves these, and path operands, against the caller's.
  */
 const PATH_FLAGS: ReadonlyArray<string> = [
   "--artifact",
@@ -181,13 +181,19 @@ const PATH_FLAGS: ReadonlyArray<string> = [
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
-const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>
+const launcherSource = (
+  node: string,
+  entryPath: string,
+  boundArgs: ReadonlyArray<string>,
+  cwd: string | undefined,
+) =>
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { isAbsolute, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 const entry = ${JSON.stringify(entryPath)};
+const workspace = ${JSON.stringify(cwd ?? null)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
 const managed = ["connect", "disconnect", "auth", "daemon"];
@@ -242,6 +248,7 @@ if (local) {
     process.exit(1);
   }
 }
+if (workspace) {
 const pathFlags = new Set(${JSON.stringify(PATH_FLAGS)});
 const absolute = value => value && value !== "-" && !isAbsolute(value) ? resolve(value) : value;
 // A reporter starting with "." is a module path; a file URL keeps it one on Windows too.
@@ -271,11 +278,12 @@ const pathOperands = {
 for (const position of pathOperands) if (operands[position] !== undefined) command[operands[position]] = absolute(command[operands[position]]);
 // A push payload is a file or inline JSON.
 if (name === "push" && operands[1] !== undefined && existsSync(absolute(command[operands[1]]))) command[operands[1]] = absolute(command[operands[1]]);
+}
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
 delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
 delete env.AGENT_DEVICE_CONFIG;
-const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env, cwd: dirname(fileURLToPath(import.meta.url)) });
+const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env, ...(workspace ? { cwd: workspace } : {}) });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });
 `;
@@ -285,6 +293,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   readonly dir: string;
   readonly entryPath: string;
   readonly boundArgs: ReadonlyArray<string>;
+  readonly cwd?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -292,7 +301,10 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   const node = yield* resolveNodeExecutable("Device automation");
   yield* fs.makeDirectory(input.dir, { recursive: true });
   const launcherPath = path.join(input.dir, "agent-device-launcher.mjs");
-  yield* fs.writeFileString(launcherPath, launcherSource(node, input.entryPath, input.boundArgs));
+  yield* fs.writeFileString(
+    launcherPath,
+    launcherSource(node, input.entryPath, input.boundArgs, input.cwd),
+  );
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
     const scriptPath = path.join(input.dir, "agent-device.cmd");
@@ -326,12 +338,16 @@ export const bindAgentDeviceLauncher = Effect.fn("AgentDeviceShim.bind")(functio
   readonly stateDir: string;
   readonly session: string;
   readonly targetArgs: ReadonlyArray<string>;
+  /** The directory that opened the session, whose workspace agent-device ties the device claim to. */
+  readonly cwd?: string | undefined;
 }) {
   const path = yield* Path.Path;
+  const dir = path.join(input.stateDir, TARGETS_DIR, input.session);
   return yield* writeLauncher({
-    dir: path.join(input.stateDir, TARGETS_DIR, input.session),
+    dir,
     entryPath: input.entryPath,
     boundArgs: input.targetArgs,
+    cwd: input.cwd ?? dir,
   });
 });
 
