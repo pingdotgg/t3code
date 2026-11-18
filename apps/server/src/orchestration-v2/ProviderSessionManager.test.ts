@@ -2557,7 +2557,7 @@ it.effect(
         assert.equal(resolved?.thread.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          new Set(["preview", "orchestration", "worktree", "pull-requests", "issues"]),
         );
 
         assert.isFalse(yield* captured!.hasPendingWake!);
@@ -2669,7 +2669,7 @@ it.effect(
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          new Set(["orchestration", "worktree", "pull-requests", "issues"]),
         );
 
         yield* manager.close(providerSessionId);

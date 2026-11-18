@@ -2432,6 +2432,27 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const resumed = yield* orchestrator.getThreadProjection(parentThreadId);
         assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "running");
         assert.isNull(resumed.subagents.find((row) => row.id === task.id)?.result);
+
+        const started = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.id === queued.id,
+        )!;
+        const waitingSequence = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:held-followup-waiting"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: started.id,
+              occurredAt: now,
+              payload: { ...started, status: "waiting" },
+            },
+          ],
+        });
+        yield* waitForStatus(waitingSequence, "waiting");
+        const waiting = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(waiting.subagents.find((row) => row.id === task.id)?.status, "waiting");
+        assert.equal(waiting.nodes.find((row) => row.id === task.id)?.status, "waiting");
       }),
     );
 
@@ -5213,6 +5234,77 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         `Child task completed without an assistant result.\n\n${stopReason}`,
       );
       assert.isUndefined(task?.cancelledRunId);
+    }),
+  );
+
+  it.effect("delivers the child's report when a run queued behind it ends without text", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:silent-queued-parent");
+      const projectId = ProjectId.make("project:silent-queued-parent");
+      const runId = RunId.make("run:silent-queued-parent");
+      const rootNodeId = NodeId.make("node:silent-queued-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:silent-queued-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "silent-queued-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("command:silent-queued-child:queued"),
+        events: [
+          {
+            id: EventId.make("event:silent-queued-child:report"),
+            type: "message.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("message:silent-queued-child:report"),
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: null,
+              role: "assistant",
+              text: "REPORT-OK",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: RunId.make("run:silent-queued-child:2"),
+            ordinal: 2,
+            status: "completed",
+            now,
+          }),
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTask(child.childThreadId);
+      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+        (row) => row.id === child.taskId,
+      );
+      assert.equal(task?.status, "completed");
+      assert.equal(task?.result, "REPORT-OK");
     }),
   );
 

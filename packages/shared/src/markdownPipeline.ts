@@ -23,6 +23,10 @@ import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
 import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
+  remarkEnableLeadingWhitespace,
+  remarkKeepLeadingWhitespace,
+} from "./markdownLeadingWhitespace.ts";
+import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
@@ -262,10 +266,12 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+// Leading whitespace is kept only where each line renders as a line.
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkKeepLeadingWhitespace,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -281,8 +287,10 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
 
 // Users type paths like ~/a and (~/b, which GFM's single-tilde strikethrough hides as <del>.
 // Appended after the base list, this reconfigures its remark-gfm entry; ~~double~~ still strikes.
+// Users also indent lines with spaces, which CommonMark drops from a paragraph.
 export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
+  remarkEnableLeadingWhitespace,
 ];
 
 export const ASSISTANT_MARKDOWN_REMARK_PLUGINS: PluggableList = [

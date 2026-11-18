@@ -1915,6 +1915,174 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each([
+    { codex: "accepts", reply: { result: {} } },
+    { codex: "rejects", reply: { error: { code: -32601, message: "Method not found" } } },
+  ] as const)(
+    "a steer that changes the service tier still steers when Codex $codex the settings update",
+    ({ codex, reply }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `steer-tier-thread-${codex}`;
+        const nativeTurnId = `steer-tier-turn-${codex}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `steer-service-tier-${codex}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
+              {
+                type: "expect_outbound",
+                label: "thread/settings/update",
+                frame: {
+                  id: 4,
+                  method: "thread/settings/update",
+                  params: { threadId: nativeThreadId, serviceTier: "fast" },
+                },
+              },
+              { type: "emit_inbound", frame: { id: 4, ...reply } },
+              {
+                type: "expect_outbound",
+                label: "turn/steer",
+                frame: {
+                  id: 5,
+                  method: "turn/steer",
+                  params: {
+                    threadId: nativeThreadId,
+                    expectedTurnId: nativeTurnId,
+                    input: [{ type: "text", text: "Hurry up." }],
+                  },
+                },
+              },
+              { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("steer-tier-attempt"),
+          text: "Work.",
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+          ),
+        );
+        const providerTurnId = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+        )[0];
+        assert.isDefined(providerTurnId);
+        if (providerTurnId === undefined) return;
+        yield* harness.runtime.steerTurn({
+          ...turnInput,
+          providerTurnId,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "serviceTier", value: "fast" }],
+          },
+          message: { ...turnInput.message, text: "Hurry up." },
+        });
+        yield* harness.firstTerminal;
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("a speed change with no message updates Codex's next-turn settings", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "picker-tier-thread";
+      const nativeTurnId = "picker-tier-turn";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "picker-service-tier",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }),
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 4,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, serviceTier: "default" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 4, result: {} } },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("picker-tier-attempt"),
+          text: "Work.",
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+        ),
+      );
+      assert.isDefined(harness.runtime.applyModelSelection);
+      yield* (
+        harness.runtime.applyModelSelection?.({
+          providerThread: harness.providerThread,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "serviceTier", value: "default" }],
+          },
+        }) ?? Effect.void
+      );
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";
@@ -4303,6 +4471,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "new-run",
     "steer",
     "start-fails",
+    "keep-changed-tier",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.gen(function* () {
       const scenario = `capacity-${outcome}`;
@@ -4345,6 +4514,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         nativeTurnId: nativeTurnId(0),
         prompt,
       });
+      // A speed picked while the first attempt runs; the retry must not send the old one.
+      const changedTier = outcome === "keep-changed-tier" ? "fast" : undefined;
+      const retryRequestId = (attempt: number) => (changedTier === undefined ? 3 : 4) + attempt;
+      if (changedTier !== undefined) {
+        entries.push(
+          {
+            type: "expect_outbound",
+            label: "thread/settings/update",
+            frame: {
+              id: 4,
+              method: "thread/settings/update",
+              params: { threadId: nativeThreadId, serviceTier: changedTier },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 4, result: {} } },
+        );
+      }
       entries.push(
         ...(outcome === "completion-only" ? failureEntries(0).slice(1) : failureEntries(0)),
       );
@@ -4370,7 +4556,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             entries.push({
               ...entry,
               frame: {
-                id: 3 + attempt,
+                id: retryRequestId(attempt),
                 method: "turn/start",
                 params: {
                   threadId: nativeThreadId,
@@ -4382,6 +4568,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   sandboxPolicy: { type: "dangerFullAccess" },
                   summary: "auto",
                   collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
+                  ...(changedTier === undefined ? {} : { serviceTier: changedTier }),
                 },
               },
             });
@@ -4418,7 +4605,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       error: { code: -32603, message: "Start failed" },
                     },
                   }
-                : withReplayRequestId(entry, 3 + attempt),
+                : withReplayRequestId(entry, retryRequestId(attempt)),
             );
           } else if (outcome !== "start-fails") {
             entries.push(
@@ -4444,6 +4631,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (outcome === "exhaust") entries.push(...failureEntries(attempt));
         if (
           outcome === "recover" ||
+          outcome === "keep-changed-tier" ||
           outcome === "completion-only" ||
           outcome === "started-first" ||
           outcome === "stop-starting"
@@ -4527,6 +4715,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         text: prompt,
       });
       yield* harness.runtime.startTurn(turnInput);
+      if (changedTier !== undefined) {
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId(0),
+          ),
+        );
+        yield* (
+          harness.runtime.applyModelSelection?.({
+            providerThread: harness.providerThread,
+            modelSelection: {
+              ...CODEX_TEST_MODEL_SELECTION,
+              options: [{ id: "serviceTier", value: changedTier }],
+            },
+          }) ?? Effect.void
+        );
+      }
       for (let attempt = 1; attempt <= Math.max(retries, 1); attempt++) {
         const milestone = yield* Queue.take(milestones);
         assert.equal(milestone.type, "turn_item.updated");
@@ -4598,6 +4804,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(
         terminal?.status,
         outcome === "recover" ||
+          outcome === "keep-changed-tier" ||
           outcome === "completion-only" ||
           outcome === "steer" ||
           outcome === "started-first" ||

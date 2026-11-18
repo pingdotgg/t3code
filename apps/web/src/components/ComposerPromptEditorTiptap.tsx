@@ -15,6 +15,7 @@ import {
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
@@ -288,6 +289,7 @@ const ComposerMentionExtension = Node.create({
 });
 
 function ComposerMentionNodeView({ node }: NodeViewProps) {
+  const gt = useGT();
   const actions = use(ComposerContextActionsContext);
   const mentionPath = (node.attrs.path as string) ?? "";
   const boardMatch = /^\[([^\]]+)\]\((board:\/\/[^)]+)\)$/.exec(mentionPath);
@@ -301,8 +303,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       kind={documentChipKindForFileName(path) ?? "mention"}
       dir="ltr"
       render={<button type="button" />}
+<<<<<<< origin/main
       onClick={() => actions.openMention(mentionPath)}
       aria-label={`Preview ${path}`}
+=======
+      onClick={() => actions.openMention(path)}
+      aria-label={gt("Preview {path}", { path })}
+>>>>>>> upstream/main
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"

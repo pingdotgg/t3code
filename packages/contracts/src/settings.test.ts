@@ -129,6 +129,7 @@ describe("storage cleanup settings", () => {
   });
 });
 
+<<<<<<< origin/main
 describe("ClientSettings math rendering", () => {
   it("turns math on by default and preserves its preference through patches and persistence", () => {
     expect(decodeClientSettings({}).mathRenderingEnabled).toBe(true);
@@ -138,6 +139,11 @@ describe("ClientSettings math rendering", () => {
       expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
     }
     expect(() => decodeClientSettingsPatch({ mathRenderingEnabled: "yes" })).toThrow();
+=======
+describe("ClientSettings terminal close confirmation", () => {
+  it("keeps confirmation enabled for settings without a saved preference", () => {
+    expect(decodeClientSettings({}).confirmTerminalClose).toBe(true);
+>>>>>>> upstream/main
   });
 });
 

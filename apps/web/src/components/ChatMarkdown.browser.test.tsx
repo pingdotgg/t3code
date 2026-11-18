@@ -2,6 +2,7 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
+import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -10,7 +11,10 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+} from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -558,7 +562,7 @@ describe("ChatMarkdown emphasis", () => {
 });
 
 describe("ChatMarkdown skill chips", () => {
-  it("shows the skill's details and opens its instructions", async () => {
+  it("shows the skill's details and opens its instructions, closing the details", async () => {
     setup();
     const threadRef = {
       environmentId: EnvironmentId.make("workspace"),
@@ -585,6 +589,7 @@ describe("ChatMarkdown skill chips", () => {
     await userEvent.click(page.getByRole("button", { name: "View instructions" }));
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
+    await expect.element(page.getByText("Reviews the current branch.")).not.toBeInTheDocument();
   });
 
   it("names a mentioned model as its provider does, without a thread", async () => {
@@ -730,6 +735,44 @@ describe("ChatMarkdown copy", () => {
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
+
+  it.each([
+    { text: "   Plan\nnext" },
+    { text: "Plan\n            Deep\n                        Deeper" },
+    { text: "Plan\n\tTabbed\n \t Mixed" },
+    { text: "- item\n    more\n      deeper\n- next" },
+    { text: "Plan\n   Step one\n        Detail a", from: "Step one" },
+  ])(
+    "copies and selects user lines the same whether their typed indentation shows: $text",
+    async (copy) => {
+      setup();
+      const copied = async (extraRemarkPlugins: typeof CHAT_USER_MARKDOWN_REMARK_PLUGINS) => {
+        await using screen = await renderText(copy.text, {
+          className: "user-message-markdown",
+          lineBreaks: true,
+          parseRawHtml: false,
+          extraRemarkPlugins,
+        });
+        const range = document.createRange();
+        range.selectNodeContents(screen.container);
+        if (copy.from) {
+          const walker = document.createTreeWalker(screen.container, NodeFilter.SHOW_TEXT);
+          let line = walker.nextNode();
+          while (line && !line.textContent!.includes(copy.from)) line = walker.nextNode();
+          // Start mid-line, three characters into the line's text.
+          range.setStart(line!, line!.textContent!.indexOf(copy.from) + 3);
+        }
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // A drag or anything else that reads the selection gets its text, not the copy payload.
+        return { payload: chatMarkdownClipboardPayload(selection), selected: selection.toString() };
+      };
+      const shown = await copied(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+      // The user pipeline as it was before typed indentation was shown.
+      expect(shown).toEqual(await copied([[remarkGfm, { singleTilde: false }]]));
+    },
+  );
 
   it("copies part of inline code without prose escapes", async () => {
     setup();

@@ -54,7 +54,7 @@ catalog:
   "@effect/sql-sqlite-do": 4.1.2
   "@effect/vitest": 4.1.2
   "@electron-webauthn/macos": 1.3.1
-  "@legendapp/list": 3.7.2
+  "@legendapp/list": 3.7.3
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.7.0-beta.4
@@ -116,7 +116,7 @@ overrides:
   expo-sharing: 58.0.22
   expo-widgets: 58.0.27
   "@ff-labs/fff-node": 0.11.0
-  "@legendapp/list": 3.7.2
+  "@legendapp/list": 3.7.3
   "@pierre/diffs": 1.7.0-beta.4
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
@@ -283,8 +283,6 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
-  # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
-  "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
 
@@ -320,7 +318,7 @@ publicHoistPattern:
   - "@cursor/sdk-*"
 
 minimumReleaseAgeExclude:
-  - "@legendapp/list@3.7.2"
+  - "@legendapp/list@3.7.3"
   - "@effect/tsgo-darwin-arm64@0.67.1"
   - "@effect/tsgo-darwin-x64@0.67.1"
   - "@effect/tsgo-linux-arm64@0.67.1"
