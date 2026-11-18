@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -19,6 +20,7 @@ export function CommitFileTree(props: {
   onExcludedFilesChange: (excludedFiles: Set<string>) => void;
   onOpenFile: (path: string) => void;
 }) {
+  const gt = useGT();
   const { files, excludedFiles, isEditing, canOpenFile, onExcludedFilesChange, onOpenFile } = props;
   const [collapsedDirectories, setCollapsedDirectories] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -46,7 +48,9 @@ export function CommitFileTree(props: {
         </span>
         <span className="shrink-0">
           {isExcluded ? (
-            <span className="text-muted-foreground">Excluded</span>
+            <span className="text-muted-foreground">
+              <T>Excluded</T>
+            </span>
           ) : node.stat ? (
             <>
               <span className="text-diff-addition">+{formatDiffCount(node.stat.additions)}</span>
@@ -66,7 +70,7 @@ export function CommitFileTree(props: {
       >
         {isEditing && (
           <Checkbox
-            aria-label={`Include ${node.path}`}
+            aria-label={gt("Include {path}", { path: node.path })}
             checked={selection === "all"}
             indeterminate={selection === "some"}
             onCheckedChange={() =>
@@ -100,7 +104,7 @@ export function CommitFileTree(props: {
             type="button"
             className="flex min-w-0 flex-1 items-center gap-1.5 text-left enabled:cursor-pointer"
             disabled={!canOpenFile}
-            aria-label={`Open ${node.path} in editor`}
+            aria-label={gt("Open {path} in editor", { path: node.path })}
             onClick={() => onOpenFile(node.path)}
           >
             <span aria-hidden="true" className="size-3.5 shrink-0" />
