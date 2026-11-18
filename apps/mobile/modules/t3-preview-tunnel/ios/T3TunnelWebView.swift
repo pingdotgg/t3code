@@ -111,6 +111,13 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   func goForward() { webView?.goForward() }
   // After a failed load the webview may show no page or the previous one, so retry what failed.
   func reload() {
+    guard let environmentId else { return reloadPage() }
+    T3EnvironmentProxy.forEnvironment(environmentId).ensureListening { [weak self] _ in
+      self?.reloadPage()
+    }
+  }
+
+  private func reloadPage() {
     guard let webView else { return }
     if let target = failedUrl ?? (webView.url == nil ? requestedUrl : nil) {
       failedUrl = nil
@@ -211,8 +218,16 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 private final class T3EnvironmentProxy {
   nonisolated(unsafe) private static var proxies: [String: T3EnvironmentProxy] = [:]
 
+  nonisolated(unsafe) private static var foregroundObserver: NSObjectProtocol?
+
   static func forEnvironment(_ environmentId: String) -> T3EnvironmentProxy {
     if let proxy = proxies[environmentId] { return proxy }
+    // A real device can drop listening sockets while the app is suspended; the simulator never does.
+    foregroundObserver = foregroundObserver ?? NotificationCenter.default.addObserver(
+      forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+    ) { _ in
+      for proxy in proxies.values { proxy.ensureListening { _ in } }
+    }
     let proxy = T3EnvironmentProxy()
     proxies[environmentId] = proxy
     return proxy
@@ -240,6 +255,11 @@ private final class T3EnvironmentProxy {
 
   func attach(_ view: T3TunnelWebView, onReady: @escaping (UInt16) -> Void) {
     views = views.filter { $0.view != nil } + [WeakView(view: view)]
+    ensureListening(onReady)
+  }
+
+  /// Starts the listener, or restarts it on its port if iOS tore it down.
+  func ensureListening(_ onReady: @escaping (UInt16) -> Void) {
     if let port, listener?.isListening == true { return onReady(port) }
     waiting.append(onReady)
     guard waiting.count == 1 else { return }
@@ -258,9 +278,18 @@ private final class T3EnvironmentProxy {
       )
     }
     self.listener = listener
-    listener.start(port: port) { [weak self] port in
-      DispatchQueue.main.async { self?.ready(port) }
-    }
+    listener.start(
+      port: port,
+      onReady: { [weak self] port in DispatchQueue.main.async { self?.ready(port) } },
+      onFailed: { [weak self, weak listener] in
+        DispatchQueue.main.async {
+          guard let self, let listener, self.listener === listener, self.waiting.isEmpty else {
+            return
+          }
+          self.ensureListening { _ in }
+        }
+      }
+    )
   }
 
   private func ready(_ port: UInt16) {

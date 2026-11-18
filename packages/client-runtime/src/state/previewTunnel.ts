@@ -29,8 +29,10 @@ export function createPreviewTunnelUrlReader<R, E>(input: {
     input.runtime
       .atom((get) => {
         const prepared = Option.getOrNull(get(input.preparedConnectionAtom(environmentId)));
+        // Mid-reconnect, wait for the connection rather than refuse the page; the read times out.
+        if (prepared === null) return Effect.never;
         // The proxy cannot send cookies, so only ticketed connections tunnel.
-        if (prepared === null || prepared.httpAuthorization === null) return Effect.succeed(null);
+        if (prepared.httpAuthorization === null) return Effect.succeed(null);
         return mintMediaTicket(prepared).pipe(
           Effect.map((ticket) => {
             const url = new URL(
