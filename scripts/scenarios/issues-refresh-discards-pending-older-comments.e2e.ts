@@ -1,11 +1,5 @@
 /// <reference lib="dom" />
-import {
-  type IssueComment,
-  type IssueCommentsPage,
-  type IssueDetail,
-  type IssueRef,
-  WS_METHODS,
-} from "@t3tools/contracts";
+import type { IssueComment, IssueCommentsPage, IssueDetail, IssueRef } from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
@@ -15,10 +9,7 @@ test(
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
-    const stubIssueRpc = ({
-      issuesDetail,
-      issuesComments,
-    }: Pick<typeof WS_METHODS, "issuesDetail" | "issuesComments">) => {
+    await browser.addInitScript(() => {
       const pendingPage = new Promise<void>((resolve) => {
         Object.assign(window, { releaseOldIssuePage: () => resolve() });
       });
@@ -62,7 +53,7 @@ test(
               }),
             }),
           );
-        if (request.tag === issuesDetail) {
+        if (request.tag === "issues.detail") {
           const { projectId, tracker, scope, key } = request.payload;
           const detail: IssueDetail = {
             projectId,
@@ -113,10 +104,10 @@ test(
           if (pendingRefresh) {
             void pendingRefresh.then(() => reply(detail));
             pendingRefresh = undefined;
-          } else {
-            queueMicrotask(() => reply(detail));
+            return;
           }
-        } else if (request.tag === issuesComments) {
+          queueMicrotask(() => reply(detail));
+        } else if (request.tag === "issues.comments") {
           if (request.payload.cursor === "first-older-page") {
             queueMicrotask(() =>
               reply({
@@ -134,10 +125,6 @@ test(
           } else return send.call(this, data);
         } else return send.call(this, data);
       };
-    };
-    await browser.addInitScript(stubIssueRpc, {
-      issuesDetail: WS_METHODS.issuesDetail,
-      issuesComments: WS_METHODS.issuesComments,
     });
 
     await t3.open("/issues?selectedProjectId=demo&tracker=github&scope=example/demo&key=42");
