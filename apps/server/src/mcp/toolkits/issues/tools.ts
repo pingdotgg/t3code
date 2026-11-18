@@ -240,7 +240,7 @@ export type ListThreadIssuesResult = typeof ListThreadIssuesResult.Type;
 
 const ListIssuesTool = Tool.make("list_issues", {
   description:
-    "List issues in a project's tracker, newest updated first. Pass the returned nextCursors as cursors for the next page.",
+    "List project tracker issues, newest updated first. Page with nextCursors as cursors.",
   parameters: Schema.Struct({
     projectId: Schema.optional(
       ProjectId.annotate({ description: "Defaults to this thread's project." }),
