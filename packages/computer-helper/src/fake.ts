@@ -127,7 +127,8 @@ export class FakeNotes implements ScreenBackend {
         if (!this.menu.includes(action.label))
           throw new Error("That menu item is gone; look again.");
         this.picked.push(action.label);
-        this.menu = [];
+        // Like a browser's "Select password", one item opens a picker of saved accounts.
+        this.menu = action.label === "Select password" ? ["Password for dana@acme.test"] : [];
         return done(undefined);
     }
   }

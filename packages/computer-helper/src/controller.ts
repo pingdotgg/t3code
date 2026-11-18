@@ -440,6 +440,11 @@ export class ComputerUse {
       const chosen = actOn(seen, this.resolveRef(seen, act), task.text);
       if ("stop" in chosen) return end("stuck", chosen.stop);
       await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
+      // A browser closes its saved-account pickers within seconds, so the popup comes back with the step itself.
+      if (chosen.action.kind !== "type" && chosen.action.kind !== "scroll") {
+        const after = await settled(backend, { signal: run.signal }, this.clock);
+        if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
+      }
       return end("done", "");
     } catch (error) {
       if (run.signal.aborted) return end("stopped", stopReason(run.signal));

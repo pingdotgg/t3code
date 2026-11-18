@@ -105,6 +105,24 @@ function children(el) {
 // The items of a menu the app has open (a context menu), wherever it hangs: off the app, or inside a window's chrome
 // (Chrome's). The menu bar and the page itself are not searched.
 var MENU_PATH = { AXWindow: 1, AXGroup: 1, AXScrollArea: 1, AXMenu: 1, AXMenuItem: 1 };
+// Chrome's autofill and saved-password rows are pressable static texts in a popup window, not menu items.
+function popupRows(app, label) {
+  var wins = attr(app, 'AXWindows'), found = [];
+  for (var i = 0; wins && i < wins.count && !found.length; i++) {
+    var w = wins.objectAtIndex(i), sub = plain(w, 'AXSubrole');
+    if (sub === 'AXStandardWindow' || sub === 'AXDialog') continue;
+    var queue = [w], seen = 0;
+    while (queue.length && seen < 200 && !found.length) {
+      var kids = children(queue.shift());
+      for (var j = 0; j < kids.length; j++, seen++) {
+        var el = kids[j];
+        if (plain(el, 'AXRole') === 'AXStaticText' && String(plain(el, 'AXValue') || '').replace(/\\s+/g, ' ').trim() === label) { found.push(el); break; }
+        queue.push(el);
+      }
+    }
+  }
+  return found;
+}
 function openMenuItems(app) {
   var queue = children(app).filter(function (el) { return plain(el, 'AXRole') !== 'AXMenuBar'; });
   var items = [], seen = 0;
@@ -581,6 +599,7 @@ function run(argv) {
   }
   if (op === 'pick') {
     var items = openMenuItems(front().app).filter(function (item) { return plain(item, 'AXTitle') === payload.label; });
+    if (!items.length) items = popupRows(front().app, payload.label);
     if (!items.length) throw new Error('ADA_GONE');
     if (!dryrun && $.AXUIElementPerformAction(items[0], $('AXPress')) !== 0) throw new Error('ADA_GONE');
     return JSON.stringify({ mode: 'background', how: 'the menu item' });

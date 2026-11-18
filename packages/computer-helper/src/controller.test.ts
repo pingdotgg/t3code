@@ -1246,20 +1246,39 @@ describe("an act the agent chose", () => {
     const { page, server, computer } = actWith();
     expect(
       await computer.run({ goal: "", text: null, act: { action: "menu", ref: "search" } }),
-    ).toMatchObject({ status: "done", steps: ["opened the menu of the textbox “Search”"] });
-    expect((await page.observe()).popup).toContain("Select password");
+    ).toMatchObject({
+      status: "done",
+      steps: ["opened the menu of the textbox “Search”", "popup open now: Paste | Select password"],
+    });
     expect(
       await computer.run({
         goal: "",
         text: null,
         act: { action: "click", label: "Select password" },
       }),
-    ).toMatchObject({ status: "done", steps: ["picked “Select password” from the menu"] });
+    ).toMatchObject({
+      status: "done",
+      steps: [
+        "picked “Select password” from the menu",
+        "popup open now: Password for dana@acme.test",
+      ],
+    });
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Password for dana@acme.test" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: ["picked “Password for dana@acme.test” from the menu"],
+    });
     expect(server.requests.map((request) => request.action)).toEqual([
       { kind: "click", ref: "search", role: "textbox", label: "Search" },
       { kind: "click", ref: "menu", role: "menuitem", label: "Select password" },
+      { kind: "click", ref: "menu", role: "menuitem", label: "Password for dana@acme.test" },
     ]);
-    expect(page.picked).toEqual(["Select password"]);
+    expect(page.picked).toEqual(["Select password", "Password for dana@acme.test"]);
   });
 
   it("switches to a tab already on the site, or the sign-in page it led to, instead of opening another", async () => {
