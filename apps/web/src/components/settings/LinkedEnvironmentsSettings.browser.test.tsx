@@ -158,6 +158,13 @@ it("keeps an in-flight renewal exclusive across collapsing and reopening Setting
   await expect
     .element(screen.getByRole("combobox", { name: "Permissions", exact: true }))
     .toHaveTextContent("Read only");
+  await screen.rerender(<RegistryContext value={registry}>{null}</RegistryContext>);
+  state.links = state.links.map((link) => ({ ...link, access: "full-access" }));
+  await screen.rerender(settings(registry));
+  await row().click();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Permissions", exact: true }))
+    .toHaveTextContent("Full access");
 });
 
 it("follows refreshed permissions while pristine and retains edits and codes through filtering and failed renewal", async () => {
@@ -298,5 +305,11 @@ describe("LinkedEnvironmentsSettings", () => {
     answer();
     await expect.element(screen.getByRole("button", { name: /^boat-task/ })).toBeVisible();
     expect(server).toMatchObject({ started: 1, interrupted: 0 });
+    await screen.rerender(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings environments={[source]} primaryEnvironmentId={loadingHostId} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText("Source unavailable", { exact: true })).toBeVisible();
   });
 });

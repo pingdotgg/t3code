@@ -50,6 +50,7 @@ export function LinkedEnvironmentsSettings({
       ? (environments.find((environment) => environment.environmentId === primaryEnvironmentId) ??
         environments[0])
       : environments.find((environment) => environment.environmentId === selectedId);
+  if (selectedId === null && selected) setSelectedId(selected.environmentId);
   if (!selected)
     return selectedId === null ? null : (
       <SettingsSection title="Agent links">
@@ -361,7 +362,7 @@ function LinkedEnvironmentRow({
       >
         <span className="min-w-0 space-y-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="break-words text-sm font-medium">{link.label}</span>
+            <span className="min-w-0 max-w-full break-words text-sm font-medium">{link.label}</span>
             <Tooltip>
               <TooltipTrigger
                 render={<span />}

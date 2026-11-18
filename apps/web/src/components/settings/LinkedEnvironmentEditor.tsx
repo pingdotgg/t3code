@@ -46,7 +46,7 @@ export function LinkedEnvironmentEditor({
   const mayMint = useEnvironmentScope(link.environmentId, AuthAccessWriteScope);
   const renew = useAtomCommand(peerLinkEnvironment.link, { label: "renew environment link" });
   const [draftAccess, setDraftAccess] = useState<AuthMcpClientAccess | null>(null);
-  const confirmed = usePeerLinkAccess(environmentId, link.environmentId, link.access);
+  const confirmed = usePeerLinkAccess(environmentId, link.environmentId, link);
   const currentAccess = confirmed.access;
   const access = draftAccess ?? currentAccess;
   const [pairingCode, setPairingCode] = useState("");
