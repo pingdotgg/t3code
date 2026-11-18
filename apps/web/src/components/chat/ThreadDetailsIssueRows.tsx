@@ -1,4 +1,5 @@
 import { threadIssueKeyOf, type ThreadIssueLink } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
@@ -22,6 +23,7 @@ export function ThreadDetailsIssueRows({
   links: ReadonlyArray<ThreadIssueLink>;
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, link: ThreadIssueLink) => void;
 }) {
+  const gt = useGT();
   if (links.length === 0) return null;
   return (
     <>
@@ -29,7 +31,7 @@ export function ThreadDetailsIssueRows({
         <ThreadDetailsControl
           key={threadIssueKeyOf(link)}
           part="row"
-          aria-label={`Issue ${link.displayKey}: ${link.title}`}
+          aria-label={gt("Issue {key}: {title}", { key: link.displayKey, title: link.title })}
           onClick={(event) => onOpenLink(event, link)}
         >
           <IssueGlyph.issue aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />

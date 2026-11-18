@@ -1,15 +1,16 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
   formatDayShort,
   formatHourShort,
-  formatRelativeHourShort,
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
+import { formatRelativeHourShort } from "@t3tools/shared/usageFormatCopy";
 import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 import { observeResize } from "~/lib/observeResize";
@@ -22,8 +23,8 @@ const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
-export function formatChartDay(day: string, days: readonly string[]): string {
-  const label = formatDayShort(day);
+export function formatChartDay(day: string, days: readonly string[], locale?: string): string {
+  const label = formatDayShort(day, locale);
   return days[0]?.slice(0, 4) !== days.at(-1)?.slice(0, 4) ? `${label}, ${day.slice(0, 4)}` : label;
 }
 
@@ -275,7 +276,9 @@ function UsageChartTooltip({
         );
       })}
       <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-        <span className="text-muted-foreground">Total</span>
+        <span className="text-muted-foreground">
+          <T>Total</T>
+        </span>
         <span className={cn("tabular-nums", partial ? "text-muted-foreground" : "text-foreground")}>
           {format(column?.total ?? 0)}
         </span>
@@ -419,6 +422,9 @@ export function UsageProviderChart({
   timeZone,
   hour12,
 }: UsageProviderChartProps) {
+  const gt = useGT();
+  const locale = useLocale();
+  const m = useMessages();
   const periods = resolution === "hour" ? hours : days;
   const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
   const byPeriod = new Map(
@@ -435,14 +441,14 @@ export function UsageProviderChart({
   const toY = (value: number) => valueToY(value, scale.max);
   const seriesClassName = (loading: boolean) =>
     cn("transition-opacity", loading && "opacity-40 delay-150");
-  const format = metric === "tokens" ? formatTokens : formatUsd;
+  const format = metric === "tokens" ? formatTokens : (value: number) => formatUsd(value, locale);
   const formatPeriod = (period: string) =>
     resolution === "hour"
-      ? formatHourShort(period, timeZone, hour12)
-      : formatChartDay(period, days);
+      ? formatHourShort(period, timeZone, hour12, locale)
+      : formatChartDay(period, days, locale);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)
+      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12, m, locale)
       : formatPeriod(period);
 
   return (
@@ -528,39 +534,52 @@ export function UsageProviderChart({
         </span>
       </div>
 
-      {/* The plot and its axes are hover-only; this carries the same figures for screen readers. */}
-      <table className="sr-only">
-        <caption>
-          {`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">{resolution === "hour" ? "Hour" : "Day"}</th>
-            {providers.map((provider) => (
-              <th key={provider} scope="col">
-                {PROVIDER_PRESENTATION[provider].label}
-              </th>
-            ))}
-            {providers.length > 1 ? <th scope="col">Total</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {periods.map((period, index) => {
-            const column = columns[index];
-            return (
-              <tr key={period}>
-                <th scope="row">{formatTooltipPeriod(period)}</th>
-                {providers.map((provider) => (
-                  <td key={provider}>
-                    {format(column?.bands.find((band) => band.provider === provider)?.value ?? 0)}
-                  </td>
-                ))}
-                {providers.length > 1 ? <td>{format(column?.total ?? 0)}</td> : null}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {/* The plot and its axes are hover-only; this carries the same figures for screen readers.
+          sr-only sits on a wrapper: Firefox does not clip a table's caption by the table's own box. */}
+      <div className="sr-only">
+        <table>
+          <caption>
+            {resolution === "hour"
+              ? metric === "tokens"
+                ? gt("Hourly processed tokens by provider")
+                : gt("Hourly cost by provider")
+              : metric === "tokens"
+                ? gt("Daily processed tokens by provider")
+                : gt("Daily cost by provider")}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">{resolution === "hour" ? gt("Hour") : gt("Day")}</th>
+              {providers.map((provider) => (
+                <th key={provider} scope="col">
+                  {PROVIDER_PRESENTATION[provider].label}
+                </th>
+              ))}
+              {providers.length > 1 ? (
+                <th scope="col">
+                  <T>Total</T>
+                </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {periods.map((period, index) => {
+              const column = columns[index];
+              return (
+                <tr key={period}>
+                  <th scope="row">{formatTooltipPeriod(period)}</th>
+                  {providers.map((provider) => (
+                    <td key={provider}>
+                      {format(column?.bands.find((band) => band.provider === provider)?.value ?? 0)}
+                    </td>
+                  ))}
+                  {providers.length > 1 ? <td>{format(column?.total ?? 0)}</td> : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
