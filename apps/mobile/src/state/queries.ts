@@ -42,6 +42,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
 import {
@@ -60,6 +61,7 @@ const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> =
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make<ThreadSearchResultsState>({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  failed: false,
   rows: [],
 }).pipe(Atom.withLabel("mobile:thread-search:empty"));
 
@@ -223,6 +225,8 @@ export function useThreadSearch(
   /** The query `matches` are for, which lags the typed one while a search runs. */
   readonly query: string;
   readonly isPending: boolean;
+  /** No environment could run the search for the current query, so an empty result is not "no matches". */
+  readonly failed: boolean;
 } {
   // A pasted wall of text searches by its start rather than failing the request.
   const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
@@ -241,6 +245,7 @@ export function useThreadSearch(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearch.results(searchKey),
   );
   const isPending = canSearch && (normalizedQuery !== debouncedQuery || result.isLoading);
+  const failed = settledQuery !== null && !result.isLoading && result.failed;
   // What fast environments returned shows without waiting for a slow one;
   // callers keep shown rows in place with `nextShownOrder`.
   const ready =
@@ -276,6 +281,7 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
+    failed,
   };
 }
 
@@ -300,6 +306,7 @@ export function useBranches(input: {
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {
+  const resolve = useMessages();
   const query = target.query?.trim() ?? "";
   const targetKey =
     target.environmentId !== null && target.cwd !== null
@@ -372,7 +379,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
           const cause = Cause.squash(failed.cause);
           return cause instanceof Error && cause.message.trim().length > 0
             ? cause.message
-            : "Failed to load refs.";
+            : resolve(msg("Failed to load refs."));
         })()
       : null;
   const refresh = () => {
@@ -407,6 +414,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
+  const resolve = useMessages();
   const query = normalizeComposerPathSearchQuery(target.query);
   const normalizedTarget = { environmentId: target.environmentId, cwd: target.cwd, query };
   const debouncedTarget = useDebouncedValue(normalizedTarget, COMPOSER_PATH_SEARCH_DEBOUNCE_MS);
@@ -416,17 +424,20 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
       : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
   );
   const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    resolve,
+  );
   const { canReadFiles } = fileAccess;
   const searchTarget =
     debouncedTarget.environmentId !== null &&
     debouncedTarget.cwd !== null &&
-    debouncedTarget.query.length > 0
+    debouncedTarget.query !== null
       ? {
           environmentId: debouncedTarget.environmentId,
           input: {
@@ -440,16 +451,21 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
   const hasTarget = searchTarget !== null;
+  const isSameCheckout =
+    normalizedTarget.environmentId === debouncedTarget.environmentId &&
+    normalizedTarget.cwd === debouncedTarget.cwd;
 
   return {
-    entries: result.data?.entries ?? [],
+    // Entries from another checkout must not be offered while the new one is debounced.
+    entries: isSameCheckout ? (result.data?.entries ?? []) : [],
     error:
       !hasTarget || fileAccess.isPending
         ? null
         : canReadFiles
           ? result.error
-          : (fileAccess.error ?? "This connection cannot search host files."),
+          : (fileAccess.error ?? resolve(msg("This connection cannot search host files."))),
     isPending:
+      !isSameCheckout ||
       normalizedTarget.query !== debouncedTarget.query ||
       (hasTarget && (fileAccess.isPending || result.isPending)),
     refresh: result.refresh,
