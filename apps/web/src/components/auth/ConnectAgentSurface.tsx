@@ -444,7 +444,7 @@ function ceilingReason(
   resolve: MessageResolver,
 ) {
   if (details.maxAccess !== undefined && access !== details.maxAccess) {
-    return "The app asked for read access only.";
+    return resolve(msg("The app asked for read access only."));
   }
   const ceiling = details.runtimeModeCeiling;
   return ceiling === undefined ||

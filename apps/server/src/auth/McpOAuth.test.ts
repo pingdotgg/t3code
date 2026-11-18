@@ -113,7 +113,10 @@ const withRoutes = <A, E>(
 ) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
-    const context = Context.make(SecureRandom.SecureRandom, random);
+    const clock = yield* Clock.Clock;
+    const context = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(Clock.Clock, clock),
+    );
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
     const layerRoutes = makeLayerRoutes((auth) => {
       routerAuth = auth;
@@ -769,6 +772,7 @@ it.effect("a client that asks only for orchestration:read is granted read only a
             access: "auto",
             code: pairing.credential,
           });
+          expect(approved).toMatchObject({ status: 200, redirectTo: expect.any(String) });
           const tokenResponse = yield* handler(
             at(
               "/oauth/mcp/token",
