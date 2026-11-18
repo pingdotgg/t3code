@@ -3,6 +3,9 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -15,11 +18,13 @@ import {
   applyPreferredCodexDefaultModel,
   codexCustomEndpoint,
   codexRoutesSpendNativeQuota,
+  type CodexAppServerProviderSnapshot,
   makeCodexSkillsProbe,
   mapCodexModelCapabilities,
+  probeCodexAppServerProvider,
 } from "./CodexProvider.ts";
 
-function makeFakeCodexAppServers() {
+function makeFakeCodexAppServers(responses: Readonly<Record<string, () => unknown>> = {}) {
   const helpers: Array<{
     readonly codexHome: unknown;
     readonly crash: Effect.Effect<void>;
@@ -70,6 +75,8 @@ function makeFakeCodexAppServers() {
                   userAgent: "codex/0.0.0",
                 });
               }
+              const reply = responses[frame.method];
+              if (reply) return respond(frame.id, reply());
               helper.requests.push(frame.params);
               return respond(frame.id, {
                 data: (frame.params?.cwds ?? []).map((cwd) => ({
@@ -142,6 +149,69 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
 
     yield* Scope.close(providerScope, Exit.void);
     assert.strictEqual(helpers[3]!.closed, true);
+  }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+);
+
+it.effect("lists the catalog Codex refreshes after the probe stops waiting for it", () =>
+  Effect.gen(function* () {
+    // The TestClock starts at the epoch, so the probe's Codex spawns at 0 ms.
+    let cache = { fetched_at: "1969-12-31T23:59:00Z", models: ["gpt-old"] };
+    const { helpers, spawner } = makeFakeCodexAppServers({
+      "account/read": () => ({
+        account: { type: "chatgpt", email: "dev@example.com", planType: "pro" },
+        requiresOpenaiAuth: true,
+      }),
+      "model/list": () => ({
+        data: cache.models.map((model, index) => ({
+          id: model,
+          model,
+          displayName: model,
+          description: "",
+          hidden: false,
+          isDefault: index === 0,
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "" }],
+        })),
+      }),
+      "config/read": () => ({ config: {} }),
+    });
+    const cacheRead = yield* Deferred.make<void>();
+    const probeScope = yield* Scope.make();
+    const probing = yield* probeCodexAppServerProvider({
+      probeTimeoutMs: 20_000,
+      binaryPath: "codex",
+      cwd: "/repo",
+      environment: {},
+    }).pipe(
+      Scope.provide(probeScope),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readFileString: () =>
+            Deferred.succeed(cacheRead, undefined).pipe(Effect.as(JSON.stringify(cache))),
+        }),
+      ),
+      Effect.provide(Path.layer),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(cacheRead);
+    yield* TestClock.adjust("3 seconds");
+    const snapshot: CodexAppServerProviderSnapshot = yield* Fiber.join(probing);
+    assert.deepStrictEqual(
+      snapshot.models?.map((model) => model.slug),
+      ["gpt-old"],
+    );
+    yield* Scope.close(probeScope, Exit.void);
+    assert.strictEqual(helpers[0]!.closed, false);
+
+    cache = { fetched_at: "1970-01-01T00:00:10Z", models: ["gpt-new", "gpt-old"] };
+    yield* TestClock.adjust("1 second");
+    const refreshed = yield* snapshot.refreshedModels!;
+    assert.deepStrictEqual(
+      refreshed?.map((model) => model.slug),
+      ["gpt-new", "gpt-old"],
+    );
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
 );
 

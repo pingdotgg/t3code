@@ -1,6 +1,7 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -161,6 +162,8 @@ export interface CodexAppServerProviderSnapshot {
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
+  /** Set when `models` came from a stale cache; resolves with the catalog Codex refreshes later, if it does. */
+  readonly refreshedModels?: Effect.Effect<ReadonlyArray<ServerProviderModel> | undefined>;
   readonly serviceTier?: string | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
@@ -564,6 +567,14 @@ const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   );
 });
 
+const awaitCodexCatalogRefresh = (codexHome: string, spawnedAtMs: number) =>
+  readCodexModelsCacheFetchedAt(codexHome).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(CODEX_CATALOG_REFRESH_POLL),
+      until: (fetchedAtMs) => fetchedAtMs >= spawnedAtMs,
+    }),
+  );
+
 /**
  * Every Codex client on the machine shares that file, and the backend tailors
  * the catalog to each client's originator: the plain CLI does not get Sol
@@ -580,27 +591,24 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
     requestAllCodexModels(input.client),
     input.deadlineMs,
   );
-  if (models === undefined) return undefined;
+  if (models === undefined) return { models, stale: false };
   const refreshed = yield* withCodexDiscoveryDeadline(
-    readCodexModelsCacheFetchedAt(input.codexHome).pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(CODEX_CATALOG_REFRESH_POLL),
-        until: (fetchedAtMs) => fetchedAtMs >= input.spawnedAtMs,
-      }),
-    ),
+    awaitCodexCatalogRefresh(input.codexHome, input.spawnedAtMs),
     input.deadlineMs,
     CODEX_CATALOG_REFRESH_TIMEOUT_MS,
   );
   if (refreshed === undefined) {
     yield* Effect.logWarning(
-      "Codex did not refresh its model catalog in time; using the cached catalog.",
+      "Codex did not refresh its model catalog in time; using the cached catalog until it does.",
     );
-    return models;
+    return { models, stale: true };
   }
-  return (
-    (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
-    models
-  );
+  return {
+    models:
+      (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
+      models,
+    stale: false,
+  };
 });
 
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
@@ -695,11 +703,10 @@ const codexProcessGroupIsBusy = Effect.fn("codexProcessGroupIsBusy")(
   Effect.orElseSucceed(() => false),
 );
 
-const stopCodexAfterStartupWork = (pid: number, processScope: Scope.Closeable) =>
+const awaitCodexStartupWork = (pid: number) =>
   codexProcessGroupIsBusy(pid).pipe(
     Effect.repeat({ schedule: Schedule.spaced("500 millis"), while: (busy) => busy }),
     Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
-    Effect.ensuring(Scope.close(processScope, Exit.void)),
   );
 
 // Usage is an enrichment: a failure or a slow answer degrades to "no usage this
@@ -739,11 +746,27 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const processScope = yield* Scope.make();
   let pid: number | undefined;
+  const refreshedModels = yield* Deferred.make<ReadonlyArray<ServerProviderModel> | undefined>();
+  // Lists again once Codex's own slow catalog refresh lands, before the process is stopped.
+  let listRefreshedModels: Effect.Effect<ReadonlyArray<ServerProviderModel> | undefined> =
+    Effect.undefined;
   // Returning the snapshot must not wait for Codex's own startup work.
   yield* Effect.addFinalizer(() =>
     pid === undefined
-      ? Scope.close(processScope, Exit.void)
-      : stopCodexAfterStartupWork(pid, processScope).pipe(
+      ? Deferred.succeed(refreshedModels, undefined).pipe(
+          Effect.andThen(Scope.close(processScope, Exit.void)),
+        )
+      : Effect.all(
+          [
+            listRefreshedModels.pipe(
+              Effect.flatMap((models) => Deferred.succeed(refreshedModels, models)),
+            ),
+            awaitCodexStartupWork(pid),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.ensuring(Deferred.succeed(refreshedModels, undefined)),
+          Effect.ensuring(Scope.close(processScope, Exit.void)),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.forkDetach,
           Effect.asVoid,
@@ -752,6 +775,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const opened = yield* withCodexAppServerClient(input).pipe(Scope.provide(processScope));
   pid = opened.pid;
   const { client, initialize } = opened;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
@@ -768,7 +793,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
+  const [skillsResponse, catalog, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -778,7 +803,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             spawnedAtMs,
             deadlineMs,
           })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs).pipe(
+            Effect.map((models) => ({ models, stale: false })),
+          ),
       // The shared catalog must exclude config from the server's launch project.
       withCodexDiscoveryDeadline(
         client.request("config/read", { includeLayers: false }),
@@ -808,6 +835,19 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  if (catalog.stale) {
+    listRefreshedModels = awaitCodexCatalogRefresh(initialize.codexHome, spawnedAtMs).pipe(
+      Effect.andThen(requestAllCodexModels(client)),
+      Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
+      Effect.map(Option.getOrUndefined),
+      Effect.catch((cause) =>
+        Effect.logDebug("Codex catalog relist failed.", { cause }).pipe(Effect.as(undefined)),
+      ),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+  }
+
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
     account: accountResponse,
@@ -815,7 +855,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
-    models,
+    models: catalog.models,
+    ...(catalog.stale ? { refreshedModels: Deferred.await(refreshedModels) } : {}),
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
@@ -825,6 +866,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
+export { probeCodexAppServerProvider };
 
 // Old CLIs can exit before initialize reports the version needed for compatibility advice.
 const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(

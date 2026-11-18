@@ -1,5 +1,5 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
-import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Signature from "effect/crypto/Signature";
@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -28,7 +29,9 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  type CodexAppServerProviderSnapshot,
   makePendingCodexProvider,
+  probeCodexAppServerProvider,
   makeCodexSkillsProbe,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
@@ -266,21 +269,51 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    // A probe that published a stale catalog, so enrichment can publish the one Codex refreshes later.
+    const staleCatalogProbe = yield* Ref.make<CodexAppServerProviderSnapshot | undefined>(
+      undefined,
+    );
+    const buildSnapshot = (probe: Parameters<typeof checkCodexProviderStatus>[1]) =>
+      Effect.zipWith(
+        checkCodexProviderStatus(effectiveConfig, probe, processEnv),
+        currentCatalog,
+        (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
+        { concurrent: true },
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+      );
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
     const checkProvider = modelCatalog.refreshInBackground.pipe(
+      Effect.andThen(Ref.set(staleCatalogProbe, undefined)),
       Effect.andThen(
-        Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
-          currentCatalog,
-          (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
-          { concurrent: true },
+        buildSnapshot((input) =>
+          probeCodexAppServerProvider(input).pipe(
+            Effect.tap((probed: CodexAppServerProviderSnapshot) =>
+              probed.refreshedModels ? Ref.set(staleCatalogProbe, probed) : Effect.void,
+            ),
+          ),
         ),
       ),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, pathService),
     );
+    const refreshedCatalogSnapshot = (probed: CodexAppServerProviderSnapshot | undefined) =>
+      probed?.refreshedModels
+        ? probed.refreshedModels.pipe(
+            Effect.flatMap((models) => {
+              if (models === undefined) return Effect.undefined;
+              const { refreshedModels: _, ...refreshed } = probed;
+              return buildSnapshot(() => Effect.succeed({ ...refreshed, models })).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not publish Codex's refreshed model catalog.", {
+                    cause,
+                  }).pipe(Effect.as(undefined)),
+                ),
+              );
+            }),
+          )
+        : Effect.undefined;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
       resolveMaintenance,
@@ -294,17 +327,27 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
-      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-        resolveMaintenance().pipe(
-          Effect.flatMap((maintenanceCapabilities) =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            }),
+      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) => {
+        const publishEnriched = (next: ServerProvider) =>
+          resolveMaintenance().pipe(
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(next, maintenanceCapabilities, {
+                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              }),
+            ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          );
+        return Ref.getAndSet(staleCatalogProbe, undefined).pipe(
+          Effect.flatMap((probed) =>
+            publishEnriched(snapshot).pipe(
+              Effect.andThen(refreshedCatalogSnapshot(probed)),
+              Effect.flatMap((next) => (next ? publishEnriched(next) : Effect.void)),
+            ),
           ),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-        ),
+        );
+      },
     }).pipe(
       Effect.mapError(
         (cause) =>
