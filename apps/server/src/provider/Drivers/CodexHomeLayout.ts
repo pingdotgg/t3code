@@ -308,7 +308,15 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
   const context = { sharedHomePath: layout.sharedHomePath, effectiveHomePath };
   const base = { ...environment };
   delete base[CODEX_PINNED_SQLITE_HOME_ENV];
-  const override = base.CODEX_SQLITE_HOME?.trim();
+  let override = base.CODEX_SQLITE_HOME?.trim();
+  if (windows) {
+    // Windows reads names without regard to case, so Codex must get only the spelling T3 checked.
+    for (const name of Object.keys(base)) {
+      if (name.toUpperCase() !== "CODEX_SQLITE_HOME") continue;
+      override = base[name]?.trim();
+      delete base[name];
+    }
+  }
   // Every Codex config layer outranks the variable, so Windows launches also pass the directory
   // as an argument.
   const route = (sqliteHomePath: string): NodeJS.ProcessEnv => ({

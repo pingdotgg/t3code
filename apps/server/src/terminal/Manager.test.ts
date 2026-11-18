@@ -2793,6 +2793,67 @@ it.layer(
     ),
   );
 
+  // regression: #24486 Windows kept a client's `codex_sqlite_home` beside the host's
+  // CODEX_SQLITE_HOME, and the host's spelling was the one validated and written back.
+  it.effect("ranks a Windows terminal's SQLite home by its source, whatever its casing", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const resolve = (rawProviderInstanceId: string) =>
+        TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          deriveProviderInstanceConfigMap,
+          serverSettings,
+          fileSystem,
+          path,
+          rawProviderInstanceId,
+          env: { codex_sqlite_home: "/configured/client-sqlite" },
+        }).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            CODEX_SQLITE_HOME: "/configured/host-sqlite",
+          }),
+          Effect.provideService(HostProcess.Platform, "win32"),
+        );
+
+      expect(yield* resolve("client_sqlite")).toMatchObject({
+        CODEX_HOME: path.resolve("/configured/client-shadow"),
+        CODEX_SQLITE_HOME: path.resolve("/configured/client-sqlite"),
+      });
+      expect(yield* resolve("instance_sqlite")).toMatchObject({
+        CODEX_SQLITE_HOME: path.resolve("/configured/instance-sqlite"),
+      });
+      expect((yield* resolve("client_sqlite")).codex_sqlite_home).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerInstances: {
+            [ProviderInstanceId.make("client_sqlite")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: {
+                homePath: "/configured/codex",
+                shadowHomePath: "/configured/client-shadow",
+              },
+            },
+            [ProviderInstanceId.make("instance_sqlite")]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                {
+                  name: "Codex_Sqlite_Home",
+                  value: "/configured/instance-sqlite",
+                  sensitive: false,
+                },
+              ],
+              config: {
+                homePath: "/configured/codex",
+                shadowHomePath: "/configured/instance-shadow",
+              },
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");

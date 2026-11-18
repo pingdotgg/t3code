@@ -1741,10 +1741,20 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
       if (layout.mode === "authOverlay") {
-        const sqliteEnvironment = yield* codexHomeEnvironment(layout, {
-          ...hostEnvironment,
-          ...resolved,
-        }).pipe(
+        const windows = yield* HostProcess.isWindows;
+        const launchEnvironment = { ...hostEnvironment };
+        for (const [name, value] of Object.entries(resolved)) {
+          // Windows reads names without regard to case, so a client's or instance's spelling must
+          // replace the host's rather than sit beside it.
+          if (windows) {
+            for (const inherited of Object.keys(launchEnvironment)) {
+              if (inherited.toUpperCase() === name.toUpperCase())
+                delete launchEnvironment[inherited];
+            }
+          }
+          launchEnvironment[name] = value;
+        }
+        const sqliteEnvironment = yield* codexHomeEnvironment(layout, launchEnvironment).pipe(
           Effect.mapError(
             (cause) =>
               new TerminalProviderEnvironmentError({
@@ -1756,8 +1766,16 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
           Effect.provideService(FileSystem.FileSystem, input.fileSystem),
           Effect.provideService(Path.Path, input.path),
         );
-        if (sqliteEnvironment.CODEX_SQLITE_HOME) {
-          resolved = { ...resolved, CODEX_SQLITE_HOME: sqliteEnvironment.CODEX_SQLITE_HOME };
+        const sqliteHome = sqliteEnvironment.CODEX_SQLITE_HOME;
+        if (sqliteHome) {
+          resolved = {
+            ...Object.fromEntries(
+              Object.entries(resolved).filter(
+                ([name]) => !windows || name.toUpperCase() !== "CODEX_SQLITE_HOME",
+              ),
+            ),
+            CODEX_SQLITE_HOME: sqliteHome,
+          };
         }
       }
     }
