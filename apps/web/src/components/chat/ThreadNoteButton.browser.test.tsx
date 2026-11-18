@@ -28,10 +28,19 @@ const threadRef = {
   threadId: ThreadId.make("thread"),
 };
 
-function noteButton() {
+function setup() {
+  persisted.note = undefined;
+  persisted.saves = 0;
+}
+
+function noteButton(threadId = "thread") {
   return (
     <AppAtomRegistryProvider>
-      <ThreadNoteButton threadRef={threadRef} canEdit />
+      <ThreadNoteButton
+        key={threadId}
+        threadRef={{ ...threadRef, threadId: ThreadId.make(threadId) }}
+        canEdit
+      />
       <div tabIndex={0} style={{ marginTop: 600 }}>
         Outside note
       </div>
@@ -40,8 +49,7 @@ function noteButton() {
 }
 
 it("keeps a note saved on click-away and drops an edit cancelled with Escape", async () => {
-  persisted.note = undefined;
-  persisted.saves = 0;
+  setup();
   await using screen = await render(noteButton());
 
   await screen.getByRole("button", { name: "Thread note" }).click();
@@ -66,4 +74,9 @@ it("keeps a note saved on click-away and drops an edit cancelled with Escape", a
   await expect
     .element(page.getByRole("textbox", { name: "Thread note" }))
     .toHaveValue("Check the login redirect");
+  await page.getByRole("textbox", { name: "Thread note" }).fill("Save on navigation");
+  await screen.rerender(noteButton("other-thread"));
+  await expect.element(page.getByRole("textbox", { name: "Thread note" })).not.toBeInTheDocument();
+  expect(persisted.note).toBe("Save on navigation");
+  expect(persisted.saves).toBe(2);
 });

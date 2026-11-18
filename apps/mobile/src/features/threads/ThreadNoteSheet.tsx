@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  AuthOrchestrationOperateScope,
   normalizeThreadNote,
   THREAD_NOTE_MAX_LENGTH,
   type EnvironmentId,
@@ -8,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
+import { T, useGT } from "gt-react-native";
+import { useEnvironmentScope } from "../../state/session";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -25,22 +28,36 @@ type ThreadNoteSheetProps = StaticScreenProps<{
 const COUNTER_THRESHOLD = THREAD_NOTE_MAX_LENGTH - 1_000;
 
 export function ThreadNoteSheet({ route }: ThreadNoteSheetProps) {
+  const gt = useGT();
+  const canEdit = useEnvironmentScope(route.params.environmentId, AuthOrchestrationOperateScope);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const ref = scopeThreadRef(route.params.environmentId, route.params.threadId);
   const note = useAtomValue(environmentThreadDetails.quietThreadAtom(ref))?.projection.thread.note;
   const setThreadNote = useAtomCommand(threadEnvironment.setNote, "save thread note");
-  const [draft, setDraft] = useState(note ?? "");
+  const [baseline] = useState(note ?? "");
+  const [draft, setDraft] = useState(baseline);
+  const [saving, setSaving] = useState(false);
 
-  const save = () => {
-    navigation.goBack();
+  const save = async () => {
+    if (saving) return;
+    if (!canEdit) {
+      navigation.goBack();
+      return;
+    }
     const next = normalizeThreadNote(draft);
-    if (next === normalizeThreadNote(note ?? null)) return;
-    void setThreadNote({
+    if (next === normalizeThreadNote(baseline)) {
+      navigation.goBack();
+      return;
+    }
+    setSaving(true);
+    const result = await setThreadNote({
       environmentId: ref.environmentId,
       input: { threadId: ref.threadId, note: next },
     });
+    setSaving(false);
+    if (result._tag === "Success") navigation.goBack();
   };
 
   const android = Platform.OS === "android";
@@ -64,17 +81,18 @@ export function ThreadNoteSheet({ route }: ThreadNoteSheetProps) {
           <TextInput
             multiline
             autoFocus
-            accessibilityLabel="Thread note"
+            accessibilityLabel={gt("Thread note")}
             value={draft}
             onChangeText={setDraft}
+            editable={canEdit && !saving}
             maxLength={THREAD_NOTE_MAX_LENGTH}
-            placeholder="Add a note for this thread…"
+            placeholder={gt("Add a note for this thread…")}
             textAlignVertical="top"
             className="min-h-40 rounded-xl bg-subtle px-4 py-3 text-base"
           />
           <View className="flex-row justify-between gap-2">
             <Text className="text-xs text-foreground-muted">
-              Only visible to you. Not sent to the agent.
+              <T>Only visible to you. Not sent to the agent.</T>
             </Text>
             {draft.length > COUNTER_THRESHOLD ? (
               <Text className="text-xs text-foreground-muted">
@@ -85,9 +103,10 @@ export function ThreadNoteSheet({ route }: ThreadNoteSheetProps) {
         </ScrollView>
       </ScreenContent>
       <SheetHeader
-        title="Note"
+        title={gt("Note", { $context: "private thread note" })}
         onCancel={() => navigation.goBack()}
-        confirm={{ label: "Done", onPress: save }}
+        dismissDisabled={saving}
+        confirm={{ label: gt("Done"), onPress: save, disabled: saving }}
       />
     </View>
   );

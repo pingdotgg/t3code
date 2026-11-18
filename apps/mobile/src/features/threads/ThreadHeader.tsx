@@ -36,7 +36,7 @@ export function ThreadHeader(props: {
   const noteAction: AppBarAction[] = props.note
     ? [
         {
-          accessibilityLabel: props.note.hasNote ? "Thread note (has note)" : "Thread note",
+          accessibilityLabel: props.note.hasNote ? gt("Thread note (has note)") : gt("Thread note"),
           icon: "note.text",
           selected: props.note.hasNote,
           separateBackground: false,

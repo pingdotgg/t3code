@@ -394,13 +394,16 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
+      const notes = new Map<ThreadId, string | undefined>();
       return Effect.forEach(
         events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "thread.note-updated"
+        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> => {
+          if (event.type === "thread.created") notes.set(event.threadId, event.payload.note);
+          return event.type === "thread.note-updated"
             ? projectionStore.getThread(event.threadId).pipe(
                 Effect.map((current) => {
                   // Provider updates can commit after the command read its thread.
+                  notes.set(event.threadId, event.payload.note);
                   const { note: _note, ...thread } = current;
                   return {
                     ...event,
@@ -411,14 +414,32 @@ const layerBase: Layer.Layer<
                   };
                 }),
               )
-            : event.type === "turn-item.updated"
-              ? turnItemPositions
-                  .normalize(
-                    event.payload,
-                    event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                  )
-                  .pipe(Effect.map((payload) => ({ ...event, payload })))
-              : Effect.succeed(event),
+            : event.type === "thread.metadata-updated"
+              ? (notes.has(event.threadId)
+                  ? Effect.succeed(notes.get(event.threadId))
+                  : projectionStore
+                      .getThread(event.threadId)
+                      .pipe(Effect.map((thread) => thread.note))
+                ).pipe(
+                  Effect.map((note) => {
+                    const { note: _note, ...thread } = event.payload;
+                    return {
+                      ...event,
+                      payload: note === undefined ? thread : { ...thread, note },
+                    };
+                  }),
+                )
+              : event.type === "turn-item.updated"
+                ? turnItemPositions
+                    .normalize(
+                      event.payload,
+                      event.payload.runId === null
+                        ? undefined
+                        : runOrdinals.get(event.payload.runId),
+                    )
+                    .pipe(Effect.map((payload) => ({ ...event, payload })))
+                : Effect.succeed(event);
+        },
         { concurrency: 1 },
       );
     };

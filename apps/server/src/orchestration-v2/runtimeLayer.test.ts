@@ -3804,6 +3804,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.equal(storedNote.event.payload.note, "Keep the newer thread state");
       }
 
+      const [storedMetadata] = yield* sink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-lifecycle-stale-metadata"),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: staleNoteThread,
+          },
+        ],
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.note,
+        "Keep the newer thread state",
+      );
+      assert.equal(storedMetadata?.event.type, "thread.metadata-updated");
+      if (storedMetadata?.event.type === "thread.metadata-updated") {
+        assert.equal(storedMetadata.event.payload.note, "Keep the newer thread state");
+      }
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({

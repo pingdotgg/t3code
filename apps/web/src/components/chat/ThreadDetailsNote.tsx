@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { PencilIcon, StickyNoteIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { useEnvironmentScope } from "../../state/session";
@@ -29,18 +30,22 @@ const NOTE_TEXT_CLASS = "line-clamp-3 min-w-0 flex-1 font-normal break-words whi
 
 /** Key it by thread: the panel outlives thread switches, and a draft must not. */
 export function ThreadDetailsNote({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const gt = useGT();
   const canEdit = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   // Null while reading; a string is the text being edited.
   const [draft, setDraft] = useState<string | null>(null);
-  const { note, save, beginEdit } = useThreadNoteSave(threadRef, canEdit, setDraft);
-  const unsavedRef = useRef<{ text: string; save: (text: string) => void } | null>(null);
+  const unsavedRef = useRef<{ text: string | null; save: (text: string) => void } | null>(null);
+  const { note, save, beginEdit, changeDraft } = useThreadNoteSave(threadRef, canEdit, (text) => {
+    setDraft(text);
+    if (unsavedRef.current) unsavedRef.current.text = text;
+  });
   const hasNote = normalizeThreadNote(note) !== null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves an edit still open when the section unmounts (panel closed by keyboard, density change), where no blur fires
   useEffect(
     () => () => {
       const unsaved = unsavedRef.current;
-      if (unsaved) unsaved.save(unsaved.text);
+      if (unsaved?.text != null) unsaved.save(unsaved.text);
     },
     [],
   );
@@ -50,7 +55,7 @@ export function ThreadDetailsNote({ threadRef }: { readonly threadRef: ScopedThr
   return (
     <ThreadDetailsSection
       headingId="thread-details-note-heading"
-      title="Thread note"
+      title={gt("Thread note")}
       showHeading={false}
     >
       <div className="flex flex-col">
@@ -58,12 +63,13 @@ export function ThreadDetailsNote({ threadRef }: { readonly threadRef: ScopedThr
           <Textarea
             size="sm"
             rows={4}
-            aria-label="Thread note"
-            placeholder="Add a note for this thread…"
+            aria-label={gt("Thread note")}
+            placeholder={gt("Add a note for this thread…")}
             maxLength={THREAD_NOTE_MAX_LENGTH}
             ref={focusAtEnd}
             value={draft}
             onChange={(event) => {
+              changeDraft();
               setDraft(event.currentTarget.value);
               unsavedRef.current = { text: event.currentTarget.value, save };
             }}
@@ -72,12 +78,13 @@ export function ThreadDetailsNote({ threadRef }: { readonly threadRef: ScopedThr
               // Escape cancels the edit; it must not also close the details popover.
               event.preventDefault();
               event.stopPropagation();
-              unsavedRef.current = null;
+              changeDraft();
+              if (unsavedRef.current) unsavedRef.current.text = null;
               setDraft(null);
             }}
             onBlur={(event) => {
               save(event.currentTarget.value);
-              unsavedRef.current = null;
+              if (unsavedRef.current) unsavedRef.current.text = null;
               // Leaving the window keeps the editor open, so coming back continues the edit.
               if (document.hasFocus()) setDraft(null);
             }}
@@ -94,8 +101,12 @@ export function ThreadDetailsNote({ threadRef }: { readonly threadRef: ScopedThr
           >
             <StickyNoteIcon className={`${THREAD_DETAILS_PANEL_ICON_CLASS} mt-px`} aria-hidden />
             <span className={NOTE_TEXT_CLASS}>
-              {hasNote ? <span className="sr-only">Edit thread note: </span> : null}
-              {hasNote ? note : "Add note"}
+              {hasNote ? (
+                <span className="sr-only">
+                  <T>Edit thread note:</T>{" "}
+                </span>
+              ) : null}
+              {hasNote ? note : gt("Add note")}
             </span>
             <PencilIcon
               aria-hidden

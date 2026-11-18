@@ -1540,8 +1540,8 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:edit-thread-note",
       searchTerms: ["note", "memo", "thread note", "remember"],
-      title: "Edit thread note",
-      description: "Add a private note to this thread",
+      title: gt("Edit thread note"),
+      description: gt("Add a private note to this thread"),
       icon: <StickyNoteIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openThreadNote(threadRef);

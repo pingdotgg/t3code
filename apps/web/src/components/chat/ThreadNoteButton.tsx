@@ -7,6 +7,7 @@ import {
 import { Atom } from "effect/reactivity";
 import { StickyNoteIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { Button } from "../ui/button";
@@ -38,14 +39,18 @@ export function ThreadNoteButton({
   readonly threadRef: ScopedThreadRef;
   readonly canEdit: boolean;
 }) {
+  const gt = useGT();
   const openThread = useAtomValue(threadNoteOpenAtom);
   const open =
     openThread !== null &&
     openThread.environmentId === threadRef.environmentId &&
     openThread.threadId === threadRef.threadId;
+  const unsavedRef = useRef<{ text: string | null; save: (text: string) => void } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the shared popover owner when navigating away from this thread
   useEffect(
     () => () => {
+      const unsaved = unsavedRef.current;
+      if (unsaved?.text != null) unsaved.save(unsaved.text);
       const current = appAtomRegistry.get(threadNoteOpenAtom);
       if (
         current?.environmentId === threadRef.environmentId &&
@@ -57,11 +62,16 @@ export function ThreadNoteButton({
   );
   // Null means untouched, so a popover opened from the command palette shows the current note.
   const [draft, setDraft] = useState<string | null>(null);
-  const { note, save, beginEdit } = useThreadNoteSave(threadRef, canEdit, (unsaved) => {
-    // Reopen with the unsaved text so a failed save never loses it.
-    setDraft(unsaved);
-    openThreadNote(threadRef);
-  });
+  const { note, save, beginEdit, changeDraft } = useThreadNoteSave(
+    threadRef,
+    canEdit,
+    (unsaved) => {
+      // Reopen with the unsaved text so a failed save never loses it.
+      setDraft(unsaved);
+      if (unsavedRef.current) unsavedRef.current.text = unsaved;
+      openThreadNote(threadRef);
+    },
+  );
   const text = draft ?? note;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -76,6 +86,8 @@ export function ThreadNoteButton({
           return;
         }
         if (eventDetails.reason !== "escape-key") save(text);
+        else changeDraft();
+        if (unsavedRef.current) unsavedRef.current.text = null;
         setDraft(null);
         closeThreadNote();
       }}
@@ -88,7 +100,7 @@ export function ThreadNoteButton({
                 <Button
                   variant="ghost-muted"
                   size="icon-xs"
-                  aria-label={hasNote ? "Thread note (has note)" : "Thread note"}
+                  aria-label={hasNote ? gt("Thread note (has note)") : gt("Thread note")}
                   data-has-note={hasNote || undefined}
                   className="relative shrink-0"
                 />
@@ -105,7 +117,9 @@ export function ThreadNoteButton({
             />
           ) : null}
         </TooltipTrigger>
-        <TooltipPopup side="top">Thread note</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Thread note</T>
+        </TooltipPopup>
       </Tooltip>
       {open ? (
         <PopoverPopup
@@ -122,28 +136,36 @@ export function ThreadNoteButton({
         >
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1">
-              <PopoverTitle>Thread note</PopoverTitle>
+              <PopoverTitle>
+                <T>Thread note</T>
+              </PopoverTitle>
               <p className="text-muted-foreground text-xs">
-                Only visible to you. Not sent to the agent.
+                <T>Only visible to you. Not sent to the agent.</T>
               </p>
             </div>
             <Textarea
               size="sm"
               rows={5}
-              aria-label="Thread note"
-              placeholder="Add a note for this thread…"
+              aria-label={gt("Thread note")}
+              placeholder={gt("Add a note for this thread…")}
               ref={textareaRef}
               maxLength={THREAD_NOTE_MAX_LENGTH}
               readOnly={!canEdit}
               value={text}
-              onChange={(event) => setDraft(event.currentTarget.value)}
+              onChange={(event) => {
+                changeDraft();
+                setDraft(event.currentTarget.value);
+                unsavedRef.current = { text: event.currentTarget.value, save };
+              }}
               onBlur={(event) => {
                 // Closing the popover saves; this covers leaving the window with it open.
                 if (!document.hasFocus()) save(event.currentTarget.value);
               }}
             />
             <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs">
-              <span>{canEdit ? "Saves when you click away · Esc to cancel" : "Read only"}</span>
+              <span>
+                {canEdit ? gt("Saves when you click away · Esc to cancel") : gt("Read only")}
+              </span>
               {text.length > COUNTER_THRESHOLD ? (
                 <span className="tabular-nums">
                   {text.length.toLocaleString()} / {THREAD_NOTE_MAX_LENGTH.toLocaleString()}

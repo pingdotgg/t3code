@@ -4,6 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { normalizeThreadNote, type ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 import { useQuietThreadProjection } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -25,46 +27,50 @@ export function useThreadNoteSave(
   });
   const submittedRef = useRef<string | null | undefined>(undefined);
   const editGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const baselineRef = useRef(normalizeThreadNote(note));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates asynchronous save recovery when this thread's editor unmounts
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       editGenerationRef.current += 1;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const save = (text: string) => {
     if (!canEdit) return;
     const next = normalizeThreadNote(text);
     const current =
       submittedRef.current === undefined ? normalizeThreadNote(note) : submittedRef.current;
-    if (next === current) return;
+    if (next === current || (submittedRef.current === undefined && next === baselineRef.current))
+      return;
     submittedRef.current = next;
     const editGeneration = editGenerationRef.current;
     void setThreadNote({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, note: next },
     }).then((result) => {
-      if (
-        result._tag !== "Failure" ||
-        isAtomCommandInterrupted(result) ||
-        editGeneration !== editGenerationRef.current
-      )
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result) || !mountedRef.current)
         return;
       const error = squashAtomCommandFailure(result);
-      submittedRef.current = undefined;
-      onFailure(text);
+      if (submittedRef.current === next) submittedRef.current = undefined;
+      if (editGeneration === editGenerationRef.current) onFailure(text);
       toastManager.add({
         type: "error",
-        title: "Failed to save thread note",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: m(msg("Failed to save thread note")),
+        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
       });
     });
   };
   const beginEdit = () => {
     editGenerationRef.current += 1;
     submittedRef.current = undefined;
+    baselineRef.current = normalizeThreadNote(note);
   };
-  return { note, save, beginEdit };
+  const changeDraft = () => {
+    editGenerationRef.current += 1;
+  };
+  return { note, save, beginEdit, changeDraft };
 }
