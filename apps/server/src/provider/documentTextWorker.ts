@@ -496,7 +496,8 @@ function* rtf(source: string): Generator<string, void> {
         } else if (control === "u") {
           if (!hidden()) yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
-        } else if (!hidden() && ["par", "line", "row"].includes(control)) yield "\n";
+        } else if (!hidden() && ["par", "line", "row", "sect", "page", "column"].includes(control))
+          yield "\n";
         else if (!hidden() && ["tab", "cell"].includes(control)) yield "\t";
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
