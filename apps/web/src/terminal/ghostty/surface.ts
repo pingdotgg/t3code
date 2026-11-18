@@ -369,7 +369,8 @@ function isTerminalPasteShortcut(
   if (!keys.has("v")) return false;
   if (isMacPlatform(platform)) return event.metaKey;
   // Windows terminals paste on Ctrl+V; Linux keeps it for the shell's quoted insert.
-  return event.ctrlKey && (isWindowsPlatform(platform) || event.shiftKey);
+  if (isWindowsPlatform(platform)) return event.ctrlKey && !event.altKey;
+  return event.ctrlKey && event.shiftKey;
 }
 
 // X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.
