@@ -47,7 +47,7 @@ export function UsageLimitRecoveryCard({
     scheduled &&
     resetAt &&
     thread.snoozedUntil &&
-    Date.parse(thread.snoozedUntil) > Date.parse(resetAt)
+    (recovery?.resetEarly || Date.parse(thread.snoozedUntil) > Date.parse(resetAt))
       ? thread.snoozedUntil
       : resetAt;
   const [copied, setCopied] = useState(false);
