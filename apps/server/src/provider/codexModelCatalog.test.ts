@@ -55,6 +55,7 @@ describe("applyCodexModelCatalog", () => {
       { slug: "gpt-next", name: "GPT Next", badge: "new", minVersion: "1.2.0" },
     ]);
     for (const result of [
+      applyCodexModelCatalog({ ...draft("1.1.9"), requiresListedModel: true }, catalog),
       applyCodexModelCatalog(draft("1.2.0"), catalog),
       applyCodexModelCatalog(draft("1.1.9", [model({ slug: "openai.gpt-next" })]), catalog),
       applyCodexModelCatalog(draft(null), catalog),

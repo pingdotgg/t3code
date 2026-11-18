@@ -69,6 +69,7 @@ export type InferenceConsumer = typeof InferenceConsumer.Type;
 export const InferenceGrantInput = Schema.Struct({
   ...InferenceConsumer.fields,
   automatic: Schema.optionalKey(Schema.Boolean),
+  capability: Schema.optionalKey(Schema.Literal("traex")),
 });
 export type InferenceGrantInput = typeof InferenceGrantInput.Type;
 
@@ -107,6 +108,7 @@ export const InferenceProxyStatus = Schema.Struct({
   ),
   availableDrivers: Schema.Array(InferenceDriver),
   consumers: Schema.Array(InferenceConsumer),
+  traexAvailable: Schema.optionalKey(Schema.Boolean),
   routes: Schema.Array(Schema.Struct({ instanceId: ProviderInstanceId, label: Schema.String })),
 });
 export type InferenceProxyStatus = typeof InferenceProxyStatus.Type;
@@ -212,7 +214,16 @@ export const InferenceProviderFields = {
     Schema.annotateKey({ providerSettingsForm: { hidden: true }, settingsMachineLocal: true }),
   ),
 };
+export const TRAEX_BRIDGE_INSTANCE_ID = ProviderInstanceId.make("codex_traex");
+export const TRAEX_BRIDGE_BASE_URL = "http://127.0.0.1:8317/v1";
+const TRAEX_BRIDGE_PROVIDER = `model_providers.traex={name="traex-bridge",base_url="${TRAEX_BRIDGE_BASE_URL}",wire_api="responses",supports_websockets=false,auth={command="sh",args=["-c","cat ~/.traex-bridge/api-key"],timeout_ms=1000}}`;
+
+export const TRAEX_BRIDGE_CODEX_LAUNCH_ARGS = `-c 'model_provider="traex"' -c '${TRAEX_BRIDGE_PROVIDER}'`;
+
 const hasLaunchArgs = Schema.is(Schema.Struct({ launchArgs: Schema.optionalKey(Schema.String) }));
+export function isStockTraexBridge(config: unknown): boolean {
+  return hasLaunchArgs(config) && config.launchArgs?.trim() === TRAEX_BRIDGE_CODEX_LAUNCH_ARGS;
+}
 const hasServerUrl = Schema.is(Schema.Struct({ serverUrl: Schema.NonEmptyString }));
 export const isCustomInferenceBackend = (instance: ProviderInstanceConfig) =>
   !isInferenceRoutingEnabled(instance.config) &&
@@ -242,7 +253,7 @@ export function isInferenceAccountReplaced(
 
 export const InferenceRouteInput = Schema.Struct({
   grant: InferenceRouteGrant,
-  driver: InferenceDriver,
+  driver: Schema.Union([InferenceDriver, Schema.Literal("traex")]),
   hostLabel: Label,
   connection: Schema.optionalKey(InferenceHostConnection),
   preserveProviderEnabled: Schema.optionalKey(Schema.Boolean),

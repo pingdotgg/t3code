@@ -1,4 +1,4 @@
-import { InferenceProviderFields } from "./inferenceProxy.ts";
+import { InferenceProviderFields, TRAEX_BRIDGE_INSTANCE_ID } from "./inferenceProxy.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -1726,9 +1726,11 @@ const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new S
   ),
 );
 
-const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(
-  ["codex", "claudeAgent"].map((instanceId) => ProviderInstanceId.make(instanceId)),
-);
+const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set([
+  ProviderInstanceId.make("codex"),
+  ProviderInstanceId.make("claudeAgent"),
+  TRAEX_BRIDGE_INSTANCE_ID,
+]);
 
 export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>
   DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId);

@@ -148,7 +148,11 @@ const handler = Effect.gen(function* () {
       ? grantDenied()
       : HttpServerResponse.jsonUnsafe(health, { headers: { "cache-control": "no-store" } });
   }
-  const canReplay = yield* host.hasRoutePool(key, targetPath.environmentId, targetPath.driver);
+  if (targetPath.traex === "resolve" && !(yield* host.hasTraexConsumerKey(key)))
+    return grantDenied();
+  const canReplay = targetPath.traex
+    ? targetPath.traex === "resolve"
+    : yield* host.hasRoutePool(key, targetPath.environmentId, targetPath.driver);
   const declaredLength = request.headers["content-length"];
   const length = Number(declaredLength);
   const buffered =
@@ -171,13 +175,15 @@ const handler = Effect.gen(function* () {
     request.headers["x-session-affinity"] ??
     metadata.promptCacheKey;
   const affinityKey = sessionRouteKey(key, targetPath.driver, model, session);
-  const candidates = yield* host.routeCandidates(
-    key,
-    targetPath.environmentId,
-    targetPath.driver,
-    model,
-    targetPath.path === "/v1/models",
-  );
+  const candidates = targetPath.traex
+    ? yield* host.traexCandidates(targetPath.traex, key, model, targetPath.path === "/v1/models")
+    : yield* host.routeCandidates(
+        key,
+        targetPath.environmentId,
+        targetPath.driver,
+        model,
+        targetPath.path === "/v1/models",
+      );
   if (candidates === null) return grantDenied();
   if (!candidates.length)
     return HttpServerResponse.jsonUnsafe(

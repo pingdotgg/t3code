@@ -65,12 +65,14 @@ export function getProviderClient(driver: string | null | undefined) {
 }
 
 export function unavailableModelReason(
-  provider: Pick<ServerProvider, "models"> | null | undefined,
+  provider: Pick<ServerProvider, "models" | "requiresListedModel"> | null | undefined,
   slug: string,
 ): string | null {
   const model = provider?.models.find(
     (entry) => entry.slug === slug || entry.aliases?.includes(slug),
   );
+  if (provider?.requiresListedModel && !model)
+    return "This model is no longer available from this provider. Choose another model.";
   return model?.isUnavailable
     ? `${model.name} is temporarily unavailable. Choose another model or try again later.`
     : null;

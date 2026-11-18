@@ -385,6 +385,7 @@ export const CodexDriver: ProviderDriver<
           { concurrent: true },
         ),
       ),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

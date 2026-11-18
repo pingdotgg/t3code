@@ -402,6 +402,24 @@ describe("command permissions", () => {
     ]);
     expect(planInferenceFallbacks(host, { ...status, sharing: false }, [consumer])).toEqual([]);
     const config = consumer.serverConfig!;
+    const traex = { ...status, traexAvailable: true, availableDrivers: [], running: false };
+    const bridgeConsumer = {
+      ...consumer,
+      serverConfig: {
+        ...config,
+        environment: {
+          ...config.environment,
+          capabilities: { ...config.environment?.capabilities, traexPeerRouting: true },
+        },
+      },
+    };
+    expect(
+      planInferenceFallbacks(host, traex, [bridgeConsumer]).map(({ driver }) => driver),
+    ).toEqual(["traex"]);
+    expect(planInferenceFallbacks(host, traex, [consumer])).toEqual([]);
+    expect(planInferenceFallbacks(host, { ...traex, sharing: false }, [bridgeConsumer])).toEqual(
+      [],
+    );
     const instanceId = ProviderInstanceId.make("claudeAgent");
     const instance = config.settings.providerInstances[instanceId]!;
     if (!isInferenceProviderConfig(instance.config)) throw new Error("Expected a configured route");

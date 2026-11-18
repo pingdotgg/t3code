@@ -1,3 +1,4 @@
+import { traexCatalogRoute } from "./codexEndpointModels.ts";
 import { InferenceProxy } from "../inference/InferenceProxy.ts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { vi } from "vite-plus/test";
@@ -586,7 +587,7 @@ it.layer(
     layerTestNodeServices,
     ServerSettingsModule.layerTest(),
     layerTestHttpClient,
-    Layer.mock(InferenceProxy)({}),
+    Layer.mock(InferenceProxy)({ refreshModelCatalog: () => Effect.void }),
   ),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
@@ -743,6 +744,62 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+      }),
+    );
+
+    it.effect("only offers models verified by the Traex bridge", () =>
+      Effect.gen(function* () {
+        const url = "https://bridge.example/v1";
+        const settings = decodeCodexSettings({ setupMode: "existing", customModels: ["absent"] });
+        const check = (response: Response) =>
+          checkCodexProviderStatus(
+            settings,
+            () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  traexRoute: traexCatalogRoute({
+                    model_provider: "traex",
+                    model_providers: { traex: { base_url: url, env_key: "BRIDGE_KEY" } },
+                  }),
+                }),
+              ),
+            { BRIDGE_KEY: "bridge-token" },
+          ).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                assert.strictEqual(request.url, url + "/models");
+                assert.strictEqual(request.headers.authorization, "Bearer bridge-token");
+                return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+              }),
+            ),
+          );
+        const online = yield* check(
+          Response.json({ data: [{ id: "traex/architect", name: "Architect" }] }),
+        );
+        assert.deepStrictEqual(
+          online.models.map(({ slug, name }) => [slug, name]),
+          [["traex/architect", "Architect"]],
+        );
+        assert.strictEqual(online.status, "ready");
+        assert.isTrue(online.requiresListedModel);
+        for (const response of [new Response(null, { status: 503 }), Response.json({ data: [] })]) {
+          const offline = yield* check(response);
+          assert.deepStrictEqual(offline.models, []);
+          assert.strictEqual(offline.availability, "unavailable");
+          assert.isTrue(offline.requiresListedModel);
+          const identity = {
+            driver: ProviderDriverKind.make("codex"),
+            instanceId: ProviderInstanceId.make("traex"),
+          };
+          assert.deepStrictEqual(
+            ProviderRegistry.mergeProviderSnapshot(
+              { ...online, ...identity },
+              { ...offline, ...identity },
+            ).models,
+            [],
+          );
+        }
       }),
     );
 
@@ -2451,6 +2508,7 @@ it.layer(
         const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
         const updateEvents = yield* Ref.make<ReadonlyArray<string>>([]);
         const hookFails = yield* Ref.make(false);
+        const endpointOnline = yield* Ref.make(false);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -2458,6 +2516,7 @@ it.layer(
             const provider = {
               instanceId,
               driver,
+              requiresListedModel: name === "codex_first",
               status: "ready",
               enabled: true,
               installed: true,
@@ -2472,6 +2531,15 @@ it.layer(
             const workspaceScans = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
+            const endpointSnapshot = Ref.get(endpointOnline).pipe(
+              Effect.map((online): ServerProvider => ({
+                ...provider,
+                models: online
+                  ? [{ slug: "traex-local", name: "Traex", isCustom: false, capabilities: null }]
+                  : [],
+                ...(online ? {} : { availability: "unavailable" }),
+              })),
+            );
             const instance = {
               instanceId,
               driverKind: driver,
@@ -2491,7 +2559,7 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
+                getSnapshot: name === "codex_first" ? endpointSnapshot : Effect.succeed(provider),
                 refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
@@ -2634,9 +2702,27 @@ it.layer(
             [second.instance.instanceId]: [],
             [unrelated.instance.instanceId]: ["/other-workspace"],
           });
-          // An opened model picker probes only when the manifest differs from what the last pass saw.
+          const endpointProbesBefore = yield* Ref.get(first.probes);
           const probesBefore = yield* Ref.get(second.probes);
+          const endpointModels = registry.getProviders.pipe(
+            Effect.map((providers) =>
+              providers
+                .find((provider) => provider.instanceId === first.instance.instanceId)
+                ?.models.map((model) => model.slug),
+            ),
+          );
+          assert.deepStrictEqual(yield* endpointModels, []);
+          yield* Ref.set(endpointOnline, true);
+          yield* Effect.all([registry.refreshModelCatalog, registry.refreshModelCatalog], {
+            concurrency: 2,
+          });
+          assert.strictEqual(yield* Ref.get(first.probes), endpointProbesBefore + 1);
+          assert.deepStrictEqual(yield* endpointModels, ["traex-local"]);
+          yield* TestClock.adjust("5 seconds");
+          yield* Ref.set(endpointOnline, false);
           yield* registry.refreshModelCatalog;
+          assert.strictEqual(yield* Ref.get(first.probes), endpointProbesBefore + 2);
+          assert.deepStrictEqual(yield* endpointModels, []);
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore);
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "2.0.0");
           yield* Ref.set(manifest, {

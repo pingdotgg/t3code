@@ -37,6 +37,7 @@ import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import type * as PortScanner from "../preview/PortScanner.ts";
+import * as TraexProviderRoutes from "../inference/TraexProviderRoutes.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
@@ -233,6 +234,7 @@ export const layer: Layer.Layer<
       serverSettings.managedPolicy,
       yield* HostProcess.Environment,
     );
+    const traex = yield* TraexProviderRoutes.TraexProviderRoutes;
     const initialConfigMap =
       initialSettings === undefined
         ? ({} as ProviderInstanceConfigMap)
@@ -242,6 +244,7 @@ export const layer: Layer.Layer<
     const layerMutable = ProviderInstanceRegistry.layer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
+      prepareConfigMap: (map) => traex.apply(map, serverSettings.managedPolicy),
       blockedReason: (driver) =>
         ManagedProviders.disallowedDriverReason(serverSettings.managedPolicy, driver),
     }).pipe(
@@ -256,7 +259,7 @@ export const layer: Layer.Layer<
       Layer.provideMerge(layerMutable),
     );
   }),
-) as Layer.Layer<
+).pipe(Layer.provide(TraexProviderRoutes.layer)) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,

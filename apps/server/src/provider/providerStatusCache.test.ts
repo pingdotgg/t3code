@@ -138,7 +138,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     assert.isUndefined(hydrate("2026-04-11T12:00:00.000Z"));
   });
 
-  it("ignores stale cached enabled state when the provider is now disabled", () => {
+  it("ignores stale cached status when the provider is disabled or unavailable", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",
       message: "Cached ready status",
@@ -152,14 +152,19 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       message: "Codex is disabled in T3 Code settings.",
     });
 
-    assert.deepStrictEqual(
-      hydrateCachedProvider({
-        cachedProvider: cachedCodex,
-        fallbackProvider: disabledFallback,
-        nowMs: NOW_MS,
-      }),
+    for (const fallbackProvider of [
       disabledFallback,
-    );
+      makeProvider(CODEX_DRIVER, { status: "warning", availability: "unavailable" }),
+    ]) {
+      assert.strictEqual(
+        hydrateCachedProvider({
+          cachedProvider: cachedCodex,
+          fallbackProvider,
+          nowMs: NOW_MS,
+        }),
+        fallbackProvider,
+      );
+    }
   });
 
   it("rejects cached snapshots that are not correlated to the fallback instance", () => {
