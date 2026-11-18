@@ -241,9 +241,13 @@ export function createChild(options: ChildOptions): Child {
           ...(result.at ? { at: result.at } : {}),
         }),
     };
-    const started = runs.start(id, task, session, limits);
-    if (!started.ok) return reply({ id, kind: "error", error: started.error });
+    // An act can ask for its grant before runs.start returns, and that frame must name this task.
     taskId = id;
+    const started = runs.start(id, task, session, limits);
+    if (!started.ok) {
+      taskId = null;
+      return reply({ id, kind: "error", error: started.error });
+    }
     reply({ id, kind: "started", taskId: id });
     settled = started.finished.then((outcome) => {
       if (taskId === id) taskId = null;

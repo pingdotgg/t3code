@@ -279,6 +279,8 @@ export class ComputerUse {
       // question, with the decider told so: steering instead of retrying.
       const acted = new Set<string>();
       const avoidBy = new Map<string, Map<string, string>>();
+      const address = webAddress(navigationText(task.goal));
+      let opened = false;
       for (let step = 0; step < run.maxSteps; step += 1) {
         this.checkpoint(run);
         const screen = await backend.observe({ signal: run.signal });
@@ -289,6 +291,20 @@ export class ComputerUse {
         // Only going to an address: done once the page on screen is on that host, rather than leaving it to the decider.
         if (pureNavigation(task.goal) && navigationReached(task.goal, screen))
           return end("done", "");
+        // The address the goal names is opened directly, once: a small decider does not reliably pick the address bar.
+        if (address && this.deps.urls && !opened && !navigationReached(task.goal, screen)) {
+          opened = true;
+          await this.authorize(
+            run,
+            { app: screen.app, title: screen.title, ...(screen.url ? { url: screen.url } : {}) },
+            { kind: "open_url", url: address },
+          );
+          await this.beforeTouching(run);
+          const browser = await this.deps.urls.open(address);
+          this.record(run, `opened ${address} in ${browser}`);
+          await this.sleep(this.settleMs);
+          continue;
+        }
         const match = quoted.find((name) => !clicked.has(name));
         const direct = match ? matchControl(screen.controls, match) : null;
         if (match && direct) {
@@ -1163,6 +1179,13 @@ export function navigationText(goal: string): string | null {
   return found ? found.replace(/[.,;:!?)]+$/, "") : null;
 }
 
+/** An address as a goal wrote it, made into a URL a browser opens: "example.com" → "https://example.com". */
+function webAddress(written: string | null): string | null {
+  if (!written) return null;
+  if (/^https?:\/\//i.test(written)) return written;
+  return `${/^(?:localhost|\d)/i.test(written) ? "http" : "https"}://${written}`;
+}
+
 const FILE_EXTENSIONS = String.raw`(?:txt|md|pdf|png|jpe?g|gif|svg|webp|heic|docx?|xlsx?|pptx?|csv|json|ya?ml|toml|js|ts|tsx|jsx|mjs|py|rb|go|rs|sh|zip|dmg|pkg|mov|mp3|mp4|wav|log|key|pages|numbers|html?|css|swift|java)`;
 
 /** What a screen shows, for telling whether an action changed it: title, page, controls and text. */
@@ -1313,11 +1336,19 @@ function matchControl(controls: ScreenControl[], name: string): ScreenControl | 
 export function pureNavigation(goal: string): boolean {
   const address = navigationText(goal);
   if (!address) return false;
-  const rest = goal.replace(address, " ");
-  return !/\b(then|and then|scroll|type|write|send|message|search|find|fill|enter|reply|draft|play|pause|press|watch|mute|click|tap|select|log ?in|sign|buy|order|pay|download|upload|read|copy|paste|book|subscribe|post|share|delete|check)\b/i.test(
-    rest,
-  );
+  // Pure only when nothing but the address and words about getting there is left: any other word is more to do.
+  return goal
+    .replace(address, " ")
+    .toLowerCase()
+    .split(/[^a-z']+/)
+    .every((word) => word === "" || NAVIGATION_WORDS.has(word));
 }
+
+const NAVIGATION_WORDS = new Set(
+  "a an the to in on of my your user's users and please go navigate browse head get take bring me switch open visit load pull up show launch new tab window page site website web url address link browser default it there chrome google safari firefox edge arc brave opera".split(
+    " ",
+  ),
+);
 
 function plainClickGoal(task: ComputerTask) {
   // Going to a site is done when the page is there, not when a tab is clicked (a blank tab once counted as done).

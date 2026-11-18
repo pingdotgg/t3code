@@ -39,6 +39,7 @@ function machine(): Mac {
     dock: null,
     apps: null,
     controls: new FakeControls(),
+    urls: { open: async () => "Safari" },
   };
 }
 
@@ -156,6 +157,22 @@ describe("the helper child", () => {
       action: "click",
       mode: "background",
     });
+
+    // An open_url act asks for its grant before its first await: the grant must still name the task.
+    parent.down({
+      id: "act_2",
+      kind: "start",
+      task: {
+        goal: "open https://example.com",
+        text: null,
+        act: { action: "open_url", url: "https://example.com" },
+      },
+    });
+    expect(
+      await parent.until(
+        (message) => message.kind === "authorize" && message.request.action.kind === "open_url",
+      ),
+    ).toMatchObject({ taskId: "act_2" });
   });
 
   it("refuses a second task while one runs, and reports what is running", async () => {

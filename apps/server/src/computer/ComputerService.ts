@@ -1131,7 +1131,11 @@ const make = Effect.gen(function* () {
     }
     const task = state.tasks.find((candidate) => candidate.id === input.taskId);
     if (task === undefined || task.kind !== "use" || task.hostId !== host.id) {
-      return { ok: false, denied: "That task is not this computer's running task." } as const;
+      return {
+        ok: false,
+        denied:
+          "Ada lost track of this task, so the step was not done. This is an internal error, not a denial.",
+      } as const;
     }
     if (task.status !== "running") {
       return { ok: false, denied: "It was stopped." } as const;

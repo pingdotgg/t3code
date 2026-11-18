@@ -7,6 +7,7 @@ import {
   ComputerUseRuns,
   navigationText,
   navigationUnmet,
+  pureNavigation,
   quotedTargets,
   resolveTab,
   siteNamed,
@@ -730,6 +731,48 @@ describe("ComputerUse", () => {
         { kind: "click", ref: "0.1" },
         { kind: "click", ref: "0.2" },
       ]);
+    });
+
+    it("opens the address a goal names itself, instead of leaving the address bar to the decider (TestFlight run, 2026-11-18)", async () => {
+      let url = "https://dev-box.example.ts.net/storage";
+      const page: ScreenBackend = {
+        kind: "desktop",
+        observe: async () => ({
+          backend: "desktop",
+          app: "Google Chrome",
+          title: url.includes("appstoreconnect") ? "Apps - App Store Connect" : "Agent Storage",
+          url,
+          controls: [control("0.7", "textbox", "Address and search bar")],
+        }),
+        act: async () => undefined,
+      };
+      const server = allowAll();
+      const { computer, asked } = computerWith(
+        [{ surface: choice("current") }, { next: choice("done") }],
+        { page, tabs: null },
+        server.authorize,
+        {
+          urls: {
+            open: async (address) => {
+              url = address;
+              return "Google Chrome";
+            },
+          },
+        },
+      );
+      const outcome = await computer.run({
+        goal: "Open https://appstoreconnect.apple.com/apps in the user's default browser. Go to the TestFlight section and report the latest build.",
+        text: null,
+      });
+      expect(outcome).toMatchObject({ status: "done" });
+      expect(url).toBe("https://appstoreconnect.apple.com/apps");
+      expect(server.requests.map((request) => request.action)).toContainEqual({
+        kind: "open_url",
+        url: "https://appstoreconnect.apple.com/apps",
+      });
+      // The decider's first look at the page is after it opened.
+      expect(asked).toHaveLength(2);
+      expect(asked[1]?.state).toMatchObject({ screen: { url } });
     });
 
     it("a navigation goal is not done when a tab is clicked, nor until the page on screen is the one asked for (Windows run, 2026-10-25)", async () => {
@@ -1569,5 +1612,11 @@ describe("navigationText", () => {
     expect(navigationText("open Chrome and go to app.t3.codes")).toBe("app.t3.codes");
     expect(navigationText("go to localhost:3000/settings")).toBe("localhost:3000/settings");
     expect(navigationText("open notes.txt")).toBeNull();
+  });
+
+  it("calls a goal navigation only when nothing is left to do on the page", () => {
+    expect(pureNavigation("open Chrome and go to example.com")).toBe(true);
+    expect(pureNavigation("Open https://example.com in the user's default browser")).toBe(true);
+    expect(pureNavigation("go to example.com and report the latest build")).toBe(false);
   });
 });

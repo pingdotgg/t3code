@@ -46,7 +46,7 @@ function nextStep(task: ComputerTaskView): string {
         ? "It is still running. Call computer_status to follow it."
         : "It is waiting for the user to approve this step in Ada. You cannot approve it: wait for them, or tell them what it is waiting for.";
     case "blocked":
-      return "The user denied it, so it has ended. Do not start it again unless the user asks.";
+      return "It was not allowed, so it has ended. `task.reason` says why: tell the user that reason as given, without calling it their denial unless it says so. Do not start it again unless the user asks.";
     case "unavailable":
       return "The computer could not do it. Tell the user what it said.";
     case "done":

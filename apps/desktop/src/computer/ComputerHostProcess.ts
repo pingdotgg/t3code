@@ -396,7 +396,15 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
       write(
         message.kind === "decide"
           ? { id: message.id, kind: "answers", answers: {} }
-          : { id: message.id, kind: "grant", grant: { ok: false, denied: "That task has ended." } },
+          : {
+              id: message.id,
+              kind: "grant",
+              grant: {
+                ok: false,
+                denied:
+                  "Ada lost track of this task, so the step was not done. This is an internal error, not a denial.",
+              },
+            },
       );
       return;
     }
