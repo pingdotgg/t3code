@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { useAtomMount } from "@effect/atom-react";
+import { T, useGT, Var } from "gt-react";
 import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -49,9 +50,6 @@ import {
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
-const platformLabel = (platform: DevicePlatform) =>
-  platform === "ios" ? "iOS Simulators" : "Android Emulators";
-
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
@@ -63,6 +61,7 @@ export function DevicePanel(props: {
   readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
+  const gt = useGT();
   const { state, loaded, error: stateError, refresh: refreshState } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
@@ -257,8 +256,10 @@ export function DevicePanel(props: {
           <DeviceHostUpdates state={state} environmentId={environmentId} />
           {bootingDevices.length > 0 ? (
             <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-              Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
-              minute.
+              <T>
+                Starting <Var>{bootingDevices.map((device) => device.name).join(", ")}</Var>… This
+                can take a minute.
+              </T>
             </div>
           ) : null}
           {holders.map((holder) => (
@@ -279,7 +280,7 @@ export function DevicePanel(props: {
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
               device={activeDevice}
-              hostLabel={activeHost?.label ?? "Device host"}
+              hostLabel={activeHost?.label ?? gt("Device host")}
               hostKind={activeHost?.kind}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
@@ -291,10 +292,10 @@ export function DevicePanel(props: {
             />
           ) : loading ? (
             <DeviceLoadingView
-              name={pendingDevice?.name ?? "Devices"}
+              name={pendingDevice?.name ?? gt("Devices")}
               description={
                 pendingDevice
-                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? gt("Device host")} · ${pendingDevice.version}`
                   : ""
               }
               stage="opening"
@@ -302,17 +303,17 @@ export function DevicePanel(props: {
                 loadError ??
                 (pendingDevice
                   ? pendingDevice.booted
-                    ? "Opening device…"
-                    : "Starting device…"
+                    ? gt("Opening device…")
+                    : gt("Starting device…")
                   : state.hostStatus === "installing"
-                    ? (state.hostStatusDetail ?? "Installing device support…")
-                    : "Finding devices…")
+                    ? (state.hostStatusDetail ?? gt("Installing device support…"))
+                    : gt("Finding devices…"))
               }
               error={loadError !== null}
             >
               {loadError !== null ? (
                 <Button size="sm" variant="outline" onClick={refreshState}>
-                  Retry
+                  <T>Retry</T>
                 </Button>
               ) : null}
             </DeviceLoadingView>
@@ -332,8 +333,8 @@ export function DevicePanel(props: {
                       tabIndex={state.hostStatus === "failed" ? 0 : undefined}
                     >
                       {state.hostStatus === "failed"
-                        ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                        : "No simulators or emulators were found on this environment."}
+                        ? (state.hostStatusDetail ?? gt("The device hub failed to start."))
+                        : gt("No simulators or emulators were found on this environment.")}
                     </p>
                   </>
                 ) : null}
@@ -343,7 +344,11 @@ export function DevicePanel(props: {
                       <section key={group.platform} className="space-y-3">
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Smartphone className="size-4 shrink-0" />
-                          <h3 className="font-medium">{platformLabel(group.platform)}</h3>
+                          <h3 className="font-medium">
+                            {group.platform === "ios"
+                              ? gt("iOS Simulators")
+                              : gt("Android Emulators")}
+                          </h3>
                         </div>
                         <DiscoveryList>
                           {group.devices.map((device) => (
@@ -359,14 +364,18 @@ export function DevicePanel(props: {
                                   {device.name}
                                 </span>
                                 <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
                                 </span>
                               </div>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 disabled={pendingDeviceKey !== null}
-                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+                                aria-label={
+                                  device.booted
+                                    ? gt("Open {name}", { name: device.name })
+                                    : gt("Start {name}", { name: device.name })
+                                }
                                 onClick={() => void selectDevice(deviceKey(device))}
                               >
                                 {pendingDeviceKey === deviceKey(device) ? (
@@ -376,7 +385,9 @@ export function DevicePanel(props: {
                                 ) : (
                                   <Play />
                                 )}
-                                {device.booted ? "Open" : "Start"}
+                                {device.booted
+                                  ? gt("Open", { $context: "verb, opens a running device" })
+                                  : gt("Start", { $context: "verb, boots a device" })}
                               </Button>
                             </div>
                           ))}
@@ -390,8 +401,10 @@ export function DevicePanel(props: {
                 !state.devices.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                   <p className="max-w-sm text-xs">
-                    No Android virtual devices found. Create one in Android Studio's Device Manager,
-                    then refresh.
+                    <T>
+                      No Android virtual devices found. Create one in Android Studio's Device
+                      Manager, then refresh.
+                    </T>
                   </p>
                 ) : null}
                 {loaded && !hostBusy ? (
@@ -401,7 +414,7 @@ export function DevicePanel(props: {
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
-                    Refresh devices
+                    <T>Refresh devices</T>
                   </Button>
                 ) : null}
               </div>
@@ -455,6 +468,7 @@ function DeviceHolderNotice(props: {
 }
 
 function DeviceNotice(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
+  const gt = useGT();
   return (
     <div
       role="alert"
@@ -470,7 +484,7 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Dismiss device error"
+        aria-label={gt("Dismiss device error")}
         onClick={props.onDismiss}
       >
         <X />
@@ -485,6 +499,7 @@ function DeviceDiscoveryWarning(props: {
   readonly incompletePlatforms: readonly DevicePlatform[];
   readonly onRetry: () => Promise<unknown>;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [dismissedCause, setDismissedCause] = useState<string | null>(null);
@@ -503,9 +518,18 @@ function DeviceDiscoveryWarning(props: {
       <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
         <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
         <span className="min-w-0">
-          {platforms.length > 0
-            ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
-            : `Device discovery on ${props.label} reported a warning.`}
+          {platforms.length > 1
+            ? gt("{first} and {second} lists on {host} may be incomplete.", {
+                first: platforms[0],
+                second: platforms[1],
+                host: props.label,
+              })
+            : platforms.length === 1
+              ? gt("{platform} list on {host} may be incomplete.", {
+                  platform: platforms[0],
+                  host: props.label,
+                })
+              : gt("Device discovery on {host} reported a warning.", { host: props.label })}
         </span>
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -514,21 +538,21 @@ function DeviceDiscoveryWarning(props: {
             size="micro"
             variant="ghost"
             disabled={retrying}
-            aria-label={`Retry device discovery on ${props.label}`}
+            aria-label={gt("Retry device discovery on {host}", { host: props.label })}
             onClick={() => {
               setRetrying(true);
               void props.onRetry().finally(() => setRetrying(false));
             }}
           >
-            {retrying ? "Retrying…" : "Retry"}
+            {retrying ? gt("Retrying…") : gt("Retry")}
           </Button>
         ) : null}
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger
-            aria-label={`Details for ${props.label}`}
+            aria-label={gt("Details for {host}", { host: props.label })}
             render={<Button size="micro" variant="ghost" />}
           >
-            Details
+            <T>Details</T>
           </PopoverTrigger>
           <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
             <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
@@ -539,7 +563,7 @@ function DeviceDiscoveryWarning(props: {
         <Button
           size="icon-micro"
           variant="ghost"
-          aria-label={`Dismiss device warning for ${props.label}`}
+          aria-label={gt("Dismiss device warning for {host}", { host: props.label })}
           onClick={() => {
             setOpen(false);
             setDismissedCause(cause);
