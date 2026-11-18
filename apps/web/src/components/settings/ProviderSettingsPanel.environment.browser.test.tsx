@@ -565,6 +565,23 @@ describe("EnvironmentProviderSettings instance removal", () => {
       }),
     );
   });
+
+  it("offers Delete for a provider that Add provider created at its default id", async () => {
+    await setup();
+    const piId = ProviderInstanceId.make("pi");
+    const pi = ProviderDriverKind.make("pi");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [piId]: { driver: pi, enabled: true, displayName: "Pi" },
+      },
+    };
+    await setProviders([{ ...provider(), instanceId: piId, driver: pi }]);
+    await using _screen = await render(panel({ targetInstanceId: piId }));
+
+    await expect.element(page.getByText("Path to the Pi coding agent binary.")).toBeVisible();
+    expect(page.getByRole("button", { name: `Delete instance ${piId}` }).query()).not.toBeNull();
+  });
 });
 
 describe("EnvironmentProviderSettings health check interval", () => {
