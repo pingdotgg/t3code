@@ -325,5 +325,5 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         ),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );
