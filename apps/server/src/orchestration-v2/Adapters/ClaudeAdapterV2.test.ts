@@ -10417,6 +10417,148 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  describe("warm process after the session changed outside T3", () => {
+    const firstReply = "00000000-0000-4000-8000-000000000c01";
+    const secondReply = "00000000-0000-4000-8000-000000000c02";
+    const terminalPrompt = "00000000-0000-4000-8000-000000000c03";
+    const terminalReply = "00000000-0000-4000-8000-000000000c04";
+    const line = (entry: object) =>
+      `${JSON.stringify({ isSidechain: false, sessionId: WAKE_NATIVE_SESSION, ...entry })}\n`;
+    const entry = (
+      type: "user" | "assistant",
+      uuid: string,
+      parentUuid: string | null,
+      content: unknown,
+      extra?: object,
+    ) => line({ type, uuid, parentUuid, message: { role: type, content }, ...extra });
+    const t3Turn = (promptUuid: string) =>
+      entry("user", promptUuid, null, "Request 1") +
+      entry("assistant", firstReply, promptUuid, [{ type: "text", text: "Working." }]) +
+      entry("assistant", secondReply, firstReply, [{ type: "text", text: "Done." }]);
+    const terminalExchange =
+      entry("user", terminalPrompt, secondReply, "Typed in the terminal") +
+      entry("assistant", terminalReply, terminalPrompt, [{ type: "text", text: "Answered." }]);
+
+    // Streams one T3 turn of two reply blocks, writes the transcript, then starts the next turn.
+    const nextTurnAfter = Effect.fnUntraced(function* (input: {
+      readonly transcript: ((promptUuid: string) => string) | null;
+      readonly backgroundShell?: boolean;
+      readonly pinnedHead?: string;
+    }) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-stale-" });
+      const projectDir = path.join(configDir, "projects", "-workspace");
+      yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+        freshQueueOnReopen: true,
+      });
+      const providerThread =
+        input.pinnedHead === undefined
+          ? harness.providerThread
+          : {
+              ...harness.providerThread,
+              nativeConversationHeadRef: {
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeId: input.pinnedHead,
+                strength: "weak" as const,
+              },
+            };
+      const now = yield* DateTime.now;
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-stale-process:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      if (input.backgroundShell === true) yield* harness.offerAndWait(wakeTaskStarted);
+      yield* harness.offerAndWait(makeAssistantTextFrame({ uuid: firstReply, text: "Working." }));
+      yield* harness.offerAndWait(makeAssistantTextFrame({ uuid: secondReply, text: "Done." }));
+      yield* harness.offerAndWait(turnOneResult);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      if (input.transcript !== null) {
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, `${WAKE_NATIVE_SESSION}.jsonl`),
+          input.transcript(harness.promptUuid(0)),
+        );
+      }
+      yield* harness.runtime.startTurn(turn(2));
+      return harness;
+    });
+    const layer = Layer.mergeAll(
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+      NodeServices.layer,
+      NodeCrypto.layer,
+    );
+
+    it.effect(
+      "replaces a warm process when the session transcript gained messages outside T3",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* nextTurnAfter({
+            transcript: (promptUuid) => t3Turn(promptUuid) + terminalExchange,
+          });
+          assert.lengthOf(harness.processQueues, 2, "the next turn must open a fresh process");
+          assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+          assert.isUndefined(harness.getOpenedOptions()?.resumeSessionAt);
+        }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect.each([
+      {
+        name: "the file lags the stream",
+        transcript: (promptUuid: string) =>
+          entry("user", promptUuid, null, "Request 1") +
+          entry("assistant", firstReply, promptUuid, [{ type: "text", text: "Working." }]),
+      },
+      {
+        name: "only bookkeeping follows T3's reply",
+        transcript: (promptUuid: string) =>
+          t3Turn(promptUuid) +
+          line({
+            type: "system",
+            subtype: "turn_duration",
+            uuid: "sys-1",
+            parentUuid: secondReply,
+          }) +
+          line({ type: "last-prompt", leafUuid: secondReply }) +
+          entry("assistant", "side-1", secondReply, [{ type: "text", text: "x" }], {
+            isSidechain: true,
+          }) +
+          entry("user", "meta-1", secondReply, "Caveat", { isMeta: true }) +
+          entry("user", "stop-1", secondReply, "[Request interrupted by user]") +
+          JSON.stringify({ type: "user", uuid: "half-written", parentUuid: secondReply }).slice(
+            0,
+            30,
+          ),
+      },
+      { name: "there is no transcript", transcript: null },
+      {
+        name: "a pinned head decides where to resume",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+        pinnedHead: firstReply,
+      },
+      {
+        name: "replacing it would end background work",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+        backgroundShell: true,
+      },
+    ])("keeps the warm process when $name", (row) =>
+      Effect.gen(function* () {
+        const harness = yield* nextTurnAfter(row);
+        assert.lengthOf(harness.processQueues, 1);
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   // The passive row is the frame Claude 2.1.303 emits for a Stop hook returning a systemMessage.
   it.effect.each([
     { name: "hides a passive summary", level: "notice", visible: false },
