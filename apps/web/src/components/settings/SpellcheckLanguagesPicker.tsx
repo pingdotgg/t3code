@@ -1,4 +1,5 @@
 import { MAX_SPELLCHECK_LANGUAGES } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -40,6 +41,7 @@ export function SpellcheckLanguagesPicker({
   selected: readonly string[];
   onChange: (languages: string[]) => void;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   // Stored codes without a dictionary stay in `selected` but are not shown as active.
   const active = selected.filter((code) => available.includes(code));
@@ -55,7 +57,7 @@ export function SpellcheckLanguagesPicker({
       )
     : items;
   const summary =
-    active.length === 0 ? "System default" : active.map(spellcheckLanguageLabel).join(", ");
+    active.length === 0 ? gt("System default") : active.map(spellcheckLanguageLabel).join(", ");
 
   return (
     <Combobox
@@ -72,17 +74,17 @@ export function SpellcheckLanguagesPicker({
         if (next.length <= MAX_SPELLCHECK_LANGUAGES) onChange(next);
       }}
     >
-      <ComboboxTrigger aria-label="Spellcheck languages" render={<SelectButton size="sm" />}>
+      <ComboboxTrigger aria-label={gt("Spellcheck languages")} render={<SelectButton size="sm" />}>
         {summary}
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="w-64">
         <ComboboxSearchInput
-          aria-label="Search languages"
-          placeholder="Search languages…"
+          aria-label={gt("Search languages")}
+          placeholder={gt("Search languages…")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <ComboboxEmpty>No matching languages.</ComboboxEmpty>
+        <ComboboxEmpty>{gt("No matching languages.")}</ComboboxEmpty>
         <ComboboxList className="max-h-72">
           {(code: string) => (
             <ComboboxItem key={code} value={code} selectedFill={false}>

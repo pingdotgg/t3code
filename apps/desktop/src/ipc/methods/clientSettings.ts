@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSpellcheck from "../../settings/DesktopSpellcheck.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
@@ -29,6 +30,7 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     const spellcheck = yield* DesktopSpellcheck.DesktopSpellcheck;
     yield* clientSettings.set(settings);
     yield* snapShot.configure(settings);
+    yield* applyLanguage(settings.language);
     yield* spellcheck.configure(settings);
   }),
 });
