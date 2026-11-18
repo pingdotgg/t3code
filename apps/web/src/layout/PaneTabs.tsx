@@ -542,9 +542,9 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
 }
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
-function revealPaneTab(strip: HTMLElement, tabId: string | null): boolean {
+function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null {
   const tab = findStripTab(strip, tabId);
-  if (!tab) return false;
+  if (!tab) return null;
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
@@ -556,11 +556,32 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): boolean {
   const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
   const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
-  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
-    strip.scrollLeft += rect.right - end;
-  else if (rect.left < start) strip.scrollLeft -= start - rect.left;
-  else if (rect.right > end) strip.scrollLeft += rect.right - end;
-  return true;
+  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end") return rect.right - end;
+  if (rect.left < start) return rect.left - start;
+  if (rect.right > end) return rect.right - end;
+  return 0;
+}
+
+function scrollWithSlide(entry: PaneStrip, left: number): void {
+  const { strip, slide } = entry;
+  const from = strip.scrollLeft;
+  const to = Math.min(Math.max(0, left), strip.scrollWidth - strip.clientWidth);
+  const start = slide?.effect?.getComputedTiming().progress;
+  if (!slide || start == null || start >= 1) {
+    strip.scrollLeft = to;
+    return;
+  }
+  let written = from;
+  const follow = () => {
+    if (Math.abs(strip.scrollLeft - written) > 1) return;
+    const progress =
+      slide.playState === "finished" ? 1 : slide.effect?.getComputedTiming().progress;
+    if (progress == null) return;
+    written = from + ((to - from) * (progress - start)) / (1 - start);
+    strip.scrollLeft = written;
+    if (progress < 1) requestAnimationFrame(follow);
+  };
+  requestAnimationFrame(follow);
 }
 
 /**
@@ -603,8 +624,10 @@ export function LayoutPaneTabStrip({
     if (strip.parentNode !== slot) moveInto(slot, strip);
     showStripLayer(layer, strip, true);
     const place = (motion: number) => {
-      if (pendingReveals.has(strip) && revealPaneTab(strip, tabId)) pendingReveals.delete(strip);
+      const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
+      if (reveal !== null) pendingReveals.delete(strip);
       placePaneJoin(entry, tabId, motion);
+      if (reveal) scrollWithSlide(entry, strip.scrollLeft + reveal);
     };
     holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
