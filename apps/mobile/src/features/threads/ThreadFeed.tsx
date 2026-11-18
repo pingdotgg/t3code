@@ -1729,7 +1729,7 @@ function compactionLabel(
   label: string,
   title: string | undefined,
   item: OrchestrationV2ProjectedTurnItem["item"],
-  gt: ReturnType<typeof useGT>,
+  m: ReturnType<typeof useMessages>,
 ) {
   const compacted =
     item.type === "compaction" &&
@@ -1742,7 +1742,7 @@ function compactionLabel(
     title === undefined || !compacted
       ? label
       : tokens
-        ? gt("{title} {before} → {after} tokens", { title, ...tokens })
+        ? m(msg("{title} {before} → {after} tokens", { title, ...tokens }))
         : title;
   // Non-breaking spaces keep "549K → 16.8K tokens" on one line when the label wraps.
   return text.replace(/ (→|tokens)/g, "\u00A0$1").replace(/→ /g, "→\u00A0");
@@ -1918,12 +1918,11 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly gt: ReturnType<typeof useGT>;
     readonly m: ReturnType<typeof useMessages>;
   },
 ) {
   const entry = info.item;
-  const { markdownStyles, iconSubtleColor, userBubbleColor, gt } = props;
+  const { markdownStyles, iconSubtleColor, userBubbleColor, m } = props;
 
   if (entry.type === "guest-pending") {
     return (
@@ -1958,7 +1957,7 @@ function renderFeedEntry(
             numberOfLines={1}
             className="shrink font-t3-medium text-sm text-foreground-muted"
           >
-            {gt("Pending", { $context: "message not yet sent" })}
+            {m(msg("Pending", { $context: "message not yet sent" }))}
           </Text>
         </View>
       </View>
@@ -2149,7 +2148,7 @@ function renderFeedEntry(
             ? `${label} · ${failure}`
             : active && labels
               ? labels.compacting
-              : compactionLabel(label, labels?.title, item, gt)
+              : compactionLabel(label, labels?.title, item, m)
         }
         icon={
           item.status === "failed" ? "exclamationmark.circle" : "arrow.down.right.and.arrow.up.left"
@@ -2199,9 +2198,9 @@ function renderFeedEntry(
         <ThreadContextDivider
           label={
             !active
-              ? gt("Context compaction")
+              ? m(msg("Context compaction"))
               : reason === undefined
-                ? gt("Compacting context")
+                ? m(msg("Compacting context"))
                 : props.m(IDLE_COMPACTING_LABELS[reason])
           }
           icon="arrow.down.right.and.arrow.up.left"
@@ -2296,7 +2295,7 @@ function renderFeedEntry(
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              {gt("Sent by T3 Code")}
+              {m(msg("Sent by T3 Code"))}
             </Text>
           ) : null}
           {presentation.guestName !== undefined ? (
@@ -2396,7 +2395,7 @@ function renderFeedEntry(
                       <Pressable
                         key={attachment.id}
                         accessibilityRole="imagebutton"
-                        accessibilityLabel={gt("Open {name}", { name: attachment.name })}
+                        accessibilityLabel={m(msg("Open {name}", { name: attachment.name }))}
                         onPress={() => {
                           const source = composerImageGallery([attachment])[0];
                           if (source)
@@ -2507,7 +2506,7 @@ function renderFeedEntry(
                 {entry.pendingMessage &&
                 !entry.acknowledged &&
                 entry.id !== props.pendingFoldMessageId
-                  ? gt("Pending", { $context: "message not yet sent" })
+                  ? m(msg("Pending", { $context: "message not yet sent" }))
                   : timestampLabel}
               </Text>
               {props.onEditPendingMessage !== null &&
@@ -2517,7 +2516,7 @@ function renderFeedEntry(
               entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={gt("Edit pending message")}
+                  accessibilityLabel={m(msg("Edit pending message"))}
                   hitSlop={8}
                   className="size-7 items-center justify-center"
                   onPress={() => {
@@ -2595,7 +2594,7 @@ function renderFeedEntry(
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
-              accessibilityLabel={gt("Copy message")}
+              accessibilityLabel={m(msg("Copy message"))}
               text={renderedText}
               tintColor={iconSubtleColor}
               buttonSize={props.replyActionSize.button}
@@ -4106,7 +4105,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : null}
           {renderFeedEntry(info, {
-            gt,
             m,
             userMessageGrouping: info.item.userMessageGrouping,
             formatMessageTime,

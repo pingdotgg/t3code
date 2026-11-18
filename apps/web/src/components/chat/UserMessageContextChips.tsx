@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "~/i18n/messages";
 import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -289,7 +289,6 @@ interface UserMessageContextRenderContext {
   onExpandImage: (image: ChatImageAttachment) => void;
   onExpandVideo: (file: ChatFileAttachment) => void;
   onOpenFile: (file: ChatFileAttachment) => void;
-  gt: ReturnType<typeof useGT>;
   m: MessageResolver;
 }
 
@@ -298,7 +297,7 @@ function UnavailableUserMessageContextChip(props: UserMessageContextRenderContex
     <UnresolvedChip
       label={props.reference.label}
       copyMarkdown={props.copyMarkdown}
-      tooltip={props.gt("This context is no longer available.")}
+      tooltip={props.m(msg("This context is no longer available."))}
     />
   );
 }
@@ -410,7 +409,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           attachment.downloadable === false && (!isVideo || attachment.previewUrl === undefined);
         const size =
           attachment.downloadable === false
-            ? context.gt("Sending…")
+            ? context.m(msg("Sending…"))
             : formatAttachmentSize(record.sizeBytes, context.m);
         return (
           <FileChip
@@ -426,8 +425,8 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             disabled={disabled}
             accessibleLabel={
               isVideo
-                ? context.gt("Video attachment, {label}, {size}", { label, size })
-                : context.gt("File attachment, {label}, {size}", { label, size })
+                ? context.m(msg("Video attachment, {label}, {size}", { label, size }))
+                : context.m(msg("File attachment, {label}, {size}", { label, size }))
             }
             copyMarkdown={context.copyMarkdown}
             onOpen={() =>
@@ -464,7 +463,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "element" ? (
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
-            accessibleLabel={context.gt("Browser element, {label}", { label: record.label })}
+            accessibleLabel={context.m(msg("Browser element, {label}", { label: record.label }))}
             kind="element"
             icon={<MousePointerClickIcon />}
             label={record.label}
@@ -486,7 +485,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         const label = reviewCommentContextLabel(record, context.m);
         const kindLabel = isPullRequest
           ? pullRequestContextKindLabel(record, context.m)
-          : context.gt("Review comment");
+          : context.m(msg("Review comment"));
         const pullRequestState = pullRequestContextDisplayState(record) ?? "unknown";
         if (isPullRequest && record.pullRequest !== undefined) {
           return (
@@ -502,12 +501,14 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={
               record.pullRequest
-                ? context.gt("{kind}, {label}, {title}", {
-                    kind: kindLabel,
-                    label,
-                    title: record.pullRequest.title,
-                  })
-                : context.gt("{kind}, {label}", { kind: kindLabel, label })
+                ? context.m(
+                    msg("{kind}, {label}, {title}", {
+                      kind: kindLabel,
+                      label,
+                      title: record.pullRequest.title,
+                    }),
+                  )
+                : context.m(msg("{kind}, {label}", { kind: kindLabel, label }))
             }
             kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
             icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
@@ -541,7 +542,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "preview-annotation" ? (
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
-            accessibleLabel={context.gt("Preview annotation, {label}", { label: record.label })}
+            accessibleLabel={context.m(msg("Preview annotation, {label}", { label: record.label }))}
             kind="preview-annotation"
             icon={<MousePointerClickIcon />}
             label={record.label}
@@ -566,7 +567,6 @@ export function UserMessageContextReferenceChip(props: {
   onOpenFile: (file: ChatFileAttachment) => void;
 }) {
   const { resolvedTheme, activeThreadEnvironmentId } = use(TimelineRowCtx);
-  const gt = useGT();
   const m = useMessages();
   const copyMarkdown = formatComposerContextReference({
     kind: props.reference.kind,
@@ -583,7 +583,6 @@ export function UserMessageContextReferenceChip(props: {
     onExpandImage: props.onExpandImage,
     onExpandVideo: props.onExpandVideo,
     onOpenFile: props.onOpenFile,
-    gt,
     m,
   });
 }
