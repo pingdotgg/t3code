@@ -873,6 +873,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
     readonly mcp: boolean;
     readonly deviceToolsAvailable: boolean;
     readonly t3AgentInstructions?: boolean;
+    readonly additions?: ClaudeAdapterV2.ClaudeAdditionSwitches;
   }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
@@ -889,6 +890,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
       ...(input.t3AgentInstructions === undefined
         ? {}
         : { t3AgentInstructions: input.t3AgentInstructions }),
+      ...(input.additions === undefined ? {} : { additions: input.additions }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -907,6 +909,44 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.deepEqual(off.systemPrompt, { type: "preset", preset: "claude_code" });
     assert.isUndefined(off.hooks);
     assert.deepEqual(off.mcpServers, options(session).mcpServers);
+  });
+
+  it("turns off each Claude Code addition with its own setting and changes nothing by default", () => {
+    const session = { mcp: true, deviceToolsAvailable: true };
+    const base = options(session);
+    const baseSettings = typeof base.settings === "object" ? base.settings : {};
+    const allOn = {
+      claudeInstructionFiles: true,
+      claudeAutoMemory: true,
+      claudeGitContext: true,
+      claudeSkillList: true,
+      claudeContextLists: true,
+      claudeHooks: true,
+    };
+    assert.deepEqual(options({ ...session, additions: allOn }), base);
+    const off = (additions: ClaudeAdapterV2.ClaudeAdditionSwitches) =>
+      options({ ...session, additions: { ...allOn, ...additions } });
+    assert.deepEqual(off({ claudeInstructionFiles: false }), {
+      ...base,
+      settings: { ...baseSettings, env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" } },
+    });
+    assert.deepEqual(off({ claudeContextLists: false }), {
+      ...base,
+      settings: { ...baseSettings, env: { CLAUDE_CODE_DISABLE_ATTACHMENTS: "1" } },
+    });
+    assert.deepEqual(off({ claudeAutoMemory: false }), {
+      ...base,
+      settings: { ...baseSettings, autoMemoryEnabled: false },
+    });
+    assert.deepEqual(off({ claudeGitContext: false }), {
+      ...base,
+      settings: { ...baseSettings, includeGitInstructions: false },
+    });
+    assert.deepEqual(off({ claudeHooks: false }), {
+      ...base,
+      settings: { ...baseSettings, disableAllHooks: true },
+    });
+    assert.deepEqual(off({ claudeSkillList: false }), { ...base, skills: [] });
   });
 
   it("leaves the device block out without device access or without T3 tools", () => {

@@ -410,6 +410,84 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     disabled={disabledFor("t3AgentInstructions")}
                     onValueChange={(value) => write({ t3AgentInstructions: value })}
                   />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: instruction files"
+                    subtitle={managedSubtitle(
+                      "claudeInstructionFiles",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off stops Claude Code sending CLAUDE.md files, including your global one. The agent works without your project rules.",
+                    )}
+                    value={uniform("claudeInstructionFiles")}
+                    disabled={disabledFor("claudeInstructionFiles")}
+                    onValueChange={(value) => write({ claudeInstructionFiles: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: auto-memory"
+                    subtitle={managedSubtitle(
+                      "claudeAutoMemory",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off removes the memory instructions from the system prompt. The agent no longer reads or saves memories.",
+                    )}
+                    value={uniform("claudeAutoMemory")}
+                    disabled={disabledFor("claudeAutoMemory")}
+                    onValueChange={(value) => write({ claudeAutoMemory: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: git context"
+                    subtitle={managedSubtitle(
+                      "claudeGitContext",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off removes the git status snapshot and commit attribution guidance. The agent must run git itself.",
+                    )}
+                    value={uniform("claudeGitContext")}
+                    disabled={disabledFor("claudeGitContext")}
+                    onValueChange={(value) => write({ claudeGitContext: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: skill list"
+                    subtitle={managedSubtitle(
+                      "claudeSkillList",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off removes the list of skills. The agent can no longer see skills or run them with its Skill tool.",
+                    )}
+                    value={uniform("claudeSkillList")}
+                    disabled={disabledFor("claudeSkillList")}
+                    onValueChange={(value) => write({ claudeSkillList: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: tool, MCP and skill lists"
+                    subtitle={managedSubtitle(
+                      "claudeContextLists",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off removes the deferred tool list, MCP server instructions, skill list and token reminders. The agent may not find MCP tools or skills.",
+                    )}
+                    value={uniform("claudeContextLists")}
+                    disabled={disabledFor("claudeContextLists")}
+                    onValueChange={(value) => write({ claudeContextLists: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="Claude Code: hooks"
+                    subtitle={managedSubtitle(
+                      "claudeHooks",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off stops every Claude Code hook from running, including security and permission hooks.",
+                    )}
+                    value={uniform("claudeHooks")}
+                    disabled={disabledFor("claudeHooks")}
+                    onValueChange={(value) => write({ claudeHooks: value })}
+                  />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 <CompletionAudioSettingsRows />

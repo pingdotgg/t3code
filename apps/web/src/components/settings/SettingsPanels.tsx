@@ -4,7 +4,7 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
@@ -790,6 +790,51 @@ function useTranslatedSearchableSetting() {
     const setting = searchableSetting(id);
     return { ...setting, title: m(setting.title) };
   };
+}
+
+type ClaudeAdditionKey =
+  | "claudeInstructionFiles"
+  | "claudeAutoMemory"
+  | "claudeGitContext"
+  | "claudeSkillList"
+  | "claudeContextLists"
+  | "claudeHooks";
+
+/** One on/off row for an item Claude Code adds to what the model receives. */
+function ClaudeAdditionRow(props: {
+  readonly settingKey: ClaudeAdditionKey;
+  readonly searchId: SettingsSearchItemId;
+  readonly description: ReactNode;
+}) {
+  const row = useTranslatedSearchableSetting()(props.searchId);
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={[props.settingKey]}
+      {...row}
+      description={props.description}
+      resetAction={
+        settings[props.settingKey] !== DEFAULT_UNIFIED_SETTINGS[props.settingKey] ? (
+          <SettingResetButton
+            label={row.title}
+            onClick={() =>
+              updateSettings({ [props.settingKey]: DEFAULT_UNIFIED_SETTINGS[props.settingKey] })
+            }
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={[props.settingKey]}
+          checked={settings[props.settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [props.settingKey]: Boolean(checked) })}
+          aria-label={row.title}
+        />
+      }
+    />
+  );
 }
 
 export function GeneralSettingsPanel() {
@@ -2075,8 +2120,70 @@ export function ThreadsSettingsPanel() {
             description={
               <T>
                 The agent CLI adds instruction files, memory, hook output and system reminders. For
-                Claude Code, the thread shows what it added to each turn and its system prompt.
-                Other harnesses are not shown.
+                Claude Code, the thread shows what it added, and the switches below turn items off
+                for sessions started afterwards.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeInstructionFiles"
+            searchId="claude-instruction-files"
+            description={
+              <T>
+                Off stops Claude Code sending CLAUDE.md files and what they import, including your
+                global one. The agent then works without your project rules.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeAutoMemory"
+            searchId="claude-auto-memory"
+            description={
+              <T>
+                Off removes the memory instructions from Claude Code's system prompt. The agent no
+                longer reads or saves memories.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeGitContext"
+            searchId="claude-git-context"
+            description={
+              <T>
+                Off removes the git status snapshot and Claude Code's commit and pull request
+                attribution guidance. The agent must run git itself and may leave out attribution
+                lines.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeSkillList"
+            searchId="claude-skill-list"
+            description={
+              <T>
+                Off removes the list of skills from Claude Code sessions. The agent can no longer
+                see skills or run them with its Skill tool.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeContextLists"
+            searchId="claude-context-lists"
+            description={
+              <T>
+                Off removes the deferred tool list, MCP server instructions, skill list and token
+                reminders. The agent may not find MCP tools or skills, and other reminders may stop
+                too.
+              </T>
+            }
+          />
+          <ClaudeAdditionRow
+            settingKey="claudeHooks"
+            searchId="claude-hooks"
+            description={
+              <T>
+                Off removes hook output and stops every Claude Code hook from running, including
+                security and permission hooks. T3 Code's own hooks keep running.
               </T>
             }
           />

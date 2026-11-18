@@ -421,7 +421,12 @@ own CLI, and some from the model provider.
   reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
   the thread shows a row named **Claude Code added context to this turn** and a row with its
   system prompt when that changes; open either to read the text. If Claude Code kept no record,
-  a row says so. Other harnesses are not shown.
+  a row says so. Other harnesses are not shown. To stop Claude Code adding an item, turn off
+  its **Claude Code:** switch under **Settings → Threads → Automatic additions**: instruction
+  files, auto-memory, git context, the skill list, the tool, MCP and skill lists, or hooks.
+  Each switch says what turning it off breaks. Turning off hooks stops every Claude Code hook
+  from running, including security and permission hooks. A session started before the change
+  keeps its old behaviour.
 - **What the provider adds.** A provider can add text after a request leaves your machine.
   T3 Code cannot show it or turn it off.
 

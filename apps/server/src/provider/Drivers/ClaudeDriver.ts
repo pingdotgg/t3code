@@ -190,6 +190,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         modelCatalog,
         routeModelCatalog: modelRoutes.route,
         t3AgentInstructions: t3AgentInstructionsEnabled(yield* ProviderHost.ProviderHost),
+        claudeAdditions: (yield* ProviderHost.ProviderHost).settings.get.pipe(
+          Effect.orElseSucceed(() => undefined),
+        ),
       },
     ).pipe(
       Effect.mapError(

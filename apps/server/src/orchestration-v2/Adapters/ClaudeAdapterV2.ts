@@ -2193,6 +2193,7 @@ export function makeClaudeQueryOptions(input: {
   readonly deviceToolsAvailable?: boolean;
   /** False when the `t3AgentInstructions` setting is off. */
   readonly t3AgentInstructions?: boolean;
+  readonly additions?: ClaudeAdditionSwitches;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2289,6 +2290,28 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
+  const additions = input.additions;
+  const additionEnv = {
+    ...(additions?.claudeInstructionFiles === false ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" } : {}),
+    ...(additions?.claudeContextLists === false ? { CLAUDE_CODE_DISABLE_ATTACHMENTS: "1" } : {}),
+  };
+  const additionSettings: ClaudeSdkSettings = {
+    ...(additions?.claudeAutoMemory === false ? { autoMemoryEnabled: false } : {}),
+    ...(additions?.claudeGitContext === false ? { includeGitInstructions: false } : {}),
+    ...(additions?.claudeHooks === false ? { disableAllHooks: true } : {}),
+  };
+  // Inline settings outrank the user's settings file; a process env var would not.
+  const querySettingsWithAdditions =
+    typeof effectiveQuerySettings === "string" ||
+    Object.keys(additionEnv).length + Object.keys(additionSettings).length === 0
+      ? effectiveQuerySettings
+      : {
+          ...effectiveQuerySettings,
+          ...additionSettings,
+          ...(Object.keys(additionEnv).length === 0
+            ? {}
+            : { env: { ...effectiveQuerySettings?.env, ...additionEnv } }),
+        };
   const t3Instructions = input.t3AgentInstructions !== false;
   const deviceInstructions =
     t3Instructions && input.mcpServers !== undefined && input.deviceToolsAvailable === true;
@@ -2337,16 +2360,18 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof querySettingsWithAdditions === "string"
+              ? querySettingsWithAdditions
               : {
-                  ...effectiveQuerySettings,
+                  ...querySettingsWithAdditions,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : querySettingsWithAdditions === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings: querySettingsWithAdditions }),
+    // An empty list hides every skill from the model and makes the Skill tool refuse them.
+    ...(additions?.claudeSkillList === false ? { skills: [] } : {}),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
@@ -5177,6 +5202,19 @@ interface ActiveClaudeSubagent {
   lastAssistantMessageId: string | null;
 }
 
+/** The settings that switch off what Claude Code adds to the model's input; each is on unless false. */
+export type ClaudeAdditionSwitches = Partial<
+  Record<
+    | "claudeInstructionFiles"
+    | "claudeAutoMemory"
+    | "claudeGitContext"
+    | "claudeSkillList"
+    | "claudeContextLists"
+    | "claudeHooks",
+    boolean
+  >
+>;
+
 interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
@@ -5613,6 +5651,8 @@ export interface ClaudeAdapterV2Options {
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   /** Reads the `t3AgentInstructions` setting per turn; on when omitted. */
   readonly t3AgentInstructions?: Effect.Effect<boolean>;
+  /** Reads the Claude Code addition switches when a query opens; all on when omitted. */
+  readonly claudeAdditions?: Effect.Effect<ClaudeAdditionSwitches | undefined>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
    * Called with the requested cwd on a process's first init message, after its synchronous
@@ -13104,6 +13144,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const additions = yield* adapterOptions.claudeAdditions ?? Effect.undefined;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
@@ -13140,6 +13181,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             t3AgentInstructions: yield* adapterOptions.t3AgentInstructions ?? Effect.succeed(true),
+            ...(additions === undefined ? {} : { additions }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
@@ -14913,6 +14955,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       | "modelCatalog"
       | "routeModelCatalog"
       | "t3AgentInstructions"
+      | "claudeAdditions"
     > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;

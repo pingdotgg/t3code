@@ -673,6 +673,62 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "claude-instruction-files",
+    title: msg("Claude Code: instruction files"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context harness claude.md agents.md project rules memory files",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "claude-auto-memory",
+    title: msg("Claude Code: auto-memory"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions injected context harness memory remember system prompt"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "claude-git-context",
+    title: msg("Claude Code: git context"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context harness git status branch commits attribution co-authored",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "claude-skill-list",
+    title: msg("Claude Code: skill list"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions injected context harness skills slash commands listing"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "claude-context-lists",
+    title: msg("Claude Code: tool, MCP and skill lists"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context harness deferred tools mcp server instructions reminders attachments",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "claude-hooks",
+    title: msg("Claude Code: hooks"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context harness hook output session start security permission",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
