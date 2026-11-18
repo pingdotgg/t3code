@@ -28,7 +28,7 @@ const writeLogin = Effect.gen(function* () {
   );
   const accountConfigPath = path.join(directory, ".claude.json");
   yield* fs.writeFileString(accountConfigPath, '{"oauthAccount":{"organizationUuid":"org-1"}}');
-  return { configDir: directory, accountConfigPath };
+  return { login: { configDir: directory, explicit: true }, accountConfigPath };
 });
 
 const respond = (status: number, body: unknown) =>
@@ -129,10 +129,24 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
+describe("claudeKeychainService", () => {
+  it("names the Keychain item Claude Code writes for the login", () => {
+    expect(
+      ["/Users/me/.claude", "/Users/me/work-claude"].map((configDir) => [
+        ClaudeResetCredits.claudeKeychainService({ configDir, explicit: false }),
+        ClaudeResetCredits.claudeKeychainService({ configDir, explicit: true }),
+      ]),
+    ).toEqual([
+      ["Claude Code-credentials", "Claude Code-credentials-0bd83d07"],
+      ["Claude Code-credentials", "Claude Code-credentials-91eb4f94"],
+    ]);
+  });
+});
+
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
+      const { login } = yield* writeLogin;
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
@@ -149,7 +163,7 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(login, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
@@ -157,18 +171,14 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("reads nothing from failed requests", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(HttpClient.HttpClient, refuseRequests),
-      );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const { login } = yield* writeLogin;
+      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(login, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      expect(limited).toBeUndefined();
     }),
   );
 });
