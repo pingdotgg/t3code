@@ -84,6 +84,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
+  /** Each failed run seen on this head (check, URL, finish time), so a rerun failing is news. */
+  failedRuns: Schema.optional(Schema.Array(Schema.String)),
   passed: Schema.Boolean,
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

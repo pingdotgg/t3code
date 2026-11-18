@@ -41,6 +41,7 @@ const RawPipelineSchema = Schema.Struct({
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
+  finished_at: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawTriggerJobSchema = Schema.Struct({
@@ -317,12 +318,14 @@ function toChecks(
 ): ReadonlyArray<PullRequestCheck> {
   const pipeline = raw.head_pipeline;
   if (!pipeline) return [];
+  const finishedAt = trimmed(pipeline.finished_at);
   return [
     {
       name: "Pipeline",
       status: toPipelineStatus(pipeline.status),
       description: trimmed(pipeline.source),
       url: trimmed(pipeline.web_url),
+      ...(finishedAt !== null && { finishedAt }),
     },
   ];
 }

@@ -480,6 +480,89 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("reports a rerun that fails again between two reads", () => {
+    const run = (job: number): PullRequestCheck => ({
+      ...check("lint", "failure"),
+      url: `https://ci.example/lint/job/${job}`,
+      required: true,
+    });
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [run(1)] }), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [run(1)] }]);
+    const again = evaluatePullRequestWatch(first.next, detail({ checks: [run(2)] }), noRemarks);
+    assert.deepEqual(again.changes, [{ kind: "checks-failed", failed: [run(2)] }]);
+    // A status can link a build shared with another check; it is that check's run, not lint's.
+    const shared = { ...check("test", "failure"), url: "https://ci.example/lint/job/3" };
+    const both = evaluatePullRequestWatch(
+      again.next,
+      detail({ checks: [run(2), shared] }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(both.next, detail({ checks: [run(3), shared] }), noRemarks).changes,
+      [{ kind: "checks-failed", failed: [run(3)] }],
+    );
+    // Neither the same run nor one told earlier on this head is news again.
+    for (const job of [2, 1]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(again.next, detail({ checks: [run(job)] }), noRemarks).changes,
+        [],
+      );
+    }
+    // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart.
+    const pipeline = (finishedAt: string) => ({ ...check("Pipeline", "failure"), finishedAt });
+    const told = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [pipeline("00:01")] }),
+      noRemarks,
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(told.next, detail({ checks: [pipeline("00:03")] }), noRemarks)
+        .changes,
+      [{ kind: "checks-failed", failed: [pipeline("00:03")] }],
+    );
+  });
+
+  it("reports one failure of a check whose push and pull_request runs both fail", () => {
+    const run = (job: number, startedAt: string, finishedAt: string): PullRequestCheck => ({
+      ...check("lint", "failure"),
+      url: `https://ci.example/lint/job/${job}`,
+      startedAt: `2026-11-16T00:${startedAt}Z`,
+      finishedAt: `2026-11-16T00:${finishedAt}Z`,
+    });
+    const push = run(1, "00:00", "01:00");
+    const pullRequest = run(2, "00:01", "02:00");
+    const rerunOfPush = run(3, "02:30", "03:00");
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [push] }), noRemarks);
+    const second = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [pullRequest] }),
+      noRemarks,
+    );
+    assert.deepEqual(second.changes, []);
+    // The read may also show only the pull_request run first, the push one never seen.
+    const onlyPullRequest = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [pullRequest] }),
+      noRemarks,
+    );
+    for (const told of [second.next, onlyPullRequest.next]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(told, detail({ checks: [rerunOfPush] }), noRemarks).changes,
+        [{ kind: "checks-failed", failed: [rerunOfPush] }],
+      );
+    }
+  });
+
+  it("does not repeat a failure an older watch told by name", () => {
+    const older = watch({ headSha: "aaaaaaaaaa", failedChecks: ["lint"] });
+    const failed = detail({ checks: [check("lint", "failure")] });
+    const report = evaluatePullRequestWatch(older, failed, noRemarks);
+    assert.deepEqual(report.changes, []);
+    assert.deepEqual(report.next.failedRuns, [
+      JSON.stringify(["lint", "https://ci.example/lint", null]),
+    ]);
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),

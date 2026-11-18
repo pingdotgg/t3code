@@ -5087,6 +5087,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       conflicting: existing.endedWatch.conflicting,
                       rebaseRequired: existing.endedWatch.rebaseRequired,
                     }),
+                    ...(existing.endedWatch?.failedRuns !== undefined && {
+                      failedRuns: existing.endedWatch.failedRuns,
+                    }),
                     awaitingBaseline: existing.endedWatch
                       ? existing.endedWatch.awaitingBaseline
                       : "all",
