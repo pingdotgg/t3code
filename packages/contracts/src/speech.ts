@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4096),
@@ -364,3 +364,22 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+/** One-way voice reads the thread's replies aloud. */
+export const VoiceMode = Schema.Literals(["off", "oneWay"]);
+export type VoiceMode = typeof VoiceMode.Type;
+
+/** Voice belongs to one thread of this environment at a time. */
+export const VoiceState = Schema.Struct({
+  mode: VoiceMode,
+  threadId: Schema.NullOr(ThreadId),
+  /** Clients turn voice off in other environments when a newer one turns it on. */
+  setAt: Schema.String.check(Schema.isMaxLength(64)),
+});
+export type VoiceState = typeof VoiceState.Type;
+export const VOICE_OFF: VoiceState = { mode: "off", threadId: null, setAt: "" };
+
+const SPEECH_SYNTHESIS_MAX_CHARS = 2_000;
+export const SpeechSynthesisRequest = Schema.Struct({
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(SPEECH_SYNTHESIS_MAX_CHARS)),
+});

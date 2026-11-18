@@ -20,7 +20,10 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../os-jank.ts";
 import type { SpeechModel } from "./model.ts";
 
-type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256">;
+type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256"> & {
+  /** Where the file goes under the models directory when its repository name is not unique. */
+  readonly path?: string;
+};
 
 class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadError>()(
   "SpeechModelDownloadError",
@@ -92,7 +95,7 @@ const make = Effect.gen(function* () {
       yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.ignore);
     }
   }
-  const modelPath = (model: ModelFile) => path.join(directory, model.filename);
+  const modelPath = (model: ModelFile) => path.join(directory, model.path ?? model.filename);
   const appDataDirectories =
     platform === "darwin"
       ? [path.join(home, "Library", "Application Support")]
@@ -290,7 +293,7 @@ const make = Effect.gen(function* () {
     function* (model, progress = {}) {
       yield* Effect.annotateCurrentSpan({ modelId: model.id });
       const finalPath = modelPath(model);
-      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(finalPath), { recursive: true });
       if (yield* verifiedPath(model, finalPath, progress.onVerificationStart)) return finalPath;
       for (const copy of knownCopies(model)) {
         const linked = yield* link([model], copy).pipe(Effect.orElseSucceed(() => []));

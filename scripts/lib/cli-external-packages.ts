@@ -11,6 +11,7 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@ff-labs/",
   "transcribe-cpp",
   "@transcribe-cpp/",
+  "sherpa-onnx-",
   "koffi",
   "@koromix/",
   "@napi-rs/keyring",
