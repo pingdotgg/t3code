@@ -223,6 +223,36 @@ const fieldSetKey = (names, field) => `${[...names].map(String).sort().join(",")
 
 const codecAsts = roots.map((r) => codecOf(r.ast));
 codecAsts.forEach(dropPassThrough);
+
+// Optional fields whose value admits a declared null (`Schema.optionalKey(Schema.NullOr(T))`):
+// the wire tells missing from null there. `Schema.optional(T)` is an Undefined the JSON codec
+// encodes as null, so its null means missing. The IR shows both as `T | null`, so each is keyed
+// by its struct's field names, as secret fields are.
+const nullableFieldKeys = new Set();
+{
+  const seen = new Set();
+  const declaresNull = (a, depth = 0) =>
+    a !== undefined &&
+    depth < 8 &&
+    (a._tag === "Null" || (a._tag === "Union" && a.types.some((t) => declaresNull(t, depth + 1))));
+  const walk = (a) => {
+    if (!a || seen.has(a)) return;
+    seen.add(a);
+    if (a._tag === "Objects") {
+      const names = a.propertySignatures.map((ps) => ps.name);
+      for (const ps of a.propertySignatures) {
+        if (ps.type.context?.isOptional && declaresNull(ps.type))
+          nullableFieldKeys.add(fieldSetKey(names, ps.name));
+        walk(ps.type);
+      }
+      for (const sig of a.indexSignatures ?? []) walk(sig.type);
+    }
+    for (const t of [...(a.types ?? []), ...(a.typeParameters ?? []), ...(a.elements ?? []), ...(a.rest ?? [])]) walk(t);
+    if (a._tag === "Suspend") walk(a.thunk());
+    for (const link of a.encoding ?? []) walk(link.to);
+  };
+  codecAsts.forEach(walk);
+}
 const doc = SchemaRepresentation.toRepresentations(codecAsts, {
   referencePolicy: ({ ast, occurrences, identifier }) => {
     const name = nameOf.get(ast);
@@ -501,7 +531,7 @@ const arrayType = (r, hint, path) => {
 };
 
 // Field type and serde attributes for a property.
-const fieldOf = (prop, owner, path) => {
+const fieldOf = (prop, owner, path, keys) => {
   const key = prop.name;
   const t = prop.type;
   const hint = owner + pascal(String(key));
@@ -521,7 +551,10 @@ const fieldOf = (prop, owner, path) => {
       (dm._tag === "Declaration" && dm.representation?.id === "effect/schema/Json")
     );
   };
-  const nestedNull = nullCount >= 2 || rest.some(admitsNull);
+  const nestedNull =
+    nullCount >= 2 ||
+    rest.some(admitsNull) ||
+    nullableFieldKeys.has(fieldSetKey(keys, key));
   const inner = () =>
     rest.length === 1
       ? typeOf(rest[0], hint, `${path}.${key}`)
@@ -594,7 +627,7 @@ const objectType = (r, hint, path, forcedName) => {
     if (typeof prop.name !== "string") {
       return opaque(path, "symbol key");
     }
-    fields.push(fieldOf(prop, name, path));
+    fields.push(fieldOf(prop, name, path, r.propertySignatures.map((p) => p.name)));
   }
   const seen = new Set();
   for (const f of fields) {

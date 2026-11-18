@@ -112,3 +112,16 @@ fn unknown_tag_is_an_error_not_a_guess() {
     let missing_field = serde_json::json!({"type": "thread.stop", "threadId": "t1"});
     assert!(conn_contract::from_json::<conn_contract::Command>(missing_field).is_err());
 }
+
+#[test]
+fn optional_nullable_project_cleanup_preserves_missing_null_and_value() {
+    use conn_contract::ServerSettingsProjectSettingsOverridesValue as Overrides;
+    for value in [
+        serde_json::json!({}),
+        serde_json::json!({"worktreeCleanup": null}),
+        serde_json::json!({"worktreeCleanup": {"mode": "off"}}),
+    ] {
+        let decoded: Overrides = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+    }
+}
