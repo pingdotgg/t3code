@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { cn } from "../../lib/cn";
 import { MOBILE_MOTION } from "../../lib/designTokens";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
@@ -53,6 +54,7 @@ export function Toast(props: ToastProps) {
 }
 
 function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
+  const gt = useGT();
   const { fontScale } = useWindowDimensions();
   const { colorScheme } = useControlTheme();
   const typography = useScaledTextRole("footnote");
@@ -179,7 +181,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
           Platform.OS === "android" ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Dismiss message"
+              accessibilityLabel={gt("Dismiss message")}
               onPress={props.onDismiss}
               className="items-center justify-center active:opacity-70"
               style={{ width: Math.max(48, 24 * scale), height: Math.max(48, 24 * scale) }}
@@ -188,7 +190,7 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
             </Pressable>
           ) : (
             <IconButton
-              accessibilityLabel="Dismiss message"
+              accessibilityLabel={gt("Dismiss message")}
               icon="xmark"
               onPress={props.onDismiss}
             />
@@ -234,6 +236,7 @@ const ENTER_TIMING = {
 };
 const TOAST_EXITING = FadeOut.duration(MOBILE_MOTION.exit).reduceMotion(ReduceMotion.System);
 function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) {
+  const gt = useGT();
   const [glassReady, setGlassReady] = useState(Platform.OS !== "ios");
   const finishEntering = useCallback(() => setGlassReady(true), []);
   // UIKit can skip glass on a moving host; remount the surface after entry so its blur installs.
@@ -302,7 +305,7 @@ function SwipeableToast(props: ToastProps & { readonly onDismiss: () => void }) 
               accessibilityRole="alert"
               accessibilityLiveRegion="assertive"
               accessibilityLabel={props.message}
-              accessibilityActions={[{ name: "dismiss", label: "Dismiss message" }]}
+              accessibilityActions={[{ name: "dismiss", label: gt("Dismiss message") }]}
               onAccessibilityAction={({ nativeEvent }) => {
                 if (nativeEvent.actionName === "dismiss") onDismiss();
               }}

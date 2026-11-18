@@ -9,8 +9,10 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import { ChildProcessSpawner } from "effect/process";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -40,41 +42,98 @@ function fileItem(relativePath: string): FileItem {
   };
 }
 
-it.effect("filters image searches before applying the result limit", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const items = [
-        ...Array.from({ length: 200 }, (_, index) => fileItem(`src/file-${index}.ts`)),
-        fileItem("public/icon.svg"),
-      ];
-      const fileSearch = vi.fn(() => ({
-        ok: true as const,
-        value: {
-          items,
-          scores: [],
-          totalMatched: items.length,
-          totalFiles: items.length,
-        },
-      }));
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
-        watch: () => ({ ok: true as const, value: () => undefined }),
-        fileSearch,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+it.live("image searches match the image subset of a file search without fetching every file", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const writeFiles = Effect.fn(function* (root: string, relativePaths: ReadonlyArray<string>) {
+      for (const relativePath of relativePaths) {
+        yield* fileSystem.makeDirectory(path.dirname(path.join(root, relativePath)), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(path.join(root, relativePath), "");
+        yield* fileSystem.utimes(path.join(root, relativePath), 0, 0);
+      }
+    });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
-      const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-image-search-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".git/info/exclude"), "hidden/\n");
+    yield* writeFiles(cwd, [
+      ...Array.from({ length: 220 }, (_, index) => `assets/source-${index}.ts`),
+      ...PROJECT_FAVICON_EXTENSIONS.flatMap((extension) => [
+        `assets/logo${extension}`,
+        `other/logo${extension.toUpperCase()}`,
+      ]),
+      "assets/logo.ts",
+      "assets/logotype.png",
+      "assetss/logotype.png",
+      "assets/images/logo.PNG",
+      "assets/foo{bar}.png",
+      "assets/[id].png",
+      "hidden/logo.png",
+    ]);
 
-      expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
-      expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
-      expect(fileSearch).toHaveBeenCalledTimes(2);
-      expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
-    }),
-  ).pipe(Effect.provide(testLayer)),
+    const fileSearch = vi.spyOn(FileFinder.prototype, "fileSearchAsync");
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+    yield* searchIndex.search("", 200, undefined, true);
+    const nativeResult = yield* Effect.promise(
+      (): ReturnType<FileFinder["fileSearchAsync"]> => fileSearch.mock.results[0]?.value,
+    );
+    if (!nativeResult.ok) return yield* Effect.die(nativeResult.error);
+    expect(nativeResult.value.items.length).toBeLessThanOrEqual(201);
+
+    // The image glob must not change fff's parse of fuzzy paths, globs, negations or locations.
+    for (const query of [
+      "",
+      "logo",
+      "lgo",
+      "*.png",
+      "!*.png",
+      "assets/**",
+      "!assets/",
+      "assets*/",
+      "/assets",
+      "assets/",
+      "logo:12",
+      "/assets/logotype.png",
+      "assets/images/",
+      "logo *.svg !other",
+      "foo{bar}.png",
+      "[id].png",
+      "*.{png,svg}",
+      "hidden/",
+    ]) {
+      const ordinary = yield* searchIndex.search(query, 1000, "file");
+      const expected = ordinary.entries.filter((entry) => isProjectFaviconPath(entry.path));
+      for (const limit of [1, 200]) {
+        const images = yield* searchIndex.search(query, limit, "directory", true);
+        expect(images, `query=${query} limit=${limit}`).toEqual({
+          entries: expected.slice(0, limit),
+          truncated: expected.length > limit,
+        });
+      }
+    }
+
+    // Past 15,000 matches fff drops its filename fallback, which the image glob would otherwise
+    // reorder: "x/logo/logo.png" must keep its place relative to "a/xxlogo.png".
+    const largeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-image-rank-" });
+    yield* writeFiles(largeCwd, [
+      ...Array.from({ length: 14_998 }, (_, index) => `b/logo-${index}.png`),
+      "x/logo/source.ts",
+      "a/xxlogo.png",
+      "x/logo/logo.png",
+    ]);
+    const largeIndex = yield* WorkspaceSearchIndex.make(largeCwd);
+    const pairPaths = ["a/xxlogo.png", "x/logo/logo.png"];
+    const ordinary = yield* largeIndex.search("logo", 20_000, "file");
+    const images = yield* largeIndex.search("logo", 20_000, "file", true);
+    expect(images.entries).toHaveLength(15_000);
+    expect(images.entries.filter((entry) => pairPaths.includes(entry.path))).toEqual(
+      ordinary.entries.filter((entry) => pairPaths.includes(entry.path)),
+    );
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 it.effect("fetches past a first page of Git-ignored results", () =>
@@ -95,7 +154,7 @@ it.effect("fetches past a first page of Git-ignored results", () =>
         fileItem("hidden/c.ts"),
         fileItem("src/a.ts"),
       ];
-      const fileSearch = vi.fn((_query: string, options?: { pageSize?: number }) => ({
+      const fileSearch = vi.fn(async (_query: string, options?: { pageSize?: number }) => ({
         ok: true as const,
         value: {
           items: items.slice(0, options?.pageSize),
@@ -107,9 +166,12 @@ it.effect("fetches past a first page of Git-ignored results", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
-        watch: () => ({ ok: true as const, value: () => undefined }),
-        fileSearch,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
+        watchAsync: async () => ({ ok: true as const, value: () => undefined }),
+        fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -131,9 +193,12 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const finder = {
           destroy: vi.fn(),
           waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-          isScanning: () => false,
-          watch: () => ({ ok: true as const, value: () => undefined }),
-          fileSearch: vi.fn(() => ({
+          getScanProgressAsync: async () => ({
+            ok: true as const,
+            value: { isScanning: false },
+          }),
+          watchAsync: async () => ({ ok: true as const, value: () => undefined }),
+          fileSearchAsync: vi.fn(async () => ({
             ok: true as const,
             value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
           })),
@@ -184,7 +249,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) =>
         options?.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
@@ -195,9 +260,12 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        isScanning: () => false,
-        watch: () => ({ ok: true as const, value: () => undefined }),
-        grep,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
+        watchAsync: async () => ({ ok: true as const, value: () => undefined }),
+        grepAsync: grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -227,6 +295,182 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+it.live("answers content searches with git grep while a slow content index builds", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "src/a.ts"),
+      "const Needle = 1;\r\nneedles(a.b);\nnone\n",
+    );
+    yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "needle\n");
+    // fff leaves out what `.ignore` excludes, so git results must leave it out too.
+    yield* fileSystem.writeFileString(path.join(cwd, ".ignore"), "out/\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "out/deep"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(cwd, "out/deep/g.txt"), "needle\n");
+
+    let isWarmupComplete = false;
+    const grep = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        items: [],
+        totalMatched: 0,
+        totalFilesSearched: 0,
+        totalFiles: 0,
+        filteredFileCount: 0,
+        nextCursor: null,
+      } satisfies GrepResult,
+    }));
+    const finder = {
+      destroy: vi.fn(),
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+      getScanProgressAsync: async () => ({
+        ok: true as const,
+        value: { isScanning: false, isWarmupComplete },
+      }),
+      watchAsync: async () => ({ ok: true as const, value: () => undefined }),
+      grepAsync: grep,
+    } as unknown as FileFinder;
+    const noPcreFinder = {
+      ...finder,
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    } as unknown as FileFinder;
+    vi.spyOn(FileFinder, "create")
+      .mockReturnValueOnce({ ok: true, value: finder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder });
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+    const search = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
+      searchIndex.searchContents({
+        query: "needle",
+        limit: 10,
+        caseSensitive: false,
+        wholeWord: false,
+        useRegex: false,
+        ...input,
+      });
+
+    expect(yield* search({})).toEqual({
+      matches: [
+        {
+          path: "src/a.ts",
+          lineNumber: 1,
+          lineContent: "const Needle = 1;",
+          matchRanges: [{ start: 6, end: 12 }],
+        },
+        {
+          path: "src/a.ts",
+          lineNumber: 2,
+          lineContent: "needles(a.b);",
+          matchRanges: [{ start: 0, end: 6 }],
+        },
+      ],
+      truncated: false,
+    });
+    expect((yield* search({ caseSensitive: true, wholeWord: true })).matches).toEqual([]);
+    expect((yield* search({ query: "a.b" })).matches.map((match) => match.matchRanges)).toEqual([
+      [{ start: 8, end: 11 }],
+    ]);
+    expect(
+      (yield* search({ query: "ne+dles?", useRegex: true })).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([[{ start: 6, end: 12 }], [{ start: 0, end: 7 }]]);
+    expect(
+      (yield* search({ query: "[a-z]e", useRegex: true })).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([
+      [{ start: 4, end: 6 }],
+      [
+        { start: 6, end: 8 },
+        { start: 10, end: 12 },
+      ],
+      [
+        { start: 0, end: 2 },
+        { start: 4, end: 6 },
+      ],
+      [{ start: 2, end: 4 }],
+    ]);
+    const invalid = yield* search({ query: "a.b(", useRegex: true });
+    expect(invalid.matches).toEqual([]);
+    expect(invalid.regexFallbackError).toBeDefined();
+    expect(yield* search({ limit: 1 })).toMatchObject({ truncated: true });
+    expect(grep).not.toHaveBeenCalled();
+
+    // When git cannot give regex results or their ranges, fff answers once ready instead.
+    const failingGitIndex = (
+      failingArgument: string,
+      stderr: string,
+      output: { readonly exitCode: number; readonly stdout: string } = {
+        exitCode: 128,
+        stdout: "",
+      },
+    ) =>
+      WorkspaceSearchIndex.make(cwd, "content").pipe(
+        Effect.provideService(
+          VcsProcess.VcsProcess,
+          VcsProcess.VcsProcess.of({
+            run: (input) =>
+              input.args.includes(failingArgument)
+                ? Effect.succeed({
+                    exitCode: ChildProcessSpawner.ExitCode(output.exitCode),
+                    stdout: output.stdout,
+                    stderr,
+                    stdoutTruncated: output.exitCode === 0,
+                    stderrTruncated: false,
+                  })
+                : vcsProcess.run(input),
+          }),
+        ),
+      );
+    const regexInput = {
+      query: "ne+dles?",
+      limit: 10,
+      caseSensitive: false,
+      wholeWord: true,
+      useRegex: true,
+    };
+    const noPcreIndex = yield* failingGitIndex(
+      "-P",
+      "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE\n",
+    );
+    expect((yield* noPcreIndex.searchContents(regexInput)).regexFallbackError).toBeUndefined();
+    expect(grep).toHaveBeenCalledTimes(1);
+    const noRangesIndex = yield* failingGitIndex("-o", "fatal: unexpected failure\n");
+    yield* noRangesIndex.searchContents(regexInput);
+    expect(grep).toHaveBeenCalledTimes(2);
+    // Ranges output cut off after line 1: line 2 is left out and the result says so.
+    const cutRangesIndex = yield* failingGitIndex("-o", "", {
+      exitCode: 0,
+      stdout: "src/a.ts\u00001\u00007\u0000Needle\nsrc/a.ts\u00002",
+    });
+    expect(yield* cutRangesIndex.searchContents(regexInput)).toEqual({
+      matches: [
+        {
+          path: "src/a.ts",
+          lineNumber: 1,
+          lineContent: "const Needle = 1;",
+          matchRanges: [{ start: 6, end: 12 }],
+        },
+      ],
+      truncated: true,
+    });
+
+    isWarmupComplete = true;
+    yield* search({});
+    expect(grep).toHaveBeenCalledTimes(3);
+    expect(finder.destroy).not.toHaveBeenCalled();
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 function fakeSymlinkFinder(
   directories: ReadonlyArray<string>,
   options: {
@@ -241,7 +485,7 @@ function fakeSymlinkFinder(
   let watchFailures = options.watchFailures ?? 0;
   // fff's pageIndex is an offset into the results, not a page number.
   const directorySearch = vi.fn(
-    (_query: string, searchOptions?: { pageIndex?: number; pageSize?: number }) => {
+    async (_query: string, searchOptions?: { pageIndex?: number; pageSize?: number }) => {
       const offset = searchOptions?.pageIndex ?? 0;
       const items = directories.slice(offset, offset + (searchOptions?.pageSize ?? 100));
       return {
@@ -260,21 +504,32 @@ function fakeSymlinkFinder(
   const finder = {
     destroy: vi.fn(),
     waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-    isScanning: () => false,
-    watch: (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
+    // fff's isScanning waits on the picker lock on the JS thread.
+    isScanning: () => {
+      throw new Error("isScanning must not run on the JS thread");
+    },
+    getScanProgressAsync: async () => ({
+      ok: true as const,
+      value: { isScanning: false },
+    }),
+    // fff's watch waits on the picker lock on the JS thread.
+    watch: () => {
+      throw new Error("watch must not run on the JS thread");
+    },
+    watchAsync: async (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
       if (watchFailures > 0) {
         watchFailures -= 1;
-        throw new Error("File system watcher is not ready");
+        return { ok: false as const, error: "File system watcher is not ready" };
       }
       watchers.push(callback);
       return { ok: true as const, value: () => undefined };
     },
-    directorySearch,
-    fileSearch: () => {
+    directorySearchAsync: directorySearch,
+    fileSearchAsync: async () => {
       const items = indexedItems.flatMap((entry) => (entry.type === "file" ? [entry.item] : []));
       return { ok: true as const, value: { items, scores: [], totalMatched: items.length } };
     },
-    mixedSearch: () => ({
+    mixedSearchAsync: async () => ({
       ok: true as const,
       value: { items: indexedItems, totalMatched: indexedItems.length },
     }),
@@ -492,4 +747,28 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
     ).pipe(Effect.provide(testLayer)),
+);
+
+// ripgrep and fff let a matching `.ignore` decide ahead of `.gitignore`, so Git's list must not hide it.
+it.live("finds Git-ignored files that a root .ignore re-includes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-search-reinclude-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "notes/\n");
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".ignore"),
+      "!notes/\nnotes/**/*\n!notes/**/\n!notes/**/*.md\n",
+    );
+    yield* fileSystem.makeDirectory(path.join(cwd, "notes", "daily"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.md"), "");
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.txt"), "");
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+    const result = yield* searchIndex.search("standup", 50, "file");
+
+    expect(result.entries).toEqual([{ kind: "file", path: "notes/daily/standup.md" }]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
