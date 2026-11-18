@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - a byte-for-byte streaming proxy needs raw Node sockets and headers.
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
+import * as NodeStream from "node:stream";
 import * as NodeZlib from "node:zlib";
 
 import type {
@@ -193,28 +194,42 @@ const make = Effect.gen(function* () {
           },
         },
         (reply) => {
-          const status = reply.statusCode ?? 502;
-          response.writeHead(status, reply.headers);
-          const keep = changed.length > 0 && (status < 200 || status >= 300);
-          const kept: Array<Buffer> = [];
-          let keptBytes = 0;
-          if (keep) {
-            reply.on("data", (chunk: Buffer) => {
-              if (keptBytes >= MAX_ERROR_BODY_BYTES) return;
-              kept.push(chunk);
-              keptBytes += chunk.length;
-            });
+          // Node throws from these callbacks outside Effect; a throw here would stop the server.
+          try {
+            // Node's client accepts statuses its server side refuses to write, such as 099.
+            const status = reply.statusCode ?? 502;
+            if (status < 100 || status > 599) {
+              reply.resume();
+              response.writeHead(502).end();
+              settle({ status: 502 });
+              return;
+            }
+            response.writeHead(status, reply.headers);
+            const keep = changed.length > 0 && (status < 200 || status >= 300);
+            const kept: Array<Buffer> = [];
+            let keptBytes = 0;
+            if (keep) {
+              reply.on("data", (chunk: Buffer) => {
+                if (keptBytes >= MAX_ERROR_BODY_BYTES) return;
+                kept.push(chunk);
+                keptBytes += chunk.length;
+              });
+            }
+            const encoding = reply.headers["content-encoding"];
+            // Unlike pipe, pipeline destroys the response when the upstream fails mid-body, so
+            // Claude Code sees the failure and retries as it would without the forwarder.
+            NodeStream.pipeline(reply, response, () =>
+              settle({
+                status,
+                ...(keep ? { errorBody: Buffer.concat(kept) } : {}),
+                ...(encoding === undefined ? {} : { encoding }),
+              }),
+            );
+          } catch {
+            reply.destroy();
+            response.destroy();
+            settle({ status: 502 });
           }
-          reply.pipe(response);
-          const encoding = reply.headers["content-encoding"];
-          const done = () =>
-            settle({
-              status,
-              ...(keep ? { errorBody: Buffer.concat(kept) } : {}),
-              ...(encoding === undefined ? {} : { encoding }),
-            });
-          reply.on("end", done);
-          reply.on("error", done);
         },
       );
       upstream.on("error", () => {
@@ -222,8 +237,10 @@ const make = Effect.gen(function* () {
         else response.writeHead(502).end();
         settle({ status: 502 });
       });
+      // The client went away first; a finished response settles through the pipeline instead.
       response.on("close", () => {
-        if (!response.writableFinished) upstream.destroy();
+        if (response.writableFinished) return;
+        upstream.destroy();
         settle({ status: response.statusCode });
       });
       upstream.end(body);

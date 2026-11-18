@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off - a real loopback client and fake upstream exercise the byte stream.
 import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeZlib from "node:zlib";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -203,5 +204,65 @@ describe("ClaudeRequestForwarder", () => {
         ),
       );
     },
+  );
+
+  it.live("answers 502 for a malformed status and fails a stream the upstream cuts off", () =>
+    Effect.gen(function* () {
+      // A raw socket upstream, so it can send what an HTTP server library refuses to.
+      const upstream = yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeNet.Server>((resolve) => {
+              const server = NodeNet.createServer((socket) => {
+                socket.once("data", (chunk: Buffer) => {
+                  const head = chunk.toString("latin1");
+                  if (head.includes("status099")) {
+                    socket.end("HTTP/1.1 099 Odd\r\ncontent-length: 0\r\n\r\n");
+                  } else {
+                    socket.write(
+                      "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n",
+                    );
+                    socket.end();
+                  }
+                });
+              });
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
+        ),
+        (server) =>
+          Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+      );
+      const address = upstream.address();
+      const upstreamPort = address !== null && typeof address === "object" ? address.port : 0;
+      const forwarder = yield* ClaudeRequestForwarder.ClaudeRequestForwarder;
+      const route = yield* forwarder.openRoute({
+        threadId: ThreadId.make("thread-raw-upstream"),
+        upstream: `http://127.0.0.1:${upstreamPort}`,
+        rules: Effect.succeed([]),
+        onRewrite: () => Effect.void,
+        onFailure: () => Effect.void,
+      });
+
+      const odd = yield* Effect.promise(() =>
+        fetch(`${route.baseUrl}/v1/messages?status099`, { method: "POST", body: requestBody }),
+      );
+      assert.strictEqual(odd.status, 502);
+
+      const cut = yield* Effect.promise(() =>
+        fetch(`${route.baseUrl}/v1/messages?truncate`, { method: "POST", body: requestBody }),
+      );
+      assert.strictEqual(cut.status, 200);
+      // The client sees the stream fail, as it would talking to the upstream directly.
+      const read = yield* Effect.promise(() =>
+        cut.text().then(
+          () => "ended",
+          () => "failed",
+        ),
+      );
+      assert.strictEqual(read, "failed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ClaudeRequestForwarder.layer.pipe(Layer.provide(NodeCrypto.layer))),
+    ),
   );
 });
