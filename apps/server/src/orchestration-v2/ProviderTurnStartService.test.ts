@@ -337,6 +337,61 @@ effectIt.effect("restores a missing worktree before a send only under the worksp
   }).pipe(Effect.provide(layerRestoreLeaseTest)),
 );
 
+effectIt.effect("restores into a leftover worktree folder that cannot itself be removed", () => {
+  const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
+  // Windows refuses to remove a folder that is still some process's cwd.
+  const remove = vi.fn((target: string) =>
+    target === worktreePath
+      ? Effect.fail(
+          PlatformError.systemError({
+            _tag: "Busy",
+            module: "FileSystem",
+            method: "remove",
+            pathOrDescriptor: target,
+          }),
+        )
+      : Effect.void,
+  );
+  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  return Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_leftover_restore"),
+      projectId: ProjectId.make("project_leftover_restore"),
+      worktreePath,
+      branch: "feature/restore",
+    });
+    expect(remove).toHaveBeenCalledWith(`${worktreePath}/node_modules`, { recursive: true });
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: (target: string) => Effect.succeed(!target.endsWith("/.git")),
+              readDirectory: () => Effect.succeed(["node_modules"]),
+              stat: () => Effect.succeed({ type: "Directory" }),
+              realPath: (target: string) => Effect.succeed(normalize(target)),
+              remove,
+            } as never),
+            layerWorktreeLocation(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              pruneWorktrees: () => Effect.void,
+              createWorktree,
+              listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
 it.each([
   { label: "directly in the scratch root", folder: "/tmp/t3-home/scratch/notes", recreated: true },
   { label: "below another folder", folder: "/tmp/t3-home/scratch/notes/deep", recreated: false },
@@ -2445,7 +2500,9 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         failReadsAfterRunning: true,
       });
       harness.createWorktree.mockImplementation(() =>
-        fileSystem.makeDirectory(worktreePath).pipe(Effect.as({} as never), Effect.orDie),
+        fileSystem
+          .makeDirectory(worktreePath, { recursive: true })
+          .pipe(Effect.as({} as never), Effect.orDie),
       );
       const open = harness.open.getMockImplementation()!;
       harness.open.mockImplementation(() =>

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
 
 import type { SavedView, SavedViewsKind } from "../SavedViewsMenu";
@@ -25,10 +26,10 @@ export const ISSUE_SAVED_VIEWS = {
     Schema.Struct({ ...SavedViewIdentity.fields, preferences: IssueListPreferencesSchema }),
   ),
   empty: [],
-  noun: "issue",
-  shortNoun: "issue",
-  placeholder: "Issues Assigned to Me",
-  suggestedName: (preferences) => (preferences.who === "assigned" ? "Issues Assigned to Me" : ""),
+  list: "issue",
+  placeholder: msg("Issues Assigned to Me"),
+  suggestedName: (preferences) =>
+    preferences.who === "assigned" ? msg("Issues Assigned to Me") : "",
   normalize: issueListPreferences,
   matches: issueViewMatches,
 } as const satisfies SavedViewsKind<
