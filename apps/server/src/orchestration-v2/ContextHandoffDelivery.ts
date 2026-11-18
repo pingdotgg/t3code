@@ -88,7 +88,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       pending.some(
         (handoff) =>
           handoff.strategy === "delta_since_target_last_seen" &&
-          !handoff.fromProviderThreadIds.includes(handoff.toProviderThreadId) &&
+          (handoff.fromProviderThreadIds.length !== 1 ||
+            handoff.fromProviderThreadIds[0] !== handoff.toProviderThreadId) &&
           ((handoff.history?.omittedItems ?? 0) > 0 ||
             handoff.history?.messages.some((message) => omittedItemIds.has(message.itemId))),
       )

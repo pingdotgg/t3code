@@ -492,11 +492,17 @@ describe("handoff delivery", () => {
   );
 
   it.effect.each([
-    { label: "a trimmed switch delta", from: "provider-thread:other", omitted: 366, fits: false },
-    { label: "a whole switch delta", from: "provider-thread:other", omitted: 0, fits: true },
+    { label: "a trimmed switch delta", from: ["provider-thread:other"], omitted: 366, fits: false },
+    { label: "a whole switch delta", from: ["provider-thread:other"], omitted: 0, fits: true },
+    {
+      label: "a trimmed delta that also covers the target",
+      from: ["provider-thread:target", "provider-thread:other"],
+      omitted: 1,
+      fits: false,
+    },
     {
       label: "a trimmed same-thread retry delta",
-      from: "provider-thread:target",
+      from: ["provider-thread:target"],
       omitted: 1,
       fits: true,
     },
@@ -508,7 +514,7 @@ describe("handoff delivery", () => {
             {
               ...handoff,
               strategy: "delta_since_target_last_seen",
-              fromProviderThreadIds: [ProviderThreadId.make(from)],
+              fromProviderThreadIds: from.map((id) => ProviderThreadId.make(id)),
               history: { ...handoff.history!, omittedItems: omitted },
             },
           ],
