@@ -1651,7 +1651,12 @@ async function recordClaudeStreamingQuery(input: {
   });
   const iterator = new RecordingMessageReader(queryRuntime[Symbol.asyncIterator]());
   const mcpServerStatus = {
-    read: () => queryRuntime.mcpServerStatus(),
+    // Like the adapter's read, a failed or slow one shows no icons rather than stopping the turn.
+    read: () =>
+      Promise.race([
+        queryRuntime.mcpServerStatus(),
+        Effect.runPromise(Effect.sleep(Duration.seconds(2))).then(() => []),
+      ]).catch(() => []),
     readToolNames: new Set<string>(),
   };
   let wakeNumber = 0;

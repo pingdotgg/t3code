@@ -8843,7 +8843,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const at =
             Option.getOrUndefined(DateTime.make(text(field(line, "timestamp")) ?? "")) ??
             (yield* DateTime.now);
-          const presentations = claudeToolPresentationsFromAssistantMessage(line);
+          const liveQuery = yield* Ref.get(queryContext);
+          const presentations = claudeToolPresentationsFromAssistantMessage(
+            line,
+            liveQuery === null ? undefined : yield* claudeMcpServerPresentations(liveQuery, line),
+          );
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(line)) {
             if (target.toolCalls.has(toolUse.id)) continue;
             yield* startSubagentToolCall(target, {
