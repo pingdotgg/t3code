@@ -431,7 +431,9 @@ own CLI, and some from the model provider.
   **T3 Code: messages from other threads** to **Block** to refuse messages from threads
   outside the target's own delegation tree and from linked machines. The sending agent gets an
   error, and the target thread shows a row naming the sender with the blocked text. A thread
-  and the tasks it delegated can always message each other.
+  and the tasks it delegated can always message each other. The block covers T3 Code's agent
+  tools only: an agent with an unsandboxed shell can still run `t3 thread send`, which counts
+  as you.
 - **What the agent's CLI adds.** Project instruction files, memory, hook output and system
   reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
   the thread shows a row named **Claude Code added context to this turn** and a row with its
