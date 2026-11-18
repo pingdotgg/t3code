@@ -1,4 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -211,4 +212,57 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
         ),
       ),
     );
+});
+
+const MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL = Duration.minutes(1);
+
+const urlOrigin = (url: string) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Only this server runs the connector, so an ingress naming another origin is a dead
+ * registration. Checks every minute and re-registers this origin on a mismatch,
+ * doubling the wait (up to 30 minutes) while the relay keeps routing elsewhere.
+ */
+export const watchManagedTunnelOrigin = Effect.fn("ManagedTunnelOrigin.watch")(function* <
+  E,
+  R,
+>(options: {
+  readonly localOrigin: string;
+  /** The service URL cloudflared routes the public hostname to, or `null` while unknown. */
+  readonly readIngressOrigin: Effect.Effect<string | null>;
+  readonly register: Effect.Effect<unknown, E, R>;
+}) {
+  const localOrigin = urlOrigin(options.localOrigin);
+  let wait = MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL;
+  while (true) {
+    yield* Effect.sleep(wait);
+    const ingress = yield* options.readIngressOrigin;
+    // An unreadable ingress says nothing, so it keeps whatever backoff is running.
+    if (ingress === null) continue;
+    const ingressOrigin = urlOrigin(ingress);
+    if (ingressOrigin !== null && ingressOrigin === localOrigin) {
+      wait = MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL;
+      continue;
+    }
+    yield* Effect.logWarning(
+      "T3 Connect routes this server's tunnel to another origin; registering this server again",
+      { ingressOrigin: ingressOrigin ?? "unparseable", localOrigin },
+    );
+    yield* options.register.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("Failed to register this server's T3 Connect origin again", {
+              cause,
+            }),
+      ),
+    );
+    wait = Duration.min(Duration.times(wait, 2), MANAGED_TUNNEL_RECOVERY_MAX_COOLDOWN);
+  }
 });
