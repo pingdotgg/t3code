@@ -26,11 +26,18 @@ function parseCpuList(list: string): ReadonlySet<number> | null {
   return cpus;
 }
 
-// os.cpus() compacts online CPUs, so its indices are not CPU ids; /proc/stat lines are keyed.
-function pinnedCpu(stat: string, allowed: ReadonlySet<number>) {
+export interface CpuTimes {
+  readonly idle: number;
+  readonly total: number;
+  readonly count: number;
+}
+
+// os.cpus() leaves iowait, softirq and steal out, so disk wait would read as busy.
+// Its indices are compacted online CPUs, not CPU ids; /proc/stat lines are keyed.
+export function linuxCpu(stat: string, allowed?: ReadonlySet<number>): CpuTimes | null {
   const cpu = { idle: 0, total: 0, count: 0 };
   for (const [, id, fields] of stat.matchAll(/^cpu(\d+) (.+)$/gm)) {
-    if (!allowed.has(Number(id))) continue;
+    if (allowed && !allowed.has(Number(id))) continue;
     const counters = (fields ?? "").trim().split(/\s+/).map(Number);
     const at = (index: number) => counters[index] ?? 0;
     // user nice system idle iowait irq softirq steal
@@ -42,7 +49,16 @@ function pinnedCpu(stat: string, allowed: ReadonlySet<number>) {
   return cpu.count > 0 ? cpu : null;
 }
 
-function readCpu() {
+/** Share of core time spent running work between two readings, null if they are not comparable. */
+export function cpuBusyBetween(previous: CpuTimes, next: CpuTimes): number | null {
+  const totalDelta = next.total - previous.total;
+  const idleDelta = next.idle - previous.idle;
+  return previous.count === next.count && totalDelta > 0 && idleDelta >= 0
+    ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+    : null;
+}
+
+function osCpu(): CpuTimes {
   const cpus = NodeOS.cpus();
   const cpu = cpus.reduce(
     (sum, { times }) => ({
@@ -104,8 +120,8 @@ const make = Effect.fn("makeHostResources")(function* () {
 
     const sampleCpu = () =>
       allowedCpus
-        ? Effect.map(readFile("/proc/stat"), (stat) => pinnedCpu(stat, allowedCpus) ?? readCpu())
-        : Effect.sync(readCpu);
+        ? Effect.map(readFile("/proc/stat"), (stat) => linuxCpu(stat, allowedCpus) ?? osCpu())
+        : Effect.sync(osCpu);
 
     const previousCpu = yield* sampleCpu();
     const previousUsage = yield* readCpuUsage();
@@ -114,13 +130,8 @@ const make = Effect.fn("makeHostResources")(function* () {
     const cpu = yield* sampleCpu();
     const usage = yield* readCpuUsage();
     const elapsedMicros = ((yield* Clock.currentTimeMillis) - startedAt) * 1000;
-    const totalDelta = cpu.total - previousCpu.total;
-    const idleDelta = cpu.idle - previousCpu.idle;
     let cpuCount = cpu.count;
-    const hostUtilization =
-      previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
-        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
-        : null;
+    const hostUtilization = cpuBusyBetween(previousCpu, cpu);
     let cpuUtilization = hostUtilization;
     if (cpuMax) {
       const capacity = Math.min(Number(cpuMax[1]) / Number(cpuMax[2]), cpu.count);

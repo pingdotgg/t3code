@@ -225,3 +225,25 @@ describe("HostResources.layer", () => {
     ),
   );
 });
+
+describe("linuxCpu", () => {
+  it("counts disk wait as idle and softirq and steal as work", () => {
+    // cpuN user nice system idle iowait irq softirq steal guest guest_nice
+    const stat =
+      "cpu 300 0 300 900 300 0 300 0 0 0\ncpu0 100 0 200 300 300 0 100 0 0 0\ncpu1 0 0 0 600 0 0 0 100 0 0\n";
+    assert.deepStrictEqual(HostResources.linuxCpu(stat), { idle: 1_200, total: 1_700, count: 2 });
+  });
+});
+
+describe("cpuBusyBetween", () => {
+  const reading = (idle: number, total: number, count = 8) => ({ idle, total, count });
+
+  it("stays within 0 to 1 when counters move inconsistently", () => {
+    assert.strictEqual(
+      HostResources.cpuBusyBetween(reading(1_000, 2_000), reading(2_100, 3_000)),
+      0,
+    );
+    assert.isNull(HostResources.cpuBusyBetween(reading(1_000, 2_000), reading(980, 3_000)));
+    assert.isNull(HostResources.cpuBusyBetween(reading(1_000, 2_000), reading(1_500, 3_000, 7)));
+  });
+});
