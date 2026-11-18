@@ -312,6 +312,7 @@ interface Wake {
   readonly after: string | undefined;
   readonly first: string | undefined;
   readonly children: Set<string>;
+  readonly awaited: Set<string>;
 }
 
 interface OpenBlock {
@@ -996,6 +997,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         published?: boolean;
       }
     >();
+
+    // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
+    const wakeLaunchingShell = (state: ThreadState, taskId: string) =>
+      sessionsOf(state)
+        .flatMap((session) => session.wakes)
+        .find((wake) =>
+          wake.events.some(
+            (event) =>
+              event.type === "session.tool.success" &&
+              stringField(event.data.metadata, "shellID") === taskId,
+          ),
+        );
 
     const owesWork = (state: ThreadState) =>
       [...shells.values()].some((shell) => shell.state === state && shell.running) ||
@@ -2985,6 +2998,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         after: delivered.at(-1)?.inboxId,
         first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
+        awaited: new Set(),
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -4406,6 +4420,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
       for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
+      for (const taskId of wake.awaited) {
+        const shell = shells.get(taskId);
+        if (shell !== undefined) shell.awaited = true;
+      }
     });
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
@@ -5134,11 +5152,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const sessions = sessionsOf(state);
           const matched = [...new Set(taskIds)].filter((taskId) => {
             const shell = shells.get(taskId);
-            return shell !== undefined && shell.running && sessions.includes(shell.state);
+            return shell === undefined
+              ? wakeLaunchingShell(state, taskId) !== undefined
+              : shell.running && sessions.includes(shell.state);
           });
           if (matched.length === 0) return { matched };
           for (const taskId of matched) {
-            const shell = shells.get(taskId)!;
+            const shell = shells.get(taskId);
+            if (shell === undefined) {
+              const held = wakeLaunchingShell(state, taskId)!.awaited;
+              if (awaited) held.add(taskId);
+              else held.delete(taskId);
+              continue;
+            }
             shell.awaited = awaited;
             yield* syncRosterAncestors(shell.state);
           }

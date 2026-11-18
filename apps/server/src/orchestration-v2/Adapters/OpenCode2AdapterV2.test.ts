@@ -2294,6 +2294,82 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("marks a shell OpenCode started on its own before T3 runs the wake", () =>
+    Effect.gen(function* () {
+      const shellID = "sh_wake";
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...tool, name: "shell" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "shell",
+          input: { command: "vp test", background: true },
+          executed: false,
+        }),
+        event(
+          "session.tool.success",
+          {
+            ...tool,
+            content: [{ type: "text", text: "Launched" }],
+            metadata: { shellID },
+            executed: false,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Routed once the held execution ended, so its update proves the launch reached the adapter.
+        event("session.model.selected", {
+          sessionID: SESSION,
+          model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+        }),
+        out("shell.output", "<any>"),
+        reply("shell.output", {
+          location: { directory: WORK },
+          data: { output: "", cursor: 0, size: 0, truncated: false },
+        }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => {
+              offers.push(request);
+            }),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchNested(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.rootVariant === "thinking");
+      assert.deepEqual(
+        yield* runtime.awaitBackgroundTasks!({
+          providerThread: thread,
+          taskIds: [shellID],
+          awaited: true,
+        }),
+        { matched: [shellID] },
+      );
+      const marked = yield* runtime.events.pipe(
+        Stream.filter(
+          (e) =>
+            e.type === "provider_thread.updated" &&
+            e.providerThread.pendingBackgroundTasks?.some(
+              (task) => task.taskId === shellID && task.awaited === true,
+            ) === true,
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      yield* Fiber.join(marked);
+    }),
+  );
+
   it.effect("clears the caller's pending work when a called session's held wake runs", () =>
     Effect.gen(function* () {
       const OTHER = "ses_other00000000000000000000";
