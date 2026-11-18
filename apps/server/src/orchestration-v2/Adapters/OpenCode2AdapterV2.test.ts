@@ -2294,14 +2294,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["running", "exited", "held"] as const)(
+  it.effect.each(["running", "exited", "timeout", "held"] as const)(
     "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
     (shell) =>
       Effect.gen(function* () {
         const shellID = "sh_wake";
         const tool = { sessionID: SESSION, assistantMessageID: "msg_wake", id: "call-wake-shell" };
         const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-        const shellReport = (state: string) =>
+        const shellReport = (state: string, extra: Record<string, unknown> = {}) =>
           event("session.inbox.enqueued", {
             inboxID: "msg_shell_report",
             sessionID: SESSION,
@@ -2310,7 +2310,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               payload: {
                 text: `<shell id="${shellID}" state="${state}">done</shell>`,
                 description: "vp test",
-                metadata: { source: "shell", shellID, state },
+                metadata: { source: "shell", shellID, state, ...extra },
               },
               delivery: "steer",
             },
@@ -2357,6 +2357,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ? [
                 event("shell.exited", { id: shellID, exit: 7, status: "exited" }),
                 shellReport("error"),
+              ]
+            : []),
+          ...(shell === "timeout"
+            ? [
+                event("shell.exited", { id: shellID, status: "timeout" }),
+                shellReport("completed", { timeout: true }),
               ]
             : []),
           // Routed once the held execution ended, so its update proves the launch reached the adapter.
@@ -2422,7 +2428,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         // A shell that ended before the wake ran never holds the thread.
         assert.deepInclude(
           yield* Deferred.await(settled),
-          shell === "exited" ? { status: "failed", exitCode: 7 } : { status: "completed" },
+          shell === "exited"
+            ? { status: "failed", exitCode: 7 }
+            : { status: shell === "timeout" ? "failed" : "completed" },
         );
         const listed = yield* Deferred.poll(marked);
         if (Option.isSome(listed)) assert.notStrictEqual(yield* listed.value, true);

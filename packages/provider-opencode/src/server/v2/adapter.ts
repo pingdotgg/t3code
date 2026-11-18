@@ -3139,14 +3139,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         });
         if (id !== undefined && shell === undefined) {
           const outcome = reportOutcome(stringField(payload.metadata, "state"));
-          const exit = shellInfo.get(id)?.exit;
+          const known = shellInfo.get(id);
+          const exit = known?.exit;
+          // A known exit outranks the report, which says "completed" for a timeout.
           heldLaunch(state, id)?.ended.set(id, {
             status:
-              outcome === "failed"
-                ? "failed"
-                : outcome === "cancelled"
+              known !== undefined && known.status !== "running"
+                ? known.status === "killed"
                   ? "interrupted"
-                  : "completed",
+                  : exit === 0
+                    ? "completed"
+                    : "failed"
+                : outcome === "failed"
+                  ? "failed"
+                  : outcome === "cancelled"
+                    ? "interrupted"
+                    : "completed",
             ...(exit === undefined ? {} : { exit }),
           });
         }
