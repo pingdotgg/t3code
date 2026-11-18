@@ -1,5 +1,4 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
-import { T3_CODE_VOICE_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
@@ -23,7 +22,6 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
-const VOICE_INSTRUCTIONS = ${JSON.stringify(T3_CODE_VOICE_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -394,10 +392,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
   // bridge as the credential owner: mcp.json overrides native registrations.
   const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
-  const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
   const ALIAS_PREFIX = "mcp__t3_code__";
-  let deferOptionalTools = supportsExposure;
-  const isDeferred = (name: string) => deferOptionalTools && !directTools.has(name);
+  let deferTools = supportsExposure;
   // An alias follows its public tool: gone when --exclude-tools removed it,
   // off while a direct one is off.
   const followsPublicTool = (
@@ -406,7 +402,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     active: ReadonlyArray<string>,
   ) =>
     registered.has("mcp__t3-code__" + name) &&
-    (isDeferred(name) || active.includes("mcp__t3-code__" + name));
+    (deferTools || active.includes("mcp__t3-code__" + name));
   let catalog: ReadonlyArray<McpTool> = [];
 
   const client = createMcpClient(endpoint, token);
@@ -424,7 +420,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         const toolName = \`\${prefix}\${name}\`;
         if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(toolName);
         const isAlias = prefix === ALIAS_PREFIX;
-        const exposure = isAlias ? "model-only" : isDeferred(name) ? "deferred" : "direct";
+        const exposure = isAlias ? "model-only" : deferTools ? "deferred" : "direct";
         pi.registerTool({
           name: toolName,
           label: name,
@@ -489,8 +485,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (!supportsExposure) return;
     // A disabled or replaced search builtin cannot discover deferred tools.
     const hasToolSearch = hasBuiltinToolSearch();
-    const exposureChanged = deferOptionalTools !== hasToolSearch;
-    deferOptionalTools = hasToolSearch;
+    const exposureChanged = deferTools !== hasToolSearch;
+    deferTools = hasToolSearch;
     if (exposureChanged) registerTools();
     // Completion gateways can silently drop calls to undeclared tools named
     // in history or guidance. Eagerly load T3 schemas, including after tree
@@ -547,16 +543,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Keep guidance in the system prompt so leading slash commands still expand.
-  pi.on("before_agent_start", (event, ctx) => {
-    reconcileDiscovery(ctx);
-    const sections = event.systemPromptOptions?.sections;
-    if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
-      // A full prompt override bypasses Pi's later section rendering.
-      sections.t3_code_voice = VOICE_INSTRUCTIONS;
-      return undefined;
-    }
-    return { systemPrompt: event.systemPrompt + "\\n\\n" + VOICE_INSTRUCTIONS };
-  });
+  pi.on("before_agent_start", (_event, ctx) => reconcileDiscovery(ctx));
 }
 `;

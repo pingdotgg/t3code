@@ -68,7 +68,6 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { t3VoiceSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import {
@@ -4493,12 +4492,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
         }
       }
-      const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3VoiceSystemPrompt(mcpAvailable),
-      ]
-        .filter((part) => part !== undefined && part.length > 0)
-        .join("\n\n");
+      const instructions = buildRuntimeInstructions({
+        harness: "OpenCode",
+        model: turnInput.modelSelection.model,
+      });
       if (instructions !== state.instructions) {
         yield* client.session.instructions.entry.put({
           sessionID: Session.ID.make(sessionId),

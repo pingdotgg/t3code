@@ -951,7 +951,6 @@ function assertReinjectedInstructions(
 ) {
   const text = blocks[0]?.text ?? "";
   assert.include(text, "T3 Code interaction mode: Default");
-  assert.include(text, "### Voice");
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
   assert.include(blocks[1]?.text ?? "", "<runtime_info>");
 }
@@ -2688,7 +2687,6 @@ describe("AcpAdapterV2", () => {
         const firstDefault = yield* runTurn(2, defaultPolicy, "First default request.");
         assert.equal(firstDefault.textBlockCount, 2);
         assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
-        assert.include(firstDefault.prompt, "### Voice");
         assert.include(firstDefault.prompt, "<runtime_info>");
         assert.notInclude(
           firstDefault.methods,

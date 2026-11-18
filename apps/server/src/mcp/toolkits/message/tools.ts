@@ -33,8 +33,6 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients)
-  // Claude Code defers MCP tools behind ToolSearch; Anthropic says to declare this from the first request.
-  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const MessageToolkit = Toolkit.make(SendToUserTool);

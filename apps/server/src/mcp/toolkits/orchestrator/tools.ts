@@ -217,8 +217,6 @@ const RequestSecretTool = Tool.make("request_secret", {
 })
   .annotate(Tool.Title, "Request a secret from the user")
   .annotate(Tool.Destructive, false)
-  // Claude Code defers MCP tools behind ToolSearch; agents that never load this one ask in chat.
-  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true })
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CreateThreadsTool = Tool.make("create_threads", {

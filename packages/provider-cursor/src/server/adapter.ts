@@ -60,7 +60,6 @@ import {
   rewriteCursorSkillMentions,
 } from "./skills.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
-import { t3VoicePrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1097,11 +1096,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const liveAgent = yield* Ref.make<CursorLiveAgent | null>(null);
-        // What the native conversation was told since it started or was last compacted.
-        const told = yield* Ref.make<{
-          readonly agent: string;
-          readonly voice: boolean;
-        } | null>(null);
         // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
           readonly agent: string;
@@ -2867,26 +2861,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         );
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-          mcpServers: Record<string, McpServerConfig> | undefined,
-          voiceDelivered: boolean,
           interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined, runtimeInstructions: undefined };
           }
-          const newText = t3VoicePrompt({
-            prompt: yield* providerMessageTextWithAttachmentPaths({
-              text: yield* resolveCursorSkillText(
-                rawText,
-                turnInput.runtimePolicy.cwd ?? undefined,
-              ),
-              attachments: turnInput.message.attachments,
-              resolveAttachmentPath: host.resolveAttachmentPath,
-              resolveExtractedTextPath: host.resolveExtractedTextPath,
-            }),
-            hasT3Mcp: mcpServers !== undefined,
-            voiceDelivered,
+          const newText = yield* providerMessageTextWithAttachmentPaths({
+            text: yield* resolveCursorSkillText(rawText, turnInput.runtimePolicy.cwd ?? undefined),
+            attachments: turnInput.message.attachments,
+            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const userText =
             interrupted === undefined
@@ -2968,12 +2953,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
-            const known = yield* Ref.get(told);
-            // A conversation this process has not sent to was told on its first run.
-            const voiceDelivered =
-              known?.agent === agent.nativeThreadId
-                ? known.voice
-                : (turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1);
             const interrupted = yield* Ref.get(interruptedPrompt);
             const runCheckpointed = (runId?: string) =>
               agent.session.runCheckpointed?.(runId) ?? Effect.succeed(false);
@@ -3012,7 +2991,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   }
                 : resume === "replay"
                   ? { message: dropped!.message, prompt: dropped!.text }
-                  : yield* resolveUserMessage(turnInput, mcpServers, voiceDelivered, dropped?.text);
+                  : yield* resolveUserMessage(turnInput, dropped?.text);
             const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
@@ -3564,10 +3543,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               }
               const threadId = rollbackInput.providerThread.appThreadId ?? input.threadId;
               const { target } = rollbackInput;
-              // The kept turns may predate a compaction, so the instructions are sent again.
-              const forgetConversation = (agent: string) =>
+              const forgetConversation = () =>
                 Effect.all([
-                  Ref.set(told, { agent, voice: false }),
                   Ref.set(interruptedPrompt, null),
                   Ref.set(resumedAgent, null),
                   // A shell the discarded runs left running must not wake the rewound thread.
@@ -3597,7 +3574,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   });
                 }
                 yield* agent.session.rewindAfterRun(keptRunId);
-                yield* forgetConversation(agent.nativeThreadId);
+                yield* forgetConversation();
                 yield* agent.session.close.pipe(Effect.ignore);
                 yield* Ref.set(liveAgent, null);
                 return {
@@ -3618,7 +3595,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 modelSelection: input.modelSelection,
                 runtimePolicy: input.runtimePolicy,
               });
-              yield* forgetConversation(opened.nativeThreadId);
+              yield* forgetConversation();
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,

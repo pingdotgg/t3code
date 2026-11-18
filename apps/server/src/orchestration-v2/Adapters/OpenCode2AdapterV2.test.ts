@@ -5811,7 +5811,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
+  it.effect("re-registers T3 MCP each turn and still runs the turn when adding fails", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
@@ -5849,12 +5849,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...turn,
           add,
           reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
-          out("session.instructions.entry.put", {
-            sessionID: SESSION,
-            key: "t3-code",
-            value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
-          }),
-          reply("session.instructions.entry.put", null),
           ...turn,
           out("mcp.remove", { server, "location[directory]": WORK }),
           reply("mcp.remove", null),

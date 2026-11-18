@@ -222,7 +222,6 @@ import {
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import { T3_CODE_VOICE_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   mcpToolPresentation,
@@ -2689,8 +2688,7 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined ? "" : `\n\n${T3_CODE_VOICE_INSTRUCTIONS}\n`),
+        buildRuntimeInstructions({ harness: "Claude Code" }),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },

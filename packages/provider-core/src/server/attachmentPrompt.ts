@@ -157,6 +157,10 @@ export function isProviderNativeImageAttachment(attachment: ChatAttachment): boo
   );
 }
 
+const VOICE_PREFIX = /^\s*(🎙|🔊)/u;
+const VOICE_REPLY_NOTE =
+  "[Voice: your reply is read aloud. Answer in 2-3 short sentences unless asked for detail, with no code, paths, lists or tables. A 🎙 message is a speech transcript: infer intent from misheard words. Never write 🎙 or 🔊 yourself.]";
+
 export const providerMessageTextWithAttachmentPaths = Effect.fn(
   "providerMessageTextWithAttachmentPaths",
 )(function* (input: {
@@ -167,7 +171,7 @@ export const providerMessageTextWithAttachmentPaths = Effect.fn(
     | ((path: string) => Effect.Effect<string | undefined>)
     | undefined;
 }) {
-  let text = input.text;
+  let text = VOICE_PREFIX.test(input.text) ? `${input.text}\n\n${VOICE_REPLY_NOTE}` : input.text;
   // The text-input budget must never hide the existence of an attachment.
   for (const attachment of input.attachments) {
     const path = input.resolveAttachmentPath(attachment);

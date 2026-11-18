@@ -90,7 +90,6 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { T3_CODE_VOICE_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
@@ -917,7 +916,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     };
     assert.equal(systemPrompt.type, "preset");
     assert.equal(systemPrompt.preset, "claude_code");
-    assert.include(systemPrompt.append ?? "", "### Voice");
+    assert.include(systemPrompt.append ?? "", "<runtime_info>");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
@@ -955,9 +954,8 @@ describe("ClaudeAdapterV2 system prompt", () => {
       }).systemPrompt as { readonly append?: string }
     ).append ?? "";
 
-  it("adds the voice rules with T3's MCP server and no T3 tool guidance", () => {
-    assert.include(append(true), T3_CODE_VOICE_INSTRUCTIONS);
-    assert.notInclude(append(false), T3_CODE_VOICE_INSTRUCTIONS);
+  it("is the same with or without T3's MCP server, with no T3 tool guidance", () => {
+    assert.equal(append(true), append(false));
     for (const tool of ["delegate_task", "t3_background_wait", "send_to_user", "device_open"]) {
       assert.notInclude(append(true), tool);
     }

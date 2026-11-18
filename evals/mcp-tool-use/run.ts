@@ -682,7 +682,7 @@ const t3ContextReport = (model: Model) => {
   const descriptions = t3Tools.reduce((sum, tool) => sum + valueText(tool.description).length, 0);
   const schemas = JSON.stringify(t3Tools).length;
   return [
-    `- T3 context: system text ${size((isCodex(model) ? JSON.stringify(buildCodexAdditionalContext({ model }, { browser: true, device: true })) : t3SystemAppend(model)).length)}`,
+    `- T3 context: system text ${size((isCodex(model) ? JSON.stringify(buildCodexAdditionalContext({ model })) : t3SystemAppend(model)).length)}`,
     `tool descriptions ${size(descriptions)}`,
     `full tool schemas ${size(schemas)} across ${t3Tools.length} tools.`,
   ].join(", ");
@@ -863,14 +863,7 @@ const buildCodexBase = (
     if (item.role === "assistant") return [];
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
-  const context = buildCodexAdditionalContext(
-    {
-      model: options.model,
-      reasoningEffort: effort,
-      agentFeedback: options.agentFeedback ?? "off",
-    },
-    { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
-  );
+  const context = buildCodexAdditionalContext({ model: options.model, reasoningEffort: effort });
   input.push(
     ...Object.entries(context).map(([key, entry]) =>
       message(`<${key}>${forArm(entry.value, options.arm)}</${key}>`),

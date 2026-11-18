@@ -28,6 +28,22 @@ const resolveAttachmentPath = (attachment: { readonly id: string; readonly name:
   `/attachments/${attachment.id}${attachment.name.slice(attachment.name.lastIndexOf("."))}`;
 
 describe("provider attachment prompts", () => {
+  it.effect("adds the voice reply note only to a message marked for voice", () =>
+    Effect.gen(function* () {
+      const text = (message: string) =>
+        providerMessageTextWithAttachmentPaths({
+          text: message,
+          attachments: [],
+          resolveAttachmentPath,
+        });
+      for (const message of ["🎙  check the build", "🔊  Check the build"]) {
+        const sent = yield* text(message);
+        assert.isTrue(sent.startsWith(`${message}\n\n[Voice: your reply is read aloud.`));
+      }
+      assert.equal(yield* text("Check the build 🎙"), "Check the build 🎙");
+    }),
+  );
+
   it.effect("lists extracted text only when the host resolves it", () =>
     Effect.gen(function* () {
       const path = "/attachments/report.docx";
