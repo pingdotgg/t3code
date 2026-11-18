@@ -6926,6 +6926,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    const continuationSourceId =
+      command.restartContinuationOfRunId ?? command.usageLimitContinuationOfRunId;
+    if (continuationSourceId !== undefined) {
+      let scheduledOrigin = false;
+      if (managedPolicy?.limits?.scheduledTasks === false) {
+        const visited = new Set<RunId>();
+        let ancestor = projection.runs.find((run) => run.id === continuationSourceId);
+        while (ancestor !== undefined && !visited.has(ancestor.id)) {
+          visited.add(ancestor.id);
+          if (
+            projection.messages.some(
+              (message) =>
+                message.id === ancestor?.userMessageId && message.scheduledTaskId !== undefined,
+            )
+          ) {
+            scheduledOrigin = true;
+            break;
+          }
+          const previousId: RunId | undefined =
+            ancestor.restartContinuationOfRunId ?? ancestor.usageLimitContinuationOfRunId;
+          ancestor = projection.runs.find((run) => run.id === previousId);
+        }
+      }
+
+      if (scheduledOrigin) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
+    }
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
@@ -6972,29 +7009,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
-      let scheduledOrigin = false;
-      if (managedPolicy?.limits?.scheduledTasks === false) {
-        const visited = new Set<RunId>();
-        let ancestor = source;
-        while (ancestor !== undefined && !visited.has(ancestor.id)) {
-          visited.add(ancestor.id);
-          if (
-            projection.messages.some(
-              (message) =>
-                message.id === ancestor?.userMessageId && message.scheduledTaskId !== undefined,
-            )
-          ) {
-            scheduledOrigin = true;
-            break;
-          }
-          const previousId: RunId | undefined = ancestor.restartContinuationOfRunId;
-          ancestor = projection.runs.find((run) => run.id === previousId);
-        }
-      }
 
       if (
         !source ||
-        scheduledOrigin ||
         !(
           isRestartContinuationSource(source, projection.providerTurns) ||
           continuationFailedBeforePrompt(source, projection.providerTurns)

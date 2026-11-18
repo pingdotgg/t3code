@@ -8,10 +8,13 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
+import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -536,5 +539,94 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
           }
         }
       }),
+  );
+  it.effect("refuses automatic usage-limit continuations of scheduled tasks", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      for (const scheduled of [false, true]) {
+        const suffix = String(scheduled);
+        const threadId = ThreadId.make("thread:usage-policy:" + suffix);
+        yield* createThread(threadId);
+        yield* orchestrator.dispatch(sendMessage(threadId, "limited:" + suffix));
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const run = projection.runs[0]!;
+        const message = projection.messages.find((item) => item.id === run.userMessageId)!;
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { seconds: 1 }));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("limited-run:" + suffix),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make("limited-message:" + suffix),
+              type: "message.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...message,
+                ...(scheduled ? { scheduledTaskId: ScheduledTaskId.make("task:limited") } : {}),
+              },
+            },
+            {
+              id: EventId.make("limited-error:" + suffix),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("limited-error:" + suffix),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("arm:" + suffix),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* TestClock.adjust("1 second");
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const continuation = limitRecoveryCommand(
+          shell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.isNotNull(continuation);
+        yield* orchestrator.dispatch(continuation!);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.length,
+          scheduled ? 1 : 2,
+        );
+      }
+    }),
   );
 });
