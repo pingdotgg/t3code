@@ -244,27 +244,30 @@ const make = Effect.gen(function* () {
             [previous] = yield* lockLink;
           }
         }
-        yield* db
-          .insert(relayEnvironmentLinks)
-          .values(linkValues)
-          .onConflictDoUpdate({
-            target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
-            set: {
-              environmentPublicKey: proof.environmentPublicKey,
-              environmentLabel: proof.descriptor.label,
-              endpointHttpBaseUrl: endpoint.httpBaseUrl,
-              endpointWsBaseUrl: endpoint.wsBaseUrl,
-              endpointProviderKind: endpoint.providerKind,
-              notificationsEnabled: request.notificationsEnabled,
-              liveActivitiesEnabled: request.liveActivitiesEnabled,
-              managedTunnelsEnabled: request.managedTunnelsEnabled,
-              createdByDeviceId: request.deviceId ?? null,
-              revokedAt: null,
-              updatedAt: now,
-              holdWebhooksWhileOffline: inheritedHoldWebhooks,
-            },
-          })
-          .pipe(Effect.mapError(upsertError("link-upsert")));
+        // Still undefined only when the insert above wrote the row.
+        if (previous !== undefined) {
+          yield* db
+            .insert(relayEnvironmentLinks)
+            .values(linkValues)
+            .onConflictDoUpdate({
+              target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
+              set: {
+                environmentPublicKey: proof.environmentPublicKey,
+                environmentLabel: proof.descriptor.label,
+                endpointHttpBaseUrl: endpoint.httpBaseUrl,
+                endpointWsBaseUrl: endpoint.wsBaseUrl,
+                endpointProviderKind: endpoint.providerKind,
+                notificationsEnabled: request.notificationsEnabled,
+                liveActivitiesEnabled: request.liveActivitiesEnabled,
+                managedTunnelsEnabled: request.managedTunnelsEnabled,
+                createdByDeviceId: request.deviceId ?? null,
+                revokedAt: null,
+                updatedAt: now,
+                holdWebhooksWhileOffline: inheritedHoldWebhooks,
+              },
+            })
+            .pipe(Effect.mapError(upsertError("link-upsert")));
+        }
         const recoveryWasUsable =
           previous?.revokedAt === null &&
           previous.environmentPublicKey === proof.environmentPublicKey &&

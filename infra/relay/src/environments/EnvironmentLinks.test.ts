@@ -181,7 +181,7 @@ describe("EnvironmentLinks", () => {
           "lock",
           ...(previous === undefined ? ["insert"] : []),
           ...(raced === undefined ? [] : ["lock"]),
-          "link",
+          ...(previous === undefined && raced === undefined ? [] : ["link"]),
           ...(moved ? ["allocation"] : []),
           "commit",
         ]);
