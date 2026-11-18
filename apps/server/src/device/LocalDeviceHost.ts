@@ -641,10 +641,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             result ?? new Error("No installed agent-device CLI could retire the registration."),
         });
       }
-      yield* Ref.update(runningRef, (running) =>
-        running ? { ...running, agentDevice: null } : running,
-      );
     }
+    yield* Ref.update(runningRef, (running) =>
+      running ? { ...running, agentDevice: null } : running,
+    );
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
       .run({
@@ -656,8 +656,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       })
       .pipe(Effect.result);
     // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
-    const started = yield* readRegistration;
-    if (started._tag === "Some") return toEndpoint(started.value);
+    const started = yield* readRegistration.pipe(Effect.result);
+    if (started._tag === "Success" && started.success._tag === "Some") {
+      return toEndpoint(started.success.value);
+    }
+    if (
+      started._tag === "Failure" &&
+      (runResult._tag === "Failure" || runResult.success.timedOut || runResult.success.code !== 0)
+    ) {
+      return yield* started.failure;
+    }
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
@@ -692,16 +700,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       });
     }
     const deadline = (yield* Clock.currentTimeMillis) + DAEMON_READY_TIMEOUT_MS;
+    let registration = started;
     while (true) {
-      const file = yield* readRegistration;
-      if (file._tag === "Some") return toEndpoint(file.value);
-      if ((yield* Clock.currentTimeMillis) > deadline) {
+      if (registration._tag === "Success" && registration.success._tag === "Some") {
+        return toEndpoint(registration.success.value);
+      }
+      if ((yield* Clock.currentTimeMillis) >= deadline) {
+        if (registration._tag === "Failure") return yield* registration.failure;
         return yield* new DeviceHost.DeviceHostTimeoutError({
           hostId,
           timeoutMs: DAEMON_READY_TIMEOUT_MS,
         });
       }
       yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
+      registration = yield* readRegistration.pipe(Effect.result);
     }
   });
 
