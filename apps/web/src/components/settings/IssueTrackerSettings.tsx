@@ -35,16 +35,17 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
 
 const UNBOUND = "";
 
-type EnvironmentConnections = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList>;
+/** Null while an environment's first load is in flight; a failed load is left out. */
+type EnvironmentConnections = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList | null>;
 
 const connectionsAcrossEnvironmentsAtom = Atom.family((environmentIdsKey: string) => {
   const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
   return Atom.make((get): EnvironmentConnections => {
-    const connections = new Map<EnvironmentId, IssueTrackerConnectionList>();
+    const connections = new Map<EnvironmentId, IssueTrackerConnectionList | null>();
     for (const environmentId of environmentIds) {
       const result = get(issueTrackerEnvironment.connections({ environmentId, input: {} }));
       const data = AsyncResult.getOrElse(result, () => null);
-      if (data !== null) connections.set(environmentId, data);
+      if (data !== null || result.waiting) connections.set(environmentId, data);
     }
     return connections;
   }).pipe(Atom.withLabel(`web-settings-issue-tracker-connections:${environmentIdsKey}`));
@@ -150,7 +151,7 @@ function TrackerRow({
     tracker,
     Object.assign(
       {},
-      ...[...connections.values()].map((list) => list.bindings),
+      ...[...connections.values()].map((list) => list?.bindings),
     ) as IssueTrackerConnectionList["bindings"],
   );
 
@@ -297,7 +298,7 @@ function ProjectBindings({
       ),
     );
     // Editing before every copy's environment has loaded would silently skip that copy.
-    const loading = inScope.some((member) => !connections.has(member.environmentId));
+    const loading = inScope.some((member) => connections.get(member.environmentId) === null);
     return [{ key: group.projectKey, title: group.displayName, members, scopes, loading }];
   });
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
