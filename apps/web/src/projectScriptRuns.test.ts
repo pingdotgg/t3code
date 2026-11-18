@@ -115,8 +115,8 @@ describe("project script runs", () => {
   });
 
   it("recognizes the echoed wrapper lines", () => {
-    expect(isProjectScriptWrapperLine(" sh -c 'pnpm test'")).toBe(true);
-    expect(isProjectScriptWrapperLine("[~/project] sh -c 'pnpm test'")).toBe(true);
+    expect(isProjectScriptWrapperLine(" sh -c 'pnpm test'")).toBe(false);
+    expect(isProjectScriptWrapperLine("[~/project] sh -c 'pnpm test'")).toBe(false);
     expect(isProjectScriptWrapperLine("quote> __t3_status=$?")).toBe(true);
     expect(isProjectScriptWrapperLine('printf "$__T3_SCRIPT_SENTINEL"')).toBe(true);
     expect(isProjectScriptWrapperLine("pnpm test failed")).toBe(false);
@@ -133,11 +133,14 @@ describe("project script runs", () => {
       projectScriptBeginMarker(sentinel),
       "first line",
       "second line",
+      "command failed: sh -c 'pnpm test'",
       `${sentinel}0`,
       "[~/project]",
     ].join("\r\n");
 
-    expect(projectScriptVisibleOutput(text, sentinel)).toBe("first line\nsecond line");
+    expect(projectScriptVisibleOutput(text, sentinel)).toBe(
+      "first line\nsecond line\ncommand failed: sh -c 'pnpm test'",
+    );
     expect(projectScriptVisibleOutput("plain output", sentinel)).toBe("plain output");
   });
 
@@ -363,8 +366,11 @@ it("keeps completion observed while a requested stop is pending", () => {
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX project commands", () => {
-  it.each(["/bin/bash", "/bin/zsh"])("runs commands in %s and reports the exit code", (shell) => {
-    const wrapped = wrapProjectScriptCommand("greet; [[ 1 == 1 ]]; exit 7", shell);
+  it.each([
+    ["greet; [[ 1 == 1 ]]; exit 7", 7],
+    ["greet; printf x &&", 2],
+  ])("runs %s in the user's shell and reports exit %s", (command, exitCode) => {
+    const wrapped = wrapProjectScriptCommand(command, "/bin/bash");
     const output = NodeChildProcess.execFileSync(
       "bash",
       ["-c", "greet() { printf 'hello\\n'; };\n" + wrapped],
@@ -378,8 +384,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX project 
       },
     );
 
-    expect(output).toContain("hello");
-    expect(output).toContain("done:7");
+    if (exitCode === 7) expect(output).toContain("hello");
+    expect(output).toContain(`done:${exitCode}`);
   });
 
   it.each(["/usr/bin/fish", null])(

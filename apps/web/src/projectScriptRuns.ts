@@ -154,7 +154,7 @@ export function wrapProjectScriptCommand(command: string, shell: string | null =
   const script = [
     `printf "\\n%s\\n" "$${PROJECT_SCRIPT_BEGIN_ENV}"`,
     "(",
-    body,
+    `eval '${body.replaceAll("'", "'\\''")}'`,
     ")",
     "__t3_status=$?",
     `printf "\\n%s%s\\n" "$${PROJECT_SCRIPT_SENTINEL_ENV}" "$__t3_status"`,
@@ -193,11 +193,7 @@ export function projectScriptOutputTail(
 /** Lines the shell echoes back for the typed wrapper, which are not command output. */
 export function isProjectScriptWrapperLine(line: string): boolean {
   const trimmed = line.trimStart();
-  return (
-    trimmed.includes("sh -c '") ||
-    trimmed.includes("__t3_status") ||
-    trimmed.includes(`$${PROJECT_SCRIPT_SENTINEL_ENV}`)
-  );
+  return trimmed.includes("__t3_status") || trimmed.includes(`$${PROJECT_SCRIPT_SENTINEL_ENV}`);
 }
 
 /** Terminal text after the begin marker, without the echoed wrapper or the end sentinel. */
