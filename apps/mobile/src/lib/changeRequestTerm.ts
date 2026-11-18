@@ -7,6 +7,7 @@ export function changeRequestTermKind(
   terminology: Pick<ChangeRequestTerminology, "singular">,
 ): ChangeRequestTermKind {
   if (terminology.singular === "merge request") return "mr";
-  if (terminology.singular === "change request") return "cr";
+  // Entire's "trail" has no translated sentences of its own; "change request" is the closest.
+  if (terminology.singular === "change request" || terminology.singular === "trail") return "cr";
   return "pr";
 }
