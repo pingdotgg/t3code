@@ -10,7 +10,10 @@ import {
   type PullRequestListResult,
   type PullRequestListStatsInput,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
+import { compareTimestamps } from "../../lib/time";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const PR_LIST_PAGE_SIZE = 30;
 export type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -242,7 +245,7 @@ export function mergePullRequestListEntries(
     const held = entries.get(key);
     if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
   }
-  return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...entries.values()].sort((a, b) => compareTimestamps(b.updatedAt, a.updatedAt));
 }
 
 export interface PullRequestListPages {
@@ -455,41 +458,42 @@ export function filterPullRequestList<
   }
   return [...unique.values()].sort((a, b) =>
     controls.sort === "created"
-      ? b.createdAt.localeCompare(a.createdAt)
+      ? compareTimestamps(b.createdAt, a.createdAt)
       : controls.sort === "oldest"
-        ? a.updatedAt.localeCompare(b.updatedAt)
-        : b.updatedAt.localeCompare(a.updatedAt),
+        ? compareTimestamps(a.updatedAt, b.updatedAt)
+        : compareTimestamps(b.updatedAt, a.updatedAt),
   );
 }
 
 export function pullRequestListReviewStatus(
   entry: Pick<PullRequestListEntry, "reviewDecision" | "viewerReviewRequested">,
+  resolve: MessageResolver = m,
 ) {
   if (entry.reviewDecision === "changes-requested")
     return {
-      label: "Changes",
-      accessibleLabel: "Changes requested",
+      label: resolve(msg("Changes", { $context: "review status badge: changes requested" })),
+      accessibleLabel: resolve(msg("Changes requested")),
       icon: "person.fill.xmark",
       tint: "accent-danger-foreground",
     } as const;
   if (entry.reviewDecision === "approved")
     return {
-      label: "Approved",
-      accessibleLabel: "Reviews approved",
+      label: resolve(msg("Approved", { $context: "review status badge" })),
+      accessibleLabel: resolve(msg("Reviews approved")),
       icon: "person.fill.checkmark",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   if (entry.viewerReviewRequested)
     return {
-      label: "Your review",
-      accessibleLabel: "Your review requested",
+      label: resolve(msg("Your review")),
+      accessibleLabel: resolve(msg("Your review requested")),
       icon: "person.badge.clock",
       tint: "accent-warning-foreground",
     } as const;
   if (entry.reviewDecision === "review-required")
     return {
-      label: "Review",
-      accessibleLabel: "Review required",
+      label: resolve(msg("Review", { $context: "review status badge: review required" })),
+      accessibleLabel: resolve(msg("Review required")),
       icon: "person.badge.clock",
       tint: "accent-icon-muted",
     } as const;
