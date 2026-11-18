@@ -3088,10 +3088,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds, revealedMessageId } =
     interactionState;
   const markdownLinkRequest = useRef<AbortController | null>(null);
+  const markdownSaveRequest = useRef<AbortController | null>(null);
   const onInlinePlaybackStart = () => {
     markdownLinkRequest.current?.abort();
   };
-  useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        markdownLinkRequest.current?.abort();
+        markdownSaveRequest.current?.abort();
+      },
+      [],
+    ),
+  );
   // A preview belongs to the thread and presentation it was opened from: a change closes it and
   // aborts a pending lookup.
   const markdownLinkScope = JSON.stringify([
@@ -3100,7 +3109,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     props.contentPresentation.kind,
   ]);
   // oxlint-disable-next-line react/exhaustive-effect-dependencies, t3code/no-unreasoned-state-sync -- A scope change (thread or presentation) aborts the pending link lookup opened from the old scope.
-  useLayoutEffect(() => () => markdownLinkRequest.current?.abort(), [markdownLinkScope]);
+  useLayoutEffect(
+    () => () => {
+      markdownLinkRequest.current?.abort();
+      markdownSaveRequest.current?.abort();
+    },
+    [markdownLinkScope],
+  );
   const [preview, setPreview] = useState<{
     readonly scope: string;
     readonly file: FilePreviewSource | null;
@@ -3468,9 +3483,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ? resolveFileLinkPath(props.workspaceRoot, presentation.path)
               : null;
           if (presentation.kind !== "file" || path === null) return;
-          markdownLinkRequest.current?.abort();
+          const lookupRequest = actionId === "save" ? markdownSaveRequest : markdownLinkRequest;
+          lookupRequest.current?.abort();
           const request = new AbortController();
-          markdownLinkRequest.current = request;
+          lookupRequest.current = request;
           void findFileLinkTarget(presentation.path, path, request.signal, reply).then((found) => {
             if (request.signal.aborted) return;
             const fullPath =

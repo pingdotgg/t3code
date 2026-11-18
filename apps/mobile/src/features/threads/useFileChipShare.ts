@@ -5,7 +5,8 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useGT } from "gt-react-native";
 import { m } from "../../i18n/messages";
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { assetEnvironment } from "../../state/assets";
@@ -32,13 +33,17 @@ export function useFileChipShare(
   });
   const requestRef = useRef<{ scope: string; controller: AbortController } | null>(null);
   const scope = JSON.stringify([environmentId, threadId, options?.draftCwd, options?.filePath]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the download when its viewer target changes or unmounts
-  useEffect(
-    () => () => {
-      const request = requestRef.current;
-      if (request?.scope === scope) request.controller.abort();
-    },
-    [scope],
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        const request = requestRef.current;
+        if (request?.scope === scope) {
+          requestRef.current = null;
+          request.controller.abort();
+        }
+      },
+      [scope],
+    ),
   );
 
   return (target: FileChipTarget): Promise<void> => {

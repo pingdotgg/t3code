@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
-import { useId, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 
 import { useFileChipShare } from "../threads/useFileChipShare";
 import { resolveWorkspaceFilePath } from "./filePath";
@@ -18,20 +19,41 @@ export function useWorkspaceFileSave(input: {
     filePath: input.relativePath,
     failureTitle: gt("Could not save file"),
   });
-  const savingRef = useRef(false);
-  const [saving, setSaving] = useState(false);
+  const scope = JSON.stringify([
+    input.environmentId,
+    input.threadId,
+    input.cwd,
+    input.relativePath,
+  ]);
+  const savingRef = useRef<{ scope: string } | null>(null);
+  const [savingAttempt, setSavingAttempt] = useState<{ scope: string } | null>(null);
+  const saving = savingAttempt?.scope === scope;
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        if (savingRef.current?.scope === scope) {
+          savingRef.current = null;
+          setSavingAttempt(null);
+        }
+      },
+      [scope],
+    ),
+  );
 
   const save = () => {
     const { cwd, relativePath } = input;
-    if (cwd === null || relativePath === null || savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
+    if (cwd === null || relativePath === null || savingRef.current?.scope === scope) return;
+    const attempt = { scope };
+    savingRef.current = attempt;
+    setSavingAttempt(attempt);
     void shareFile({
       fullPath: resolveWorkspaceFilePath(cwd, relativePath),
       relativePath,
     }).finally(() => {
-      savingRef.current = false;
-      setSaving(false);
+      if (savingRef.current === attempt) {
+        savingRef.current = null;
+        setSavingAttempt(null);
+      }
     });
   };
 
