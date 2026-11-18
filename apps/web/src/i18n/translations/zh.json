@@ -6998,6 +6998,7 @@
   "13eb3e529a3e9bff": "从会话中忽略",
   "93cebe7fdcc9821e": "已关联的 PR 不可用",
   "47c92b77099a6346": "此环境不支持关联多个 pull request。",
+  "96a45e508e9ede58": "{count, plural, other {# 项已隐藏}} · 显示全部",
   "e18c90152452a50e": "{openCount, plural, other {{openCount} 个开放}} · {linkCount, plural, other {{linkCount} 个已关联}}",
   "106c1bf3308a8c33": "关注中：检查完成、有人评论或分支出现冲突时，智能体会被唤醒",
   "15a560968264b0ed": "打开",
@@ -7006,14 +7007,6 @@
   "55cffd2c96741220": "分组堆栈",
   "a4e0e1e0bad3dcd8": "没有已关联的 PR",
   "973b668999e33451": "智能体从本会话打开的 pull request 会显示在这里。你也可以通过 URL 或编号自行关联。",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " 项已隐藏 · 显示全部"
-  ],
   "f034c05267f161ce": [
     "同步于",
     " ",

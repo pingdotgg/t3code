@@ -34,7 +34,11 @@ import {
   encodePullRequestDragPayload,
 } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
+import {
+  persistClientSettingsUpdate,
+  updateClientSettings,
+  useClientSettings,
+} from "~/hooks/useSettings";
 import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import { pullRequestLinkPanelTarget, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { usePrimaryEnvironmentId } from "~/state/environments";
@@ -482,11 +486,12 @@ function LinkedPullRequestViewMenu({
               key={status}
               checked={!view.hiddenStatuses.includes(status)}
               onCheckedChange={(checked) =>
-                void updateClientSettings({
+                void persistClientSettingsUpdate((current) => ({
+                  ...current,
                   linkedPullRequestHiddenStatuses: checked
-                    ? view.hiddenStatuses.filter((hidden) => hidden !== status)
-                    : [...view.hiddenStatuses, status],
-                })
+                    ? current.linkedPullRequestHiddenStatuses.filter((hidden) => hidden !== status)
+                    : [...new Set([...current.linkedPullRequestHiddenStatuses, status])],
+                }))
               }
             >
               <span className="flex min-w-0 items-center gap-2">
@@ -519,12 +524,13 @@ function LinkedPullRequestViewMenu({
         <MenuSeparator />
         <MenuItem
           onClick={() =>
-            void updateClientSettings({
+            void persistClientSettingsUpdate((current) => ({
+              ...current,
               linkedPullRequestSort: DEFAULT_CLIENT_SETTINGS.linkedPullRequestSort,
               linkedPullRequestHiddenStatuses:
                 DEFAULT_CLIENT_SETTINGS.linkedPullRequestHiddenStatuses,
               linkedPullRequestGroupStacks: DEFAULT_CLIENT_SETTINGS.linkedPullRequestGroupStacks,
-            })
+            }))
           }
         >
           <T>Reset to default</T>
@@ -685,7 +691,12 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           renderItem={({ item: row }) =>
             row.kind === "header" ? (
               <div className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground/70">
-                <h3 className="shrink-0">{sort === "status" ? resolve(row.label) : row.label}</h3>
+                <Tooltip>
+                  <TooltipTrigger render={<h3 className="min-w-0 truncate" />}>
+                    {sort === "status" ? resolve(row.label) : row.label}
+                  </TooltipTrigger>
+                  <TooltipPopup>{sort === "status" ? resolve(row.label) : row.label}</TooltipPopup>
+                </Tooltip>
                 <span className="shrink-0 tabular-nums text-muted-foreground/50">{row.count}</span>
                 <Separator className="min-w-2 flex-1" />
               </div>
@@ -694,11 +705,16 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
                 <Button
                   size="xs"
                   variant="ghost"
-                  onClick={() => void updateClientSettings({ linkedPullRequestHiddenStatuses: [] })}
+                  onClick={() =>
+                    void persistClientSettingsUpdate((current) => ({
+                      ...current,
+                      linkedPullRequestHiddenStatuses: [],
+                    }))
+                  }
                 >
-                  <T>
-                    <Var>{row.count}</Var> hidden · Show all
-                  </T>
+                  {gt("{count, plural, one {# hidden} other {# hidden}} · Show all", {
+                    count: row.count,
+                  })}
                 </Button>
               </div>
             ) : (

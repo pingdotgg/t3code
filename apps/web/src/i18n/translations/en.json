@@ -6990,6 +6990,7 @@
   "13eb3e529a3e9bff": "Dismiss from thread",
   "93cebe7fdcc9821e": "Linked pull requests unavailable",
   "47c92b77099a6346": "This environment does not support multiple linked pull requests.",
+  "96a45e508e9ede58": "{count, plural, one {# hidden} other {# hidden}} · Show all",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} open} other {{openCount} open}} · {linkCount, plural, one {{linkCount} linked} other {{linkCount} linked}}",
   "106c1bf3308a8c33": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts",
   "15a560968264b0ed": "Open",
@@ -6998,14 +6999,6 @@
   "55cffd2c96741220": "Group stacks",
   "a4e0e1e0bad3dcd8": "No linked pull requests",
   "973b668999e33451": "Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " hidden · Show all"
-  ],
   "f034c05267f161ce": [
     "synced",
     " ",

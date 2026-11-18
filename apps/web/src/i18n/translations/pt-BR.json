@@ -6983,6 +6983,7 @@
   "13eb3e529a3e9bff": "Dispensar da thread",
   "93cebe7fdcc9821e": "Pull requests vinculados indisponíveis",
   "47c92b77099a6346": "Este ambiente não permite vários pull requests vinculados.",
+  "96a45e508e9ede58": "{count, plural, one {# oculta} other {# ocultas}} · Mostrar todas",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} aberto} other {{openCount} abertos}} · {linkCount, plural, one {{linkCount} vinculado} other {{linkCount} vinculados}}",
   "106c1bf3308a8c33": "Acompanhando: o agente é ativado quando as verificações terminam, alguém comenta ou o branch entra em conflito",
   "15a560968264b0ed": "Abrir",
@@ -6991,14 +6992,6 @@
   "55cffd2c96741220": "Agrupar pilhas",
   "a4e0e1e0bad3dcd8": "Nenhum pull request vinculado",
   "973b668999e33451": "Os pull requests que o agente abrir a partir desta thread aparecem aqui. Vincule um você mesmo por URL ou número.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ocultas · Mostrar todas"
-  ],
   "f034c05267f161ce": [
     "sincronizado",
     " ",

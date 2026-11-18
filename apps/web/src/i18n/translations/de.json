@@ -6982,6 +6982,7 @@
   "13eb3e529a3e9bff": "Aus dem Thread entfernen",
   "93cebe7fdcc9821e": "Verknüpfte Pull Requests nicht verfügbar",
   "47c92b77099a6346": "Diese Umgebung unterstützt nicht mehrere verknüpfte Pull Requests.",
+  "96a45e508e9ede58": "{count, plural, one {# ausgeblendet} other {# ausgeblendet}} · Alle anzeigen",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} offen} other {{openCount} offen}} · {linkCount, plural, one {{linkCount} verknüpft} other {{linkCount} verknüpft}}",
   "106c1bf3308a8c33": "Beobachtet: Der Agent wird geweckt, wenn Checks fertig sind, jemand kommentiert oder der Branch Konflikte hat",
   "15a560968264b0ed": "Öffnen",
@@ -6990,14 +6991,6 @@
   "55cffd2c96741220": "Stacks gruppieren",
   "a4e0e1e0bad3dcd8": "Keine verknüpften Pull Requests",
   "973b668999e33451": "Pull Requests, die der Agent aus diesem Thread öffnet, landen hier. Verknüpfe selbst einen über URL oder Nummer.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ausgeblendet · Alle anzeigen"
-  ],
   "f034c05267f161ce": [
     "synchronisiert",
     " ",

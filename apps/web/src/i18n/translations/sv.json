@@ -6989,6 +6989,7 @@
   "13eb3e529a3e9bff": "Avfärda från tråden",
   "93cebe7fdcc9821e": "Länkade pull requests är inte tillgängliga",
   "47c92b77099a6346": "Den här miljön stöder inte flera länkade pull requests.",
+  "96a45e508e9ede58": "{count, plural, one {# dold} other {# dolda}} · Visa alla",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} öppen} other {{openCount} öppna}} · {linkCount, plural, one {{linkCount} länkad} other {{linkCount} länkade}}",
   "106c1bf3308a8c33": "Bevakar: agenten vaknar när kontrollerna är klara, någon kommenterar eller grenen får konflikter",
   "15a560968264b0ed": "Öppna",
@@ -6997,14 +6998,6 @@
   "55cffd2c96741220": "Gruppera stackar",
   "a4e0e1e0bad3dcd8": "Inga länkade pull requests",
   "973b668999e33451": "Pull requests som agenten öppnar från den här tråden hamnar här. Länka en själv från en URL eller ett nummer.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " dolda · Visa alla"
-  ],
   "f034c05267f161ce": [
     "synkad",
     " ",

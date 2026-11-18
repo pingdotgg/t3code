@@ -6983,6 +6983,7 @@
   "13eb3e529a3e9bff": "Descartar del hilo",
   "93cebe7fdcc9821e": "Pull requests vinculadas no disponibles",
   "47c92b77099a6346": "Este entorno no admite varias pull requests vinculadas.",
+  "96a45e508e9ede58": "{count, plural, one {# oculta} other {# ocultas}} · Mostrar todas",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} abierta} other {{openCount} abiertas}} · {linkCount, plural, one {{linkCount} vinculada} other {{linkCount} vinculadas}}",
   "106c1bf3308a8c33": "Siguiendo: el agente se activa cuando terminan las comprobaciones, alguien comenta o la rama tiene conflictos",
   "15a560968264b0ed": "Abrir",
@@ -6991,14 +6992,6 @@
   "55cffd2c96741220": "Agrupar pilas",
   "a4e0e1e0bad3dcd8": "No hay pull requests vinculadas",
   "973b668999e33451": "Aquí llegan las pull requests que el agente abre desde este hilo. Vincula una tú mismo desde una URL o un número.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ocultas · Mostrar todas"
-  ],
   "f034c05267f161ce": [
     "sincronizado",
     " ",

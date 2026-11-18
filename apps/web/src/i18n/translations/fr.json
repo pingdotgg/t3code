@@ -6984,6 +6984,7 @@
   "13eb3e529a3e9bff": "Écarter du fil",
   "93cebe7fdcc9821e": "Pull requests associées indisponibles",
   "47c92b77099a6346": "Cet environnement ne prend pas en charge plusieurs pull requests associées.",
+  "96a45e508e9ede58": "{count, plural, one {# masquée} other {# masquées}} · Tout afficher",
   "e18c90152452a50e": "{openCount, plural, one {{openCount} ouverte} other {{openCount} ouvertes}} · {linkCount, plural, one {{linkCount} associée} other {{linkCount} associées}}",
   "106c1bf3308a8c33": "Surveillance : l’agent se réveille quand les checks se terminent, que quelqu’un commente ou que la branche entre en conflit",
   "15a560968264b0ed": "Ouvrir",
@@ -6992,14 +6993,6 @@
   "55cffd2c96741220": "Regrouper les piles",
   "a4e0e1e0bad3dcd8": "Aucune pull request associée",
   "973b668999e33451": "Les pull requests que l’agent ouvre depuis ce fil arrivent ici. Associez-en une vous-même à partir d’une URL ou d’un numéro.",
-  "8e2de95df86dfeb7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " masquées · Tout afficher"
-  ],
   "f034c05267f161ce": [
     "synchronisé",
     " ",
