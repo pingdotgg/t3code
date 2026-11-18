@@ -742,7 +742,15 @@ export const make = Effect.gen(function* () {
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
     const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
-      if (update === undefined) return { path, records, malformedRecords };
+      if (update === undefined) {
+        const historical = historicalFileCache.get(path);
+        if (historical !== undefined && historical.mtimeMs >= retentionCutoffMs) {
+          historicalFileCache.delete(path);
+          fileCache.set(path, historical);
+          cacheDirty = true;
+        }
+        return { path, records, malformedRecords };
+      }
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.

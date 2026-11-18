@@ -23,9 +23,22 @@ const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
+const yearDayFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function formatChartDay(day: string, days: readonly string[], locale?: string): string {
-  const label = formatDayShort(day, locale);
-  return days[0]?.slice(0, 4) !== days.at(-1)?.slice(0, 4) ? `${label}, ${day.slice(0, 4)}` : label;
+  if (days[0]?.slice(0, 4) === days.at(-1)?.slice(0, 4)) return formatDayShort(day, locale);
+  const intlLocale = locale === undefined || locale === "en" ? "en-US" : locale;
+  let formatter = yearDayFormatters.get(intlLocale);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat(intlLocale, {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    yearDayFormatters.set(intlLocale, formatter);
+  }
+  return formatter.format(new Date(`${day}T00:00:00Z`));
 }
 
 interface UsageProviderChartProps {

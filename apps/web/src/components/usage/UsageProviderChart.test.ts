@@ -8,8 +8,9 @@ describe("formatChartDay", () => {
     { days: ["2025-12-31", "2026-01-01"], label: "Jan 1, 2026" },
     { days: ["2024-01-01", "2026-01-01"], label: "Jan 1, 2026" },
     { days: ["2026-01-01"], label: "Jan 1" },
-  ])("formats dates across $days", ({ days, label }) => {
-    expect(formatChartDay("2026-01-01", days)).toBe(label);
+    { days: ["2025-12-31", "2026-01-01"], locale: "ja", label: "2026年1月1日" },
+  ])("formats dates across $days", ({ days, label, locale }) => {
+    expect(formatChartDay("2026-01-01", days, locale)).toBe(label);
   });
 });
 
