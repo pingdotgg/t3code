@@ -2,7 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
-import { collectLimitAccounts, limitsNotice, remainingPercent } from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, remainingPercent } from "@t3tools/shared/usageLimits";
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { summarizeTodayUsage } from "@t3tools/shared/usageToday";
 import type {
   EnvironmentId,
@@ -16,6 +17,7 @@ import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runti
 import { useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
+import { useGT, useMessages } from "gt-react";
 import { InfoIcon } from "lucide-react";
 
 import { environmentPresentations } from "../../state/presentation";
@@ -55,6 +57,8 @@ type DriverGroup = {
 
 function selectedDriverLimits(
   presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentationWithProviders>,
+  gt: ReturnType<typeof useGT>,
+  m: ReturnType<typeof useMessages>,
 ): Map<ProviderDriverKind, DriverLimits> {
   const byDriver = new Map<ProviderDriverKind, DriverGroup>();
   const addAccount = (
@@ -86,7 +90,10 @@ function selectedDriverLimits(
     addAccount(account.driver, kind, {
       key: account.key,
       label:
-        account.email?.trim() || account.displayName?.trim() || account.sourceLabel || "Account",
+        account.email?.trim() ||
+        account.displayName?.trim() ||
+        account.sourceLabel ||
+        gt("Account"),
       windows: [...account.limits.windows],
       notice: null,
       noticeDetails: null,
@@ -110,7 +117,7 @@ function selectedDriverLimits(
         (candidate) => PROVIDER_PRESENTATION[candidate].driverKind === provider.driver,
       );
       if (kind === undefined) continue;
-      const notice = limitsNotice(limits);
+      const notice = limitsNotice(limits, m);
       if (notice === null) continue;
       const accountIdentity =
         provider.auth.email?.trim().toLowerCase() || `${environmentId}:${provider.instanceId}`;
@@ -123,7 +130,7 @@ function selectedDriverLimits(
         windows: [],
         notice:
           limits.unavailable?.reason === "probeFailed"
-            ? "Could not load subscription limits. Refresh to try again."
+            ? gt("Could not load subscription limits. Refresh to try again.")
             : notice,
         noticeDetails:
           limits.unavailable?.reason === "probeFailed"
@@ -149,6 +156,8 @@ export function QuickUsagePopover({
   readonly trigger?: ReactNode;
   readonly onOpenFull?: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -198,7 +207,7 @@ export function QuickUsagePopover({
     usage.shown?.window.timeZone ?? todayWindow.timeZone,
   );
 
-  const byDriver = selectedDriverLimits(presentations);
+  const byDriver = selectedDriverLimits(presentations, gt, m);
   const providers = PROVIDER_ORDER.map((kind) =>
     byDriver.get(PROVIDER_PRESENTATION[kind].driverKind),
   ).filter((entry): entry is DriverLimits => entry !== undefined);
@@ -231,10 +240,12 @@ export function QuickUsagePopover({
   const updated =
     latestCheckedAt === null || !Number.isFinite(Date.parse(latestCheckedAt))
       ? null
-      : `updated ${new Date(latestCheckedAt).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}`;
+      : gt("updated {time}", {
+          time: new Date(latestCheckedAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        });
 
   const refresh = () => {
     if (refreshingRef.current) return;
@@ -263,7 +274,7 @@ export function QuickUsagePopover({
           console.error("[quick-usage] Provider limit refresh failed", result.cause);
           toastManager.add({
             type: "error",
-            title: "Could not refresh usage limits",
+            title: gt("Could not refresh usage limits"),
             description: Cause.pretty(result.cause),
           });
         } else {
@@ -277,8 +288,10 @@ export function QuickUsagePopover({
           if (failures.length > 0) {
             toastManager.add({
               type: "error",
-              title: "Could not refresh usage limits",
-              description: `Refresh failed for ${failures.map(({ label }) => label).join(", ")}.`,
+              title: gt("Could not refresh usage limits"),
+              description: gt("Refresh failed for {environments}.", {
+                environments: failures.map(({ label }) => label).join(", "),
+              }),
             });
           }
         }
@@ -288,8 +301,8 @@ export function QuickUsagePopover({
         console.error("[quick-usage] Refresh failed", error);
         toastManager.add({
           type: "error",
-          title: "Could not refresh usage",
-          description: error instanceof Error ? error.message : "Try again.",
+          title: gt("Could not refresh usage"),
+          description: error instanceof Error ? error.message : gt("Try again."),
         });
       })
       .finally(() => {
@@ -307,9 +320,9 @@ export function QuickUsagePopover({
       }}
     >
       <PopoverTrigger
-        render={<Button ref={triggerRef} variant="ghost" size="sm" aria-label="Usage" />}
+        render={<Button ref={triggerRef} variant="ghost" size="sm" aria-label={gt("Usage")} />}
       >
-        {trigger ?? "Usage"}
+        {trigger ?? gt("Usage")}
       </PopoverTrigger>
       <PopoverPopup
         width="xl"
@@ -321,7 +334,7 @@ export function QuickUsagePopover({
       >
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
-            <PopoverTitle>Quick usage</PopoverTitle>
+            <PopoverTitle>{gt("Quick usage")}</PopoverTitle>
             <span className="ms-auto text-xs text-muted-foreground tabular-nums">
               {updated ?? ""}
             </span>
@@ -329,7 +342,7 @@ export function QuickUsagePopover({
               type="button"
               variant="ghost"
               size="icon-xs"
-              aria-label="Refresh usage"
+              aria-label={gt("Refresh usage")}
               aria-busy={isRefreshing}
               disabled={isRefreshing}
               onClick={refresh}
@@ -339,12 +352,12 @@ export function QuickUsagePopover({
           </div>
 
           {providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No usage limits reported yet.</p>
+            <p className="text-sm text-muted-foreground">{gt("No usage limits reported yet.")}</p>
           ) : (
             <>
               <div className="min-w-0 max-w-full overflow-x-auto">
                 <ToggleGroup
-                  aria-label="Usage provider"
+                  aria-label={gt("Usage provider")}
                   variant="segmented"
                   value={selected ? [selected.kind] : []}
                   onValueChange={(next) => {
@@ -360,7 +373,7 @@ export function QuickUsagePopover({
                 </ToggleGroup>
               </div>
 
-              <div aria-label="Usage windows" className="flex flex-col gap-3">
+              <div aria-label={gt("Usage windows")} className="flex flex-col gap-3">
                 {selected?.accounts.map((account) => (
                   <section key={account.key} className="flex flex-col gap-1.5">
                     {selected.accounts.length > 1 ? (
@@ -380,7 +393,7 @@ export function QuickUsagePopover({
                     ) : (
                       <div className="flex items-start gap-1">
                         <p className="text-sm text-muted-foreground">
-                          {account.notice ?? "No usage limits reported yet."}
+                          {account.notice ?? gt("No usage limits reported yet.")}
                         </p>
                         {account.noticeDetails ? (
                           <Tooltip>
@@ -389,7 +402,9 @@ export function QuickUsagePopover({
                                 <Button
                                   variant="ghost"
                                   size="icon-xs"
-                                  aria-label={`Subscription limit error details for ${account.label}`}
+                                  aria-label={gt("Subscription limit error details for {account}", {
+                                    account: account.label,
+                                  })}
                                 />
                               }
                             >
@@ -409,16 +424,23 @@ export function QuickUsagePopover({
           {todaySummary ? (
             <div className="flex items-center justify-between gap-3 rounded-lg bg-foreground/5 px-3 py-2">
               <div className="min-w-0 text-xs tabular-nums">
-                <p className="font-medium text-foreground">Spent today</p>
+                <p className="font-medium text-foreground">{gt("Spent today")}</p>
                 <p className="truncate text-muted-foreground">
-                  {formatUsd(todaySummary.todayCostUsd)} spent · {formatUsd(todaySummary.paceUsd)}{" "}
-                  pace
+                  {gt("{spent} spent · {pace} pace", {
+                    spent: formatUsd(todaySummary.todayCostUsd),
+                    pace: formatUsd(todaySummary.paceUsd),
+                  })}
                 </p>
               </div>
               {todaySummary.deltaPercent === null ? null : (
                 <span className="shrink-0 rounded-full border border-border px-2 py-1 text-2xs font-medium tabular-nums text-muted-foreground">
-                  {Math.abs(Math.round(todaySummary.deltaPercent))}%{" "}
-                  {todaySummary.deltaPercent <= 0 ? "under" : "over"} pace
+                  {todaySummary.deltaPercent <= 0
+                    ? gt("{percent}% under pace", {
+                        percent: Math.abs(Math.round(todaySummary.deltaPercent)),
+                      })
+                    : gt("{percent}% over pace", {
+                        percent: Math.round(todaySummary.deltaPercent),
+                      })}
                 </span>
               )}
             </div>
@@ -442,7 +464,7 @@ export function QuickUsagePopover({
                 onOpenFull?.();
               }}
             >
-              View more
+              {gt("View more")}
             </Button>
           </div>
         </div>

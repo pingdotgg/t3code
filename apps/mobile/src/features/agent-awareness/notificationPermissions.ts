@@ -2,6 +2,9 @@ import * as Notifications from "expo-notifications";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Platform } from "react-native";
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 
 export type NotificationPermissionResult =
   | { readonly type: "unsupported" }
@@ -15,7 +18,7 @@ export class NotificationPermissionReadError extends Schema.TaggedError<Notifica
   },
 ) {
   override get message(): string {
-    return "Failed to read notification permissions.";
+    return m(msg("Failed to read notification permissions."));
   }
 }
 
@@ -26,7 +29,7 @@ export class NotificationPermissionRequestError extends Schema.TaggedError<Notif
   },
 ) {
   override get message(): string {
-    return "Failed to request notification permissions.";
+    return m(msg("Failed to request notification permissions."));
   }
 }
 
@@ -42,7 +45,7 @@ export const requestAgentNotificationPermission: Effect.Effect<
     yield* Effect.tryPromise({
       try: () =>
         Notifications.setNotificationChannelAsync("agent-alerts", {
-          name: "Agent alerts",
+          name: m(msg("Agent alerts")),
           importance: Notifications.AndroidImportance.HIGH,
         }),
       catch: (cause) => new NotificationPermissionRequestError({ cause }),
