@@ -4,6 +4,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useInterfaceDirection } from "../../i18n/I18nProvider";
 import { T, useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
@@ -44,6 +45,7 @@ const FileTreeRow = function FileTreeRow(props: {
 }) {
   const { node, depth } = props.item;
   const gt = useGT();
+  const collapsedChevron = useInterfaceDirection() === "rtl" ? "chevron.left" : "chevron.right";
 
   return (
     <Pressable
@@ -70,7 +72,7 @@ const FileTreeRow = function FileTreeRow(props: {
     >
       {node.kind === "directory" ? (
         <SymbolView
-          name={props.expanded ? "chevron.down" : "chevron.right"}
+          name={props.expanded ? "chevron.down" : collapsedChevron}
           size={12}
           tintColorClassName="accent-icon-muted"
           type="monochrome"

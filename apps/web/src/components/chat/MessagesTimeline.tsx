@@ -1927,7 +1927,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           {row.expanded ? (
             <ChevronDownIcon className="size-3.5" />
           ) : (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 [&:dir(rtl)]:rotate-180" />
           )}
         </button>
         <TimelineRowTimestamp
@@ -1961,7 +1961,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         {row.expanded ? (
           <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground [&:dir(rtl)]:rotate-180" />
         )}
         <span className="text-xs font-medium text-foreground/80">
           {row.label}

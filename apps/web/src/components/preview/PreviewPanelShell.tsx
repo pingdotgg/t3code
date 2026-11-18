@@ -166,7 +166,7 @@ function PreviewPanelShellFrame(
           ? maximized
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
               "flex-1"
-            : "shrink-0 border-l border-border"
+            : "shrink-0 border-s border-border"
           : "w-full",
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
@@ -190,7 +190,7 @@ function PreviewPanelShellFrame(
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {/* Content stays pinned to the right edge, so closing uncovers the chat
+      {/* Content stays pinned to the inline end, so closing uncovers the chat
           instead of sliding the tab bar under the title bar controls. */}
       <div
         className={cn(

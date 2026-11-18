@@ -1900,7 +1900,7 @@ function ImportCandidateList({
               }
             />
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
+              <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180" />
               <span className="truncate text-sm text-muted-foreground">
                 <T>Other folders</T>
               </span>
@@ -1962,7 +1962,7 @@ function ImportRepositoryGroup({
           onCheckedChange={(checked) => onToggle(keys, checked === true)}
         />
         <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180" />
           <span className="truncate text-sm font-medium">{group.label}</span>
           <ImportRowMeta
             sources={[...new Set(group.candidates.flatMap((c) => c.sources))]}

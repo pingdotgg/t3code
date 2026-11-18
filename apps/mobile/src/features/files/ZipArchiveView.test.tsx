@@ -132,6 +132,7 @@ vi.mock("../../components/ui/useBarInset", () => ({
   useContentBottomInset: () => 0,
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../i18n/I18nProvider", () => ({ useInterfaceDirection: () => "ltr" }));
 vi.mock("../../components/ui/Progress", () => ({ Progress: () => null }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
 vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));

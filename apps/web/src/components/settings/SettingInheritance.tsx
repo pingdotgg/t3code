@@ -430,10 +430,13 @@ export function SettingInheritance({
                   const header = (
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
                       {foldOverrides ? (
-                        <CollapsibleTrigger render={<InlineButton tone="muted" />}>
+                        <CollapsibleTrigger
+                          className="group"
+                          render={<InlineButton tone="muted" />}
+                        >
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 [[data-panel-open]_&]:rotate-90"
+                            className="size-3 group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180"
                           />
                           <T>Overridden by</T>
                         </CollapsibleTrigger>

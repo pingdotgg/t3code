@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { T, useGT } from "gt-react";
+import { he } from "@daypicker/react/locale/he";
+import { T, useGT, useLocale } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import {
@@ -67,6 +68,7 @@ export function CustomSnoozeDialogHost() {
 function CustomSnoozeDialog() {
   const gt = useGT();
   const locale = useFormattingLocale();
+  const hebrew = useLocale() === "he";
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -150,7 +152,7 @@ function CustomSnoozeDialog() {
                             />
                           }
                         >
-                          {date.toLocaleDateString(locale, {
+                          {date.toLocaleDateString(hebrew ? "he" : locale, {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
@@ -163,7 +165,11 @@ function CustomSnoozeDialog() {
                             required
                             selected={date}
                             defaultMonth={date}
-                            {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
+                            {...(hebrew
+                              ? { locale: he, dir: "rtl" }
+                              : weekStartsOn === undefined
+                                ? {}
+                                : { weekStartsOn })}
                             disabled={{ before: today }}
                             onSelect={(selected) => {
                               setDate(selected);
@@ -252,7 +258,7 @@ function CustomSnoozeDialog() {
             <Button
               type="button"
               variant="ghost-muted"
-              className="sm:mr-auto"
+              className="sm:me-auto"
               onClick={() => {
                 finish(null);
                 void navigate({

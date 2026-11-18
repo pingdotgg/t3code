@@ -20,6 +20,7 @@ import * as Haptics from "expo-haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
+import { useInterfaceDirection } from "../../i18n/I18nProvider";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
@@ -171,11 +172,19 @@ function WorkLogIcon(props: {
 
 export function ThreadDisclosureChevron(props: {
   readonly expanded: boolean;
-  readonly collapsedDirection: "right" | "down";
+  readonly collapsedDirection: "right" | "down" | "inline-end";
   readonly size: number;
   readonly tintColor: ColorValue;
 }) {
-  const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
+  const direction = useInterfaceDirection();
+  const collapsedIcon =
+    props.collapsedDirection === "down"
+      ? "chevron.down"
+      : props.collapsedDirection === "inline-end" && direction === "rtl"
+        ? "chevron.left"
+        : "chevron.right";
+  const expandedAngle =
+    collapsedIcon === "chevron.down" ? 180 : collapsedIcon === "chevron.left" ? -90 : 90;
   const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the chevron's Reanimated rotation value when the expanded state changes
@@ -201,7 +210,7 @@ export function ThreadDisclosureChevron(props: {
       style={[{ width: props.size, height: props.size }, rotationStyle]}
     >
       <SymbolView
-        name={props.collapsedDirection === "right" ? "chevron.right" : "chevron.down"}
+        name={collapsedIcon}
         size={props.size}
         tintColor={props.tintColor}
         type="monochrome"

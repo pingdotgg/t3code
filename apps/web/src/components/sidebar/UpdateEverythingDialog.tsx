@@ -223,8 +223,11 @@ function UpdateEverythingDialogContent({
           </div>
           {skipped.length > 0 ? (
             <Collapsible>
-              <CollapsibleTrigger className="flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground data-panel-open:[&_svg]:rotate-90">
-                <ChevronRightIcon className="size-3.5 transition-transform" aria-hidden />
+              <CollapsibleTrigger className="group flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground">
+                <ChevronRightIcon
+                  className="size-3.5 transition-transform group-data-panel-open:rotate-90 [&:dir(rtl)]:group-aria-[expanded=false]:rotate-180"
+                  aria-hidden
+                />
                 {gt("{count, plural, one {{count} skipped} other {{count} skipped}}", {
                   count: skipped.length,
                 })}

@@ -380,7 +380,11 @@ export function WorktreeSetupCard({
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
+          {detailsOpen ? (
+            <ChevronDownIcon aria-hidden />
+          ) : (
+            <ChevronRightIcon aria-hidden className="[&:dir(rtl)]:rotate-180" />
+          )}
           <T>Details</T>
         </Button>
         {showTerminal ? (

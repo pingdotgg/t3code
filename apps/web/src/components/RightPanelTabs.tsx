@@ -1140,7 +1140,9 @@ function RightPanelTab(
               }
               onClick={(event) => onActivate(surface, event.shiftKey)}
             >
-              <span className="truncate">{title}</span>
+              <span dir={surface.kind === "file" ? "ltr" : undefined} className="truncate">
+                {title}
+              </span>
             </button>
           }
           label={

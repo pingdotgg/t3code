@@ -816,7 +816,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <ChevronDownIcon
                   className={cn(
                     "size-3.5 transition-transform",
-                    publishAdvancedOpen ? "" : "-rotate-90",
+                    !publishAdvancedOpen && "-rotate-90 [&:dir(rtl)]:rotate-90",
                   )}
                 />
                 <T context="publish dialog section of advanced options">Advanced</T>

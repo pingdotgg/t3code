@@ -15,7 +15,7 @@ export interface UseResizableWidthOptions {
   readonly defaultWidth: number;
   readonly minWidth: number;
   readonly maxWidth: number;
-  readonly edge: "left" | "right";
+  readonly edge: "left" | "right" | "inline-start";
 }
 
 export interface ResizableWidthHandlers {
@@ -78,9 +78,15 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     // switches keys before the pointer is released.
     const startStorageKey = storageKey;
     const startWidth = clampedWidth;
+    const physicalEdge =
+      edge === "inline-start"
+        ? event.currentTarget.matches(":dir(rtl)")
+          ? "right"
+          : "left"
+        : edge;
     return {
       width: startWidth,
-      edge,
+      edge: physicalEdge,
       bounds: { min: minWidth, max: maxWidth },
       resize(nextWidth) {
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);

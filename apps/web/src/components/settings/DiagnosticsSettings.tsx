@@ -275,7 +275,7 @@ function ProcessNameCell({
           {isExpanded ? (
             <ChevronDownIcon className="size-3.5" />
           ) : (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 [&:dir(rtl)]:rotate-180" />
           )}
         </Button>
       ) : (
