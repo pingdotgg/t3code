@@ -2,7 +2,7 @@
 /**
  * Small hand validators in place of a schema library (the helper has no runtime dependencies). Each
  * returns the value with its type when the shape is right and throws a ShapeError naming the field
- * when it is not, so a script's output or a frame from the box is never used half-checked.
+ * when it is not, so a script's output or a frame from the server is never used half-checked.
  */
 export class ShapeError extends Error {}
 

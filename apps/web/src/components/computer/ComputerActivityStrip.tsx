@@ -1,6 +1,8 @@
 import {
-  computerPendingApprovals,
+  type ComputerActivityEntry,
+  computerLiveApprovals,
   computerTaskLastStep,
+  nextComputerApprovalDeadline,
 } from "@t3tools/client-runtime/state/computer";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -9,27 +11,18 @@ import { useState } from "react";
 
 import { useNowAfter } from "../../hooks/useDeadline";
 import { tickTextContent } from "../../lib/tickTextContent";
-import {
-  type ComputerActivityEntry,
-  nextComputerDeadline,
-  stopComputerTasks,
-  useComputerActivity,
-  useComputerSnapshot,
-} from "../../state/computer";
+import { stopComputerTasks, useComputerActivity } from "../../state/computer";
 import { InlineButton } from "../ui/button";
 import { ComputerApprovalCard } from "./ComputerApprovalCard";
 
 /** One environment's running task: its last step, the tap it waits for, and Stop. */
 function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
-  const { snapshot } = useComputerSnapshot(entry.environmentId);
-  // Re-reads the clock once, when the approval this snapshot holds lapses.
-  const nowMs = useNowAfter(nextComputerDeadline(snapshot));
+  // Re-reads the clock once, when the tap this task waits for lapses.
+  const nowMs = useNowAfter(nextComputerApprovalDeadline(entry.approvals));
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { task } = entry;
-  const approval = computerPendingApprovals(snapshot, nowMs).find(
-    (candidate) => candidate.binding.taskId === task.taskId,
-  );
+  const approval = computerLiveApprovals(entry.approvals, nowMs)[0];
   const lastStep = computerTaskLastStep(task);
   const startedAtMs = DateTime.toEpochMillis(task.startedAt);
 

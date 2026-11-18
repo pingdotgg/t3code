@@ -1,34 +1,150 @@
 import {
   type ComputerAction,
   type ComputerApproval,
+  type ComputerHostView,
   type ComputerSnapshot,
   type ComputerTaskView,
+  type EnvironmentId,
+  type ServerConfig,
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  runAtomCommand,
+  squashAtomCommandFailure,
 } from "./runtime.ts";
 
+type ComputerServerConfigs = ReadonlyMap<
+  EnvironmentId,
+  Pick<ServerConfig, "environment" | "settings">
+>;
+
+/** One running task, with the environment it belongs to and the taps it waits for. */
+export interface ComputerActivityEntry {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly task: ComputerTaskView;
+  readonly approvals: ReadonlyArray<ComputerApproval>;
+}
+
+/** A computer one environment can use, labelled with that environment. */
+interface ComputerHostEntry {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly host: ComputerHostView;
+}
+
+/** What one thread's screen shows of computer use: its running task and the taps it waits for. */
+export interface ComputerThreadView {
+  readonly task: ComputerTaskView | null;
+  readonly approvals: ReadonlyArray<ComputerApproval>;
+}
+
+const EMPTY_ACTIVITY: ReadonlyArray<ComputerActivityEntry> = [];
+const EMPTY_HOSTS: ReadonlyArray<ComputerHostEntry> = [];
+const EMPTY_THREAD_VIEW: ComputerThreadView = { task: null, approvals: [] };
+
+const pendingApprovals = (snapshot: ComputerSnapshot, taskIds: ReadonlySet<string>) =>
+  snapshot.approvals.filter(
+    (approval) => approval.state === "pending" && taskIds.has(approval.binding.taskId),
+  );
+
+const sameIds = (left: ReadonlyArray<ComputerApproval>, right: ReadonlyArray<ComputerApproval>) =>
+  left.length === right.length && left.every((approval, index) => approval.id === right[index]?.id);
+
+// A thread's screen redraws only when what it shows changes, not on every step of another thread.
+const sameThreadView = (left: ComputerThreadView, right: ComputerThreadView) =>
+  sameIds(left.approvals, right.approvals) &&
+  (left.task === right.task ||
+    (left.task !== null &&
+      right.task !== null &&
+      left.task.taskId === right.task.taskId &&
+      left.task.goal === right.task.goal &&
+      left.task.approvalsMode === right.task.approvalsMode));
+
 /**
- * What every client draws of computer use on one environment: the hosts it can use, the tasks
- * running or finished, and the approvals still answerable. Answers go through
- * `computer.respondToApproval`, which needs `computer:approve`.
+ * What every client draws of computer use: the hosts each environment can use, the tasks running
+ * there, and the approvals still answerable. One `computer.subscribe` per environment feeds every
+ * view; a server without the capability is skipped, since it has no computer RPC to answer.
  */
 export function createComputerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  serverConfigsAtom: () => Atom.Atom<ComputerServerConfigs>,
 ) {
+  const state = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:computer:state",
+    tag: WS_METHODS.computerSubscribe,
+  });
+
+  const snapshotOf = (
+    get: Atom.AtomContext,
+    environmentId: EnvironmentId,
+    configs: ComputerServerConfigs,
+  ): ComputerSnapshot | null => {
+    if (configs.get(environmentId)?.environment.capabilities.computerUse !== true) return null;
+    return Option.getOrNull(AsyncResult.value(get(state({ environmentId, input: {} }))));
+  };
+
+  const labelOf = (config: Pick<ServerConfig, "environment" | "settings">) =>
+    config.settings.environmentLabel ?? config.environment.label;
+
+  const activity = Atom.make((get): ReadonlyArray<ComputerActivityEntry> => {
+    const configs = get(serverConfigsAtom());
+    const entries: ComputerActivityEntry[] = [];
+    for (const [environmentId, config] of configs) {
+      const snapshot = snapshotOf(get, environmentId, configs);
+      if (snapshot === null) continue;
+      for (const task of snapshot.tasks) {
+        if (task.status !== "running") continue;
+        entries.push({
+          environmentId,
+          environmentLabel: labelOf(config),
+          task,
+          approvals: pendingApprovals(snapshot, new Set([task.taskId])),
+        });
+      }
+    }
+    return entries.length === 0 ? EMPTY_ACTIVITY : entries;
+  }).pipe(Atom.withLabel("computer-activity"));
+
+  const hosts = Atom.make((get): ReadonlyArray<ComputerHostEntry> => {
+    const configs = get(serverConfigsAtom());
+    const entries: ComputerHostEntry[] = [];
+    for (const [environmentId, config] of configs) {
+      for (const host of snapshotOf(get, environmentId, configs)?.hosts ?? []) {
+        entries.push({ environmentId, environmentLabel: labelOf(config), host });
+      }
+    }
+    return entries.length === 0 ? EMPTY_HOSTS : entries;
+  }).pipe(Atom.withLabel("computer-hosts"));
+
+  const threadFamily = Atom.family((key: string) => {
+    const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
+    return Atom.make((get): ComputerThreadView => {
+      const snapshot = snapshotOf(get, environmentId, get(serverConfigsAtom()));
+      if (snapshot === null) return EMPTY_THREAD_VIEW;
+      const taskIds = new Set<string>();
+      let task: ComputerTaskView | null = null;
+      for (const candidate of snapshot.tasks) {
+        if (candidate.threadId !== threadId) continue;
+        taskIds.add(candidate.taskId);
+        if (candidate.status === "running") task = candidate;
+      }
+      if (taskIds.size === 0) return EMPTY_THREAD_VIEW;
+      return { task, approvals: pendingApprovals(snapshot, taskIds) };
+    }).pipe(Atom.withEquality(sameThreadView), Atom.withLabel("computer-thread"));
+  });
+
   return {
-    state: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:computer:state",
-      tag: WS_METHODS.computerSubscribe,
-    }),
+    state,
     stop: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:computer:stop",
       tag: WS_METHODS.computerStop,
@@ -44,49 +160,64 @@ export function createComputerEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
+    /** Every environment's running tasks, for a global strip and Stop. */
+    activity,
+    /** Every environment's connected computers, for Settings. */
+    hosts,
+    /** One thread's running task and pending taps; equal views keep their identity. */
+    thread: (environmentId: EnvironmentId, threadId: ThreadId) =>
+      threadFamily(JSON.stringify([environmentId, threadId])),
   };
 }
 
-export const EMPTY_COMPUTER_SNAPSHOT: ComputerSnapshot = {
-  hosts: [],
-  tasks: [],
-  approvals: [],
-};
+type ComputerEnvironmentAtoms = ReturnType<typeof createComputerEnvironmentAtoms>;
 
-/** Approvals somebody can still answer: pending, and not past the 60 s they last. */
-export function computerPendingApprovals(
-  snapshot: ComputerSnapshot,
-  nowMs: number,
-): ReadonlyArray<ComputerApproval> {
-  return snapshot.approvals.filter(
-    (approval) =>
-      approval.state === "pending" && DateTime.toEpochMillis(approval.expiresAt) > nowMs,
+/**
+ * Stops every running task in one environment, or only `taskId`. Resolves to null on success, or
+ * the sentence to show when the request failed.
+ */
+export async function stopComputerTasks(
+  registry: AtomRegistry.AtomRegistry,
+  atoms: Pick<ComputerEnvironmentAtoms, "stop">,
+  input: { readonly environmentId: EnvironmentId; readonly taskId?: string },
+): Promise<string | null> {
+  const result = await runAtomCommand(
+    registry,
+    atoms.stop,
+    {
+      environmentId: input.environmentId,
+      input: input.taskId === undefined ? {} : { taskId: input.taskId },
+    },
+    { reportFailure: false },
   );
+  if (result._tag === "Success") return null;
+  const failure = squashAtomCommandFailure(result);
+  return failure instanceof Error && failure.message.trim().length > 0
+    ? failure.message
+    : "Could not stop computer use.";
 }
 
-/** The task this thread started that is still running, or null. A computer runs one task at a time. */
-export function computerThreadTask(
-  snapshot: ComputerSnapshot,
-  threadId: ThreadId,
-): ComputerTaskView | null {
-  return (
-    snapshot.tasks.find((task) => task.threadId === threadId && task.status === "running") ?? null
-  );
-}
-
-/** The taps one thread's computer tasks still wait for, so its screen can ask for them. */
-export function computerThreadApprovals(
-  snapshot: ComputerSnapshot,
-  threadId: ThreadId,
+/** The approvals still answerable at `nowMs`: each lasts until its own deadline. */
+export function computerLiveApprovals(
+  approvals: ReadonlyArray<ComputerApproval>,
   nowMs: number,
 ): ReadonlyArray<ComputerApproval> {
-  const threadTaskIds = new Set(
-    snapshot.tasks.flatMap((task) => (task.threadId === threadId ? [task.taskId] : [])),
-  );
-  if (threadTaskIds.size === 0) return [];
-  return computerPendingApprovals(snapshot, nowMs).filter((approval) =>
-    threadTaskIds.has(approval.binding.taskId),
-  );
+  return approvals.filter((approval) => DateTime.toEpochMillis(approval.expiresAt) > nowMs);
+}
+
+/**
+ * When the next of these approvals lapses, so a view re-renders once at that moment instead of on
+ * a timer. Null when nothing waits.
+ */
+export function nextComputerApprovalDeadline(
+  approvals: ReadonlyArray<ComputerApproval>,
+): number | null {
+  let next: number | null = null;
+  for (const approval of approvals) {
+    const expiresAtMs = DateTime.toEpochMillis(approval.expiresAt);
+    if (next === null || expiresAtMs < next) next = expiresAtMs;
+  }
+  return next;
 }
 
 function clipped(value: string, maxLength: number): string {
@@ -149,18 +280,4 @@ export function computerApprovalSurface(approval: ComputerApproval): string {
 export function computerTaskLastStep(task: ComputerTaskView): string | null {
   const last = task.steps[task.steps.length - 1];
   return last === undefined || last.trim().length === 0 ? null : clipped(last, 160);
-}
-
-/**
- * When the next pending approval lapses, so a view re-renders once at that moment instead of on a
- * timer. Null when nothing waits.
- */
-export function nextComputerApprovalDeadline(snapshot: ComputerSnapshot): number | null {
-  let next: number | null = null;
-  for (const approval of snapshot.approvals) {
-    if (approval.state !== "pending") continue;
-    const expiresAtMs = DateTime.toEpochMillis(approval.expiresAt);
-    if (next === null || expiresAtMs < next) next = expiresAtMs;
-  }
-  return next;
 }

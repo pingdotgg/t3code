@@ -619,60 +619,7 @@ return run;`;
     ).toEqual({ backend: "desktop", ...seen });
   });
 
-  it("scales a Retina window capture to the longest edge asked for, and says how image pixels map to points", async () => {
-    const files: string[] = [];
-    let resized = false;
-    const { runner, calls } = fakeRunner((call) => {
-      if (call.script.includes("CGPreflightScreenCaptureAccess"))
-        return '{"accessibility":true,"screenRecording":true,"host":""}';
-      if (call.script.includes("CGWindowListCopyWindowInfo"))
-        return JSON.stringify({
-          app: "Safari",
-          window: { id: 7, x: 100, y: 50, w: 1440, h: 900, title: "Docs" },
-        });
-      if (call.file === "screencapture") return "";
-      if (call.file === "sips" && call.argv.includes("--resampleWidth")) {
-        resized = true;
-        return "";
-      }
-      if (call.file === "sips")
-        return resized
-          ? "pixelWidth: 1568\n  pixelHeight: 980\n"
-          : "pixelWidth: 2880\n  pixelHeight: 1800\n";
-      return "";
-    });
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ada-shot-"));
-    const file = NodePath.join(dir, "shot.png");
-    NodeFS.writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    files.push(file);
-    const shot = await new DesktopBackend(runner, { tmp: () => file }).screenshot({
-      maxEdge: 1568,
-    });
-    expect(shot).toMatchObject({
-      width: 1568,
-      height: 980,
-      region: { x: 100, y: 50, w: 1440, h: 900 },
-      app: "Safari",
-      title: "Docs",
-    });
-    expect(shot.scale).toBeCloseTo(1568 / 1440);
-    expect(Array.from(shot.png.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
-    expect(calls.find((call) => call.argv.includes("--resampleWidth"))?.argv).toEqual([
-      "--resampleWidth",
-      "1568",
-      file,
-    ]);
-    // The capture is deleted at once.
-    expect(NodeFS.existsSync(file)).toBe(false);
-    NodeFS.rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("refuses a screenshot without Screen Recording access instead of returning the desktop", async () => {
-    const { runner } = fakeRunner(() => '{"accessibility":true,"screenRecording":false,"host":""}');
-    await expect(new DesktopBackend(runner).screenshot()).rejects.toThrow(/Screen Recording/);
-  });
-
-  it("reports the mode and where it acted, for the audit and the visible cursor", async () => {
+  it("reports the mode and where it acted, for the audit", async () => {
     const bg = fakeRunner(() => JSON.stringify({ mode: "background", at: { x: 640, y: 212 } }));
     expect(await new DesktopBackend(bg.runner).act({ kind: "click", ref: "0.1" })).toEqual({
       mode: "background",
@@ -796,9 +743,6 @@ return run;`;
     });
     await expect(new DesktopBackend(runner).observe()).rejects.toThrow(
       /^Google Chrome is refusing to show its window.*Screen Recording is off for Ada, so no screenshot was taken/,
-    );
-    await expect(new DesktopBackend(runner).screenshot()).rejects.toThrow(
-      /^Screen Recording is off for Ada/,
     );
     expect(calls.some((call) => call.file === "screencapture")).toBe(false);
   });

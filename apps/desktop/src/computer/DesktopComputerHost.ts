@@ -50,6 +50,7 @@ const NO_HELPER = "The computer helper is not running.";
 const OTHER_ENVIRONMENT = "This computer is busy with a task another environment started.";
 /** The local stop: it ends the task on this Mac without asking the environment, so it works offline. */
 const STOP_SHORTCUT = "CommandOrControl+Shift+Escape";
+const STOPPED_HERE = "You stopped it on this computer.";
 
 /**
  * The computer use host this desktop offers to one environment at a time. It owns the helper child, the
@@ -105,15 +106,6 @@ const make = Effect.gen(function* () {
     } catch {
       // A shortcut the platform refused to register is already absent.
     }
-  };
-
-  /** Ends the task on this Mac without a word to the environment, so it works with the network down. */
-  const stopLocally = () => {
-    const task = running;
-    if (task === null) return;
-    running = null;
-    releaseStopShortcut();
-    helper?.stop({ taskId: task.taskId, reason: "You stopped it on this computer." });
   };
 
   const holdStopShortcut = () => {
@@ -184,6 +176,34 @@ const make = Effect.gen(function* () {
       });
       void PubSub.publishUnsafe(calls, request);
     });
+
+  /**
+   * Ends the task on this Mac first, so it works with the network down, then tells the environment:
+   * the helper's own end is dropped once its task is cleared.
+   */
+  const stopLocally = () => {
+    const task = running;
+    if (task === null) return;
+    running = null;
+    releaseStopShortcut();
+    helper?.stop({ taskId: task.taskId, reason: STOPPED_HERE });
+    void ask<void>(
+      (callId) => ({
+        type: "event",
+        callId,
+        environmentId: task.environmentId,
+        taskId: task.taskId,
+        event: {
+          type: "finished",
+          status: "stopped",
+          reason: STOPPED_HERE,
+          steps: [],
+          surface: null,
+        },
+      }),
+      () => undefined,
+    );
+  };
 
   const askAuthorize = (
     owner: { readonly environmentId: EnvironmentId; readonly taskId: string },

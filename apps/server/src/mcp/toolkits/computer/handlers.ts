@@ -6,8 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import { ComputerError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ComputerService from "../../../computer/ComputerService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -112,6 +110,9 @@ const settled = (task: ComputerTaskView) => (snapshot: ComputerSnapshot) => {
     : undefined;
 };
 
+const taskIn = (snapshot: ComputerSnapshot, taskId: string) =>
+  snapshot.tasks.find((task) => task.taskId === taskId);
+
 /**
  * A start returns as soon as the task does anything: its first step, a question, a tap, or its end.
  * The bound is the safety net for a helper that says nothing at all.
@@ -121,16 +122,13 @@ const firstChange = Effect.fn("computerTools.firstChange")(function* (
   task: ComputerTaskView,
 ) {
   const stream = yield* service.subscribe;
-  const found = yield* stream.pipe(
-    Stream.filterMap((snapshot) => {
-      const current = settled(task)(snapshot);
-      return current === undefined ? Result.failVoid : Result.succeed(current);
-    }),
-    Stream.take(1),
+  yield* stream.pipe(
+    Stream.filter((snapshot) => settled(task)(snapshot) !== undefined),
     Stream.runHead,
     Effect.timeoutOption(FIRST_CHANGE_WAIT),
   );
-  return progressForTask(Option.flatten(found).pipe(Option.getOrElse(() => task)));
+  // The stream is the clients' view, without the planner's questions: read the agent's.
+  return progressForTask(taskIn(yield* service.status, task.taskId) ?? task);
 });
 
 const controlOf = (input: {
@@ -148,9 +146,6 @@ const controlOf = (input: {
   ...(input.player === undefined ? {} : { player: input.player }),
   ...(input.level === undefined ? {} : { level: input.level }),
 });
-
-const taskIn = (snapshot: ComputerSnapshot, taskId: string) =>
-  snapshot.tasks.find((task) => task.taskId === taskId);
 
 const handlers = {
   computer_status: McpToolAccess.readsAsCaller((input) =>
@@ -185,6 +180,7 @@ const handlers = {
             decisionId: input.decisionId,
             answers: input.answers ?? {},
             answeredBy: requesterFor(scope),
+            threadId: scope.thread.threadId,
           });
         } else if (input.answers !== undefined) {
           return yield* new ComputerError({

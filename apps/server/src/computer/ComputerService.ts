@@ -74,6 +74,8 @@ const REPLY_TIMEOUT = Duration.millis(COMPUTER_LIMITS.replyTimeoutMs);
 const MAX_GOAL = 1_000;
 const MAX_TEXT = 4_000;
 const MAX_STEP_TEXT = 200;
+/** Ended tasks kept for the strip and the tools; every snapshot carries them. */
+const MAX_ENDED_TASKS = 10;
 
 type PendingDecision = {
   readonly id: string;
@@ -157,6 +159,12 @@ const replaceTask = (state: ServiceState, task: Task): ServiceState => ({
   tasks: state.tasks.map((candidate) => (candidate.id === task.id ? task : candidate)),
 });
 
+const withoutOldEnded = (tasks: ReadonlyArray<Task>): ReadonlyArray<Task> => {
+  let ended = tasks.filter((task) => task.status !== "running").length;
+  if (ended <= MAX_ENDED_TASKS) return tasks;
+  return tasks.filter((task) => task.status === "running" || ended-- <= MAX_ENDED_TASKS);
+};
+
 const patchTask = (
   state: ServiceState,
   taskId: ComputerTaskId,
@@ -180,7 +188,8 @@ const hostView = (host: Host): ComputerHostView => ({
   connectedAt: DateTime.makeUnsafe(host.connectedAtMs),
 });
 
-const taskView = (task: Task): ComputerTaskView => ({
+/** Only the agent's tools read the planner's questions, so client snapshots leave them out. */
+const taskView = (task: Task, withQuestions = true): ComputerTaskView => ({
   taskId: task.id,
   kind: task.kind,
   hostId: task.hostId,
@@ -196,7 +205,11 @@ const taskView = (task: Task): ComputerTaskView => ({
   endedAt: task.endedAtMs === null ? null : DateTime.makeUnsafe(task.endedAtMs),
   waitingForApproval: task.approvalId,
   pendingDecision:
-    task.decision === null ? null : { id: task.decision.id, questions: task.decision.questions },
+    task.decision === null
+      ? null
+      : withQuestions
+        ? { id: task.decision.id, questions: task.decision.questions }
+        : { id: task.decision.id },
   approvalsMode: task.approvalsMode,
 });
 
@@ -253,6 +266,8 @@ export class ComputerService extends Context.Service<
       readonly decisionId: string;
       readonly answers: ComputerPlannerAnswers;
       readonly answeredBy: string;
+      /** The agent's thread: only the thread that started a task answers its questions. */
+      readonly threadId?: ThreadId;
     }) => Effect.Effect<ComputerAnswers, ComputerError>;
     /** The hosts, the tasks and the approvals a client draws. */
     readonly status: Effect.Effect<ComputerSnapshot>;
@@ -321,18 +336,21 @@ const make = Effect.gen(function* () {
   // Publishes happen one at a time, so a reader never sees an older snapshot after a newer one.
   const publishLock = yield* Semaphore.make(1);
 
-  const snapshot = Effect.gen(function* () {
+  // Published on every change; the span would be per step and the callers' spans cover it.
+  const snapshotOf = Effect.fnUntraced(function* (withQuestions: boolean) {
     const state = yield* Ref.get(stateRef);
     const listed = yield* approvals.list;
     return {
       hosts: state.hosts.map(hostView),
-      tasks: state.tasks.toReversed().map(taskView),
+      tasks: state.tasks.toReversed().map((task) => taskView(task, withQuestions)),
       approvals: listed,
     } satisfies ComputerSnapshot;
   });
+  const status = snapshotOf(true);
+  const clientSnapshot = snapshotOf(false);
 
   const publish = Effect.gen(function* () {
-    const next = yield* snapshot;
+    const next = yield* clientSnapshot;
     yield* PubSub.publish(changes, next);
   });
 
@@ -345,6 +363,24 @@ const make = Effect.gen(function* () {
         return result;
       }),
     );
+
+  /** A change no client draws (budget counters): no snapshot. */
+  const update = (change: (state: ServiceState) => ServiceState) => Ref.update(stateRef, change);
+
+  /** The step's setting, published only when it changed the task's "approvals off" label. */
+  const refreshApprovalsMode = Effect.fnUntraced(function* (task: Task) {
+    const mode = yield* approvalsModeFor(task.projectId);
+    if (mode !== task.approvalsMode) {
+      yield* mutate(
+        (state) =>
+          [
+            undefined,
+            patchTask(state, task.id, (running) => ({ ...running, approvalsMode: mode })),
+          ] as const,
+      );
+    }
+    return mode;
+  });
 
   const record = (event: string, fields: Readonly<Record<string, unknown>> = {}) =>
     audit.record(event, fields);
@@ -386,7 +422,8 @@ const make = Effect.gen(function* () {
       return [
         { task: finished, decision: task.decision, approvals: approvalsPending },
         {
-          ...replaceTask(state, finished),
+          ...state,
+          tasks: withoutOldEnded(replaceTask(state, finished).tasks),
           approvals: remaining,
           hosts: state.hosts.map((host) =>
             host.taskId === input.taskId ? { ...host, taskId: null } : host,
@@ -641,14 +678,7 @@ const make = Effect.gen(function* () {
     host: Host;
     decision: ComputerDecision;
   }) {
-    const mode = yield* approvalsModeFor(input.task.projectId);
-    yield* mutate(
-      (state) =>
-        [
-          undefined,
-          patchTask(state, input.task.id, (task) => ({ ...task, approvalsMode: mode })),
-        ] as const,
-    );
+    const mode = yield* refreshApprovalsMode(input.task);
     const binding: ComputerApprovalBinding = {
       hostId: input.host.id,
       taskId: input.task.id,
@@ -848,6 +878,15 @@ const make = Effect.gen(function* () {
     if (task === undefined) {
       return yield* failure("not_found", "That task is not known here.", { taskId: input.taskId });
     }
+    if (
+      task.threadId !== null &&
+      input.threadId !== undefined &&
+      task.threadId !== input.threadId
+    ) {
+      return yield* failure("not_found", "That task belongs to another thread.", {
+        taskId: task.id,
+      });
+    }
     if (task.status !== "running") {
       return yield* failure("stopped", "That task has ended.", { taskId: task.id });
     }
@@ -917,12 +956,8 @@ const make = Effect.gen(function* () {
     ) {
       return yield* failure("refused", "It was taking too long.", { taskId: task.id });
     }
-    yield* mutate(
-      (current) =>
-        [
-          undefined,
-          patchTask(current, task.id, (running) => ({ ...running, decided: running.decided + 1 })),
-        ] as const,
+    yield* update((current) =>
+      patchTask(current, task.id, (running) => ({ ...running, decided: running.decided + 1 })),
     );
     if (!task.grounderFailed) {
       const grounded = yield* decider.ask({ state: input.state, questions: input.questions });
@@ -934,12 +969,8 @@ const make = Effect.gen(function* () {
         return grounded.answers;
       }
       if (grounded._tag === "failed") {
-        yield* mutate(
-          (current) =>
-            [
-              undefined,
-              patchTask(current, task.id, (running) => ({ ...running, grounderFailed: true })),
-            ] as const,
+        yield* update((current) =>
+          patchTask(current, task.id, (running) => ({ ...running, grounderFailed: true })),
         );
         yield* record("decision.grounder_failed", {
           taskId: task.id,
@@ -966,25 +997,26 @@ const make = Effect.gen(function* () {
       return { ok: false, denied: "It was stopped." } as const;
     }
     const nowMs = yield* Clock.currentTimeMillis;
-    if (task.authorized >= COMPUTER_LIMITS.maxSteps) {
-      return yield* deny(task.id, `It did not finish within ${COMPUTER_LIMITS.maxSteps} steps.`);
-    }
     if (
       nowMs - task.startedAtMs - task.waitedMs > COMPUTER_LIMITS.timeoutMs ||
       nowMs - task.startedAtMs > WALL_TIME_MS
     ) {
       return yield* deny(task.id, "It was taking too long.");
     }
-    yield* mutate(
-      (current) =>
-        [
-          undefined,
-          patchTask(current, task.id, (running) => ({
-            ...running,
-            authorized: running.authorized + 1,
-          })),
-        ] as const,
-    );
+    // Checked and counted in one step, so two authorizations at once cannot both take the last one.
+    const counted = yield* Ref.modify(stateRef, (current) => {
+      const running = current.tasks.find((candidate) => candidate.id === task.id);
+      if (running === undefined || running.authorized >= COMPUTER_LIMITS.maxSteps) {
+        return [false, current] as const;
+      }
+      return [
+        true,
+        replaceTask(current, { ...running, authorized: running.authorized + 1 }),
+      ] as const;
+    });
+    if (!counted) {
+      return yield* deny(task.id, `It did not finish within ${COMPUTER_LIMITS.maxSteps} steps.`);
+    }
     let decision = screen(input.action);
     let judged: number | null = null;
     if (decision.verdict === "judge") {
@@ -1006,12 +1038,8 @@ const make = Effect.gen(function* () {
         decision = afterJudge(verdict.probability);
       } else {
         if (verdict._tag === "failed") {
-          yield* mutate(
-            (current) =>
-              [
-                undefined,
-                patchTask(current, task.id, (running) => ({ ...running, grounderFailed: true })),
-              ] as const,
+          yield* update((current) =>
+            patchTask(current, task.id, (running) => ({ ...running, grounderFailed: true })),
           );
         }
         decision = afterJudge(null);
@@ -1027,14 +1055,7 @@ const make = Effect.gen(function* () {
       });
       return { ok: true, grant: "allow" } as const;
     }
-    const mode = yield* approvalsModeFor(task.projectId);
-    yield* mutate(
-      (current) =>
-        [
-          undefined,
-          patchTask(current, task.id, (running) => ({ ...running, approvalsMode: mode })),
-        ] as const,
-    );
+    const mode = yield* refreshApprovalsMode(task);
     const binding: ComputerApprovalBinding = {
       hostId: host.id,
       taskId: task.id,
@@ -1116,48 +1137,39 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const stop: ComputerService["Service"]["stop"] = Effect.fn("ComputerService.stop")(
-    function* (input) {
-      const state = yield* Ref.get(stateRef);
-      const targets = state.tasks.filter(
-        (task) =>
-          task.status === "running" && (input.taskId === undefined || task.id === input.taskId),
-      );
-      for (const task of targets) {
-        yield* record("task.stop", { taskId: task.id, by: input.by });
-        const ended = yield* finishTask({
-          taskId: task.id,
-          status: "stopped",
-          reason: input.reason ?? "You stopped it.",
-        });
-        if (ended === null) continue;
-        state.hosts
-          .find((candidate) => candidate.id === task.hostId)
-          ?.send({
-            kind: "stop",
-            requestId: `stop_${task.id}`,
-            taskId: task.id,
-            reason: input.reason ?? "You stopped it.",
-          });
-      }
-    },
+  /** Ends each running task that matches, and tells its computer to stop at once. */
+  const stopTasks = Effect.fnUntraced(function* (
+    matches: (task: Task) => boolean,
+    by: string,
+    reason: string,
+  ) {
+    const state = yield* Ref.get(stateRef);
+    const targets = state.tasks.filter((task) => task.status === "running" && matches(task));
+    for (const task of targets) {
+      yield* record("task.stop", { taskId: task.id, by });
+      const ended = yield* finishTask({ taskId: task.id, status: "stopped", reason });
+      if (ended === null) continue;
+      state.hosts
+        .find((candidate) => candidate.id === task.hostId)
+        ?.send({ kind: "stop", requestId: `stop_${task.id}`, taskId: task.id, reason });
+    }
+  });
+
+  const stop: ComputerService["Service"]["stop"] = Effect.fn("ComputerService.stop")((input) =>
+    stopTasks(
+      (task) => input.taskId === undefined || task.id === input.taskId,
+      input.by,
+      input.reason ?? "You stopped it.",
+    ),
   );
 
   const stopForThread = Effect.fn("ComputerService.stopForThread")(
-    function* (threadId: ThreadId) {
-      const state = yield* Ref.get(stateRef);
-      const targets = state.tasks.filter(
-        (task) => task.status === "running" && task.threadId === threadId,
-      );
-      for (const task of targets) {
-        yield* record("task.stop", { taskId: task.id, by: "thread interrupt" });
-        yield* finishTask({
-          taskId: task.id,
-          status: "stopped",
-          reason: "The thread's run was interrupted.",
-        });
-      }
-    },
+    (threadId: ThreadId) =>
+      stopTasks(
+        (task) => task.threadId === threadId,
+        "thread interrupt",
+        "The thread's run was interrupted.",
+      ),
     Effect.catchCause((cause) =>
       Effect.logWarning("Computer use could not be stopped for an interrupted run", { cause }),
     ),
@@ -1322,7 +1334,7 @@ const make = Effect.gen(function* () {
   });
 
   const subscribe = Effect.gen(function* () {
-    const current = yield* snapshot;
+    const current = yield* clientSnapshot;
     return Stream.concat(Stream.make(current), Stream.fromPubSub(changes));
   });
 
@@ -1332,7 +1344,7 @@ const make = Effect.gen(function* () {
     control,
     startUse,
     answerDecision,
-    status: snapshot,
+    status,
     stop,
     stopForThread,
     subscribe,

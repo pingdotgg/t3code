@@ -15,7 +15,7 @@ export type InstalledApp = { id: string; name: string; aliases?: string[] };
 export const PLAYERS = ["Spotify", "Music"] as const;
 export type Player = (typeof PLAYERS)[number];
 
-/** The closed set of controls the box may ask for, in the protocol's order. */
+/** The closed set of controls the server may ask for, in the protocol's order. */
 export const CONTROL_KINDS = [
   "open_app",
   "quit_app",
@@ -25,7 +25,7 @@ export const CONTROL_KINDS = [
   "lock_screen",
 ] as const;
 
-/** The closed set of computer actions the box may request; nothing here reaches a shell. */
+/** The closed set of computer actions the server may request; nothing here reaches a shell. */
 export type ComputerControl =
   | { kind: "open_app"; app: string }
   | { kind: "quit_app"; app: string }
@@ -39,7 +39,7 @@ export type ComputerControl =
   | { kind: "dark_mode"; action: "on" | "off" | "toggle" }
   | { kind: "lock_screen" };
 
-/** A control that could not run, with a code the box can sort on and a message for the user. */
+/** A control that could not run, with a code the server can sort on and a message for the user. */
 export class ControlError extends Error {
   readonly code: "unavailable" | "not_found" | "forbidden" | "invalid" | "ambiguous";
 
@@ -56,7 +56,7 @@ const appName = (value: unknown, what: string) => {
   return name;
 };
 
-/** Checks a `control` from the box against the closed set; throws a ControlError on anything else. */
+/** Checks a `control` from the server against the closed set; throws a ControlError on anything else. */
 export function parseControl(value: unknown): ComputerControl {
   try {
     return readControl(value);
@@ -221,7 +221,7 @@ function slugify(name: string): string {
 const clamp = (level: number) => Math.min(100, Math.max(0, Math.round(level)));
 
 /**
- * Deterministic macOS controls the helper runs directly when the box sends a `control`.
+ * Deterministic macOS controls the helper runs directly when the server sends a `control`.
  * Every app name is resolved against the installed-app scan before any command runs.
  */
 export class MacControls {
@@ -365,7 +365,7 @@ export class MacControls {
     }
   }
 
-  /** Runs one control and returns a short sentence suitable for speaking back. */
+  /** Runs one control and returns a short sentence saying what was done. */
   async run(control: ComputerControl): Promise<{ done: string }> {
     if (!this.available)
       throw new ControlError("unavailable", "Computer controls work on macOS only");
@@ -582,7 +582,7 @@ const words = (s: string) =>
     .filter(Boolean);
 
 /**
- * The installed app a spoken or typed name means: its exact name (or bundle/display name), a common alias, the same
+ * The installed app a name means: its exact name (or bundle/display name), a common alias, the same
  * letters without spaces or punctuation ("googlechrome", "zoom us"), then a case-insensitive word-prefix match
  * ("photoshop" is "Adobe Photoshop 2026"). Several equally good matches are a question, never a guess. `aliases`: the
  * platform's alias table (APP_ALIASES is the Mac's).

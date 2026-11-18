@@ -1,4 +1,5 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/desktop-helper/src/computer/types.ts), modified for Ada.
+// LocalRouter ported it from Sidebud (github.com/jayleaton/sidebud @70da540); both notices ship in LICENSE.localrouter.
 
 /**
  * Computer use: the helper moves the real cursor and presses real keys on this Mac (a browser tab, an
@@ -128,25 +129,6 @@ export function needsPointer(error: unknown): error is NeedsPointer {
   );
 }
 
-/**
- * The front window as an image. `region` is the part of the screen it shows (global coordinates) and `scale` the
- * image pixels per global unit, so image pixel (px, py) is the global point (region.x + px / scale, region.y + py / scale).
- */
-export type Screenshot = {
-  png: Uint8Array;
-  width: number;
-  height: number;
-  region: Rect;
-  scale: number;
-  app: string;
-  title: string;
-};
-
-export type ScreenshotOptions = { maxEdge?: number; signal?: AbortSignal };
-
-/** The longest image edge a screenshot is scaled to by default (what vision models read without resizing again). */
-export const SCREENSHOT_MAX_EDGE = 1568;
-
 /** Reads and drives one surface. Errors are thrown with a message a person can act on. */
 export interface ScreenBackend {
   readonly kind: "browser" | "desktop";
@@ -157,14 +139,6 @@ export interface ScreenBackend {
   pointer?(): Promise<PointerReading>;
   /** Every display's bounds, in global coordinates (the local stop's corners are worked out from them). */
   displays?(): Promise<Rect[]>;
-  /** The front window as an image, scaled down so its longer edge is at most `maxEdge` (SCREENSHOT_MAX_EDGE). */
-  screenshot?(options?: ScreenshotOptions): Promise<Screenshot>;
-}
-
-/** The scale a capture of `w`×`h` image pixels needs so its longer edge is at most `maxEdge` (never above 1). */
-export function fitScale(w: number, h: number, maxEdge: number = SCREENSHOT_MAX_EDGE): number {
-  const edge = Math.max(w, h);
-  return edge > maxEdge && edge > 0 ? maxEdge / edge : 1;
 }
 
 /** One open browser tab. */

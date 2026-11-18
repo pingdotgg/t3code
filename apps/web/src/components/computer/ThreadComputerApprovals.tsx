@@ -1,8 +1,11 @@
-import { computerThreadApprovals } from "@t3tools/client-runtime/state/computer";
+import {
+  computerLiveApprovals,
+  nextComputerApprovalDeadline,
+} from "@t3tools/client-runtime/state/computer";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useNowAfter } from "../../hooks/useDeadline";
-import { nextComputerDeadline, useComputerSnapshot } from "../../state/computer";
+import { useThreadComputer } from "../../state/computer";
 import { useEnvironment } from "../../state/environments";
 import { ComputerApprovalCard } from "./ComputerApprovalCard";
 
@@ -15,11 +18,11 @@ export function ThreadComputerApprovals({
 }: {
   readonly threadRef: ScopedThreadRef | null;
 }) {
-  const { snapshot } = useComputerSnapshot(threadRef?.environmentId ?? null);
-  const nowMs = useNowAfter(nextComputerDeadline(snapshot));
+  const { approvals } = useThreadComputer(threadRef);
+  const nowMs = useNowAfter(nextComputerApprovalDeadline(approvals));
   const environment = useEnvironment(threadRef?.environmentId ?? null);
   if (threadRef === null) return null;
-  const waiting = computerThreadApprovals(snapshot, threadRef.threadId, nowMs);
+  const waiting = computerLiveApprovals(approvals, nowMs);
   if (waiting.length === 0) return null;
   return (
     <div className="mb-2 flex flex-col gap-2">

@@ -62,12 +62,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { useDeadlinePassed, useNowAfter } from "../../lib/clock";
 import {
-  nextComputerDeadline,
-  stopComputerTask,
-  threadComputerApprovals,
-  threadComputerTask,
-  useComputerSnapshot,
-} from "../../state/computer";
+  computerLiveApprovals,
+  nextComputerApprovalDeadline,
+} from "@t3tools/client-runtime/state/computer";
+import { stopComputerTask, useThreadComputer } from "../../state/computer";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -800,15 +798,13 @@ function ThreadDetailBody(
     };
   })();
   const statusLines = [backgroundLine, lifecycleLine].filter((line) => line !== null);
-  // One subscription for both the pill and the taps this thread waits for.
-  const computerSnapshot = useComputerSnapshot(props.environmentId);
-  const computerNowMs = useNowAfter(nextComputerDeadline(computerSnapshot));
-  const computerTask = threadComputerTask(computerSnapshot, props.selectedThread.id);
-  const computerApprovals = threadComputerApprovals(
-    computerSnapshot,
+  // Only this thread's task and taps: another thread's steps do not redraw this screen.
+  const { task: computerTask, approvals: pendingComputerApprovals } = useThreadComputer(
+    props.environmentId,
     props.selectedThread.id,
-    computerNowMs,
   );
+  const computerNowMs = useNowAfter(nextComputerApprovalDeadline(pendingComputerApprovals));
+  const computerApprovals = computerLiveApprovals(pendingComputerApprovals, computerNowMs);
   const [computerStopping, setComputerStopping] = useState(false);
   const stopComputerUse = async () => {
     if (computerTask === null || computerStopping) return;

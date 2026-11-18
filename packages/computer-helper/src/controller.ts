@@ -1,4 +1,5 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/desktop-helper/src/computer/controller.ts), modified for Ada.
+// LocalRouter ported it from Sidebud (github.com/jayleaton/sidebud @70da540); both notices ship in LICENSE.localrouter.
 import type { Logger } from "./log.ts";
 import { choiceProbability } from "./decisions.ts";
 import type { Answers, Decider, Question } from "./decisions.ts";
@@ -130,6 +131,21 @@ const summary = (screen: Observation): ObservationSummary => ({
 });
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+const HIDDEN = "[typed text]";
+const MIN_HIDDEN = 3;
+/** `value` with the task's typed text replaced wherever it appears: that text only ever leaves in the type action's own binding. */
+function without<T>(value: T, secret: string | null): T {
+  if (!secret || secret.length < MIN_HIDDEN) return value;
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") return node.split(secret).join(HIDDEN);
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object")
+      return Object.fromEntries(Object.entries(node).map(([key, entry]) => [key, walk(entry)]));
+    return node;
+  };
+  return walk(value) as T;
+}
+
 /** Why the task was aborted: the reason given to abort(), when it is words. */
 export function stopReason(signal: AbortSignal): string {
   const reason: unknown = signal.reason;
@@ -156,6 +172,8 @@ class Halt extends Error {
 /** One task's running state. Working time is wall time minus the time spent waiting for the server. */
 type Run = {
   task: ComputerTask;
+  /** The text the server gave to type, never shown to it again; null when the text was read from the goal itself. */
+  secret: string | null;
   signal: AbortSignal;
   watch: PointerWatch | null;
   steps: string[];
@@ -197,6 +215,7 @@ export class ComputerUse {
       given.text === null ? { ...given, text: navigationText(given.goal) } : given;
     const run: Run = {
       task,
+      secret: given.text,
       signal: options.signal ?? new AbortController().signal,
       watch: options.watch ?? null,
       steps: [],
@@ -220,7 +239,7 @@ export class ComputerUse {
         ms: this.now() - run.started,
         waited_ms: run.waited,
       });
-      return { status, reason, steps: run.steps, surface: where };
+      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
     };
     try {
       this.checkpoint(run);
@@ -311,9 +330,10 @@ export class ComputerUse {
   }
 
   private record(run: Run, text: string) {
-    run.steps.push(text);
+    const shown = without(text, run.secret);
+    run.steps.push(shown);
     try {
-      this.deps.onStep?.(text);
+      this.deps.onStep?.(shown);
     } catch (error) {
       this.deps.log.warn("computer_use.progress_failed", { error: messageOf(error) });
     }
@@ -371,7 +391,14 @@ export class ComputerUse {
     run.watch?.moving();
     let grant: Grant;
     try {
-      grant = await this.deps.authorize({ step: run.authorized, observation, action });
+      grant = await this.deps.authorize({
+        step: run.authorized,
+        observation: without(observation, run.secret),
+        action:
+          action.kind === "type"
+            ? { ...without({ ...action, text: "" }, run.secret), text: action.text }
+            : without(action, run.secret),
+      });
     } catch (error) {
       if (run.signal.aborted) throw new Halt("stopped", stopReason(run.signal));
       throw new Halt("stuck", `The server did not allow the next step: ${messageOf(error)}`);
@@ -698,7 +725,7 @@ export class ComputerUse {
     const canType = Boolean(task.text) && !typed && textboxes.length > 0;
     const state = {
       goal: task.goal,
-      ...(task.text ? { textToType: clip(task.text, 400), alreadyTyped: typed } : {}),
+      ...(task.text ? { hasTextToType: true, alreadyTyped: typed } : {}),
       screen: {
         app: screen.app,
         title: screen.title,
@@ -740,7 +767,7 @@ export class ComputerUse {
             : { scroll_down: "Scroll down to see more of this page or list." }),
           ...(avoid.has("scroll:up") ? {} : { scroll_up: "Scroll up to see earlier content." }),
           ...(canType
-            ? { type_text: "Type the prepared text (`textToType`) into a text box." }
+            ? { type_text: "Type the prepared text (not shown to you) into a text box." }
             : {}),
           ...(typed && !avoid.has("press:enter")
             ? {
@@ -774,7 +801,11 @@ export class ComputerUse {
           }
         : {}),
     };
-    const answers = await this.ask(run, state, questions);
+    const answers = await this.ask(
+      run,
+      { ...without({ ...state, goal: "" }, run.secret), goal: task.goal },
+      without(questions, run.secret),
+    );
     const next = this.confident(answers, "next");
     if (!next || next === "stuck")
       return { stop: "stuck", reason: `It could not tell what to do next on ${screen.app}.` };
@@ -794,7 +825,7 @@ export class ComputerUse {
         target && target !== "none"
           ? controls[Number(target.slice(1))]
           : controls.find((control) => control.role === "textbox" && control.focused);
-      if (!box) return { stop: "stuck", reason: "It could not tell which box to type into." };
+      if (!box) return { stop: "stuck", reason: "It could not tell which text box to type into." };
       return {
         action: { kind: "type", ref: box.ref, text: task.text },
         step: `typed the text into the ${describeControl(box)}`,
@@ -980,7 +1011,7 @@ const sameName = (title: string, name: string) => {
   return a === b || a.startsWith(`${b} `) || a.startsWith(`${b}-`) || a.startsWith(`${b} –`);
 };
 
-/** A rough sound key, so a name that was heard finds what it sounds like: "school" and "Skool" both become "skl". */
+/** A rough sound key, so a loosely spelled name finds what it sounds like: "school" and "Skool" both become "skl". */
 export function soundKey(text: string): string {
   const letters = text
     .toLowerCase()
