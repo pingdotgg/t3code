@@ -268,8 +268,8 @@ function markJoinAtStart(entry: PaneStrip): void {
   if (!row) return;
   const atStart =
     shown !== null &&
-    shown.x <= PANE_JOIN_EAR_PX + 1 &&
-    strip.scrollLeft < 1 &&
+    shown.x - strip.scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
+    shown.x + shown.w - strip.scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
     stripAtPaneEdge(strip, row);
   if (row.hasAttribute("data-pane-join-start") !== atStart) {
     row.toggleAttribute("data-pane-join-start", atStart);

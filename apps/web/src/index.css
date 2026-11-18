@@ -6533,6 +6533,9 @@ body {
     & [data-layout-pane-id]:has([data-pane-join-start]) > [data-pane-cut="start-notch"] {
       opacity: 0;
     }
+    & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {
+      --strip-fade-start: 0px;
+    }
     & [data-pane-bar-corner="end"] {
       inset-inline-end: 0;
       mask: radial-gradient(circle 14px at 0 100%, transparent 13.5px, #000 14.5px);
