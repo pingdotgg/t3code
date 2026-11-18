@@ -34,7 +34,7 @@ export type ComputerTask = {
 
 /** An agent's own step on the window in front; a `type` step types the task's `text`. */
 export type ComputerAct = {
-  action: "click" | "type" | "key" | "scroll" | "open_url";
+  action: "click" | "type" | "key" | "scroll" | "menu" | "open_url";
   ref?: string;
   label?: string;
   x?: number;
@@ -706,6 +706,13 @@ export class ComputerUse {
           : { kind: "press", key: action.key };
       case "scroll":
         return { kind: "scroll", direction: action.direction };
+      // Opening a control's menu is a click on it; an item of an open menu is a click on that item.
+      case "menu": {
+        const control = this.control(screen, action.ref);
+        return { kind: "click", ref: action.ref, role: control.role, label: control.label };
+      }
+      case "pick":
+        return { kind: "click", ref: "menu", role: "menuitem", label: action.label };
     }
   }
 
@@ -1034,6 +1041,11 @@ function controlAt(controls: ScreenControl[], x: number, y: number): ScreenContr
 }
 
 /** An agent's step as an action on this screen, or why it cannot be one. */
+/** The lines of a popup or menu open over the window, without the ▸ that marks the highlighted one. */
+function popupLines(screen: Observation): string[] {
+  return (screen.popup ?? "").split(" | ").map((line) => line.replace(/^\u25b8 /, "").trim());
+}
+
 function actOn(
   screen: Observation,
   act: ComputerAct,
@@ -1044,6 +1056,13 @@ function actOn(
   switch (act.action) {
     case "click": {
       const named = act.label === undefined ? null : matchControl(screen.controls, act.label);
+      // An item of a menu open over the window (a context menu) is pressed by its title.
+      if (act.label !== undefined && !byRef && !named && popupLines(screen).includes(act.label))
+        return {
+          screen,
+          action: { kind: "pick", label: act.label },
+          said: `picked “${clip(act.label, 60)}” from the menu`,
+        };
       if (act.label !== undefined && !byRef && !named)
         return { stop: `No single control “${clip(act.label, 60)}” is on screen; look again.` };
       const at =
@@ -1067,6 +1086,16 @@ function actOn(
         screen: { ...screen, controls: [...screen.controls, spot] },
         action: { kind: "click", ref: spot.ref },
         said: `clicked at ${at.x},${at.y}`,
+      };
+    }
+    case "menu": {
+      const target =
+        byRef ?? (act.label === undefined ? null : matchControl(screen.controls, act.label));
+      if (!target) return { stop: "Name the control whose menu to open: its ref or its label." };
+      return {
+        screen,
+        action: { kind: "menu", ref: target.ref },
+        said: `opened the menu of the ${describeControl(target)}`,
       };
     }
     case "type": {
@@ -1166,7 +1195,10 @@ function actionKey(action: ScreenAction): string {
   switch (action.kind) {
     case "click":
     case "type":
+    case "menu":
       return `${action.kind}:${action.ref}`;
+    case "pick":
+      return `pick:${action.label}`;
     case "press":
       return `press:${action.key}`;
     case "scroll":

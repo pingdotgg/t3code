@@ -1228,6 +1228,26 @@ describe("an act the agent chose", () => {
     });
   });
 
+  it("opens a control's context menu and picks an item from it by label, in the background", async () => {
+    const { page, server, computer } = actWith();
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "menu", ref: "search" } }),
+    ).toMatchObject({ status: "done", steps: ["opened the menu of the textbox “Search”"] });
+    expect((await page.observe()).popup).toContain("Select password");
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Select password" },
+      }),
+    ).toMatchObject({ status: "done", steps: ["picked “Select password” from the menu"] });
+    expect(server.requests.map((request) => request.action)).toEqual([
+      { kind: "click", ref: "search", role: "textbox", label: "Search" },
+      { kind: "click", ref: "menu", role: "menuitem", label: "Select password" },
+    ]);
+    expect(page.picked).toEqual(["Select password"]);
+  });
+
   it("switches to a tab already on the site, or the sign-in page it led to, instead of opening another", async () => {
     const opened: string[] = [];
     const pressed: string[] = [];

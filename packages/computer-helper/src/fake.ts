@@ -35,6 +35,9 @@ export class FakeNotes implements ScreenBackend {
   query = "";
   searched = false;
   selected: number | null = null;
+  /** The open context menu's items, and the items picked from one. */
+  menu: string[] = [];
+  readonly picked: string[] = [];
   private focus: "search" | null = null;
   private at: Point = { x: 400, y: 300 };
 
@@ -66,7 +69,14 @@ export class FakeNotes implements ScreenBackend {
     const text = this.searched
       ? `Search results for “${this.query}”: ${visible.map((index) => this.notes[index]).join("; ") || "no notes match"}`
       : `${this.notes.length} notes`;
-    return { backend: "desktop", app: "Notes", title, controls, text };
+    return {
+      backend: "desktop",
+      app: "Notes",
+      title,
+      controls,
+      text,
+      ...(this.menu.length ? { popup: this.menu.join(" | ") } : {}),
+    };
   }
 
   /** Refs that cannot be acted on in the background (a canvas): acting on them needs the person's mouse. */
@@ -110,6 +120,15 @@ export class FakeNotes implements ScreenBackend {
         return done(undefined);
       case "scroll":
         return done({ x: 400, y: 300 });
+      case "menu":
+        this.menu = action.ref === "search" ? ["Paste", "Select password"] : [];
+        return done(this.spot(action.ref));
+      case "pick":
+        if (!this.menu.includes(action.label))
+          throw new Error("That menu item is gone; look again.");
+        this.picked.push(action.label);
+        this.menu = [];
+        return done(undefined);
     }
   }
 

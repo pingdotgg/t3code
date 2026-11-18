@@ -260,7 +260,7 @@ export const ComputerControl = Schema.Struct({
 });
 export type ComputerControl = typeof ComputerControl.Type;
 
-const COMPUTER_ACT_ACTIONS = ["click", "type", "key", "scroll", "open_url"] as const;
+const COMPUTER_ACT_ACTIONS = ["click", "type", "key", "scroll", "menu", "open_url"] as const;
 const COMPUTER_KEYS = [
   "return",
   "tab",

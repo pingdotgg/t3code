@@ -97,7 +97,11 @@ export type ScreenAction =
   | { kind: "type"; ref: string; text: string }
   | { kind: "press"; key: Key }
   /** `ref`: the list or area to scroll (a control of this observation); the window's middle when absent. */
-  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string };
+  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string }
+  /** Open the control's context menu. */
+  | { kind: "menu"; ref: string }
+  /** Press the item of an open menu with this title. */
+  | { kind: "pick"; label: string };
 
 /**
  * How an action reached the app. `background`: without the person's real pointer, focus or keyboard (an accessibility

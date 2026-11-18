@@ -102,6 +102,20 @@ function children(el) {
   for (var i = 0; i < list.count; i++) out.push(list.objectAtIndex(i));
   return out;
 }
+// The items of a menu the app has open (a context menu), wherever it hangs: off the app, or inside a window's chrome
+// (Chrome's). The menu bar and the page itself are not searched.
+var MENU_PATH = { AXWindow: 1, AXGroup: 1, AXScrollArea: 1, AXMenu: 1, AXMenuItem: 1 };
+function openMenuItems(app) {
+  var queue = children(app).filter(function (el) { return plain(el, 'AXRole') !== 'AXMenuBar'; });
+  var items = [], seen = 0;
+  while (queue.length && seen < 1500) {
+    var el = queue.shift(); seen++;
+    var role = plain(el, 'AXRole');
+    if (role === 'AXMenuItem' && plain(el, 'AXTitle')) items.push(el);
+    if (MENU_PATH[role]) queue = queue.concat(children(el));
+  }
+  return items;
+}
 function center(el) {
   var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
   return p && s && s[0] > 0 && s[1] > 0 ? [p[0] + s[0] / 2, p[1] + s[1] / 2] : null;
@@ -359,7 +373,7 @@ function run(argv) {
   if (url) out.url = url;
   if (truncated) out.truncated = true;
   if (loading) out.loading = true;
-  var popup = popupText(target.app);
+  var popup = [popupText(target.app)].concat(openMenuItems(target.app).filter(function (item) { return plain(item, 'AXEnabled') !== false; }).map(function (item) { return clip(plain(item, 'AXTitle'), 80); })).filter(function (line) { return line; }).join(' | ').slice(0, 600);
   if (popup) out.popup = popup;
   return JSON.stringify(out);
 }`;
@@ -558,6 +572,19 @@ function run(argv) {
     else typeText($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier, String(payload.text), dryrun);
     return JSON.stringify({ mode: 'pointer' });
   }
+  if (op === 'menu') {
+    var owner = front();
+    if (!owner.win) throw new Error('ADA_NO_WINDOW');
+    var menuOf = resolve(owner.win, payload.ref), menuAt = center(menuOf);
+    if (!dryrun && $.AXUIElementPerformAction(menuOf, $('AXShowMenu')) !== 0) throw new Error('ADA_NEEDS_POINTER:that control has no menu:');
+    return JSON.stringify(menuAt ? { mode: 'background', at: { x: menuAt[0], y: menuAt[1] } } : { mode: 'background' });
+  }
+  if (op === 'pick') {
+    var items = openMenuItems(front().app).filter(function (item) { return plain(item, 'AXTitle') === payload.label; });
+    if (!items.length) throw new Error('ADA_GONE');
+    if (!dryrun && $.AXUIElementPerformAction(items[0], $('AXPress')) !== 0) throw new Error('ADA_GONE');
+    return JSON.stringify({ mode: 'background', how: 'the menu item' });
+  }
   var spot = /^v:(-?[\\d.]+),(-?[\\d.]+)$/.exec(String(payload.ref || '')), point, el = null, ax = null;
   if (spot) {
     point = [Number(spot[1]), Number(spot[2])];
@@ -713,6 +740,7 @@ function actionPayload(action: ScreenAction): object {
       ? { direction: action.direction, ref: action.ref }
       : { direction: action.direction };
   if (action.kind === "type") return { ref: action.ref, text: action.text };
+  if (action.kind === "pick") return { label: action.label };
   return { ref: action.ref };
 }
 
