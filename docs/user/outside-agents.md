@@ -156,6 +156,11 @@ the message as its next turn. Pass `-` as the message to read it from stdin.
 `--model` (and `--effort`) switch the thread to that model of its own provider
 from this message on.
 
+To choose the model, pass `--provider <instance-id> --model <slug>`. Add
+`--option id=value` for each model option, such as `--option effort=high`.
+Option ids and values depend on the model; `true` and `false` set on/off
+options.
+
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.

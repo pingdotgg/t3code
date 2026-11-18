@@ -23,10 +23,12 @@ const neutralOutline = cn(
   "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28]",
 );
 
+const errorColors =
+  "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]";
+
 const variantColors: Record<ComposerBannerVariant, string> = {
   default: neutralOutline,
-  error:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
+  error: errorColors,
   info: neutralOutline,
   success: neutralOutline,
   warning:
