@@ -491,6 +491,33 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("tells a resumed native thread that a delta handoff supersedes its own history", () =>
+    Effect.gen(function* () {
+      const result = yield* deliverContextHandoffs({
+        handoffs: [
+          {
+            ...handoff,
+            strategy: "delta_since_target_last_seen",
+            coveredRunOrdinals: { from: 158, to: 264 },
+            history: {
+              ...handoff.history!,
+              coverage: handoffCoverage({
+                threadId,
+                coveredRunOrdinals: { from: 158, to: 264 },
+                items: [],
+              }),
+            },
+          },
+        ],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.void,
+      });
+      assert.match(result.context, /supersede/i);
+    }),
+  );
+
   it.effect("persists successful injection before turn start and skips it on retry", () =>
     Effect.gen(function* () {
       let durable = handoff;
