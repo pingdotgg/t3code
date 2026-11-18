@@ -53,6 +53,8 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
+import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
@@ -79,6 +81,7 @@ import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerificatio
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
+const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
 const WEBHOOK_DELIVERY_RETENTION = 50;
 const WEBHOOK_DEDUPE_DELIVERY_RETENTION = 20;
@@ -362,6 +365,14 @@ function requireFutureOnce(
 function errorMessage(error: unknown): string {
   const failure = Cause.isCause(error) ? Cause.squash(error) : error;
   return failure instanceof Error ? failure.message : String(failure);
+}
+
+function dispatchErrorMessage(cause: Cause.Cause<unknown>): string {
+  const failure = Cause.squash(cause);
+  // Direct orchestration refusals are user-facing; nested defects can contain private data.
+  return isOrchestratorDispatchError(failure) && typeof failure.cause === "string"
+    ? (userFacingDispatchErrorMessage(failure.cause) ?? errorMessage(failure))
+    : errorMessage(failure);
 }
 
 function webhookPath(taskId: string, token: string): string {
@@ -873,8 +884,10 @@ export const layer = Layer.effect(
     );
 
     // A dispatch is recorded once the message is accepted; the provider can still
-    // reject the turn after that, so follow the run and record its failure.
-    const recordRunFailure = Effect.fn("ScheduledTaskService.recordRunFailure")(function* (
+    // reject the turn after that, so follow the run and record its failure. A one-time
+    // task whose turn completed at or after its runAt is spent, so it is removed; its
+    // thread stays. A paused task always has a NULL next_run_at, so that alone proves nothing.
+    const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (
       taskId: ScheduledTaskId,
       startedAtIso: string,
       threadId: ThreadId,
@@ -891,16 +904,31 @@ export const layer = Layer.effect(
         runId: dispatched.id,
         timeoutMs: RUN_OUTCOME_WAIT_MS,
       });
-      if (
-        run === null ||
-        run.status === "completed" ||
-        !ThreadManagementService.isTerminalRunStatus(run.status)
-      )
+      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+      if (run.status === "completed") {
+        const removed = yield* sql`
+          DELETE FROM scheduled_tasks
+          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+            AND last_run_status = 'succeeded' AND next_run_at IS NULL
+            AND json_extract(schedule_json, '$.type') = 'once'
+            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+          RETURNING task_id
+        `;
+        if (removed.length > 0) yield* notifyChanged;
         return;
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
-        "turnItems",
-        "messages",
-      ]);
+      }
+      // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+      // thread holds tens of thousands of items.
+      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
+        thread,
+        ["turnItems", "messages"],
+        {
+          messageIds: [messageId],
+          turnItemRunId: run.id,
+          turnItemTypes: ["error"],
+          turnItemStatuses: ["failed"],
+        },
+      );
       // A queued message promoted to a steer cancels its run and joins the active one.
       if (
         run.status === "cancelled" &&
@@ -1098,7 +1126,7 @@ export const layer = Layer.effect(
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        const lastRunError = runSucceeded ? null : dispatchErrorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
@@ -1165,7 +1193,7 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null) {
-          yield* recordRunFailure(active.id, startedAtIso, threadId, messageId).pipe(
+          yield* recordRunOutcome(active.id, startedAtIso, threadId, messageId).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
