@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
   mintUrl: vi.fn<() => Promise<string | null>>(),
-  createAssetUrl: vi.fn<(options: { readonly refresh?: boolean }) => Promise<unknown>>(),
+  assetMints: 0,
   openedUrls: [] as string[],
 }));
 
@@ -27,28 +27,53 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
   ...(await original()),
   runAtomCommand: ((_registry: unknown, _command: unknown, request: unknown) =>
     state.writeFile(request)) as never,
-  executeAtomQuery: ((_registry: unknown, _atom: unknown, options: { refresh?: boolean }) =>
-    state.createAssetUrl(options)) as never,
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
   usePreviewAvailable: () => true,
 }));
-vi.mock(import("~/browser/openFileInPreview"), async (original) => ({
-  ...(await original()),
-  openFileInPreview: (async (input: {
-    readonly createAssetUrl: (target: unknown) => Promise<{
-      readonly value: { readonly relativeUrl: string };
-    }>;
-  }) => {
-    const result = await input.createAssetUrl({
-      environmentId: "markdown-preview-test",
-      input: { resource: { _tag: "workspace-file", threadId: "thread", path: "report.pdf" } },
-    });
-    state.openedUrls.push(result.value.relativeUrl);
-    return AsyncResult.success(undefined);
-  }) as never,
-}));
+vi.mock(import("~/state/assets"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  // Runs through the real query path: a signed URL stays cached until its atom is refreshed.
+  const signedUrl = Atom.family((path: string) =>
+    Atom.make(
+      Effect.sync(() => ({
+        relativeUrl: `/api/assets/token-${++state.assetMints}/${path}`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      })),
+    ).pipe(Atom.keepAlive),
+  );
+  return {
+    ...actual,
+    assetEnvironment: {
+      ...actual.assetEnvironment,
+      createUrl: ((target: { readonly input: { readonly resource: { readonly path: string } } }) =>
+        signedUrl(target.input.resource.path)) as never,
+    },
+  };
+});
+vi.mock(import("~/browser/openFileInPreview"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openFileInPreview: (async (input: Parameters<typeof actual.openFileInPreview>[0]) => {
+      const result = await input.createAssetUrl({
+        environmentId: input.threadRef.environmentId,
+        input: {
+          resource: {
+            _tag: "workspace-file",
+            threadId: input.threadRef.threadId,
+            path: input.filePath,
+          },
+        },
+      });
+      if (result._tag === "Success") state.openedUrls.push(result.value.relativeUrl);
+      return AsyncResult.success(undefined);
+    }) as never,
+  };
+});
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentHttpBaseUrl: () => "http://localhost:3000",
@@ -152,15 +177,6 @@ function setup() {
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openedUrls = [];
-  let cachedAssetUrl: string | null = null;
-  let assetMints = 0;
-  // Mirrors the query cache: only a refresh signs a new URL once one is cached.
-  state.createAssetUrl.mockReset().mockImplementation(async ({ refresh }) => {
-    if (cachedAssetUrl === null || refresh === true) {
-      cachedAssetUrl = `/api/assets/token-${++assetMints}/report.pdf`;
-    }
-    return AsyncResult.success({ relativeUrl: cachedAssetUrl, expiresAt: Number.MAX_SAFE_INTEGER });
-  });
   return {
     [Symbol.dispose]() {
       for (const [index, key] of keys.entries()) {
