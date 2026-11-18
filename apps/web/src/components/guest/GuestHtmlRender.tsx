@@ -2,7 +2,7 @@ import { GUEST_RENDER_ROUTE, GUEST_SHARE_PARAM } from "@t3tools/contracts";
 import {
   type HtmlRenderReference,
   HTML_RENDER_COLUMN_WIDTH,
-  htmlRenderFrameHeight,
+  htmlRenderFitHeight,
   htmlRenderResult,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
@@ -81,7 +81,7 @@ export function GuestHtmlRender({
     <div
       ref={boxRef}
       style={{
-        height: htmlRenderFrameHeight(reference, width, contentHeight),
+        height: htmlRenderFitHeight(reference, width, contentHeight),
       }}
     >
       <iframe

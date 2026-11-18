@@ -101,7 +101,17 @@ const items: ReadonlyArray<OrchestrationV2TurnItem> = [
     type: "dynamic_tool",
     toolName: "mcp__t3-code__html_render",
     input: null,
-    output: { htmlRender: { attachmentId: "thread-a-1", title: "Chart", height: 200 } },
+    output: {
+      htmlRender: {
+        attachmentId: "thread-a-1",
+        title: "Chart",
+        height: 200,
+        heights: [
+          [320, 260],
+          [1144, 260],
+        ],
+      },
+    },
   },
   reply("reply", 3, "All checks pass."),
 ];
@@ -242,6 +252,8 @@ describe("GuestPage", () => {
         "src",
         expect.stringContaining(`${GUEST_RENDER_ROUTE}?share=${SHARE_ID}&item=visual`),
       );
+    // Before its page reports a height, the visual opens at the one the server measured.
+    expect(screen.getByTitle("Chart").element().parentElement?.style.height).toBe("260px");
     // Guests cannot act on the thread, so no control offers to.
     expect(screen.container.querySelector('[aria-label="Fork from this response"]')).toBeNull();
     expect(socket).not.toHaveBeenCalled();

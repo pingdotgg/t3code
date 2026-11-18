@@ -115,12 +115,17 @@ export function htmlRenderFrameHeight(
 }
 
 /**
- * The height a frame that fits its page opens at before the page reports one.
- * It rises above the capped frame height only as far as both neighboring
+ * The height of a frame that fits its page. Before the page reports `contentHeight`
+ * it rises above the capped frame height only as far as both neighboring
  * measurements reach: a breakpoint between them can give the page either one.
  */
-export function htmlRenderFitHeight(reference: HtmlRenderReference, width: number) {
-  const capped = htmlRenderFrameHeight(reference, width);
+export function htmlRenderFitHeight(
+  reference: HtmlRenderReference,
+  width: number,
+  contentHeight?: number,
+) {
+  const capped = htmlRenderFrameHeight(reference, width, contentHeight);
+  if (contentHeight !== undefined) return capped;
   const heights = reference.heights;
   if (
     heights === undefined ||

@@ -3,7 +3,6 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFitHeight,
-  htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { T, useGT, Var } from "gt-react";
@@ -57,15 +56,14 @@ export function HtmlRenderFrame(props: {
   // Client fonts can exceed the server-measured height and cause nested scrolling.
   const [contentHeight, setContentHeight] = useState<number>();
   const [remembered] = useState(() => measuredContentHeights.get(attachmentId));
-  const pageHeight =
+  const height = htmlRenderFitHeight(
+    props.htmlRender,
+    width,
     contentHeight ??
-    (remembered !== undefined && Math.abs(remembered.width - width) < 1
-      ? remembered.height
-      : undefined);
-  const height =
-    pageHeight === undefined
-      ? htmlRenderFitHeight(props.htmlRender, width)
-      : htmlRenderFrameHeight(props.htmlRender, width, pageHeight);
+      (remembered !== undefined && Math.abs(remembered.width - width) < 1
+        ? remembered.height
+        : undefined),
+  );
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
