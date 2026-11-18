@@ -5,6 +5,7 @@ import { View } from "react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { LocalPreviewScreen } from "../browser/LocalPreviewRouteScreen";
 import { DevicePreviewScreen } from "../devices/DevicePreviewRouteScreen";
 import {
   WorkspaceContentWidthContext,
@@ -85,7 +86,21 @@ export function ThreadInspectorPreview(props: {
   return (
     <ThreadInspectorNavigationContext value={props.onOpen}>
       <InspectorContentScope>
-        {target.type === "device" ? (
+        {target.type === "localPreview" && target.url ? (
+          <LocalPreviewScreen
+            key={`${target.environmentId}:${target.url}`}
+            environmentId={EnvironmentId.make(target.environmentId)}
+            url={target.url}
+            onClose={props.onClose}
+            onMaximize={(url) => {
+              props.onOpen({ ...target, url });
+              navigation.navigate("ThreadLocalPreview", {
+                environmentId: target.environmentId,
+                url,
+              });
+            }}
+          />
+        ) : target.type === "device" ? (
           <DevicePreviewScreen
             key={`${target.environmentId}:${target.threadId}`}
             environmentId={EnvironmentId.make(target.environmentId)}

@@ -318,6 +318,8 @@ import {
 } from "./ThreadMarkdownImage";
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
+import { loopbackUrlForDevice } from "../browser/browserTabs";
+import { useOpenLocalPreview } from "../browser/useOpenLocalPreview";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
 
@@ -2957,6 +2959,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  const openLocalPreview = useOpenLocalPreview();
   // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
@@ -3366,6 +3369,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
+      // The environment's localhost, which this device can only reach through the tunnel.
+      if (loopbackUrlForDevice(href)) {
+        return {
+          title: href,
+          actions: [
+            { id: "open-on-device", title: "Open on this device" },
+            { id: "copy-link", title: "Copy link" },
+          ],
+        };
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
@@ -3381,6 +3394,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
+        return;
+      }
+      const deviceUrl = loopbackUrlForDevice(href);
+      if (deviceUrl) {
+        if (actionId === "open-on-device") {
+          openLocalPreview(
+            { environmentId: String(props.environmentId), threadId: String(props.threadId) },
+            deviceUrl,
+          );
+        } else if (actionId === "copy-link") copyTextWithHaptic(href);
         return;
       }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
