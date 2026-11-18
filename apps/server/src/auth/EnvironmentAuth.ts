@@ -523,6 +523,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly renewAccessToken: (
       accessToken: string,
       proofKeyThumbprint: string,
+      consumeProof: Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>,
     ) => Effect.Effect<
       AuthAccessTokenResult,
       ServerAuthInvalidCredentialError | ServerAuthInternalError
@@ -700,16 +701,15 @@ const rejectMcpClientAudience = <S extends { readonly subject: string }>(session
       ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
     : Effect.succeed(session);
 
+const toSessionVerificationError = (cause: SessionStore.SessionCredentialError) =>
+  SessionStore.isSessionCredentialInvalidError(cause)
+    ? new ServerAuthInvalidCredentialError({ cause })
+    : new ServerAuthSessionCredentialValidationError({ cause });
+
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
 ): Effect.Effect<A, ServerAuthInvalidCredentialError | ServerAuthInternalError, R> =>
-  effect.pipe(
-    Effect.mapError((cause) =>
-      SessionStore.isSessionCredentialInvalidError(cause)
-        ? new ServerAuthInvalidCredentialError({ cause })
-        : new ServerAuthSessionCredentialValidationError({ cause }),
-    ),
-  );
+  effect.pipe(Effect.mapError(toSessionVerificationError));
 
 export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
@@ -1072,14 +1072,21 @@ export const make = Effect.gen(function* () {
 
   const renewAccessToken: EnvironmentAuth["Service"]["renewAccessToken"] = Effect.fn(
     "EnvironmentAuth.renewAccessToken",
-  )(function* (accessToken, proofKeyThumbprint) {
+  )(function* (accessToken, proofKeyThumbprint, consumeProof) {
     const session = yield* sessions
       .renew(accessToken, {
         proofKeyThumbprint,
         ttl: RENEWABLE_ACCESS_TOKEN_TTL,
         renewalWindow: RENEWABLE_SESSION_WINDOW,
+        consumeProof,
       })
-      .pipe(mapSessionVerificationErrors);
+      .pipe(
+        Effect.mapError((cause) =>
+          isServerAuthCredentialError(cause) || isServerAuthInternalError(cause)
+            ? cause
+            : toSessionVerificationError(cause),
+        ),
+      );
     return yield* toAccessTokenResult(session);
   });
 

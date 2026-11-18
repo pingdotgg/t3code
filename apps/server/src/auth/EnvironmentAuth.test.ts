@@ -455,17 +455,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
 
         yield* TestClock.adjust("20 days");
-        const renewed = yield* serverAuth.renewAccessToken(paired.access_token, key.thumbprint);
+        const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
+          dpopFailureReason: "replay",
+        });
+        const rejected = yield* serverAuth
+          .renewAccessToken(paired.access_token, key.thumbprint, Effect.fail(replay))
+          .pipe(Effect.flip);
+        expect(rejected).toBe(replay);
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+
+        const renewed = yield* serverAuth.renewAccessToken(
+          paired.access_token,
+          key.thumbprint,
+          Effect.void,
+        );
         expect(renewed.scope).toBe("orchestration:read");
         const verified = yield* sessions.verify(renewed.access_token);
         expect(verified.sessionId).toBe(sessionId);
         expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 50 * 24 * 60 * 60 * 1000);
 
         const refused = (token: string, thumbprint: string) =>
-          serverAuth.renewAccessToken(token, thumbprint).pipe(
-            Effect.flip,
-            Effect.map((error) => error._tag),
-          );
+          serverAuth
+            .renewAccessToken(
+              token,
+              thumbprint,
+              Effect.die("Invalid credentials cannot consume a proof."),
+            )
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
         expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
           "ServerAuthInvalidCredentialError",
         );

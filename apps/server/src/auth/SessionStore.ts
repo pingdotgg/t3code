@@ -24,6 +24,10 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import type {
+  ServerAuthInternalError,
+  ServerAuthInvalidCredentialError,
+} from "./EnvironmentAuth.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
@@ -419,8 +423,15 @@ export class SessionStore extends Context.Service<
         readonly proofKeyThumbprint: string;
         readonly ttl: Duration.Duration;
         readonly renewalWindow: Duration.Duration;
+        readonly consumeProof: Effect.Effect<
+          void,
+          ServerAuthInvalidCredentialError | ServerAuthInternalError
+        >;
       },
-    ) => Effect.Effect<IssuedSession, SessionCredentialError>;
+    ) => Effect.Effect<
+      IssuedSession,
+      SessionCredentialError | ServerAuthInvalidCredentialError | ServerAuthInternalError
+    >;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
@@ -941,6 +952,7 @@ const make = Effect.gen(function* () {
           observedAt: now,
         });
       }
+      yield* input.consumeProof;
       const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(input.ttl) });
       const extended = yield* authSessions
         .extend({

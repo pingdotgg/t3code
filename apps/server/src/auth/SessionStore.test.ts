@@ -199,6 +199,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       yield* TestClock.adjust(Duration.minutes(90));
       yield* sessions.renew(client.token, {
         proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+        consumeProof: Effect.void,
         ...renewable,
       });
       yield* TestClock.adjust(Duration.millis(120 * 60_000 - 1));

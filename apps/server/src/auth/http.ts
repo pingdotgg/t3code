@@ -381,8 +381,7 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            // Not recorded: a replayer also holds the subject token and could sign its own proof.
-            // Recording would let anyone write replay state to disk.
+            // Bootstrap exchanges leave the proof unrecorded because its key is not always trusted.
             const proof = args.headers.dpop
               ? yield* checkRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
@@ -412,6 +411,7 @@ export const layer = HttpApiBuilder.group(
               return yield* serverAuth.renewAccessToken(
                 args.payload.subject_token,
                 proof.thumbprint,
+                proof.consume,
               );
             }
             return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
