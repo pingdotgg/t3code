@@ -342,7 +342,6 @@
   "b6d55657e1a027b8": "Waiting for {step}",
   "e942562a42aede34": "Finished",
   "26b2b9727fe11289": "Ended early",
-  "dd6f32213f162fca": "{count} at once",
   "1bb995dcec481554": "Approve this device on {host}. It shows code {verificationCode}.",
   "8696a33219944832": "Could not create the websocket authorization proof.",
   "5678f133a8631f7d": "Your cloud sign-in changed. Sign in again to authorize the environment.",
