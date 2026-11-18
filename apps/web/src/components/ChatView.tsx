@@ -3400,12 +3400,6 @@ export default function ChatView(props: ChatViewProps) {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            {isElectron && rightPanelControlsAtRoot ? (
-              <span
-                aria-hidden
-                className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
-              />
-            ) : null}
             {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
               activeThreadEnvironmentId={activeThread.environmentId}
