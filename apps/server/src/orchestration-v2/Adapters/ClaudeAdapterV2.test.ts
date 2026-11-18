@@ -6840,6 +6840,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
+  it.effect("sends MCP app model context with the next Claude turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const runTurn = Effect.fnUntraced(function* (ordinal: number, note: string) {
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`mcp-app-context-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "What did the app report?",
+            attachments: [],
+          }),
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        return lastOffered();
+      });
+      const lastOffered = () => {
+        const content = harness.offeredMessages.at(-1)?.message.content;
+        return typeof content === "string"
+          ? content
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      };
+      const steer = Effect.fnUntraced(function* (ordinal: number, note: string) {
+        const attemptId = `mcp-app-context-${ordinal}`;
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make(`run-${attemptId}`),
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`steer-${attemptId}-${harness.offeredMessages.length}`),
+            text: "What did the app report now?",
+            attachments: [],
+          },
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        return lastOffered();
+      });
+      const finishTurn = Effect.fnUntraced(function* (ordinal: number) {
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: `mcp-app-context-result-${ordinal}`, result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      });
+
+      assert.include(yield* runTurn(0, "Created Jira issue PROJ-42"), "PROJ-42");
+      // A turn that does not complete may not have put the note in Claude's history.
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: "turn:mcp-app-context-0",
+        }),
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      assert.include(yield* runTurn(1, "Created Jira issue PROJ-42"), "PROJ-42");
+      yield* finishTurn(1);
+      // Already in Claude's history: resending it every turn would only grow the context.
+      assert.notInclude(yield* runTurn(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      // regression: #38541 a note the app changes mid-turn rides on the next steer, once.
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      assert.include(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
+      yield* finishTurn(2);
+      assert.notInclude(yield* runTurn(3, "Created Jira issue PROJ-44"), "PROJ-44");
+      yield* finishTurn(3);
+      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000038284",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* finishTurn(4);
+      // Compaction summarizes the note away, so the next turn carries it again.
+      assert.include(yield* runTurn(5, "Created Jira issue PROJ-43"), "PROJ-43");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -18355,11 +18457,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* startTurn(1, false);
       for (const frame of [
         roster([agentEntry("run-1")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016101",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016101",
+          }),
+          run_id: "run-1",
+        },
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000016102", result: "LAUNCHED" }),
       ]) {
         yield* harness.offerAndWait(frame);
@@ -18411,11 +18516,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         roster([]),
         roster([agentEntry("run-2")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016107",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016107",
+          }),
+          run_id: "run-2",
+        },
       ]) {
         yield* harness.offerAndWait(frame);
       }
@@ -18473,6 +18581,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* harness.until(() => subagentUpdates().at(-1)?.result === "DONE");
       assert.equal(subagentUpdates().at(-1)?.status, "completed");
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === "DONE",
+        ),
+      );
+      const childMessageTexts = new Map<string, string>();
+      for (const event of harness.events) {
+        if (event.type === "message.updated" && event.message.threadId === routing.childThreadId) {
+          childMessageTexts.set(event.message.id, event.message.text);
+        }
+      }
+      assert.deepEqual(
+        [...childMessageTexts.values()].filter((text) => text === "WAITING" || text === "DONE"),
+        ["WAITING", "DONE"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -24590,6 +24713,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.some(
             (event) => event.type === "message.updated" && event.message.role === "assistant",
           ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("drops a goal the CLI clears after an unrecoverable error", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "all tests pass";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              goal: { objective: condition, status: "active", checks: 1 },
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-error-clear-attempt"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "goal-error-clear-api-error",
+            error: "invalid_request",
+            text: "Prompt is too long",
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "informational",
+            content: `Goal cleared after an unrecoverable error (context limit reached): "${condition}". Run /goal again to continue.`,
+            level: "warning",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "goal-error-clear-notice",
+          }),
+          makeResultFrame({
+            uuid: "goal-error-clear-result",
+            result: "Prompt is too long",
+            isError: true,
+            terminalReason: "prompt_too_long",
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.isNull(
+          harness.events.findLast((event) => event.type === "provider_thread.updated")
+            ?.providerThread.goal,
         );
       }).pipe(
         Effect.scoped,
