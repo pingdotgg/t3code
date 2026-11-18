@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - The test observes a real cleanup-shell spawn failure.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Config from "effect/Config";
@@ -10,7 +12,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { afterEach, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -22,7 +24,69 @@ import {
   uninstallCommand,
 } from "./uninstall.ts";
 
+vi.mock("node:child_process", { spy: true });
+
 afterEach(() => vi.restoreAllMocks());
+
+it.live("reports failure when the Windows cleanup shell cannot start", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-shell-" });
+    const runtimeDir = path.join(baseDir, "runtime");
+    yield* fs.makeDirectory(runtimeDir);
+    vi.spyOn(BootService, "layer").mockReturnValue(
+      Layer.succeed(
+        BootService.BootService,
+        BootService.BootService.of({
+          status: Effect.succeed({
+            supported: false,
+            installed: false,
+            current: false,
+            unitPath: "",
+            logPath: "",
+          }),
+          withStopped: (operation) => operation,
+          restart: Effect.die("unexpected restart"),
+          install: () => Effect.die("unexpected install"),
+          uninstall: Effect.die("unexpected uninstall"),
+        }),
+      ),
+    );
+    const actual = yield* Effect.promise(() =>
+      vi.importActual<typeof import("node:child_process")>("node:child_process"),
+    );
+    const spawn = actual.spawn;
+    const failedSpawn = new Promise<Error>((resolve) => {
+      vi.spyOn(NodeChildProcess, "spawn").mockImplementation((...args) => {
+        const child = spawn(...args);
+        // Observe the real spawn error without letting it terminate the test runner.
+        child.once("error", resolve);
+        return child;
+      });
+    });
+    const result = yield* Command.runWith(uninstallCommand, { version: packageJson.version })([
+      "--base-dir",
+      baseDir,
+      "--yes",
+    ]).pipe(
+      Effect.result,
+      Effect.provideService(HostProcess.Environment, {
+        ComSpec: path.join(baseDir, "missing-cmd.exe"),
+      }),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.IsExecutable, false),
+      Effect.provide(
+        Layer.mergeAll(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+          Layer.fresh(TestConsole.layer),
+        ),
+      ),
+    );
+    yield* Effect.promise(() => failedSpawn);
+    expect(result._tag, "an unavailable cleanup shell must fail uninstall").toBe("Failure");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer))),
+);
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall command", (it) => {
   it.effect("names another home's service it leaves installed", () =>
