@@ -26,7 +26,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
 // The provider turn waits on the baseline, so a workspace too slow for this starts without one.
-// It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
+// Start the budget after acquiring the lock so an in-flight capture can finish the same ref.
 const BASELINE_CAPTURE_BUDGET = "5 seconds";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
@@ -290,12 +290,11 @@ export const layer: Layer.Layer<
               checkpointRef,
             })
             .pipe(
-              Effect.timeout(BASELINE_CAPTURE_BUDGET),
               Effect.catchTags({
                 VcsUnsupportedOperationError: () => Effect.void,
               }),
             );
-        }),
+        }).pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)),
       ).pipe(
         Effect.mapError(
           (cause) =>

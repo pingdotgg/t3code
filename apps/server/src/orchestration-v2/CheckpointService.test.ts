@@ -103,7 +103,7 @@ it.effect(
 );
 
 it.effect(
-  "bounds a slow baseline snapshot but waits for an in-flight capture of the same ref",
+  "bounds baseline lookup and capture together but waits for an in-flight capture of the same ref",
   () =>
     Effect.gen(function* () {
       const scope: OrchestrationV2CheckpointScope = {
@@ -121,6 +121,7 @@ it.effect(
       };
       const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
       const snapshots = yield* Ref.make(0);
+      const lookupDelayMs = yield* Ref.make(0);
       const firstSnapshotStarted = yield* Deferred.make<void>();
       const layerTest = CheckpointService.layer.pipe(
         Layer.provide(
@@ -129,7 +130,11 @@ it.effect(
             Layer.mock(CheckpointStore.CheckpointStore)({
               isGitRepository: () => Effect.succeed(true),
               hasCheckpointRef: ({ checkpointRef }) =>
-                Ref.get(refs).pipe(Effect.map((current) => current.has(checkpointRef))),
+                Effect.gen(function* () {
+                  const delay = yield* Ref.get(lookupDelayMs);
+                  if (delay > 0) yield* Effect.sleep(delay);
+                  return (yield* Ref.get(refs)).has(checkpointRef);
+                }),
               captureCheckpoint: ({ checkpointRef }) =>
                 Effect.gen(function* () {
                   yield* Ref.update(snapshots, (count) => count + 1);
@@ -164,13 +169,20 @@ it.effect(
         assert.strictEqual((yield* Fiber.join(postTurn)).status, "ready");
         assert.strictEqual((yield* Fiber.join(waitingBaseline))._tag, "Success");
 
-        const slowBaseline = yield* checkpoints
-          .captureBaseline({ scope, ordinalWithinScope: 2 })
-          .pipe(Effect.result, Effect.forkChild);
-        yield* TestClock.adjust("5 seconds");
-        assert.strictEqual((yield* Fiber.join(slowBaseline))._tag, "Failure");
-        assert.strictEqual(yield* Ref.get(snapshots), 2);
-        assert.strictEqual((yield* Ref.get(refs)).size, 1);
+        for (const [delayMs, expectedSnapshots] of [
+          [10_000, 1],
+          [3_000, 2],
+        ] as const) {
+          yield* Ref.set(lookupDelayMs, delayMs);
+          const slowBaseline = yield* checkpoints
+            .captureBaseline({ scope, ordinalWithinScope: 2 })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* TestClock.adjust("5 seconds");
+          assert.isDefined(slowBaseline.pollUnsafe());
+          assert.strictEqual((yield* Fiber.join(slowBaseline))._tag, "Failure");
+          assert.strictEqual(yield* Ref.get(snapshots), expectedSnapshots);
+          assert.strictEqual((yield* Ref.get(refs)).size, 1);
+        }
       }).pipe(Effect.provide(layerTest));
     }),
 );
