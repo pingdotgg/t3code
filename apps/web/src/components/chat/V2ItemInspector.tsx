@@ -455,14 +455,18 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
       {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
       {item.type === "todo_list" ? (
-        <StructuredValue
-          value={item.steps
-            .map(
-              (step) =>
-                `${step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"} ${step.text}`,
-            )
-            .join("\n")}
-        />
+        <ul
+          className={cn("max-h-80 overflow-auto text-start text-muted-foreground", monoClassName)}
+        >
+          {item.steps.map((step) => (
+            <li key={step.id} className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0">
+                {step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"}
+              </span>
+              <bdi className="min-w-0">{step.text}</bdi>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

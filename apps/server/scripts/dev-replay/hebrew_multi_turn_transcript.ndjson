@@ -1,0 +1,7 @@
+{"type":"transcript_start","provider":"acpRegistry","protocol":"acp.ndjson-jsonrpc","version":1,"scenario":"dev_replay_hebrew_multi_turn","metadata":{"generatedBy":"hand-written for the dev replay agent"}}
+{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## סבב ראשון\n\nזיהיתי 2 קבצים לבדיקה: `package.json` ו־`tsconfig.json`. שלחו הודעה נוספת כדי לראות את הסבב השני."}}}}}
+{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}
+{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"## סבב שני\n\nבהמשך לבדיקה הקודמת, `strict` מופעל והפקודה `vp test run` זמינה.\n\n**סיכום:** 2 קבצים נבדקו, ללא שגיאות."}}}}}
+{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}

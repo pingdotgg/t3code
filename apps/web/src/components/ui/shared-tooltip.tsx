@@ -28,7 +28,7 @@ interface SharedTooltipContent {
   readonly render: () => ReactNode;
   /** Comparable key that changes whenever `render()` output changes while open. */
   readonly contentKey?: unknown;
-  readonly side?: "top" | "bottom" | "left" | "right";
+  readonly side?: "top" | "bottom" | "left" | "right" | "inline-start" | "inline-end";
   readonly align?: "start" | "center" | "end";
   readonly sideOffset?: number;
   readonly variant?: "default" | "glass" | "code";

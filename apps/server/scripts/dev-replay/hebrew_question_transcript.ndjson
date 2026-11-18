@@ -1,0 +1,7 @@
+{"type":"transcript_start","provider":"acpRegistry","protocol":"acp.ndjson-jsonrpc","version":1,"scenario":"dev_replay_hebrew_question","metadata":{"generatedBy":"hand-written for the dev replay agent"}}
+{"type":"expect_outbound","frame":{"kind":"request","method":"session/prompt","params":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"לפני שאמשיך, יש לי שאלה לגבי התצוגה.\n\n"}}}}}
+{"type":"emit_inbound","frame":{"kind":"request","method":"elicitation/create","params":{"sessionId":"dev-replay-session","mode":"form","message":"איך להציג את תוצאות הבדיקה?","requestedSchema":{"type":"object","title":"אופן הצגת התוצאות","properties":{"report_format":{"type":"string","title":"סוג תצוגה","description":"בחרו איך להציג את הסיכום.","enum":["סיכום קצר (מומלץ)","טבלה מפורטת"]}},"required":["report_format"]}}}}
+{"type":"expect_outbound","frame":{"kind":"response","method":"elicitation/create","result":"<any>"}}
+{"type":"emit_inbound","frame":{"kind":"notification","method":"session/update","params":{"sessionId":"dev-replay-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"קיבלתי את התשובה. זה סוף תרחיש השאלה בעברית."}}}}}
+{"type":"emit_inbound","frame":{"kind":"response","method":"session/prompt","result":{"stopReason":"end_turn"}}}

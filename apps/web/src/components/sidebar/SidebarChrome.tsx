@@ -276,7 +276,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       {isOnUtilityPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
+            <ArrowLeftIcon className="rtl:rotate-180" />
             <span>
               <T>Back</T>
             </span>

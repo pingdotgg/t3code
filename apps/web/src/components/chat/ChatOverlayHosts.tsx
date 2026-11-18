@@ -272,7 +272,7 @@ export function RevertConfirmHost(props: {
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <AlertDialogFooter>
+        <AlertDialogFooter className="sm:rtl:justify-start">
           <AlertDialogClose render={<Button variant="outline" />}>
             <T>Cancel</T>
           </AlertDialogClose>
