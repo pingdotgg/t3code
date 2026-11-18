@@ -215,6 +215,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */
   triage: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The server runs computer use (`computer.*`) and its snapshot lists the hosts and tasks.
+   * Missing on older servers, which have no computer RPC to offer.
+   */
+  computerUse: Schema.optionalKey(Schema.Boolean),
   /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */
   oneTimeSchedules: Schema.optionalKey(Schema.Boolean),
   /** Server honors `freshContext` on sends; older servers ignore it and keep the old context. */
