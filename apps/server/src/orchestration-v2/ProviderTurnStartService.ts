@@ -5,6 +5,7 @@ import {
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
+  type OrchestrationV2Notification,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -59,6 +60,7 @@ import {
 import {
   deliverContextHandoffs,
   turnAddedContextNotification,
+  turnNotSentNotification,
   isContextHandoffRedeliverable,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
@@ -254,6 +256,7 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -922,10 +925,17 @@ export const layer: Layer.Layer<
         run,
         attempts: projection.attempts,
       });
-      const restartNote =
+      // Unreadable settings keep every addition on.
+      const additions = yield* serverSettings.getSettings.pipe(
+        Effect.option,
+        Effect.map(Option.getOrUndefined),
+      );
+      const restartNoteText =
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      // A later completed turn marks the cancelled work delivered whether or not the note went out.
+      const restartNote = additions?.t3RestartNote === false ? "" : restartNoteText;
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1465,6 +1475,7 @@ export const layer: Layer.Layer<
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
+            suppress: additions?.t3ContextHandoff === false,
             alreadyDeliveredItemIds: context.deliveredItemIds,
             persist: () => Effect.void,
           }).pipe(
@@ -1830,11 +1841,10 @@ export const layer: Layer.Layer<
           ],
         });
       });
-      const recordAddedContext = Effect.fn("ProviderTurnStartService.recordAddedContext")(
-        function* (parts: Parameters<typeof turnAddedContextNotification>[0]) {
-          const notification = turnAddedContextNotification(parts);
+      const recordTurnNotification = Effect.fn("ProviderTurnStartService.recordTurnNotification")(
+        function* (signal: string, notification: OrchestrationV2Notification | undefined) {
           if (notification === undefined) return;
-          const id = idAllocator.derive.runSignalTurnItem({ runId, signal: "added-context" });
+          const id = idAllocator.derive.runSignalTurnItem({ runId, signal });
           const recordedAt = yield* DateTime.now;
           yield* eventSink.write({
             events: [
@@ -1877,12 +1887,15 @@ export const layer: Layer.Layer<
           Effect.logWarning("Failed to record context added to a turn", { runId: run.id }),
         ),
       );
+      const recordAddedContext = (parts: Parameters<typeof turnAddedContextNotification>[0]) =>
+        recordTurnNotification("added-context", turnAddedContextNotification(parts));
       const goalPart = { label: "goal", text: goalBlock ?? "" };
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
             deferInline: compact || goalCommand,
+            suppress: additions?.t3ContextHandoff === false,
             providerThread: runningProviderThread,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,
@@ -1900,10 +1913,11 @@ export const layer: Layer.Layer<
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
-          const sideChatContext =
+          const sideChatText =
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
+          const sideChatContext = additions?.t3SideChatContext === false ? "" : sideChatText;
           const context = [delivery.context, sideChatContext, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
@@ -1957,7 +1971,7 @@ export const layer: Layer.Layer<
           yield* Effect.forEach(
             [
               delivery.delivered,
-              ...(sideChatContext === "" || sideChatHandoff === undefined || nativeThreadId == null
+              ...(sideChatText === "" || sideChatHandoff === undefined || nativeThreadId == null
                 ? []
                 : [
                     persistHandoff({
@@ -1991,6 +2005,24 @@ export const layer: Layer.Layer<
             { label: "restart note", text: restartNote },
             ...(resumed || goalCommand ? [] : [goalPart]),
           ]);
+          if (delivery.suppressed) {
+            yield* recordTurnNotification(
+              "not-sent:context-handoff",
+              turnNotSentNotification("context handoff"),
+            );
+          }
+          if (sideChatText !== sideChatContext) {
+            yield* recordTurnNotification(
+              "not-sent:side-chat-context",
+              turnNotSentNotification("side-chat context"),
+            );
+          }
+          if (restartNoteText !== restartNote) {
+            yield* recordTurnNotification(
+              "not-sent:restart-note",
+              turnNotSentNotification("restart note", restartNoteText),
+            );
+          }
         },
         Effect.mapError((cause) =>
           cause._tag === "ProviderAdapterTurnStartError"
@@ -2009,7 +2041,7 @@ export const layer: Layer.Layer<
         retryHandoff.handoffs.length === 0 &&
         retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
-        restartNote === "" &&
+        restartNoteText === "" &&
         !noteContinuation
           ? goalBlock === null
             ? session

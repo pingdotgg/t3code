@@ -92,11 +92,14 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  settings?: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(settings),
   );
 
 function startWithMissingWorktree(
@@ -484,6 +487,7 @@ function makeLocalCommandHarness(input: {
    * the provider, or an earlier run that delivered it. `nativeForkFrom` plans a native fork of the
    * parent. `switchedProvider` puts the earlier run and its context on another provider thread.
    */
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly unsentResume?: boolean;
@@ -1316,8 +1320,10 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
-        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-        layerWorktreeLocation(input.worktreesDir),
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)(
+          input.settings === undefined ? {} : { allocate: () => Effect.succeed(1) },
+        ),
+        layerWorktreeLocation(input.worktreesDir, input.settings),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1340,7 +1346,7 @@ function makeLocalCommandHarness(input: {
           getRuntimeRecoveryProjection,
           getRun,
           getTurnStartHistory: () =>
-            input.sideChat !== undefined
+            input.sideChat !== undefined || input.settings !== undefined
               ? Effect.succeed([])
               : Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
@@ -2270,6 +2276,140 @@ effectIt.effect.each([
           delivery: { nativeThreadId: "side-chat-native", status: "inline" },
         },
       ]);
+    }),
+);
+
+const notSentRows = (harness: ReturnType<typeof makeLocalCommandHarness>) =>
+  harness.events.flatMap((event) =>
+    event.type === "turn-item.updated" &&
+    event.payload.type === "notification" &&
+    event.payload.summary.includes("did not send")
+      ? [{ summary: event.payload.summary, detail: event.payload.detail }]
+      : [],
+  );
+
+effectIt.effect.each([true, false])(
+  "keeps side chat context out of the turn when its setting is off (on: %s)",
+  (on) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "",
+        manualContinuation: true,
+        sideChat: { contextRun: "current" },
+        settings: { t3SideChatContext: on },
+      });
+
+      yield* harness.start;
+
+      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+        withInlineContext(on ? "SIDE_CHAT_CONTEXT" : "", ""),
+      ]);
+      // Settled either way, so turning the setting back on does not send it later.
+      expect(harness.projection().contextHandoffs).toMatchObject([
+        { id: "side-chat-context", delivery: { status: "inline" } },
+      ]);
+      expect(notSentRows(harness)).toEqual(
+        on
+          ? []
+          : [
+              {
+                summary: "T3 Code did not send the side-chat context (switched off in Settings)",
+                detail: undefined,
+              },
+            ],
+      );
+    }),
+);
+
+effectIt.effect.each([true, false])(
+  "settles a context handoff without sending it when its setting is off (on: %s)",
+  (on) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        // This fixture is the one whose run reaches the provider's startTurn.
+        sideChat: { contextRun: "delivered" },
+        settings: { t3ContextHandoff: on },
+      });
+      const projection = harness.projection();
+      const run = projection.runs.at(-1)!;
+      harness.setProjection({
+        ...projection,
+        contextHandoffs: [
+          ...projection.contextHandoffs,
+          {
+            id: ContextHandoffId.make("provider-switch-context"),
+            transferId: null,
+            threadId: run.threadId,
+            targetRunId: run.id,
+            fromProviderThreadIds: [],
+            toProviderThreadId: run.providerThreadId!,
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "HANDOFF_SUMMARY",
+            createdByProviderInstanceId: null,
+            createdAt: projection.updatedAt,
+            updatedAt: projection.updatedAt,
+          },
+        ],
+      });
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text.includes("HANDOFF_SUMMARY")).toBe(on);
+      if (!on) expect(text).toBe("Continue");
+      expect(harness.projection().contextHandoffs.at(-1)).toMatchObject({
+        id: "provider-switch-context",
+        delivery: { status: "inline", itemIds: [] },
+      });
+      expect(notSentRows(harness)).toEqual(
+        on
+          ? []
+          : [
+              {
+                summary: "T3 Code did not send the context handoff (switched off in Settings)",
+                detail: undefined,
+              },
+            ],
+      );
+    }),
+);
+
+effectIt.effect.each([true, false])(
+  "keeps the restart note out of the turn and shows the cancelled work when its setting is off (on: %s)",
+  (on) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        sideChat: { contextRun: "delivered" },
+        settings: { t3RestartNote: on },
+      });
+      const projection = harness.projection();
+      harness.setProjection({
+        ...projection,
+        runs: projection.runs.map((candidate, index) =>
+          index === 0
+            ? {
+                ...candidate,
+                restartCancelledBackgroundWork: [{ kind: "shell", label: "CANCELLED_WATCHER" }],
+              }
+            : candidate,
+        ),
+      });
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text.includes("CANCELLED_WATCHER")).toBe(on);
+      if (!on) expect(text).toBe("Continue");
+      const rows = notSentRows(harness);
+      expect(rows.map((row) => row.summary)).toEqual(
+        on ? [] : ["T3 Code did not send the restart note (switched off in Settings)"],
+      );
+      if (!on) expect(rows[0]?.detail).toContain("CANCELLED_WATCHER");
     }),
 );
 

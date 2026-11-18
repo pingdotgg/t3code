@@ -1581,6 +1581,10 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Off removes T3 Code's own instruction text from agent sessions; its tools stay available. */
   t3AgentInstructions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Each off stops T3 Code adding that context or starting that turn; the thread still shows a row for it. */
+  t3ContextHandoff: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3SideChatContext: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3RestartNote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Each off stops Claude Code adding that item to what the model receives, in sessions opened afterwards. */
   claudeInstructionFiles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   claudeAutoMemory: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2035,6 +2039,9 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   t3AgentInstructions: Schema.optionalKey(Schema.Boolean),
+  t3ContextHandoff: Schema.optionalKey(Schema.Boolean),
+  t3SideChatContext: Schema.optionalKey(Schema.Boolean),
+  t3RestartNote: Schema.optionalKey(Schema.Boolean),
   claudeInstructionFiles: Schema.optionalKey(Schema.Boolean),
   claudeAutoMemory: Schema.optionalKey(Schema.Boolean),
   claudeGitContext: Schema.optionalKey(Schema.Boolean),

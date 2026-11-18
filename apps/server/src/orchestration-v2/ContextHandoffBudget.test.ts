@@ -543,6 +543,45 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("sends nothing when suppressed and settles the handoff with every item omitted", () =>
+    Effect.gen(function* () {
+      const persisted: Array<OrchestrationV2ContextHandoff> = [];
+      let injections = 0;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 16_000,
+        suppress: true,
+        alreadyDeliveredItemIds: new Set<string>(),
+        inject: () =>
+          Effect.sync(() => {
+            injections += 1;
+            return true;
+          }),
+        persist: (value) => Effect.sync(() => void persisted.push(value)),
+      });
+      assert.deepEqual([result.context, result.injected, result.suppressed], ["", false, true]);
+      assert.equal(injections, 0);
+      assert.lengthOf(persisted, 0);
+      yield* result.delivered;
+      const durable = persisted[0]!;
+      assert.equal(durable.delivery?.status, "inline");
+      assert.deepEqual(durable.delivery?.itemIds, []);
+      assert.deepEqual(durable.delivery?.omittedItemIds, [
+        ...(handoff.history?.omittedItemIds ?? []),
+        ...(handoff.history?.messages ?? []).map((message) => message.itemId),
+      ]);
+      const again = yield* deliverContextHandoffs({
+        handoffs: [durable],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set<string>(),
+        persist: () => Effect.void,
+      });
+      assert.equal(again.context, "");
+    }),
+  );
+
   it.effect("persists successful injection before turn start and skips it on retry", () =>
     Effect.gen(function* () {
       let durable = handoff;
