@@ -13,6 +13,7 @@ import {
   CODEX_PINNED_SQLITE_HOME_ENV,
   codexLaunchArgSettingSqliteHome,
 } from "../codexLaunchArgs.ts";
+import { codexConfigSetsSqliteHome } from "../codexSqliteHomeSetting.ts";
 
 export interface CodexHomeLayout {
   readonly mode: "direct" | "authOverlay";
@@ -42,8 +43,6 @@ const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]
 const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/iu;
 const SQLITE_DATABASE_ENTRY_NAME = /\.sqlite$/iu;
 const SQLITE_DATA_SIDECAR_ENTRY_NAME = /^(.*\.sqlite)-(?:wal|journal)$/iu;
-// Any line that could assign the key counts, table or not: refusing one too many is the safe side.
-const SQLITE_HOME_CONFIG_KEY = /^[ \t]*["']?sqlite_home["']?[ \t]*=/mu;
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
@@ -352,7 +351,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
                 }),
         }),
       );
-      if (SQLITE_HOME_CONFIG_KEY.test(config)) {
+      if (codexConfigSetsSqliteHome(config)) {
         return yield* new CodexShadowHomeSqliteSettingError({
           ...context,
           setting: "configFile",

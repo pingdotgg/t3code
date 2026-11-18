@@ -742,7 +742,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           yield* fileSystem.remove(shadowConfig);
           yield* writeTextFile(
             sharedConfig,
-            `[features]\nx = true\n  "sqlite_home"='${shadowHome}'\n`,
+            `x = true\n  "sqlite_home"='${shadowHome}'\n[features]\ny = true\n`,
           );
           for (const refused of yield* launch()) {
             expect(refused).toMatchObject({
@@ -756,6 +756,46 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           for (const launched of yield* launch()) {
             expect(launched).toMatchObject({ success: { CODEX_SQLITE_HOME: sharedHome } });
           }
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    // regression: #24486 the check matched any `sqlite_home =` text, so Windows refused a shadow whose
+    // MCP server had a variable of that name, or whose instructions mentioned the setting.
+    it.effect.skipIf(!symlinksSupported)(
+      "launches a Windows shadow whose sqlite_home is not Codex's own setting",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "goals_1.sqlite"),
+            path.join(shadowHome, "goals_1.sqlite"),
+          );
+          const expectLaunch = Effect.fn(function* (launchArgs?: string) {
+            for (const run of [materializeCodexShadowHome, codexHomeEnvironment]) {
+              expect(yield* run(layout, {}, launchArgs).pipe(Effect.result)).toMatchObject({
+                success: { CODEX_SQLITE_HOME: sharedHome, T3CODE_CODEX_SQLITE_HOME: sharedHome },
+              });
+            }
+          });
+
+          const shadowConfig = path.join(shadowHome, "config.toml");
+          yield* writeTextFile(
+            shadowConfig,
+            'developer_instructions = """\nKeep this text.\nsqlite_home = "somewhere"\n"""\nmodel = "gpt"\n',
+          );
+          yield* expectLaunch();
+          yield* expectLaunch(`-c 'mcp_servers.example.env.sqlite_home="MCP-only"'`);
+          yield* expectLaunch(`--config 'developer_instructions="Leave sqlite_home=unset"'`);
+
+          yield* fileSystem.remove(shadowConfig);
+          yield* writeTextFile(
+            path.join(sharedHome, "config.toml"),
+            '[mcp_servers.example]\ncommand = "echo"\n[mcp_servers.example.env]\nsqlite_home = "an MCP-only value"\n',
+          );
+          yield* expectLaunch();
         }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
     );
 

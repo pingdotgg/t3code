@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  codexLaunchArgSettingSqliteHome,
   codexMcpListLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
@@ -85,6 +86,35 @@ describe("codex exec and mcp list launch args", () => {
       "--enable",
       "foo",
     ]);
+  });
+});
+
+describe("codexLaunchArgSettingSqliteHome", () => {
+  it.each([
+    ['-c sqlite_home="/my shadow"', "sqlite_home=/my shadow"],
+    ["--config sqlite_home=/shadow", "sqlite_home=/shadow"],
+    ["--config=sqlite_home='/shadow'", "--config=sqlite_home=/shadow"],
+    ["-csqlite_home=/shadow", "-csqlite_home=/shadow"],
+    ["-c=sqlite_home=/shadow", "-c=sqlite_home=/shadow"],
+    ["--strict-config -c ' sqlite_home = \"/shadow\"'", ' sqlite_home = "/shadow"'],
+    // Codex 0.170.0 ignores a quoted key, but a later release may not.
+    [`-c '"sqlite_home"="/shadow"'`, '"sqlite_home"="/shadow"'],
+  ])("finds the override in %s", (launchArgs, expected) => {
+    NodeAssert.equal(codexLaunchArgSettingSqliteHome(launchArgs), expected);
+  });
+
+  // regression: #24486 any argument holding `sqlite_home=` counted, so Windows refused an MCP
+  // server's own variable and text that only mentioned the setting.
+  it.each([
+    `-c 'mcp_servers.example.env.sqlite_home="MCP-only"'`,
+    `--config=mcp_servers.example.env.sqlite_home=MCP-only`,
+    `-c 'developer_instructions="Leave sqlite_home=unset"'`,
+    "-c sqlite_home.nested=1",
+    "-c model=sqlite_home",
+    "--strict-config --enable sqlite_home",
+    "",
+  ])("leaves %s alone", (launchArgs) => {
+    NodeAssert.equal(codexLaunchArgSettingSqliteHome(launchArgs), undefined);
   });
 });
 

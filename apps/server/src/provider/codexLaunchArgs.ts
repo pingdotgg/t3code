@@ -22,11 +22,22 @@ const pinnedSqliteHomeArgs = (environment: NodeJS.ProcessEnv | undefined) => {
   return ["-c", `sqlite_home=${value}`];
 };
 
-const SQLITE_HOME_LAUNCH_ARG = /sqlite_home["']?\s*=/u;
+const CONFIG_OVERRIDE_FLAG = /^(?:--config=|-c=?)/u;
+const QUOTED_OVERRIDE_KEY = /^(["'])(.*)\1$/u;
 
-/** The launch arg that sets `sqlite_home`, in any form Codex accepts for a config override. */
+/**
+ * The launch arg that sets `sqlite_home`. Codex splits an override at its first `=` and reads only
+ * the root key, so `mcp_servers.x.env.sqlite_home` and a value that mentions the key do not count.
+ */
 export const codexLaunchArgSettingSqliteHome = (launchArgs?: string) =>
-  codexLaunchArgv(launchArgs).find((arg) => SQLITE_HOME_LAUNCH_ARG.test(arg));
+  codexLaunchArgv(launchArgs).find((arg) => {
+    // Either the flag with its override attached, or the override that follows a bare flag.
+    const override = arg.replace(CONFIG_OVERRIDE_FLAG, "");
+    const equals = override.indexOf("=");
+    if (equals < 0) return false;
+    const key = override.slice(0, equals).trim();
+    return key.replace(QUOTED_OVERRIDE_KEY, "$2").trim() === "sqlite_home";
+  });
 
 // T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
 export const codexAppServerArgs = (
