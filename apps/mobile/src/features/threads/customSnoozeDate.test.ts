@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applySnoozePickerDate, snoozeDateToPickerDate } from "./customSnoozeDate";
+import {
+  applySnoozePickerDate,
+  snoozeDateToPickerDate,
+  snoozePickerLabels,
+} from "./customSnoozeDate";
 
 describe("custom snooze calendar conversion", () => {
   it("passes the local calendar day to Compose without shifting it across time zones", () => {
@@ -19,5 +23,10 @@ describe("custom snooze calendar conversion", () => {
       next.getMinutes(),
     ]).toEqual([2026, 8, 20, 23, 45]);
     expect(date.getDate()).toBe(16);
+  });
+
+  it("labels the picked date and time in the app language", () => {
+    const date = new Date(2027, 4, 5, 14, 30);
+    expect(snoozePickerLabels(date, "fr", true)).toEqual({ date: "5 mai", time: "14:30" });
   });
 });
