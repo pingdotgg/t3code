@@ -30,6 +30,7 @@ export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedError<En
     userId: Schema.String,
     environmentId: Schema.String,
     deviceId: Schema.optionalKey(Schema.String),
+    stage: Schema.Literals(["link-lock", "link-upsert", "allocation-generation", "transaction"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -187,35 +188,65 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      const upsertError = (cause: unknown) =>
-        new EnvironmentLinkUpsertPersistenceError({
-          userId: input.userId,
-          environmentId,
-          ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
-          cause,
-        });
-      // Restoring the recovery key invalidates a stale reaper claim atomically.
-      // Lock the link before the allocation, matching enableRecovery.
-      const writeLink = Effect.gen(function* () {
-        yield* db
-          .insert(relayEnvironmentLinks)
-          .values({
+      const upsertError =
+        (stage: EnvironmentLinkUpsertPersistenceError["stage"]) => (cause: unknown) =>
+          new EnvironmentLinkUpsertPersistenceError({
             userId: input.userId,
             environmentId,
-            holdWebhooksWhileOffline: inheritedHoldWebhooks,
-            environmentLabel: proof.descriptor.label,
-            environmentPublicKey: proof.environmentPublicKey,
-            endpointHttpBaseUrl: endpoint.httpBaseUrl,
-            endpointWsBaseUrl: endpoint.wsBaseUrl,
-            endpointProviderKind: endpoint.providerKind,
-            notificationsEnabled: request.notificationsEnabled,
-            liveActivitiesEnabled: request.liveActivitiesEnabled,
-            managedTunnelsEnabled: request.managedTunnelsEnabled,
-            createdByDeviceId: request.deviceId ?? null,
-            revokedAt: null,
-            createdAt: now,
-            updatedAt: now,
-          })
+            ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
+            stage,
+            cause,
+          });
+      const linkValues = {
+        userId: input.userId,
+        environmentId,
+        holdWebhooksWhileOffline: inheritedHoldWebhooks,
+        environmentLabel: proof.descriptor.label,
+        environmentPublicKey: proof.environmentPublicKey,
+        endpointHttpBaseUrl: endpoint.httpBaseUrl,
+        endpointWsBaseUrl: endpoint.wsBaseUrl,
+        endpointProviderKind: endpoint.providerKind,
+        notificationsEnabled: request.notificationsEnabled,
+        liveActivitiesEnabled: request.liveActivitiesEnabled,
+        managedTunnelsEnabled: request.managedTunnelsEnabled,
+        createdByDeviceId: request.deviceId ?? null,
+        revokedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const lockLink = db
+        .select({
+          environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+          endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
+          revokedAt: relayEnvironmentLinks.revokedAt,
+        })
+        .from(relayEnvironmentLinks)
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, environmentId),
+          ),
+        )
+        .for("update")
+        .pipe(Effect.mapError(upsertError("link-lock")));
+      // Lock the link before the allocation, matching enableRecovery.
+      const writeLink = Effect.gen(function* () {
+        let [previous] = yield* lockLink;
+        if (previous === undefined) {
+          // FOR UPDATE locks nothing for a missing link; a concurrent first link may insert it first.
+          const inserted = yield* db
+            .insert(relayEnvironmentLinks)
+            .values(linkValues)
+            .onConflictDoNothing()
+            .returning({ environmentId: relayEnvironmentLinks.environmentId })
+            .pipe(Effect.mapError(upsertError("link-upsert")));
+          if (inserted.length === 0) {
+            [previous] = yield* lockLink;
+          }
+        }
+        yield* db
+          .insert(relayEnvironmentLinks)
+          .values(linkValues)
           .onConflictDoUpdate({
             target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
             set: {
@@ -232,7 +263,16 @@ const make = Effect.gen(function* () {
               updatedAt: now,
               holdWebhooksWhileOffline: inheritedHoldWebhooks,
             },
-          });
+          })
+          .pipe(Effect.mapError(upsertError("link-upsert")));
+        const recoveryWasUsable =
+          previous?.revokedAt === null &&
+          previous.environmentPublicKey === proof.environmentPublicKey &&
+          previous.endpointProviderKind === "cloudflare_tunnel";
+        // Only a relink that makes recovery usable again invalidates a stale reaper claim.
+        if (recoveryWasUsable || endpoint.providerKind !== "cloudflare_tunnel") {
+          return;
+        }
         yield* db
           .update(relayManagedEndpointAllocations)
           .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
@@ -245,9 +285,14 @@ const make = Effect.gen(function* () {
                 proof.environmentPublicKey,
               ),
             ),
-          );
+          )
+          .pipe(Effect.mapError(upsertError("allocation-generation")));
       });
-      yield* db.$client.withTransaction(writeLink).pipe(Effect.mapError(upsertError));
+      yield* db.$client.withTransaction(writeLink).pipe(
+        Effect.catchTags({
+          SqlError: (cause) => Effect.fail(upsertError("transaction")(cause)),
+        }),
+      );
     }),
 
     listDeliveryUsersForEnvironment: Effect.fn(
