@@ -9853,6 +9853,15 @@
   "470ad8c54049d1e1": "Checkouts durchsuchen",
   "7e2dfdd9f97fc027": "Projektbereich",
   "1cf216566c1ee064": "Projekt nicht verfügbar",
+  "68d397a56a00a7ba": [
+    "Skills verwalten auf",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "c1b8c351aa90f319": [
     {
       "t": "span",
@@ -11376,6 +11385,7 @@
   "1a07e4d043f5df4e": "Verbindungen",
   "d8cd577c915539bd": "{label}-Konten und -Token",
   "a5ea998202be1fbc": "{label}-Anmeldedaten",
+  "394a2908edb312fd": "T3 Code-Skills installieren und aktualisieren",
   "8f636f473e42e657": "alle lokalen dateien nicht committete änderungen bearbeitet verfolgt ignoriert env build-ausgabe bereinigung aufräumen",
   "b1c7f74049a4147c": "speicher bereinigung jetzt ausführen ergebnisse bericht entfernt behalten fehlgeschlagen",
   "2678550365a59e17": "Worktree-Bereinigung",

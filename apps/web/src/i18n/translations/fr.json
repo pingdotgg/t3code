@@ -9852,6 +9852,15 @@
   "470ad8c54049d1e1": "Rechercher des checkouts",
   "7e2dfdd9f97fc027": "Portée des projets",
   "1cf216566c1ee064": "Projet indisponible",
+  "68d397a56a00a7ba": [
+    "Gérer les skills sur",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "c1b8c351aa90f319": [
     {
       "t": "span",
@@ -11374,6 +11383,7 @@
   "1a07e4d043f5df4e": "Connexions",
   "d8cd577c915539bd": "Comptes et jeton {label}",
   "a5ea998202be1fbc": "Identifiants {label}",
+  "394a2908edb312fd": "Installer et mettre à jour les skills T3 Code",
   "8f636f473e42e657": "tous fichiers locaux modifications non commitées fichiers suivis modifiés ignorés env sortie de build nettoyage",
   "b1c7f74049a4147c": "stockage nettoyage exécuter maintenant résultats rapport supprimés conservés échecs",
   "2678550365a59e17": "Nettoyage des worktrees",

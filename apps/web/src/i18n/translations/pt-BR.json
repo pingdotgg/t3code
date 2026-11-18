@@ -9851,6 +9851,15 @@
   "470ad8c54049d1e1": "Pesquisar checkouts",
   "7e2dfdd9f97fc027": "Escopo de projeto",
   "1cf216566c1ee064": "Projeto indisponível",
+  "68d397a56a00a7ba": [
+    "Gerenciar skills em",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "c1b8c351aa90f319": [
     {
       "t": "span",
@@ -11373,6 +11382,7 @@
   "1a07e4d043f5df4e": "Conexões",
   "d8cd577c915539bd": "Contas e token do {label}",
   "a5ea998202be1fbc": "Credenciais do {label}",
+  "394a2908edb312fd": "Instalar e atualizar skills do T3 Code",
   "8f636f473e42e657": "quaisquer arquivos locais alterações sem commit arquivos rastreados editados ignorados env saída de build limpeza",
   "b1c7f74049a4147c": "armazenamento limpeza executar agora resultados relatório removidos mantidos com falha",
   "2678550365a59e17": "Limpeza de worktrees",
