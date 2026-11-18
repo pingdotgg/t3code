@@ -2801,6 +2801,7 @@
   "ba4eb02aa89050b6": "Esta conexión no puede subir adjuntos.",
   "8ebdc336371e5ca4": "El archivo subido caducó.",
   "ca27205ca369c740": "El archivo subido caducó. Quítalo y vuelve a adjuntarlo.",
+  "ac6b8d643459ce2d": "El archivo adjunto está dañado. Elimínalo y vuelve a adjuntarlo.",
   "7fa2b08a65cc1799": "No se pudo verificar el archivo subido. Vuelve a intentarlo cuando el servidor se reconecte.",
   "5caa9a9764aab746": "Tipo de imagen no compatible",
   "47ba9f2574c7d5b4": "El archivo original ya no está disponible",

@@ -242,7 +242,7 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
         verification.status === "missing"
           ? msg("Uploaded file expired. Remove it and attach it again.")
           : verification.status === "mismatched"
-            ? msg("Uploaded file is damaged. Remove it and attach it again.")
+            ? msg("Uploaded attachment is damaged. Remove it and attach it again.")
             : msg("Uploaded file could not be verified. Retry when the server reconnects."),
       );
     }

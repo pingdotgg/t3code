@@ -2801,6 +2801,7 @@
   "ba4eb02aa89050b6": "This connection cannot upload attachments.",
   "8ebdc336371e5ca4": "Uploaded file expired.",
   "ca27205ca369c740": "Uploaded file expired. Remove it and attach it again.",
+  "ac6b8d643459ce2d": "Uploaded attachment is damaged. Remove it and attach it again.",
   "7fa2b08a65cc1799": "Uploaded file could not be verified. Retry when the server reconnects.",
   "5caa9a9764aab746": "Unsupported image type",
   "47ba9f2574c7d5b4": "Original file is no longer available",
