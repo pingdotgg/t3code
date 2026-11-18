@@ -451,6 +451,73 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                   <SettingsSwitchRow
                     icon="doc.text"
+                    label="T3 Code: wake when a delegated task finishes"
+                    subtitle={managedSubtitle(
+                      "t3WakeOnDelegateFinished",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off starts no turn when a delegated task finishes. The agent will not pick up the result on its own.",
+                    )}
+                    value={uniform("t3WakeOnDelegateFinished")}
+                    disabled={disabledFor("t3WakeOnDelegateFinished")}
+                    onValueChange={(value) => write({ t3WakeOnDelegateFinished: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: wake when a delegated task asks"
+                    subtitle={managedSubtitle(
+                      "t3WakeOnDelegateQuestion",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off starts no turn when a delegated task asks a question. The task waits until it is answered.",
+                    )}
+                    value={uniform("t3WakeOnDelegateQuestion")}
+                    disabled={disabledFor("t3WakeOnDelegateQuestion")}
+                    onValueChange={(value) => write({ t3WakeOnDelegateQuestion: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: wake on pull request updates"
+                    subtitle={managedSubtitle(
+                      "t3WakeOnPullRequestUpdate",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off starts no turn for a watched pull request's checks, reviews and comments. The agent will not react to them.",
+                    )}
+                    value={uniform("t3WakeOnPullRequestUpdate")}
+                    disabled={disabledFor("t3WakeOnPullRequestUpdate")}
+                    onValueChange={(value) => write({ t3WakeOnPullRequestUpdate: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: goal continuation"
+                    subtitle={managedSubtitle(
+                      "t3GoalContinuation",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off stops the next goal turn. The goal waits until you send a message or turn this back on.",
+                    )}
+                    value={uniform("t3GoalContinuation")}
+                    disabled={disabledFor("t3GoalContinuation")}
+                    onValueChange={(value) => write({ t3GoalContinuation: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: block messages from other threads"
+                    subtitle={managedSubtitle(
+                      "agentMessagePolicy",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "On refuses messages that agents in unrelated threads or on linked machines send into a thread. A thread's own delegates are unaffected.",
+                    )}
+                    value={uniform("agentMessagePolicy") === "block"}
+                    disabled={disabledFor("agentMessagePolicy")}
+                    onValueChange={(value) =>
+                      write({ agentMessagePolicy: value ? "block" : "allow" })
+                    }
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
                     label="Claude Code: instruction files"
                     subtitle={managedSubtitle(
                       "claudeInstructionFiles",

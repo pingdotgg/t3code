@@ -417,10 +417,21 @@ own CLI, and some from the model provider.
   additions**, the **T3 Code: context handoff**, **T3 Code: side-chat context** and **T3 Code:
   restart note** switches turn each one off. The thread then shows a row saying T3 Code did
   not send it, and the agent works without that context. Turning off the handoff also covers
-  history sent after a fork, a merge back or a lost provider session.
+  history sent after a fork, a merge back or a lost provider session, and the retry of your
+  own messages from a run that failed before the agent received them.
 - **Messages T3 Code sends for you.** Wake-ups from delegated tasks and watched pull requests,
   goal continuation, idle compaction and restart continuation. They appear in the thread as
-  sent by T3 Code and follow their own features and settings.
+  sent by T3 Code. Under **Settings → Threads → Automatic additions**, four **T3 Code:**
+  switches turn off the wake when a delegated task finishes, when it asks a question, on pull
+  request updates, and goal continuation. With a switch off, T3 Code starts no turn; the thread
+  shows a row saying it did not wake the agent, with what the wake would have said. A goal
+  then waits until you send a message or turn the switch back on. Idle compaction and restart
+  continuation keep their own settings.
+- **Messages from other threads.** An agent can send a message into another thread. Set
+  **T3 Code: messages from other threads** to **Block** to refuse messages from threads
+  outside the target's own delegation tree and from linked machines. The sending agent gets an
+  error, and the target thread shows a row naming the sender with the blocked text. A thread
+  and the tasks it delegated can always message each other.
 - **What the agent's CLI adds.** Project instruction files, memory, hook output and system
   reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
   the thread shows a row named **Claude Code added context to this turn** and a row with its

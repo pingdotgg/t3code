@@ -701,6 +701,52 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "t3-wake-delegate-finished",
+    title: msg("T3 Code: wake when a delegated task finishes"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions messages sent for you delegate subagent finished completed wake-up turn",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "t3-wake-delegate-question",
+    title: msg("T3 Code: wake when a delegated task asks"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions messages sent for you delegate subagent question blocked wake-up turn",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "t3-wake-pull-request-update",
+    title: msg("T3 Code: wake on pull request updates"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions messages sent for you pull request watch checks reviews comments wake-up turn",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "t3-goal-continuation",
+    title: msg("T3 Code: goal continuation"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions messages sent for you goal loop continue next turn wake-up"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "agent-message-policy",
+    title: msg("T3 Code: messages from other threads"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions agent messages block allow thread send linked machine"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "claude-instruction-files",
     title: msg("Claude Code: instruction files"),
     to: "/settings/threads",

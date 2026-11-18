@@ -793,6 +793,10 @@ function useTranslatedSearchableSetting() {
 }
 
 type AdditionSwitchKey =
+  | "t3WakeOnDelegateFinished"
+  | "t3WakeOnDelegateQuestion"
+  | "t3WakeOnPullRequestUpdate"
+  | "t3GoalContinuation"
   | "t3ContextHandoff"
   | "t3SideChatContext"
   | "t3RestartNote"
@@ -835,6 +839,63 @@ function AdditionSwitchRow(props: {
           onCheckedChange={(checked) => updateSettings({ [props.settingKey]: Boolean(checked) })}
           aria-label={row.title}
         />
+      }
+    />
+  );
+}
+
+/** The allow-or-block choice for messages agents send into threads outside their delegation tree. */
+function AgentMessagePolicyRow() {
+  const gt = useGT();
+  const row = useTranslatedSearchableSetting()("agent-message-policy");
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["agentMessagePolicy"]);
+  const labels = { allow: gt("Allow"), block: gt("Block") };
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["agentMessagePolicy"]}
+      {...row}
+      description={
+        <T>
+          Block refuses messages that agents in unrelated threads or on linked machines send into a
+          thread. Coordination between threads stops; a thread's own delegates are unaffected.
+        </T>
+      }
+      resetAction={
+        settings.agentMessagePolicy !== DEFAULT_UNIFIED_SETTINGS.agentMessagePolicy ? (
+          <SettingResetButton
+            label={row.title}
+            onClick={() =>
+              updateSettings({ agentMessagePolicy: DEFAULT_UNIFIED_SETTINGS.agentMessagePolicy })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={mixed ? null : settings.agentMessagePolicy}
+          onValueChange={(value) => {
+            if (value === "allow" || value === "block") {
+              updateSettings({ agentMessagePolicy: value });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={row.title}>
+            <SelectValue>
+              {(value: "allow" | "block" | null) => (value === null ? gt("Mixed") : labels[value])}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="allow">
+              {labels.allow}
+            </SelectItem>
+            <SelectItem hideIndicator value="block">
+              {labels.block}
+            </SelectItem>
+          </SelectPopup>
+        </Select>
       }
     />
   );
@@ -2129,16 +2190,47 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <SettingsRow
-            title={gt("Messages T3 Code sends for you")}
+          <AdditionSwitchRow
+            settingKey="t3WakeOnDelegateFinished"
+            searchId="t3-wake-delegate-finished"
             description={
               <T>
-                Wake-ups from delegated tasks, pull request watch updates, goal continuation, idle
-                compaction and restart continuation. Shown in the thread as sent by T3 Code. Each
-                follows its own setting.
+                Off stops T3 Code starting a turn when a delegated task finishes. The agent will not
+                pick up the result on its own. The thread shows a row instead.
               </T>
             }
           />
+          <AdditionSwitchRow
+            settingKey="t3WakeOnDelegateQuestion"
+            searchId="t3-wake-delegate-question"
+            description={
+              <T>
+                Off stops T3 Code starting a turn when a delegated task asks a question. The task
+                waits until you or the agent answer it. The thread shows a row instead.
+              </T>
+            }
+          />
+          <AdditionSwitchRow
+            settingKey="t3WakeOnPullRequestUpdate"
+            searchId="t3-wake-pull-request-update"
+            description={
+              <T>
+                Off stops T3 Code starting a turn for a watched pull request's checks, reviews and
+                comments. The agent will not react to them. The thread shows a row instead.
+              </T>
+            }
+          />
+          <AdditionSwitchRow
+            settingKey="t3GoalContinuation"
+            searchId="t3-goal-continuation"
+            description={
+              <T>
+                Off stops T3 Code sending the next goal turn. The goal waits until you send a
+                message or turn this back on. The thread shows a row instead.
+              </T>
+            }
+          />
+          <AgentMessagePolicyRow />
           <SettingsRow
             title={gt("Harness additions")}
             description={
