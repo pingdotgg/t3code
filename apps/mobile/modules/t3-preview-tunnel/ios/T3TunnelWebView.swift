@@ -65,7 +65,9 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       return
     }
     pendingUrl = nil
-    guard let target = URL(string: url), webView.url != target else { return }
+    guard let target = URL(string: url).map(T3Loopback.standIn), webView.url != target else {
+      return
+    }
     requestedUrl = target
     webView.load(URLRequest(url: target))
   }
@@ -76,7 +78,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       pendingUrl = url
       return
     }
-    guard let target = URL(string: url) else { return }
+    guard let target = URL(string: url).map(T3Loopback.standIn) else { return }
     requestedUrl = target
     webView.load(URLRequest(url: target))
   }
@@ -105,7 +107,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private func reportNavigation() {
     guard let webView else { return }
     onNavigationChange([
-      "url": webView.url?.absoluteString ?? "",
+      "url": webView.url.map(T3Loopback.shown)?.absoluteString ?? "",
       "title": webView.title ?? "",
       "loading": webView.isLoading,
       "canGoBack": webView.canGoBack,
@@ -126,6 +128,20 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     reportError(error)
   }
 
+  /// Links and redirects to loopback go to the stand-in host, which is the one the proxy carries.
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+  ) {
+    let url = navigationAction.request.url
+    guard let url, navigationAction.targetFrame?.isMainFrame ?? true,
+      T3Loopback.standIn(url) != url
+    else { return decisionHandler(.allow) }
+    decisionHandler(.cancel)
+    navigate(url.absoluteString)
+  }
+
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
     failedUrl = nil
   }
@@ -137,7 +153,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private func reportError(_ error: Error) {
     let error = error as NSError
     if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
-    let failingUrl = error.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+    let failingUrl = (error.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
+      .flatMap(URL.init(string:)).map(T3Loopback.shown)?.absoluteString
     onLoadError([
       "code": error.code,
       "description": error.localizedDescription,
@@ -173,8 +190,8 @@ private final class T3EnvironmentProxy {
     var proxy = ProxyConfiguration(
       socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
     )
-    // Only loopback belongs to the environment; everything else loads directly.
-    proxy.matchDomains = ["localhost", "127.0.0.1", "::1", "t3-loopback.test"]
+    // Only the stand-in host belongs to the environment; everything else loads directly.
+    proxy.matchDomains = [T3Loopback.standInHost]
     proxy.allowFailover = false
     store.proxyConfigurations = [proxy]
     dataStore = store
@@ -216,4 +233,38 @@ private final class T3EnvironmentProxy {
 
 private struct WeakView {
   weak var view: T3TunnelWebView?
+}
+
+/// Real iPhones never send loopback addresses to a webview's proxy (the simulator does), so the
+/// view loads them under a stand-in host the proxy does carry, and shows `localhost` instead.
+/// It is as long as `localhost`, so the proxy can swap the two in plain HTTP without
+/// changing a message's length.
+enum T3Loopback {
+  static let standInHost = "t3lo.test"
+
+  static func isLoopbackHost(_ host: String) -> Bool {
+    let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    if host == "localhost" || host.hasSuffix(".localhost") { return true }
+    if let address = IPv4Address(host) { return address.rawValue.first == 127 }
+    if let address = IPv6Address(host) { return address.isLoopback }
+    return false
+  }
+
+  static func standIn(_ url: URL) -> URL {
+    guard let host = url.host(percentEncoded: false), isLoopbackHost(host) else { return url }
+    return replacingHost(url, with: standInHost)
+  }
+
+  static func shown(_ url: URL) -> URL {
+    guard url.host(percentEncoded: false)?.lowercased() == standInHost else { return url }
+    return replacingHost(url, with: "localhost")
+  }
+
+  private static func replacingHost(_ url: URL, with host: String) -> URL {
+    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return url
+    }
+    components.host = host
+    return components.url ?? url
+  }
 }
