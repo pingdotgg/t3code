@@ -23,6 +23,21 @@ import {
   McpGatewayUnavailableError,
 } from "./mcpGateway.ts";
 import {
+  ComputerAnswers,
+  ComputerAuditTailInput,
+  ComputerError,
+  ComputerHostAuthorizeInput,
+  ComputerHostConnectInput,
+  ComputerHostDecideInput,
+  ComputerHostEventInput,
+  ComputerHostFrame,
+  ComputerHostRespondInput,
+  ComputerGrant,
+  ComputerRespondToApprovalInput,
+  ComputerSnapshot,
+  ComputerStopInput,
+} from "./computer.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -586,6 +601,16 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+
+  computerSubscribe: "computer.subscribe",
+  computerStop: "computer.stop",
+  computerRespondToApproval: "computer.respondToApproval",
+  computerAuditTail: "computer.auditTail",
+  computerHostConnect: "computer.hostConnect",
+  computerHostRespond: "computer.hostRespond",
+  computerHostDecide: "computer.hostDecide",
+  computerHostAuthorize: "computer.hostAuthorize",
+  computerHostEvent: "computer.hostEvent",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2111,6 +2136,58 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsComputerSubscribeRpc = Rpc.make(WS_METHODS.computerSubscribe, {
+  payload: Schema.Struct({}),
+  success: ComputerSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsComputerStopRpc = Rpc.make(WS_METHODS.computerStop, {
+  payload: ComputerStopInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerRespondToApprovalRpc = Rpc.make(WS_METHODS.computerRespondToApproval, {
+  payload: ComputerRespondToApprovalInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerAuditTailRpc = Rpc.make(WS_METHODS.computerAuditTail, {
+  payload: ComputerAuditTailInput,
+  success: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostConnectRpc = Rpc.make(WS_METHODS.computerHostConnect, {
+  payload: ComputerHostConnectInput,
+  success: ComputerHostFrame,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsComputerHostRespondRpc = Rpc.make(WS_METHODS.computerHostRespond, {
+  payload: ComputerHostRespondInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostDecideRpc = Rpc.make(WS_METHODS.computerHostDecide, {
+  payload: ComputerHostDecideInput,
+  success: ComputerAnswers,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostAuthorizeRpc = Rpc.make(WS_METHODS.computerHostAuthorize, {
+  payload: ComputerHostAuthorizeInput,
+  success: ComputerGrant,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostEventRpc = Rpc.make(WS_METHODS.computerHostEvent, {
+  payload: ComputerHostEventInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationGetCommandReceiptsRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getCommandReceipts,
   {
@@ -2760,6 +2837,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsComputerSubscribeRpc,
+  WsComputerStopRpc,
+  WsComputerRespondToApprovalRpc,
+  WsComputerAuditTailRpc,
+  WsComputerHostConnectRpc,
+  WsComputerHostRespondRpc,
+  WsComputerHostDecideRpc,
+  WsComputerHostAuthorizeRpc,
+  WsComputerHostEventRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

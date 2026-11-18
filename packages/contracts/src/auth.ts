@@ -45,6 +45,10 @@ export const AuthFilesystemWriteScope = "filesystem:write" as const;
 const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
+/** Answers a computer-use approval: one consequential step on a person's computer. */
+export const AuthComputerApproveScope = "computer:approve" as const;
+/** Hosts this computer to an environment: it runs the steps the user's agents ask for. */
+export const AuthComputerHostScope = "computer:host" as const;
 /** T3 Connect scopes. Kept decodable for existing credentials and older clients; never granted. */
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
@@ -64,6 +68,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthSourceControlWriteScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
+  AuthComputerHostScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
 ]);
@@ -109,6 +115,9 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
   [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
+  // A legacy server has no computer RPC at all, so these only keep its error cards readable.
+  [AuthComputerApproveScope]: AuthOrchestrationOperateScope,
+  [AuthComputerHostScope]: AuthOrchestrationReadScope,
 };
 
 /** Keep permission denials decodable by clients with the original scope enum. */
@@ -171,6 +180,8 @@ export const AuthStandardClientScopes = [
   AuthFilesystemWriteScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
+  AuthComputerHostScope,
 ] as const;
 
 export const AuthTokenExchangeGrantType =

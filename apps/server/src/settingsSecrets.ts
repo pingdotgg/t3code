@@ -3,6 +3,7 @@ import {
   ClaudeSettings,
   CloudSpeechCredentials,
   CodexSettings,
+  ComputerGrounderConfig,
   EasDeviceHostConfig,
   type ProviderInstanceConfig,
   type ServerSettings,
@@ -48,6 +49,7 @@ const providerSecretFields = new Map([
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
+const computerGrounderSecretFields = secretSettingsFields(ComputerGrounderConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
@@ -249,6 +251,15 @@ function mapSecretFieldGroups(
 
   return {
     ...settings,
+    ...(settings.computerGrounder === null || settings.computerGrounder === undefined
+      ? {}
+      : {
+          computerGrounder: mapFields(
+            settings.computerGrounder as unknown as Record<string, unknown>,
+            computerGrounderSecretFields,
+            (field) => `computer-grounder-${encode(field)}`,
+          ) as unknown as ServerSettings["computerGrounder"],
+        }),
     cloudSpeechCredentials: mapFields(
       settings.cloudSpeechCredentials,
       voiceSecretFields,

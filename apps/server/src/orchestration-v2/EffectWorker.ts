@@ -30,6 +30,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SettlementCascade from "./SettlementCascade.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -115,6 +116,7 @@ export const layerExecutor: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
   | SettlementCascade.SettlementCascade
+  | ComputerService.ComputerService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -132,6 +134,7 @@ export const layerExecutor: Layer.Layer<
     const settings = yield* ServerSettings.ServerSettingsService;
     const settlementCascade = yield* SettlementCascade.SettlementCascade;
     const remoteSettlement = yield* SettlementCascade.RemoteSettlementRelay;
+    const computer = yield* ComputerService.ComputerService;
     const startRun = (
       effect: EffectOutbox.OrchestrationEffectV2,
       runId: RunId,
@@ -267,7 +270,7 @@ export const layerExecutor: Layer.Layer<
             );
           case "provider-turn.interrupt": {
             const request = effect.request;
-            return providerTurnControl
+            const interrupted = providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
                 providerSessionId: request.providerSessionId,
@@ -344,6 +347,11 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+            // Interrupting the thread's run ends any computer task it started, once, before the
+            // provider is asked: a computer task must never outlive the run that asked for it.
+            return request.subagent === undefined
+              ? computer.stopForThread(effect.threadId).pipe(Effect.andThen(interrupted))
+              : interrupted;
           }
           case "provider-turn.steer":
             return providerTurnControl
@@ -500,6 +508,10 @@ export const layerExecutor: Layer.Layer<
                           detail: "Provider thread handoff replaced this session binding.",
                         })
                       : Effect.void,
+                ),
+                Effect.andThen(
+                  // A restart replaces the turn that started any computer task on this thread.
+                  computer.stopForThread(effect.threadId),
                 ),
                 Effect.andThen(
                   // Failed interruption or detach must not report the old process stopped.

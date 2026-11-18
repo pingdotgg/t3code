@@ -9,6 +9,7 @@ import {
 export { AgentSkill } from "./agentSkills.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import { AgentGatewaySettings } from "./mcpGateway.ts";
+import { ComputerApprovalsMode } from "./computer.ts";
 import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
@@ -1064,6 +1065,22 @@ export const TextGeneratorConfig = Schema.Struct({
 });
 export type TextGeneratorConfig = typeof TextGeneratorConfig.Type;
 
+/** Who answers a computer-use step's questions. Null means the agent answers them in `computer_use`. */
+export const ComputerGrounderKind = Schema.Literals(["openai-compatible", "systemone"]);
+export type ComputerGrounderKind = typeof ComputerGrounderKind.Type;
+
+/**
+ * A decision endpoint for computer use. It sees control labels and up to 1,500 characters of visible
+ * text, and never writes text; only the text a task was started with is ever typed.
+ */
+export const ComputerGrounderConfig = Schema.Struct({
+  kind: ComputerGrounderKind,
+  baseUrl: TextGeneratorBaseUrl,
+  model: TrimmedNonEmptyString,
+  apiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
+});
+export type ComputerGrounderConfig = typeof ComputerGrounderConfig.Type;
+
 export const TextGeneratorModel = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -1359,6 +1376,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
+  "enableAgentComputerUse",
+  "computerApprovals",
   "textGenerationModelSelection",
   "threadTitleInstructions",
   "sourceControlWriterModelSelection",
@@ -1397,6 +1416,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  enableAgentComputerUse: Schema.optionalKey(Schema.Boolean),
+  /** "skip" grants a consequential step at once and audits it as `approval_skipped`. */
+  computerApprovals: Schema.optionalKey(ComputerApprovalsMode),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1625,6 +1647,16 @@ export const ServerSettings = Schema.Struct({
   projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Computer use is opt-in per project; the tools answer with how to turn it on. */
+  enableAgentComputerUse: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Read at each step, so changing it applies to a task already running. */
+  computerApprovals: ComputerApprovalsMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("ask" as const)),
+  ),
+  /** Null: the agent answers each step's questions in `computer_use`. */
+  computerGrounder: Schema.NullOr(ComputerGrounderConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2097,6 +2129,9 @@ export const ServerSettingsPatch = Schema.Struct({
     ),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  enableAgentComputerUse: Schema.optionalKey(Schema.Boolean),
+  computerApprovals: Schema.optionalKey(ComputerApprovalsMode),
+  computerGrounder: Schema.optionalKey(Schema.NullOr(ComputerGrounderConfig)),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

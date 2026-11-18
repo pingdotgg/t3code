@@ -14,6 +14,8 @@ import {
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthComputerApproveScope,
+  AuthComputerHostScope,
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -533,5 +535,92 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }),
+);
+
+it.effect("answers a computer approval only with computer:approve", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.computerRespondToApproval
+        > => tag !== WS_METHODS.computerRespondToApproval,
+      ),
+    );
+    let answered = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.computerRespondToApproval, () =>
+            Effect.sync(() => {
+              answered += 1;
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.computerRespondToApproval]({
+        approvalId: "appr_1",
+        approve: true,
+      }).pipe(Effect.flip),
+    ).toMatchObject({
+      // Older clients decode the denial through the scope that already covers operating here.
+      requiredScope: AuthOrchestrationOperateScope,
+      requiredPermission: AuthComputerApproveScope,
+    });
+    expect(answered).toBe(0);
+  }),
+);
+
+it.effect("hosts a computer only with computer:host", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.computerHostEvent> =>
+          tag !== WS_METHODS.computerHostEvent,
+      ),
+    );
+    let received = 0;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.computerHostEvent, () =>
+            Effect.sync(() => {
+              received += 1;
+            }),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.computerHostEvent]({
+        hostId: "host_1",
+        taskId: "cu_1",
+        event: { type: "step", text: "clicked Send" },
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthComputerHostScope });
+    expect(received).toBe(0);
+    for (const method of [
+      WS_METHODS.computerHostConnect,
+      WS_METHODS.computerHostRespond,
+      WS_METHODS.computerHostDecide,
+      WS_METHODS.computerHostAuthorize,
+      WS_METHODS.computerHostEvent,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthComputerHostScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.computerSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.computerStop)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.computerAuditTail)).toBe(AuthDiagnosticsReadScope);
   }),
 );

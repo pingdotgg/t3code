@@ -65,7 +65,7 @@ export const clip = (value: string): string => {
 };
 
 /** A step's action for the log: typed text as its digest, screen text clipped. */
-const actionAuditFields = (action: ComputerAction): Readonly<Record<string, unknown>> => ({
+export const actionAuditFields = (action: ComputerAction): Readonly<Record<string, unknown>> => ({
   kind: action.kind,
   ...(action.ref ? { ref: action.ref } : {}),
   ...(action.role ? { role: action.role } : {}),
