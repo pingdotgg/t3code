@@ -1,0 +1,12 @@
+[
+  {
+    "file": "apps/server/src/provider/Drivers/ClaudeSkills.test.ts",
+    "test": "merges plugin enablement and selects installs in native registry order",
+    "reason": "macOS: the test keeps the /var temp path while the code resolves /private/var"
+  },
+  {
+    "file": "apps/server/src/provider/Drivers/ClaudeSkills.test.ts",
+    "test": "gives a synced namespace to an installed plugin, then the first synced row",
+    "reason": "macOS: the case-insensitive file system cannot hold both pstack and PSTACK"
+  }
+]
