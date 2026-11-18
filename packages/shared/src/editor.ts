@@ -213,19 +213,26 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         .map((entry) => path.join(dir, entry)),
     );
   }
+  const probeZed = editor.id === "zed" && platform !== "win32";
   const rejected = new Set<string>();
   for (const candidate of candidates) {
-    const resolved = yield* resolveCommandPath(candidate, { env });
-    if (resolved === null || rejected.has(resolved)) continue;
-    if (preferZeditor && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
-      rejected.add(resolved);
-      continue;
+    // OpenZFS zed can shadow the editor's zed in an earlier PATH entry.
+    const matches =
+      probeZed && candidate === "zed"
+        ? yield* resolveCommandPaths(candidate, { env, until: () => false })
+        : [yield* resolveCommandPath(candidate, { env })];
+    for (const resolved of matches) {
+      if (resolved === null || rejected.has(resolved)) continue;
+      if (probeZed && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
+        rejected.add(resolved);
+        continue;
+      }
+      return Option.some({
+        command: resolved === matches[0] ? candidate : resolved,
+        baseArgs:
+          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+      });
     }
-    return Option.some({
-      command: candidate,
-      baseArgs:
-        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-    });
   }
   return Option.none();
 });

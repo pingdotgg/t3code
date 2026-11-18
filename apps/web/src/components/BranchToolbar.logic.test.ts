@@ -8,6 +8,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveConfirmedSelectedRef,
   resolveDefaultWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
@@ -404,5 +405,30 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveConfirmedSelectedRef", () => {
+  const listed: VcsRef = {
+    name: "previous",
+    isRemote: false,
+    current: false,
+    isDefault: false,
+    worktreePath: "/worktree-b",
+  };
+
+  it.each([
+    [
+      "the claimed worktree still has it checked out",
+      [{ ...listed, current: true }],
+      "/worktree-b",
+    ],
+    ["the claimed worktree has moved to another branch", [], null],
+    ["the claimed worktree lists it but not as current", [listed], null],
+    ["the read failed", null, null],
+  ] as const)("%s", (_label, refs, expected) => {
+    expect(resolveConfirmedSelectedRef(listed, refs === null ? null : { refs }).worktreePath).toBe(
+      expected,
+    );
   });
 });

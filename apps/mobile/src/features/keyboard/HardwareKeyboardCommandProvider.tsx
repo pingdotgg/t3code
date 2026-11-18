@@ -1,4 +1,5 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
+import { msg, useMessages } from "gt-react-native";
 import { Platform } from "react-native";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import {
@@ -15,6 +16,7 @@ import {
 } from "react";
 
 import { copyThreadReference } from "../../lib/copyThreadReference";
+import { m } from "../../i18n/messages";
 import {
   firstWorkspaceDetailOpen,
   workspaceHasColumns,
@@ -53,6 +55,7 @@ export function HardwareKeyboardCommandProvider({
   pathname,
 }: PropsWithChildren<{ readonly pathname: string }>) {
   const navigation = useNavigation();
+  const messages = useMessages();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
@@ -61,14 +64,17 @@ export function HardwareKeyboardCommandProvider({
     () =>
       activeThreadRef === null
         ? null
-        : resolveThreadReferenceCopyTarget({
-            threadRef: activeThreadRef,
-            title: activeThread?.title ?? "",
-            pullRequests: activeThread?.pullRequests,
-            linkedPullRequestUrl:
-              (activeThread?.linkedPullRequest ?? activeThread?.branchPullRequest)?.url ?? null,
-          }),
-    [activeThread, activeThreadRef],
+        : resolveThreadReferenceCopyTarget(
+            {
+              threadRef: activeThreadRef,
+              title: activeThread?.title ?? "",
+              pullRequests: activeThread?.pullRequests,
+              linkedPullRequestUrl:
+                (activeThread?.linkedPullRequest ?? activeThread?.branchPullRequest)?.url ?? null,
+            },
+            messages,
+          ),
+    [activeThread, activeThreadRef, messages],
   );
   const [copyFeedback, setCopyFeedback] = useState<GitActionProgress>(EMPTY_COPY_FEEDBACK);
   const copyRequestIdRef = useRef(0);
@@ -147,7 +153,7 @@ export function HardwareKeyboardCommandProvider({
               : {
                   phase: "error",
                   label: copyTarget.failureTitle,
-                  description: "Try again.",
+                  description: m(msg("Try again.")),
                 },
           );
         });

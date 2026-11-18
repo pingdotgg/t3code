@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
@@ -248,14 +250,54 @@ export function captureComposerDraftInsertion(
   };
 }
 
+function mapCapturedRange(
+  captured: ComposerDraftInsertion,
+  text: string,
+): { start: number; end: number } | null {
+  if (captured.text === text) return captured;
+  // A replaced selection is not safe to delete after edits; only a caret follows them.
+  if (captured.start !== captured.end) return null;
+  const previous = captured.text;
+  const shared = Math.min(previous.length, text.length);
+  let prefix = 0;
+  while (prefix < shared && previous[prefix] === text[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < shared - prefix &&
+    previous[previous.length - 1 - suffix] === text[text.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  // Text typed at the caret lands after it, so the insertion stays before that text.
+  if (captured.start <= prefix) return captured;
+  if (captured.start < previous.length - suffix) return null;
+  const caret = captured.start + text.length - previous.length;
+  return { start: caret, end: caret };
+}
+
+/** Keep a caret after the insertion where it was, or the next keystroke lands before typed text. */
+function caretAfterInsertion(
+  draftKey: string,
+  previousText: string,
+  range: { start: number; end: number },
+  inserted: number,
+): { start: number; end: number } {
+  const caret = readComposerDraftSelection(draftKey, previousText);
+  if (caret && caret.start > range.end) {
+    const delta = range.start + inserted - range.end;
+    return { start: caret.start + delta, end: caret.end + delta };
+  }
+  return { start: range.start + inserted, end: range.start + inserted };
+}
+
 function contextInsertionRange(
   draftKey: string,
   draft: ComposerDraft,
   target?: ComposerDraftInsertion,
 ) {
   const captured = target ?? appAtomRegistry.get(composerDraftSelectionAtom(draftKey));
-  // Append after text edits during writes; caret-only moves preserve the captured insertion range.
-  const selection = captured?.text === draft.text ? captured : null;
+  // Follow edits made during writes; append when an edit touched the captured range.
+  const selection = captured ? mapCapturedRange(captured, draft.text) : null;
   const start = Math.max(0, Math.min(selection?.start ?? draft.text.length, draft.text.length));
   return { start, end: Math.max(start, Math.min(selection?.end ?? start, draft.text.length)) };
 }
@@ -416,6 +458,7 @@ function draftWithInsertedContext(
   draft: ComposerDraft,
   content: { text: string; context: OrchestrationMessageContext },
   target?: ComposerDraftInsertion,
+  maxContextRecords = COMPOSER_CONTEXT_MAX_RECORDS,
 ): ComposerDraft | null {
   const { start, end } = contextInsertionRange(draftKey, draft, target);
   const before = draft.text.slice(0, start);
@@ -425,11 +468,12 @@ function draftWithInsertedContext(
   const records = new Map(draft.context?.records.map((record) => [record.contextId, record]));
   for (const record of content.context.records) records.set(record.contextId, record);
   const context = referencedComposerContext(text, { version: 1, records: [...records.values()] });
-  if ((context?.records.length ?? 0) > COMPOSER_CONTEXT_MAX_RECORDS) return null;
-  rememberComposerDraftSelection(draftKey, text, {
-    start: start + insertion.length,
-    end: start + insertion.length,
-  });
+  if ((context?.records.length ?? 0) > maxContextRecords) return null;
+  rememberComposerDraftSelection(
+    draftKey,
+    text,
+    caretAfterInsertion(draftKey, draft.text, { start, end }, insertion.length),
+  );
   return withReferencedContextFiles(draft, text, context);
 }
 
@@ -1191,7 +1235,8 @@ export async function archiveCloudComposerDrafts(
   knownEnvironmentIds: Iterable<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
-  if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
+  if (!(await threadOutboxManager.load()))
+    throw new Error(m(msg("Could not preserve queued messages.")));
   await flushThreadOutbox();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const owner = accountId ?? cloud.accountId;
@@ -1321,7 +1366,8 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const saved = cloud.signedOut[accountId];
   if (saved) {
-    if (!(await threadOutboxManager.load())) throw new Error("Could not restore queued messages.");
+    if (!(await threadOutboxManager.load()))
+      throw new Error(m(msg("Could not restore queued messages.")));
     for (const message of saved.queuedMessages) {
       const alreadyQueued = Object.values(
         appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -1406,11 +1452,9 @@ export function insertComposerDraftText(
   const draft = getComposerDraftSnapshot(draftKey);
   const { start, end } = contextInsertionRange(draftKey, draft, target);
   const text = draft.text.slice(0, start) + value + draft.text.slice(end);
+  const caret = caretAfterInsertion(draftKey, draft.text, { start, end }, value.length);
   setComposerDraftText(draftKey, text);
-  rememberComposerDraftSelection(draftKey, text, {
-    start: start + value.length,
-    end: start + value.length,
-  });
+  rememberComposerDraftSelection(draftKey, text, caret);
 }
 
 export function appendComposerDraftText(draftKey: string, value: string): void {
@@ -1426,8 +1470,14 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-function attachmentDedupKey(attachment: DraftComposerAttachment): string {
-  return `${attachment.mimeType}\u0000${attachment.sizeBytes}\u0000${attachment.name}`;
+// Pasted images all share one name, so an image's inline bytes decide whether it is a repeat.
+function isSameAttachment(a: DraftComposerAttachment, b: DraftComposerAttachment): boolean {
+  return (
+    a.mimeType === b.mimeType &&
+    a.sizeBytes === b.sizeBytes &&
+    a.name === b.name &&
+    (a.type !== "image" || b.type !== "image" || a.dataUrl === b.dataUrl)
+  );
 }
 
 /**
@@ -1455,13 +1505,12 @@ export function appendComposerDraftAttachments(
     const retained = options?.appendReference
       ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
       : existing;
-    const keys = new Set(retained.attachments.map(attachmentDedupKey));
+    const seen = [...retained.attachments];
     const attachments = options?.restore
       ? incoming
       : incoming.filter((attachment) => {
-          const key = attachmentDedupKey(attachment);
-          if (keys.has(key)) return false;
-          keys.add(key);
+          if (seen.some((other) => isSameAttachment(other, attachment))) return false;
+          seen.push(attachment);
           return true;
         });
     duplicates = incoming.filter((attachment) => !attachments.includes(attachment));
@@ -1474,9 +1523,10 @@ export function appendComposerDraftAttachments(
             options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           ) - retained.attachments.length,
         );
-    const contextCapacity = options?.appendReference
-      ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
-      : attachments.length;
+    const contextCapacity =
+      options?.appendReference && !options.restore
+        ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
+        : attachments.length;
     const accepted = attachments.slice(0, Math.min(remaining, contextCapacity));
     rejected = attachments.slice(accepted.length);
     if (accepted.length === 0) {
@@ -1492,7 +1542,8 @@ export function appendComposerDraftAttachments(
           text: records.map(formatComposerContextReference).join(" "),
           context: { version: 1, records },
         },
-        options?.insertion,
+        options.insertion,
+        options.restore ? Infinity : COMPOSER_CONTEXT_MAX_RECORDS,
       );
       if (!inserted) {
         rejected = attachments;
