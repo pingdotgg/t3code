@@ -1004,6 +1004,13 @@ function PullRequestCodeTab({
     loadedSlices.length > 0 && nextCursor === null,
     canLoadNextSlice ? loadNextSlice : null,
   );
+  // The viewer moves scrollTop itself while it measures restored rows; saving those moves would
+  // drift the offset further on every remount, so only a reader's own scroll is saved.
+  const scrolledByReader = useRef(false);
+  const followReader = () => {
+    scrolledByReader.current = true;
+    codeViewReveal.cancel();
+  };
   const attachCodeView = useStableCallback(
     (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
       codeViewScroll.attach(handle);
@@ -1063,6 +1070,7 @@ function PullRequestCodeTab({
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     codeViewScroll.discard();
+    scrolledByReader.current = true;
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
     setFoldChoices((current) => withFileDiffFold(current, item.id, false));
     if (range) setSelectedLines({ id: item.id, range });
@@ -1943,10 +1951,10 @@ function PullRequestCodeTab({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"
-          onWheelCapture={codeViewReveal.cancel}
-          onTouchStartCapture={codeViewReveal.cancel}
-          onPointerDownCapture={codeViewReveal.cancel}
-          onKeyDownCapture={codeViewReveal.cancel}
+          onWheelCapture={followReader}
+          onTouchStartCapture={followReader}
+          onPointerDownCapture={followReader}
+          onKeyDownCapture={followReader}
           // Headers live in shadow DOM; composedPath crosses that boundary.
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -1974,7 +1982,9 @@ function PullRequestCodeTab({
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
               viewerRef={attachCodeView}
-              onScroll={codeViewScroll.onScroll}
+              onScroll={(scrollTop, viewer) => {
+                if (scrolledByReader.current) codeViewScroll.onScroll(scrollTop, viewer);
+              }}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
