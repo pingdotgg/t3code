@@ -9566,15 +9566,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
                 ...(slow === undefined ? [] : [`Warning: ${slow}`]),
               ].join("\n\n"),
-              addition: {
-                group: "rules",
-                characters: rules.reduce((total, rule) => total + rule.added - rule.removed, 0),
-                items: rules.map((rule) => ({
-                  label: rule.name,
-                  note: requestCount(rule.requests),
-                  characters: rule.added - rule.removed,
-                })),
-              },
+              addition:
+                rules.length === 0
+                  ? { group: "rules" }
+                  : {
+                      group: "rules",
+                      characters: rules.reduce(
+                        (total, rule) => total + rule.added - rule.removed,
+                        0,
+                      ),
+                      items: rules.map((rule) => ({
+                        label: rule.name,
+                        note: requestCount(rule.requests),
+                        characters: rule.added - rule.removed,
+                      })),
+                    },
             });
           }
           for (const notice of notices) yield* emitNotice(context, notice);

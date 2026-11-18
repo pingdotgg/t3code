@@ -74,7 +74,9 @@ export function AgentAdditionsTimelineRow({
       readonly label: string;
       readonly note?: string | undefined;
       readonly characters?: number | undefined;
-    }> = item.addition.items ?? [{ label: item.summary, characters: item.addition.characters }];
+    }> = item.addition.items?.length
+      ? item.addition.items
+      : [{ label: item.summary, characters: item.addition.characters }];
     return (
       <li key={item.id}>
         {lines.map((line, index) => (

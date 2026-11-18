@@ -105,9 +105,15 @@ export function ThreadAgentAdditionsPanel(props: {
               </Text>
               {rows.map(({ item, activity }) => {
                 const warn = group === "blocked" || item.outcome === "failed";
-                const lines = item.addition.items ?? [
-                  { label: item.summary, note: undefined, characters: item.addition.characters },
-                ];
+                const lines = item.addition.items?.length
+                  ? item.addition.items
+                  : [
+                      {
+                        label: item.summary,
+                        note: undefined,
+                        characters: item.addition.characters,
+                      },
+                    ];
                 return (
                   <View key={item.id}>
                     {lines.map((line, index) => (
