@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import type { AgentActivityProps } from "./AgentActivity";
 
 export const AGENT_ACTIVITY_FRESHNESS_MS = 10 * 60_000;
@@ -12,7 +14,7 @@ export function agentActivityTimeline(props: AgentActivityProps, now: number) {
     ...props,
     activeCount: -1,
     isExpired: true,
-    subtitle: "Open T3 to refresh",
+    subtitle: props.text?.openToRefresh ?? m(msg("Open {product} to refresh", { product: "T3" })),
     activities: props.activities.map((row) =>
       row.phase === "completed" || row.phase === "failed"
         ? row

@@ -9,12 +9,14 @@ export function publishAgentActivityWidget(
   props: AgentActivityProps,
   resolve: MessageResolver = m,
 ): boolean {
-  const published = observeAgentWidget({
+  last = props;
+  return observeAgentWidget({
     ...props,
-    text: agentActivityText(Math.max(props.activeCount ?? 0, props.activities.length), resolve),
+    text: agentActivityText(
+      Math.max(props.totalCount ?? 0, props.activeCount ?? 0, props.activities.length),
+      resolve,
+    ),
   });
-  if (published) last = props;
-  return published;
 }
 
 /** Keeps the observation's original expiry when the UI language changes. */

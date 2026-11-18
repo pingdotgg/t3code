@@ -1325,12 +1325,23 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
-  it.effect("replays a newly visible completion without alerting", () => {
+  it.effect("replays a newly visible completion without consuming another completion alert", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const markedDeliveries: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+    > = [];
     const done = {
       ...aggregate,
-      activeCount: 0,
-      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const }],
+      activities: [
+        { ...aggregate.activities[0]!, phase: "completed" as const },
+        {
+          ...aggregate.activities[0]!,
+          threadId: ThreadId.make("other"),
+          phase: "completed" as const,
+        },
+        { ...aggregate.activities[0]!, threadId: ThreadId.make("active") },
+      ],
     };
     const previous = {
       ...aggregate,
@@ -1344,12 +1355,53 @@ describe("fast completion delivery", () => {
       yield* deliveries.sendForTarget({
         target: device,
         aggregate: done,
+        state: { ...state, phase: "completed" },
         nowMs: 0,
         replay: true,
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
-    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+      yield* deliveries.processSignedJob(queuedJobs[0]!);
+      expect(markedDeliveries[0]?.aggregate?.activities).toEqual([
+        previous.activities[0],
+        done.activities[0],
+      ]);
+      device.last_aggregate_json = JSON.stringify(markedDeliveries[0]!.aggregate);
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: done,
+        nowMs: 0,
+        state: { ...state, threadId: ThreadId.make("other"), phase: "completed" },
+      });
+      expect(queuedJobs).toHaveLength(2);
+      yield* deliveries.processSignedJob(queuedJobs[1]!);
+      const request = requests[1]!;
+      expect(request.body._tag).toBe("Uint8Array");
+      if (request.body._tag === "Uint8Array") {
+        const { aps } = JSON.parse(new TextDecoder().decode(request.body.body));
+        expect(aps.alert).toBeDefined();
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          markedDeliveries,
+          currentTargets: [device],
+          config: signingConfig,
+          activityStates: done.activities.map((row) => ({
+            ...state,
+            threadId: row.threadId as typeof state.threadId,
+            phase: row.phase,
+          })),
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }));
+            }),
+        }),
+      ),
+    );
   });
 });
 

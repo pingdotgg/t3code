@@ -52,6 +52,7 @@ export interface AgentActivityRowProps {
 export interface AgentActivityText {
   readonly working?: Readonly<Record<string, string>>;
   readonly openToRefresh?: string;
+  readonly moreThreads?: Readonly<Record<string, string>>;
   readonly outOfDate: string;
   readonly failed: string;
   readonly done: string;
@@ -111,6 +112,7 @@ export function AgentActivity(
 
   const text = props.text;
   const productName = "Code";
+  const openToRefresh = text?.openToRefresh ?? "Open T3 to refresh";
 
   // Placeholder / first-paint entries arrive with empty props. Treat missing
   // fields as idle rather than throwing inside the widget JS runtime.
@@ -144,6 +146,10 @@ export function AgentActivity(
     typeof props.totalCount === "number" && props.totalCount >= receivedActivities.length
       ? props.totalCount
       : null;
+  const overflowLabel =
+    totalCount === null
+      ? ""
+      : (text?.moreThreads?.[String(totalCount - 4)] ?? `${totalCount - 4} more threads · Open T3`);
   const widgetFamily = "widgetFamily" in environment ? environment.widgetFamily : undefined;
 
   // Hierarchical foregrounds inherit system tint and vibrancy.
@@ -391,7 +397,7 @@ export function AgentActivity(
               lineLimit(1),
             ]}
           >
-            {props.isExpired ? (text?.openToRefresh ?? "Open T3 to refresh") : row0.threadTitle}
+            {props.isExpired ? openToRefresh : row0.threadTitle}
           </Text>
           <Spacer minLength={6} />
           <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
@@ -401,7 +407,7 @@ export function AgentActivity(
       ) : null}
       {props.isExpired && !row0 ? (
         <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground)]}>
-          {text?.openToRefresh ?? "Open T3 to refresh"}
+          {openToRefresh}
         </Text>
       ) : null}
     </VStack>
@@ -489,7 +495,7 @@ export function AgentActivity(
             <Text
               modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
             >
-              Open T3 to refresh
+              {openToRefresh}
             </Text>
           ) : null}
           <Spacer minLength={0} />
@@ -562,7 +568,7 @@ export function AgentActivity(
               padding({ top: 4 }),
             ]}
           >
-            Open T3 to refresh
+            {openToRefresh}
           </Text>
         ) : null}
         <Spacer minLength={0} />
@@ -627,7 +633,7 @@ export function AgentActivity(
       {row3 ? renderCompactRow(row3) : null}
       {totalCount !== null && totalCount > 5 ? (
         <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
-          {`${totalCount - 4} more threads · Open T3`}
+          {overflowLabel}
         </Text>
       ) : row4 ? (
         renderCompactRow(row4)

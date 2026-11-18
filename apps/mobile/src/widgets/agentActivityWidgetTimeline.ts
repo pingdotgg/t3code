@@ -20,6 +20,9 @@ export function agentActivityText(
       "0": resolve(msg("{count} working", { count: 0 })),
       ...countTable(maxCount, (count) => resolve(msg("{count} working", { count }))),
     },
+    moreThreads: countTable(maxCount, (count) =>
+      resolve(msg("{count} more threads · Open {product}", { count, product: "T3" })),
+    ),
     openToRefresh: resolve(msg("Open {product} to refresh", { product: "T3" })),
     outOfDate: resolve(msg("Out of date")),
     failed: resolve(msg("Failed", { $context: "agent work status" })),

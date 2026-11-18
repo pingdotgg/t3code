@@ -264,7 +264,7 @@ export function setAgentAwarenessRelayTokenProvider(
     publishRegularWidget({
       ...idleWidgetProps(),
       isSignedOut: true,
-      subtitle: "Sign in to see agent activity",
+      subtitle: m(msg("Sign in to see agent activity")),
     });
     setRegistrationStatus("unknown");
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
@@ -282,7 +282,7 @@ export function setAgentAwarenessRelayTokenProvider(
     publishRegularWidget({
       ...idleWidgetProps(),
       activeCount: null,
-      subtitle: "Activity count unavailable",
+      subtitle: m(msg("Activity count unavailable")),
     });
   }
   ensurePushTokenListener();

@@ -823,7 +823,6 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.publishThread(THREAD_ID);
         yield* Ref.set(currentShell, shell(snooze));
         yield* relay.publishThread(THREAD_ID);
-        yield* TestClock.adjust("2 hours");
         yield* Ref.set(
           currentShell,
           shell({
@@ -832,6 +831,7 @@ describe("AgentAwarenessRelay", () => {
             latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:30:00.000Z"),
           }),
         );
+        yield* TestClock.adjust("2 hours");
         yield* relay.publishThread(THREAD_ID);
         yield* TestClock.adjust("5 seconds");
         yield* relay.drain;
