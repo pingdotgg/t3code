@@ -273,8 +273,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
-    // Hermes replies on the root session when a background process it started exits.
-    ...(isHermes ? { enablePostSettleContinuation: true } : {}),
+    // Hermes replies on the root session when a background process it started exits; no
+    // prompt response follows, so the continuation ends on the deferred-finalize debounce.
+    ...(isHermes
+      ? { enablePostSettleContinuation: true, deferFinalizeForBackgroundWork: true }
+      : {}),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {

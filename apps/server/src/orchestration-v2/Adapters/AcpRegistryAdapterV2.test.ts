@@ -20,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2066,11 +2067,14 @@ describe("AcpRegistryAdapterV2", () => {
       const foreground = yield* session.until((event) => event.type === "turn.terminal");
       assert.include(JSON.stringify(foreground.at(-1)), '"status":"completed"');
       gate.release("process-exit");
-      const wake = yield* session.throughMarker("after completion reply");
-      assert.isTrue(
-        session.offers.length > 0 || JSON.stringify(wake).includes("printed DONE"),
-        "the completion reply is shown or opens a continuation run",
-      );
+      yield* Queue.take(session.offered);
+      yield* session.throughMarker("after completion reply");
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* TestClock.adjust("10 seconds");
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continuation), "printed DONE");
+      assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
     }).pipe(Effect.provide(layerTest)),
   );
 
