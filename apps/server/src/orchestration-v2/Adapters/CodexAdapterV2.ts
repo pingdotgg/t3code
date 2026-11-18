@@ -805,6 +805,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
+    /** The managed `cua-driver` MCP server is attached to this thread. */
+    readonly computerUse?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -853,6 +855,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
+              computerUse: input.computerUse ?? false,
             },
           )
         : undefined;
@@ -1504,11 +1507,13 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOLS = ["t3_thread_wait", "delegate_task"];
 
-function codexThreadRuntimeParams(input: {
+export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  /** The user's Codex config already defines `cua-driver`; theirs wins. */
+  readonly userCuaDriver?: boolean;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1523,6 +1528,7 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const cuaDriver = input.userCuaDriver === true ? undefined : mcpSession?.cuaDriver;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
@@ -1544,6 +1550,17 @@ function codexThreadRuntimeParams(input: {
               enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
               omit_tools_from: ["code_mode", "deferred"],
             },
+            ...(cuaDriver === undefined
+              ? {}
+              : {
+                  [`mcp_servers.${McpProviderSession.CUA_MCP_SERVER_NAME}`]: {
+                    command: cuaDriver.command,
+                    args: [...cuaDriver.args],
+                    env: Object.fromEntries(
+                      cuaDriver.environment.map(({ name, value }) => [name, value]),
+                    ),
+                  },
+                }),
           }),
     },
   };
@@ -2060,6 +2077,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // A failed open is discarded, so the next turn spawns the updated binary.
         if (adapterOptions.compatibility !== undefined) yield* ensureInitialized;
+        /**
+         * Whether the user's merged Codex config (home and project layers)
+         * already defines `cua-driver`. Their server wins over the managed
+         * one, so a thread never gets two drivers. Read once per directory;
+         * an unreadable config also yields to the user.
+         */
+        const userCuaDriverByCwd = new Map<string, boolean>();
+        const userCuaDriver = Effect.fn("CodexAdapterV2.userCuaDriver")(function* (
+          mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+          cwd: string | null | undefined,
+        ) {
+          // Only a thread with the managed driver needs the answer.
+          if (mcpSession?.cuaDriver === undefined) return false;
+          const key = cwd ?? "";
+          const known = userCuaDriverByCwd.get(key);
+          if (known !== undefined) return known;
+          const configured = yield* ensureInitialized.pipe(
+            Effect.andThen(client.request("config/read", { cwd: cwd ?? null })),
+            Effect.map((response) => {
+              const servers = response.config.mcp_servers;
+              return (
+                typeof servers === "object" &&
+                servers !== null &&
+                Object.hasOwn(servers, McpProviderSession.CUA_MCP_SERVER_NAME)
+              );
+            }),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not read Codex config; leaving Cua to the user.", {
+                cause,
+              }).pipe(Effect.as(true)),
+            ),
+          );
+          userCuaDriverByCwd.set(key, configured);
+          return configured;
+        });
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -7564,6 +7616,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+              computerUse:
+                mcpSession?.cuaDriver !== undefined &&
+                !(yield* userCuaDriver(mcpSession, turnInput.runtimePolicy.cwd)),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
@@ -7947,18 +8002,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ensureInitialized.pipe(
               Effect.andThen(mcpSessions.read(threadInput.threadId)),
               Effect.flatMap((mcpSession) =>
-                client.request("thread/start", {
-                  ...codexThreadRuntimeParams({
-                    threadId: threadInput.threadId,
-                    mcpSession,
-                    modelSelection: threadInput.modelSelection,
-                    runtimePolicy: threadInput.runtimePolicy,
-                  }),
-                  // Codex tags the child's MCP calls with thread_source "subagent".
-                  ...(IdAllocator.isDelegatedTaskThread(threadInput.threadId)
-                    ? { threadSource: "subagent" }
-                    : {}),
-                }),
+                Effect.flatMap(
+                  userCuaDriver(mcpSession, threadInput.runtimePolicy.cwd),
+                  (configured) =>
+                    client.request("thread/start", {
+                      ...codexThreadRuntimeParams({
+                        threadId: threadInput.threadId,
+                        mcpSession,
+                        modelSelection: threadInput.modelSelection,
+                        runtimePolicy: threadInput.runtimePolicy,
+                        userCuaDriver: configured,
+                      }),
+                      // Codex tags the child's MCP calls with thread_source "subagent".
+                      ...(IdAllocator.isDelegatedTaskThread(threadInput.threadId)
+                        ? { threadSource: "subagent" }
+                        : {}),
+                    }),
+                ),
               ),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
@@ -7983,17 +8043,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
               const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
+              const mcpSession = yield* readMcpSession(appThreadId);
+              const configured = yield* userCuaDriver(mcpSession, threadInput.runtimePolicy?.cwd);
               const resume = resumeNativeThread(nativeThreadId, {
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
                   threadId: appThreadId,
-                  mcpSession: yield* readMcpSession(appThreadId),
+                  mcpSession,
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  userCuaDriver: configured,
                 }),
               });
               const response = yield* ensureInitialized.pipe(
@@ -8852,13 +8915,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               // thread/revert requires the thread loaded in this app-server; resume after restart or idle release.
               if (!loaded) {
+                const mcpSession = yield* readMcpSession(threadInput.providerThread.appThreadId);
                 yield* resumeNativeThread(threadId, {
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
                     threadId: threadInput.providerThread.appThreadId,
-                    mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
+                    mcpSession,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
+                    userCuaDriver: yield* userCuaDriver(mcpSession, input.runtimePolicy.cwd),
                   }),
                 });
               }
@@ -8900,19 +8965,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
+              const mcpSession = yield* mcpSessions.read(threadInput.targetThreadId);
+              const configured = yield* userCuaDriver(mcpSession, threadInput.runtimePolicy?.cwd);
               const fork = client.request("thread/fork", {
                 threadId,
                 excludeTurns: true,
                 ...(boundary.lastTurnId === undefined ? {} : { lastTurnId: boundary.lastTurnId }),
                 ...codexThreadRuntimeParams({
                   threadId: threadInput.targetThreadId,
-                  mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                  mcpSession,
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  userCuaDriver: configured,
                 }),
               });
               const response = yield* ensureInitialized.pipe(

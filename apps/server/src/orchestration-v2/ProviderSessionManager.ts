@@ -51,6 +51,8 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import * as CuaDriver from "../cua/CuaDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -431,6 +433,23 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      /**
+       * The environment's managed computer use. Optional for the same reason
+       * as settings; acquiring it returns nothing while the setting is off.
+       */
+      const cuaDriver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
+      /**
+       * Records the thread's session with the managed Cua Driver, when it is
+       * running. A session prepared while it is off keeps its stale answer
+       * until its next prepare, like the browser and device capabilities.
+       */
+      const setMcpSession = Effect.fn("ProviderSessionManagerV2.setMcpSession")(function* (
+        config: McpProviderSessionConfig,
+      ) {
+        const cua = Option.isSome(cuaDriver) ? yield* cuaDriver.value.acquire : Option.none();
+        const { cuaDriver: _previous, ...rest } = config;
+        yield* mcpSessions.set(Option.isSome(cua) ? { ...rest, cuaDriver: cua.value } : rest);
+      });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -598,6 +617,7 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
+                    yield* setMcpSession(existing);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -610,7 +630,7 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
-                yield* mcpSessions.set({
+                yield* setMcpSession({
                   ...credential.config,
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
