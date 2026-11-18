@@ -365,8 +365,8 @@ export const SpeechStreamEvent = Schema.Union([
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
 
-/** One-way voice reads the thread's replies aloud. */
-export const VoiceMode = Schema.Literals(["off", "oneWay"]);
+/** One-way voice reads the thread's replies aloud; two-way also sends what the user says. */
+export const VoiceMode = Schema.Literals(["off", "oneWay", "twoWay"]);
 export type VoiceMode = typeof VoiceMode.Type;
 
 /** Voice belongs to one thread of this environment at a time. */

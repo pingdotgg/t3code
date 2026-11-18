@@ -16,7 +16,7 @@ export const layer = McpToolAccess.toLayer(VoiceToolkit, {
       const threadId = scope.thread.threadId;
       const settings = yield* ServerSettings.ServerSettingsService;
       const { voice } = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-      const onHere = voice.mode === "oneWay" && voice.threadId === threadId;
+      const onHere = voice.mode !== "off" && voice.threadId === threadId;
       const on = action === "toggle" ? !onHere : action === "on";
       if (on !== onHere) {
         const setAt = DateTime.formatIso(yield* DateTime.now);
@@ -28,7 +28,7 @@ export const layer = McpToolAccess.toLayer(VoiceToolkit, {
           })
           .pipe(Effect.mapError(unavailable));
       }
-      return { mode: on ? ("oneWay" as const) : ("off" as const) };
+      return { mode: !on ? ("off" as const) : onHere ? voice.mode : ("oneWay" as const) };
     }),
   ),
 });

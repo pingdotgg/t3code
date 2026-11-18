@@ -8,7 +8,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 
 const VoiceModeTool = Tool.make("t3_voice_mode", {
   description:
-    "Turn voice on or off for this thread, only when the user asks. On, T3 Code reads this thread's replies aloud and marks the user's typed messages with 🔊. Voice belongs to one thread at a time.",
+    "Turn voice on or off for this thread, only when the user asks. On turns on one-way voice: T3 Code reads this thread's replies aloud and marks the user's typed messages with 🔊. On keeps a two-way voice the user chose, which also sends what they say marked with 🎙. Voice belongs to one thread at a time.",
   parameters: Schema.Struct({ action: Schema.Literals(["on", "off", "toggle"]) }),
   success: Schema.Struct({ mode: VoiceMode }),
   failure: OrchestratorMcpFailure,

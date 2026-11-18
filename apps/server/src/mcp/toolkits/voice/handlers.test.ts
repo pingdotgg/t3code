@@ -64,6 +64,10 @@ it.effect("turns voice on and off for the calling thread only", () =>
       expect(yield* call("toggle")).toEqual({ mode: "off" });
       expect(settings.voice).toMatchObject({ mode: "off", threadId: null });
 
+      settings = { ...settings, voice: { mode: "twoWay", threadId, setAt: "y" } };
+      expect(yield* call("on")).toEqual({ mode: "twoWay" });
+      expect(settings.voice).toMatchObject({ mode: "twoWay", setAt: "y" });
+
       settings = { ...settings, voice: { mode: "oneWay", threadId: otherThreadId, setAt: "x" } };
       expect(yield* call("off")).toEqual({ mode: "off" });
       expect(settings.voice).toMatchObject({ threadId: otherThreadId, setAt: "x" });
