@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
+import * as NodeUtil from "node:util";
 
 import type {
   OrchestrationV2NativeChildStep,
@@ -200,7 +201,8 @@ const plannerCallIdsAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number)
 export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(function* (
   profileDirectory: string,
   rootSessionId: string,
-  toolCallIds: ReadonlyArray<string>,
+  tools: ReadonlyArray<{ readonly id: string; readonly input: unknown; readonly command: boolean }>,
+  requestedIds: ReadonlyArray<string>,
 ) {
   if (!NATIVE_ID.test(rootSessionId)) return new Map<string, ReadonlyArray<string>>();
   return yield* Effect.tryPromise({
@@ -223,8 +225,8 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
       if (file === undefined) return result;
       const database = new NodeSqlite.DatabaseSync(file.path, { readOnly: true });
       try {
-        const owners = new Map(toolCallIds.map((id) => [id, id]));
-        for (const id of toolCallIds) {
+        const owners = new Map(tools.map(({ id }) => [id, id]));
+        for (const { id, input, command } of tools) {
           const step = /^(.*):(\d+)$/.exec(id);
           if (step?.[1] !== rootSessionId) continue;
           const payload = payloadOf(
@@ -241,23 +243,63 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
                   messages(
                     message(bytes, STEP_PLANNER_RESPONSE) ?? new Uint8Array(),
                     PLANNER_TOOL_CALLS,
-                  ).flatMap((call) => {
-                    const callId = text(call, 1);
-                    return callId === undefined ? [] : [callId];
-                  }),
+                  ).map((call) => ({
+                    id: text(call, 1),
+                    name: text(call, 2),
+                    args: text(call, 3),
+                  })),
                 )(payload);
-          if (calls?.length === 1) owners.set(calls[0]!, id);
+          const candidates = calls?.filter((call) =>
+            command
+              ? call.name === "run_command"
+              : call.name === "invoke_subagent" || call.name === "start_subagent",
+          );
+          const matches =
+            candidates?.length === 1
+              ? candidates
+              : candidates?.filter(
+                  (call) =>
+                    call.args !== undefined &&
+                    input !== undefined &&
+                    Option.exists(decodeArgument(call.args), (args) =>
+                      NodeUtil.isDeepStrictEqual(args, input),
+                    ),
+                );
+          const match = matches?.length === 1 ? matches[0]?.id : undefined;
+          owners.delete(id);
+          if (match !== undefined && !owners.has(match)) owners.set(match, id);
         }
+        if (owners.size === 0) return result;
+        const byIndex = database.prepare(
+          "SELECT idx, metadata FROM steps WHERE idx = ? AND step_format = 0 AND length(metadata) <= ?",
+        );
+        // Native command IDs encode their trajectory row; the payload still has to prove ownership.
+        const indexed = requestedIds.flatMap((id) => {
+          const step = /^(.+)\/task-(\d+)$/.exec(id);
+          if (step?.[1] !== rootSessionId) return [];
+          const idx = Number(step[2]);
+          if (!Number.isSafeInteger(idx)) return [];
+          const row = byIndex.get(idx, MAX_STEP_BYTES);
+          return row === undefined ? [] : [row];
+        });
+        let metadataBytes = 0;
         let bytes = 0;
         let rows = 0;
         // Cortex step types: RUN_COMMAND=21, INVOKE_SUBAGENT=127, GENERIC=132 (exa.cortex_pb).
-        for (const row of database
+        const recent = database
           .prepare(
-            "SELECT idx, metadata FROM steps WHERE step_type IN (21, 127, 132) AND step_format = 0 AND length(metadata) <= ? ORDER BY idx DESC",
+            "SELECT idx, CASE WHEN step_type IN (21, 127, 132) AND step_format = 0 AND length(metadata) <= ? THEN metadata END AS metadata FROM steps ORDER BY idx DESC LIMIT 2048",
           )
-          .iterate(MAX_STEP_BYTES)) {
+          .iterate(MAX_STEP_BYTES);
+        function* candidates() {
+          yield* indexed;
+          yield* recent;
+        }
+        for (const row of candidates()) {
           const metadata = row.metadata;
           if (!(metadata instanceof Uint8Array)) continue;
+          metadataBytes += metadata.length;
+          if (metadataBytes > MAX_SCAN_BYTES) break;
           const callId = safely((data) => text(message(data, METADATA_TOOL_CALL), 1))(metadata);
           const owner = callId === undefined ? undefined : owners.get(callId);
           if (owner === undefined || result.has(owner)) continue;
@@ -297,6 +339,7 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
             !result.has(owner)
           ) {
             result.set(owner, record.ids);
+            if (result.size === owners.size) break;
           }
         }
         return result;

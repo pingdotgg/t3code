@@ -1436,7 +1436,8 @@ describe("AntigravityAdapterV2 foreground command waits", () => {
             taskIds: ["call_fg"],
             awaited: true,
           })
-          .pipe(Effect.forkScoped);
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        assert.isUndefined(waitFiber.pollUnsafe());
         yield* Deferred.succeed(finishForeground, undefined);
         const waited = yield* Fiber.join(waitFiber);
         assert.deepEqual(waited, { matched: ["call_fg"] });

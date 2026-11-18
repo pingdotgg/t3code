@@ -657,7 +657,8 @@ export interface AcpAdapterV2Flavor {
     readonly isForegroundCommand?: (toolCall: AcpToolCallState) => boolean;
     readonly resolveTaskIds?: (
       sessionId: string,
-      toolCallIds: ReadonlyArray<string>,
+      tools: ReadonlyArray<AcpToolCallState>,
+      requestedIds: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyMap<string, ReadonlyArray<string>>, Error>;
     readonly buildContinuationPrompt: (
       openTools: ReadonlyArray<AcpToolCallState>,
@@ -6349,10 +6350,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ),
         );
 
-        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* () {
+        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
+          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
+        ) {
           const waiting = turnAttached;
           turnAttached = yield* Deferred.make<boolean>();
           yield* Deferred.succeed(waiting, false);
+          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
+          if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
+            yield* runtimeMcpBridge.stopCalls;
+          }
           const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
             [...current.values()],
             new Map<string, PendingRuntimeRequest>(),
@@ -7218,7 +7225,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const nativeForm = flavor.extractElicitationForm?.(params);
               const parsedForm =
                 nativeForm === undefined
-                  ? parseElicitationForm(params.requestedSchema, params.message)
+                  ? parseElicitationForm(params.requestedSchema, params.message, {
+                      allowOther: unknownRecord(params._meta)?.["cognition.ai/allowOther"] === true,
+                    })
                   : undefined;
               const form =
                 nativeForm ??
@@ -9031,6 +9040,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return { result, hiddenFailure };
                 }
 
+                yield* runtime.drainEvents;
+                if (context.interrupted || context.finalized) return { result, hiddenFailure };
                 const openTools = yield* runtimeCallbackPermit.withPermit(
                   Effect.sync(() =>
                     unreleasedOpenForegroundTools(context).filter(
@@ -9801,7 +9812,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       if (hardRestart || turnInput.requestRuntimeRestart === true) {
                         yield* quarantineStoppedRun();
                       }
-                      yield* cancelPendingRuntimeRequests();
+                      // A settled soft interrupt keeps background subagents, and with them their MCP calls.
+                      yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
                       // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
                         (hardRestart || context.promptSettled || settledSoftInterrupt) &&
@@ -9916,12 +9928,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const tools = [...context.tools.values()].filter(
                     wait.isForegroundCommand ?? ((tool) => tool.kind === "execute"),
                   );
-                  if (wait.resolveTaskIds !== undefined) {
+                  const matchesTaskId = (id: string) =>
+                    tools.some(
+                      (tool) =>
+                        id === tool.toolCallId ||
+                        context.foregroundTaskIds.get(tool.toolCallId)?.includes(id),
+                    );
+                  if (
+                    wait.resolveTaskIds !== undefined &&
+                    tools.length > 0 &&
+                    uniqueTaskIds.some((id) => !matchesTaskId(id))
+                  ) {
                     const resolved = yield* wait
-                      .resolveTaskIds(
-                        sessionId,
-                        tools.map((tool) => tool.toolCallId),
-                      )
+                      .resolveTaskIds(sessionId, tools, uniqueTaskIds)
                       .pipe(
                         Effect.mapError(
                           (cause) =>
@@ -9936,13 +9955,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       context.foregroundTaskIds.set(id, nativeIds);
                   }
                   if (context.finalized || context.interrupted) return { matched: [] };
-                  const matched = uniqueTaskIds.filter((id) =>
-                    tools.some(
-                      (tool) =>
-                        id === tool.toolCallId ||
-                        context.foregroundTaskIds.get(tool.toolCallId)?.includes(id),
-                    ),
-                  );
+                  const matched = uniqueTaskIds.filter(matchesTaskId);
                   if (!awaited) {
                     for (const id of matched) {
                       context.releasedForegroundTaskIds.add(id);

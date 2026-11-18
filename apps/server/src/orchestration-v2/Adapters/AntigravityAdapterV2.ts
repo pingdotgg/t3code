@@ -229,8 +229,17 @@ export function makeAntigravityAcpAdapterFlavor(
       ...(profileDirectory === undefined
         ? {}
         : {
-            resolveTaskIds: (sessionId: string, toolCallIds: ReadonlyArray<string>) =>
-              readAntigravityTaskIds(profileDirectory, sessionId, toolCallIds),
+            resolveTaskIds: (sessionId, tools, requestedIds) =>
+              readAntigravityTaskIds(
+                profileDirectory,
+                sessionId,
+                tools.map((tool) => ({
+                  id: tool.toolCallId,
+                  input: tool.data.rawInput,
+                  command: tool.kind === "execute",
+                })),
+                requestedIds,
+              ),
           }),
       isOpenForegroundCommand: isAntigravityForegroundCommandOpen,
       isForegroundCommand: isAntigravityForegroundCommand,
