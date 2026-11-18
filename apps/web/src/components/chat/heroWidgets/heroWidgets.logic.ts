@@ -1,4 +1,4 @@
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { type HostCpuHistory, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import type { LimitPool, LimitPoolWindow } from "@t3tools/shared/usageLimits";
 
 import { DETAILS_CARD_CLEARANCE } from "../chatCanvasLayout";
@@ -673,12 +673,9 @@ export function recordedSince(
   return Math.max(now - capMs, since);
 }
 
-// Machines: a client-side CPU history from hostResources polling.
-
 export interface HostSample {
   readonly t: number;
   readonly cpu: number | null;
-  readonly memoryUsed: number;
 }
 
 export const HOST_HISTORY_MS = 5 * MINUTE_MS;
@@ -690,6 +687,17 @@ export function appendHostSample(
   const last = samples.at(-1);
   if (last && sample.t - last.t < 1000) return samples;
   return [...samples.filter((entry) => sample.t - entry.t <= HOST_HISTORY_MS), sample];
+}
+
+export function hostSamplesFromHistory(
+  history: HostCpuHistory,
+  clientAheadOfServerMs: number,
+): ReadonlyArray<HostSample> {
+  const last = history.values.length - 1;
+  return history.values.map((cpu, index) => ({
+    t: history.endAt + clientAheadOfServerMs - (last - index) * history.intervalMs,
+    cpu,
+  }));
 }
 
 export function formatGigabytes(bytes: number): string {

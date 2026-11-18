@@ -1,5 +1,5 @@
 import * as NodeOS from "node:os";
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import type { HostCpuHistory, HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
@@ -8,7 +8,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
+const CPU_HISTORY_INTERVAL_MS = 5_000;
+const CPU_HISTORY_SAMPLES = 60;
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -77,7 +81,7 @@ const make = Effect.fn("makeHostResources")(function* () {
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
-  const sample = Effect.fn("HostResources.sample")(function* () {
+  const { cgroup, readCounters, cpuLoad } = yield* Effect.gen(function* () {
     // cgroup v2 only; limits of the server's own cgroup, which is `/` inside a container.
     const cgroupPath =
       platform === "linux"
@@ -107,27 +111,28 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? Effect.map(readFile("/proc/stat"), (stat) => pinnedCpu(stat, allowedCpus) ?? readCpu())
         : Effect.sync(readCpu);
 
-    const previousCpu = yield* sampleCpu();
-    const previousUsage = yield* readCpuUsage();
-    const startedAt = yield* Clock.currentTimeMillis;
-    yield* Effect.sleep("200 millis");
-    const cpu = yield* sampleCpu();
-    const usage = yield* readCpuUsage();
-    const elapsedMicros = ((yield* Clock.currentTimeMillis) - startedAt) * 1000;
-    const totalDelta = cpu.total - previousCpu.total;
-    const idleDelta = cpu.idle - previousCpu.idle;
-    let cpuCount = cpu.count;
-    const hostUtilization =
-      previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
-        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
-        : null;
-    let cpuUtilization = hostUtilization;
-    if (cpuMax) {
+    const readCounters = Effect.fn("HostResources.readCounters")(function* () {
+      return {
+        cpu: yield* sampleCpu(),
+        usage: yield* readCpuUsage(),
+        at: yield* Clock.currentTimeMillis,
+      };
+    });
+    type Counters = Effect.Success<ReturnType<typeof readCounters>>;
+    const cpuLoad = (previous: Counters, current: Counters) => {
+      const { cpu } = current;
+      const elapsedMicros = (current.at - previous.at) * 1000;
+      const totalDelta = cpu.total - previous.cpu.total;
+      const idleDelta = cpu.idle - previous.cpu.idle;
+      const hostUtilization =
+        previous.cpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
+          ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+          : null;
+      if (!cpuMax) return { cpuCount: cpu.count, cpuUtilization: hostUtilization };
       const capacity = Math.min(Number(cpuMax[1]) / Number(cpuMax[2]), cpu.count);
-      cpuCount = Math.max(1, Math.floor(capacity));
       const cgroupIdle =
-        previousUsage !== null && usage !== null && elapsedMicros > 0
-          ? capacity - (usage - previousUsage) / elapsedMicros
+        previous.usage !== null && current.usage !== null && elapsedMicros > 0
+          ? capacity - (current.usage - previous.usage) / elapsedMicros
           : null;
       // Agents can run in sibling cgroups (agentScope.ts), so a busy host still counts.
       const hostIdle = hostUtilization === null ? null : cpu.count * (1 - hostUtilization);
@@ -135,8 +140,18 @@ const make = Effect.fn("makeHostResources")(function* () {
         cgroupIdle === null || hostIdle === null
           ? (cgroupIdle ?? hostIdle)
           : Math.min(cgroupIdle, hostIdle);
-      cpuUtilization = idle === null ? null : Math.min(1, Math.max(0, 1 - idle / capacity));
-    }
+      return {
+        cpuCount: Math.max(1, Math.floor(capacity)),
+        cpuUtilization: idle === null ? null : Math.min(1, Math.max(0, 1 - idle / capacity)),
+      };
+    };
+    return { cgroup, readCounters, cpuLoad };
+  });
+
+  const sample = Effect.fn("HostResources.sample")(function* () {
+    const previous = yield* readCounters();
+    yield* Effect.sleep("200 millis");
+    const { cpuCount, cpuUtilization } = cpuLoad(previous, yield* readCounters());
 
     let totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
@@ -186,7 +201,41 @@ const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+
+  const history = yield* Ref.make<HostCpuHistory>({
+    endAt: 0,
+    intervalMs: CPU_HISTORY_INTERVAL_MS,
+    values: [],
+  });
+  yield* Effect.gen(function* () {
+    yield* Effect.sleep(CPU_HISTORY_INTERVAL_MS);
+    let previous = yield* readCounters();
+    while (true) {
+      yield* Effect.sleep(CPU_HISTORY_INTERVAL_MS);
+      const current = yield* readCounters();
+      const { cpuUtilization } = cpuLoad(previous, current);
+      const hostSlept = current.at - previous.at > 2 * CPU_HISTORY_INTERVAL_MS;
+      previous = current;
+      yield* Ref.update(history, (entry) => ({
+        ...entry,
+        endAt: current.at,
+        values: hostSlept
+          ? []
+          : [
+              ...entry.values,
+              cpuUtilization === null ? null : Math.round(cpuUtilization * 1000) / 1000,
+            ].slice(-CPU_HISTORY_SAMPLES),
+      }));
+    }
+  }).pipe(Effect.forkScoped);
+
+  return HostResources.of({
+    read: Effect.gen(function* () {
+      const snapshot = yield* Cache.get(cache, "host");
+      const cpuHistory = yield* Ref.get(history);
+      return cpuHistory.values.length > 0 ? { ...snapshot, cpuHistory } : snapshot;
+    }),
+  });
 });
 
 export const layer = Layer.effect(HostResources, make());

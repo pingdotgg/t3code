@@ -114,6 +114,20 @@ describe("HostResources.layer", () => {
     ),
   );
 
+  it.effect("serves the CPU history it samples in the background", () =>
+    Effect.gen(function* () {
+      setup(0.5);
+      yield* TestClock.adjust("20 seconds");
+      const snapshot = yield* read;
+
+      assert.deepStrictEqual(snapshot.cpuHistory, {
+        endAt: 20_000,
+        intervalMs: 5_000,
+        values: [0.5, 0.5, 0.5],
+      });
+    }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
+  );
+
   it.effect("reports memory against the server cgroup's memory.max", () =>
     Effect.gen(function* () {
       setup();

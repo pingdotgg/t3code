@@ -19,6 +19,7 @@ import {
   formatGigabytes,
   HOST_HISTORY_MS,
   type HostSample,
+  hostSamplesFromHistory,
 } from "./heroWidgets.logic";
 import { GHOST, readStored, useDebugValue, WidgetCard, writeStored } from "./widgetChrome";
 
@@ -49,17 +50,14 @@ const hostResourcesListAtom = Atom.family((environmentIdsKey: string) =>
 function recordSample(environmentId: string, resources: HostResourcesSnapshot, receivedAt: number) {
   if (lastSeen.get(environmentId) === resources.sampledAt) return;
   lastSeen.set(environmentId, resources.sampledAt);
-  const memoryUsed =
-    resources.totalMemoryBytes > 0
-      ? 1 - resources.availableMemoryBytes / resources.totalMemoryBytes
-      : 0;
   hostHistory.set(
     environmentId,
-    appendHostSample(hostHistory.get(environmentId) ?? [], {
-      t: receivedAt,
-      cpu: resources.cpuUtilization,
-      memoryUsed,
-    }),
+    resources.cpuHistory
+      ? hostSamplesFromHistory(resources.cpuHistory, receivedAt - resources.sampledAt)
+      : appendHostSample(hostHistory.get(environmentId) ?? [], {
+          t: receivedAt,
+          cpu: resources.cpuUtilization,
+        }),
   );
   writeStored(HISTORY_KEY, Object.fromEntries(hostHistory));
 }
@@ -74,7 +72,7 @@ export function MachinesWidget({ now }: { readonly now: number }) {
   const idsKey = connectedIds.join("\n");
   const resources = useAtomValue(hostResourcesListAtom(idsKey));
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls host load so the sparkline builds up while the new-chat screen is open
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls host load so the sparkline keeps moving while the new-chat screen is open
   useEffect(() => {
     const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
     const id = window.setInterval(() => {

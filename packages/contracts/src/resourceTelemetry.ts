@@ -6,12 +6,23 @@ import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
+const Utilization = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
+/** Evenly spaced CPU readings, the last one taken at `endAt`. */
+export const HostCpuHistory = Schema.Struct({
+  endAt: NonNegativeInt,
+  intervalMs: PositiveInt,
+  values: Schema.Array(Schema.NullOr(Utilization)),
+});
+export type HostCpuHistory = typeof HostCpuHistory.Type;
+
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
-  cpuUtilization: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  cpuUtilization: Schema.NullOr(Utilization),
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  cpuHistory: Schema.optional(HostCpuHistory),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
