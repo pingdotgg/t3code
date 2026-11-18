@@ -201,6 +201,7 @@ export interface ProviderEventIngestInput {
   readonly runId?: RunId;
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
+  readonly withdrawApprovals?: boolean;
   readonly event: ProviderAdapter.ProviderAdapterV2Event;
   readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
@@ -296,14 +297,18 @@ export const layer: Layer.Layer<
         );
       });
 
-    const dismissNativeUserInputs = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
+    const dismissNativeRuntimeRequests = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
       function* (
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
         threadId = input.threadId,
         retained: ReadonlyArray<RuntimeRequestId> = [],
       ) {
-        const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
+        const pending = yield* projections.getPendingNativeRuntimeRequests(
+          threadId,
+          providerTurnId,
+          input.withdrawApprovals,
+        );
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
         const kept = new Set(retained);
@@ -531,7 +536,7 @@ export const layer: Layer.Layer<
                 ...(["completed", "interrupted", "failed", "cancelled"].includes(
                   input.event.providerTurn.status,
                 )
-                  ? yield* dismissNativeUserInputs(
+                  ? yield* dismissNativeRuntimeRequests(
                       input,
                       input.event.providerTurn.id,
                       input.event.threadId,
@@ -661,7 +666,7 @@ export const layer: Layer.Layer<
               // The session manager serves these to clients before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(
+              const dismissed = yield* dismissNativeRuntimeRequests(
                 input,
                 input.event.providerTurnId,
                 undefined,
@@ -760,7 +765,7 @@ export const layer: Layer.Layer<
             if (input.writeIfProviderThreadOwner !== undefined) {
               const ownerResult = yield* eventSink
                 .writeIfProviderThreadOwner({
-                  guardPendingUserInputCancellations: true,
+                  guardPendingRuntimeRequestCancellations: true,
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                   ...input.writeIfProviderThreadOwner,
                   events,
@@ -771,7 +776,7 @@ export const layer: Layer.Layer<
             if (input.writeIfRunCurrent === undefined) {
               return yield* eventSink
                 .write({
-                  guardPendingUserInputCancellations: true,
+                  guardPendingRuntimeRequestCancellations: true,
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                   events,
                 })
@@ -779,7 +784,7 @@ export const layer: Layer.Layer<
             }
             const result = yield* eventSink
               .writeIfRunCurrent({
-                guardPendingUserInputCancellations: true,
+                guardPendingRuntimeRequestCancellations: true,
                 ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                 threadId: input.threadId,
                 ...input.writeIfRunCurrent,
