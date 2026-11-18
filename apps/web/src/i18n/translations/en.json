@@ -5698,6 +5698,7 @@
   "217e1e7b60469736": "Issue state, {state}",
   "a98a269e3061a069": "Open {issue} on {provider}",
   "c1ff5afd83b1e027": "Refresh issue",
+  "8ab83a75cae667a2": "Could not refresh this issue",
   "78398e2d7d040498": "Issue title",
   "7b4fa0f856528bb0": "Edit title",
   "c78c0974dbdb66c2": "Labels",

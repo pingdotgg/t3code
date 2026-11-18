@@ -5703,6 +5703,7 @@
   "217e1e7b60469736": "issue 状态，{state}",
   "a98a269e3061a069": "在 {provider} 上打开 {issue}",
   "c1ff5afd83b1e027": "刷新 issue",
+  "8ab83a75cae667a2": "无法刷新此 issue",
   "78398e2d7d040498": "issue 标题",
   "7b4fa0f856528bb0": "编辑标题",
   "c78c0974dbdb66c2": "标签",
