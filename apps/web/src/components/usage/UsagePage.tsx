@@ -391,7 +391,14 @@ export function UsagePage() {
     </>
   );
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+    <div
+      className={cn(
+        "grid w-full min-w-0 items-center gap-x-3 py-2 @4xl/usage-header:flex",
+        showingLimits
+          ? "grid-cols-1 gap-y-2 @2xl/usage-header:grid-cols-[minmax(0,1fr)_auto]"
+          : "grid-cols-[minmax(0,1fr)_auto]",
+      )}
+    >
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
