@@ -401,7 +401,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
 
       event.preventDefault();
       event.stopPropagation();
-      toggleOutsideOverview();
+      if (!event.repeat) toggleOutsideOverview();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
