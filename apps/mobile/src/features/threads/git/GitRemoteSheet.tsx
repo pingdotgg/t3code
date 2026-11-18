@@ -48,28 +48,29 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
   const remotes = gitStatus.data?.remotes ?? [];
   const pushRemote = gitStatus.data?.pushRemote;
 
+  const runSelection = async (remoteName: string) => {
+    if (action) {
+      navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+      await gitActions.onRunSelectedThreadGitAction({
+        action,
+        pushRemote: remoteName,
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(featureBranch === "true" ? { featureBranch: true } : {}),
+        ...(filePaths ? { filePaths: JSON.parse(filePaths) as string[] } : {}),
+      });
+      return;
+    }
+    const result = await gitActions.onSetSelectedThreadPushRemote(remoteName);
+    if (result !== null && navigation.isFocused()) navigation.goBack();
+  };
   const selectRemote = async (remoteName: string) => {
     if (selecting.current) return;
     selecting.current = true;
     setIsSelecting(true);
-    try {
-      if (action) {
-        navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
-        await gitActions.onRunSelectedThreadGitAction({
-          action,
-          pushRemote: remoteName,
-          ...(commitMessage ? { commitMessage } : {}),
-          ...(featureBranch === "true" ? { featureBranch: true } : {}),
-          ...(filePaths ? { filePaths: JSON.parse(filePaths) as string[] } : {}),
-        });
-        return;
-      }
-      const result = await gitActions.onSetSelectedThreadPushRemote(remoteName);
-      if (result !== null && navigation.isFocused()) navigation.goBack();
-    } finally {
+    await runSelection(remoteName).finally(() => {
       selecting.current = false;
       setIsSelecting(false);
-    }
+    });
   };
 
   return (

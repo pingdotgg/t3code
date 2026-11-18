@@ -1691,50 +1691,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  // Worktree config can override remote.pushDefault, so cache by checkout path.
-  const readStatusRemotes = (cwd: string) =>
-    Effect.all(
-      [
-        executeGit("GitVcsDriver.statusDetails.remotes", cwd, ["remote"], {
-          allowNonZeroExit: true,
-        }),
-        executeGit(
-          "GitVcsDriver.statusDetails.remotePushDefault",
-          cwd,
-          ["config", "--get", "remote.pushDefault"],
-          { allowNonZeroExit: true },
-        ),
-      ],
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.map(([remotes, pushDefault]) => {
+  const readStatusRemotes = (cwd: string, gitArgs: ReadonlyArray<string> = []) =>
+    executeGit("GitVcsDriver.statusDetails.remotes", cwd, [...gitArgs, "remote"], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.map((remotes) => {
         const names = remotes.exitCode === 0 ? parseRemoteNamesInGitOrder(remotes.stdout) : [];
-        const defaultPushRemote = pushDefault.stdout.trim();
-        const needsChoice =
-          names.length > 1 && !names.includes("origin") && !names.includes(defaultPushRemote);
-        return {
-          hasRemote: names.length > 0,
-          ...(names.length > 1 ? { names } : {}),
-          ...(needsChoice ? { choices: names } : {}),
-          ...(names.includes(defaultPushRemote) ? { defaultPushRemote } : {}),
-        };
+        return { hasRemote: names.length > 0, ...(names.length > 1 ? { names } : {}) };
       }),
     );
-  const NO_STATUS_REMOTES: {
-    hasRemote: boolean;
-    names?: ReadonlyArray<string>;
-    choices?: ReadonlyArray<string>;
-    defaultPushRemote?: string;
-  } = {
+  const NO_STATUS_REMOTES: { hasRemote: boolean; names?: ReadonlyArray<string> } = {
     hasRemote: false,
   };
-  const remotesCache = yield* Cache.makeWith(readStatusRemotes, {
-    capacity: 2_048,
-    timeToLive: Exit.match({
-      onSuccess: () => STATUS_REMOTES_CACHE_TTL,
-      onFailure: () => Duration.zero,
-    }),
-  });
+  const remotesCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* readStatusRemotes(fetchCwd, ["--git-dir", gitCommonDir]);
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_REMOTES_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
   const invalidateStatusStaticCaches = Effect.fn("GitVcsDriverCore.invalidateStatusStaticCaches")(
     function* (cwd: string, gitCommonDir?: string | null) {
       const commonDir =
@@ -1745,7 +1729,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
-      yield* Cache.invalidate(remotesCache, normalizeRepositoryPathsCacheKey(cwd));
+      yield* Cache.invalidate(remotesCache, cacheKey);
     },
   );
 
@@ -2560,7 +2544,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
           : resolvePrimaryDefaultBranchName(cwd).pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
-          ? Cache.get(remotesCache, normalizeRepositoryPathsCacheKey(cwd)).pipe(
+          ? Cache.get(remotesCache, statusCacheKey).pipe(
               Effect.orElseSucceed(() => NO_STATUS_REMOTES),
             )
           : readStatusRemotes(cwd).pipe(Effect.orElseSucceed(() => NO_STATUS_REMOTES)),
@@ -2708,6 +2692,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
 
+    const configuredPushDefault = remotes.names
+      ? yield* readConfigValue(cwd, "remote.pushDefault")
+      : null;
+    const defaultPushRemote =
+      configuredPushDefault !== null && remotes.names?.includes(configuredPushDefault)
+        ? configuredPushDefault
+        : undefined;
+    const pushRemoteChoices =
+      remotes.names && !remotes.names.includes("origin") && defaultPushRemote === undefined
+        ? remotes.names
+        : undefined;
     const pushRemote =
       remotes.names && refName
         ? yield* resolveStatusPushRemote(
@@ -2715,7 +2710,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             refName,
             upstreamRef,
             remotes.names,
-            remotes.defaultPushRemote,
+            defaultPushRemote,
           )
         : null;
 
@@ -2724,7 +2719,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       hasOriginRemote: remotes.hasRemote,
       ...(remotes.names ? { remotes: remotes.names } : {}),
       ...(pushRemote ? { pushRemote } : {}),
-      ...(remotes.choices ? { pushRemoteChoices: remotes.choices } : {}),
+      ...(pushRemoteChoices ? { pushRemoteChoices } : {}),
       isDefaultBranch,
       branch: refName,
       upstreamRef,
