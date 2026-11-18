@@ -7028,11 +7028,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             assert.include(detail, "COVERING INDEX", detail);
           }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
-            // Only held input is read from the sparse index; transcript history stays unread.
-            assert.include(
-              detail,
+            // Sparse lookups read only held input and stop rows; transcript history stays unread.
+            assert.oneOf(detail, [
               "SEARCH held USING INDEX orchestration_v2_projection_turn_items_queued_input_idx (run_id=?)",
-            );
+              "SEARCH result USING INDEX orchestration_v2_projection_turn_items_thread_type_idx (thread_id=? AND type=?)",
+              "SEARCH request USING COVERING INDEX orchestration_v2_projection_turn_items_stop_request_idx (thread_id=? AND run_id=?)",
+            ]);
           }
         }
       }
@@ -10969,7 +10970,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("keeps undelivered queued input out of forks taken after a later run", () =>
+  it.effect("keeps undelivered input and replaced stop results out of forks and counts", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -11115,6 +11116,55 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         });
         yield* applyRun(answeredRunId, 2, "completed");
+        // A steer replaced this attempt without a stop request, so its stop result stays hidden.
+        const replacedNodeId = NodeId.make(`node:${answeredRunId}:replaced`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${prefix}:replaced-attempt`),
+          type: "run-attempt.created",
+          threadId: sourceThreadId,
+          runId: answeredRunId,
+          nodeId: replacedNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: RunAttemptId.make(`attempt:${prefix}:replaced`),
+            runId: answeredRunId,
+            attemptOrdinal: 1,
+            rootNodeId: replacedNodeId,
+            providerInstanceId,
+            providerThreadId: ProviderThreadId.make(`provider-thread:${prefix}`),
+            providerTurnId: null,
+            reason: "initial",
+            status: "superseded",
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${prefix}:replaced-stop`),
+          type: "turn-item.updated",
+          threadId: sourceThreadId,
+          runId: answeredRunId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`turn-item:${prefix}:replaced-stop`),
+            threadId: sourceThreadId,
+            runId: answeredRunId,
+            nodeId: replacedNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 202,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "run_interrupt_result",
+            message: "Stopped",
+          },
+        });
         yield* applyUserItem({
           threadId: sourceThreadId,
           runId: heldRunId,

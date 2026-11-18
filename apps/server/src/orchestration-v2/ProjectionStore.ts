@@ -8243,8 +8243,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
           `;
 
+    // The timeline hides a replaced attempt's stop result when its run has no stop request.
+    // Stop results are rare, so counts find them by thread and type rather than per run.
+    const hiddenStopResult = sql`result.type = 'run_interrupt_result'
+      AND EXISTS (
+        SELECT 1
+        FROM orchestration_v2_projection_run_attempts AS attempt
+        WHERE attempt.run_id = result.run_id
+          AND attempt.root_node_id = result.node_id
+          AND attempt.status = 'superseded'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM orchestration_v2_projection_turn_items AS request
+        WHERE request.thread_id = result.thread_id
+          AND request.run_id = result.run_id
+          AND request.type = 'run_interrupt_request'
+      )`;
+
     // Forks do not inherit undelivered queued input, including from cancelled runs
     // rolled back later. Checking the run first limits sparse-index seeks to those few runs.
+    // Hidden stop results arrive as negative rows, summed per run by runMapsByThreadId.
     const selectShellRunItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellRunItemCountRow>`
         SELECT per_run.thread_id, per_run.run_key AS run_id,
@@ -8279,6 +8298,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           END AS item_count
         FROM orchestration_v2_projection_turn_item_counts AS per_run
         WHERE per_run.run_key <> '' AND per_run.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
+        UNION ALL
+        SELECT result.thread_id, result.run_id, -COUNT(*) AS item_count
+        FROM orchestration_v2_projection_turn_items AS result
+          INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+        WHERE result.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
+          AND ${hiddenStopResult}
+        GROUP BY result.thread_id, result.run_id
       `;
 
     const selectShellItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
@@ -8297,7 +8323,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
               ELSE 0
             END
-            ELSE 0 END) AS item_count,
+            ELSE 0 END) - (
+            SELECT COUNT(*)
+            FROM orchestration_v2_projection_turn_items AS result
+              INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+            WHERE result.thread_id = counts.thread_id
+              AND ${hiddenStopResult}
+              AND EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_runs AS run
+                  INDEXED BY orchestration_v2_projection_runs_run_status_idx
+                WHERE run.run_id = result.run_id AND run.status <> 'rolled_back'
+              )
+          ) AS item_count,
           SUM(CASE WHEN counts.run_key = '' THEN counts.item_count ELSE 0 END)
             AS runless_item_count
         FROM orchestration_v2_projection_turn_item_counts counts
@@ -8372,7 +8410,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const threadId = ThreadId.make(row.thread_id);
         const runId = RunId.make(row.run_id);
         const existing = itemCountsByThreadId.get(threadId) ?? new Map<RunId, number>();
-        existing.set(runId, row.item_count);
+        existing.set(runId, (existing.get(runId) ?? 0) + row.item_count);
         itemCountsByThreadId.set(threadId, existing);
       }
       return { runsByThreadId, itemCountsByThreadId };
