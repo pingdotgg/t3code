@@ -216,7 +216,8 @@ const layerT3Home = ServerConfig.layerTest(process.cwd(), { prefix: "t3-sqlite-c
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig", (it) => {
   it.effect("does not migrate a T3 home a running server owns", () =>
     Effect.gen(function* () {
-      const recorded = Math.max(...migrationManifest.map(([id]) => id)) - 1;
+      // The id before the latest; ids may skip a number while parallel migrations land.
+      const recorded = migrationManifest.at(-2)![0];
       yield* migrateTo(recorded);
       yield* ownT3Home();
 
