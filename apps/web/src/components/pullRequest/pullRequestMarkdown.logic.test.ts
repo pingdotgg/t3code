@@ -71,6 +71,16 @@ describe("remarkPullRequestAutolinks", () => {
       ["#12", "http://gitlab.internal:8080/team/app/-/issues/12", "reference"],
       ["shot", "/uploads/a.png", undefined],
     ]);
+    expect(
+      links(
+        "See #12.",
+        issueMarkdownPlugins({
+          tracker: "gitlab",
+          url: "http://gitlab.internal:8080/gitlab/team/app/-/issues/8",
+          scope: "team/app",
+        }),
+      ),
+    ).toEqual([["#12", "http://gitlab.internal:8080/gitlab/team/app/-/issues/12", "reference"]]);
   });
 
   it("links only `#123` in a thread's words to its project's repository", () => {

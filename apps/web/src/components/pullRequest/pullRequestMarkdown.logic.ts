@@ -137,8 +137,12 @@ export function issueMarkdownPlugins(issue: {
   readonly url: string;
   readonly scope: string;
 }): PluggableList {
-  const origin = URL.canParse(issue.url) ? new URL(issue.url).origin : null;
-  return hostReferencePlugins(issue.tracker, origin && `${origin}/${issue.scope}`);
+  const url = URL.canParse(issue.url) ? new URL(issue.url) : null;
+  const repositoryUrl =
+    url &&
+    (sourceControlClients.find(issue.tracker)?.repositoryUrlFromPage?.(url, true) ??
+      `${url.origin}/${issue.scope}`);
+  return hostReferencePlugins(issue.tracker, repositoryUrl);
 }
 
 /** `#123` references in a thread's own words, read against its project's repository. */
