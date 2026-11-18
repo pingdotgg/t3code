@@ -503,8 +503,26 @@ const showInfo = argv.includes("--info");
  * Differences in a field Orbit reads that are known, with the reason; each is a defect that
  * waits for its fix. The state then shows `KNOWN` and passes while its FAIL lines stay exactly
  * these. Any other line fails, and so does a known state that turns `same`: remove it here.
+ * An `intermittent` difference depends on timing and may not show on a run; then the state
+ * passes as `same` with a note, and it is never reported as fixed.
  */
-const KNOWN = {};
+const KNOWN = {
+  "a turn being stopped": {
+    intermittent: true,
+    reason:
+      "with the provider's reply to turn/interrupt held, T3 reported the run interrupted " +
+      "(cause not proven), while Conn ends a stopped run only on the provider's terminal " +
+      "event: it awaits the reply, then up to 10 s for the terminal, and past that marks the " +
+      "Stop unresponsive and keeps the run open; seen on a slow CI runner (run 44382517419)",
+    lines: [
+      'FAIL orbit.rows[0].activityRunStatus: T3 null / Conn "running"',
+      'FAIL orbit.rows[0].latestRunCompletedAt: T3 "<time>" / Conn null',
+      'FAIL orbit.rows[0].status: T3 "interrupted" / Conn "running"',
+      "FAIL orbit.rows[0].works: T3 false / Conn true",
+      "FAIL orbit.turnRuns: T3 false / Conn true",
+    ],
+  },
+};
 
 /** Records one comparison and prints it; `summary` describes the T3 server's answer. */
 function record(pair, { state, lines, info, notes, summary, orbitSends = true }) {
@@ -512,10 +530,19 @@ function record(pair, { state, lines, info, notes, summary, orbitSends = true })
   const unreached = notes.filter((note) => note.startsWith("T3 "));
   lines.push(...unreached.map((note) => `FAIL ${note}`));
   const known = KNOWN[state];
+  // A known difference is excused only in the state it names: a side that missed its gate
+  // never reached that state, so it fails, whichever side it is.
+  if (known) {
+    const missed = notes.filter((note) => note.startsWith("Conn ") && note.includes("did not reach"));
+    lines.push(...missed.map((note) => `FAIL ${note}`));
+  }
   let verdict;
   if (!orbitSends) verdict = info.length === 0 ? "same" : "info";
   else if (known === undefined) verdict = lines.length === 0 ? "same" : "DIFF";
-  else if (lines.length === 0) {
+  else if (lines.length === 0 && known.intermittent) {
+    verdict = "same";
+    notes = [...notes, `known timing-dependent difference did not show: ${known.reason}`];
+  } else if (lines.length === 0) {
     verdict = "FIXED";
     lines.push("FAIL no longer differs: remove it from KNOWN in idle-diff.mjs");
   } else {

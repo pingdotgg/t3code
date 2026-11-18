@@ -13,6 +13,14 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Known difference, stop in progress (2026-11-18):** with the provider's reply to
+`turn/interrupt` held, T3 reported the run interrupted on one slow CI run (cause not proven).
+Conn ends a stopped run only on the provider's terminal event: the Codex adapter awaits the
+reply, then waits up to 10 s for the terminal; past that the Stop is marked unresponsive and
+the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff` lists the
+split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
+match T3 is open.
+
 ## Managed access, target side (item 4)
 
 `serve --managed-provision <file>` serves Orbit callers on a separate managed ingress and
