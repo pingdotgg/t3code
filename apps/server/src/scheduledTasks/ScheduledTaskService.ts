@@ -906,8 +906,10 @@ export const layer = Layer.effect(
     );
 
     // A dispatch is recorded once the message is accepted; the provider can still
-    // reject the turn after that, so follow the run and record its failure.
-    const recordRunFailure = Effect.fn("ScheduledTaskService.recordRunFailure")(function* (
+    // reject the turn after that, so follow the run and record its failure. A one-time
+    // task whose turn completed at or after its runAt is spent, so it is removed; its
+    // thread stays. A paused task always has a NULL next_run_at, so that alone proves nothing.
+    const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (
       taskId: ScheduledTaskId,
       startedAtIso: string,
       threadId: ThreadId,
@@ -924,12 +926,19 @@ export const layer = Layer.effect(
         runId: dispatched.id,
         timeoutMs: RUN_OUTCOME_WAIT_MS,
       });
-      if (
-        run === null ||
-        run.status === "completed" ||
-        !ThreadManagementService.isTerminalRunStatus(run.status)
-      )
+      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+      if (run.status === "completed") {
+        const removed = yield* sql`
+          DELETE FROM scheduled_tasks
+          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+            AND last_run_status = 'succeeded' AND next_run_at IS NULL
+            AND json_extract(schedule_json, '$.type') = 'once'
+            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+          RETURNING task_id
+        `;
+        if (removed.length > 0) yield* notifyChanged;
         return;
+      }
       const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
         "turnItems",
         "messages",
@@ -1198,7 +1207,7 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null) {
-          yield* recordRunFailure(active.id, startedAtIso, threadId, messageId).pipe(
+          yield* recordRunOutcome(active.id, startedAtIso, threadId, messageId).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
