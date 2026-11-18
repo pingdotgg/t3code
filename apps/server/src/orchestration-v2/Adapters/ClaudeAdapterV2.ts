@@ -12,6 +12,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { capNotificationDetail } from "../ContextHandoffDelivery.ts";
+import { parseClaudeSessionLogContext } from "./claudeSessionLogContext.ts";
 import { field, text } from "../unknownField.ts";
 import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
 import {
@@ -105,7 +106,6 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
-  type OrchestrationV2Notification,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
@@ -5636,24 +5636,6 @@ export interface ClaudeAdapterV2Options {
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
-/** The notification for SessionStart hook output, which the CLI adds to the model's context; undefined when the hook printed none. */
-function claudeHookContextNotification(
-  message: Extract<SDKMessage, { readonly subtype: "hook_response" }>,
-): OrchestrationV2Notification | undefined {
-  if (message.hook_event !== "SessionStart" || message.stdout.trim() === "") return undefined;
-  return {
-    source: { kind: "system" },
-    outcome:
-      message.outcome === "success"
-        ? "completed"
-        : message.outcome === "error"
-          ? "failed"
-          : "cancelled",
-    summary: `Claude Code hook added context: ${message.hook_name.startsWith(message.hook_event) ? message.hook_name : `${message.hook_event}:${message.hook_name}`} (${message.stdout.length.toLocaleString("en-US")} characters)`,
-    detail: capNotificationDetail(message.stdout),
-  };
-}
-
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
@@ -6072,11 +6054,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
-        // SessionStart hooks report when the query opens, which can be before a turn exists to show them in.
-        const pendingHookNotices: Array<{
-          readonly nativeItemId: string;
-          readonly notification: OrchestrationV2Notification;
-        }> = [];
+        // How far each native session's log has been read, so a turn reads only what the CLI appended.
+        const sessionLogReads = new Map<
+          string,
+          {
+            offset: number;
+            // Records older than the query belong to earlier turns or a forked-from session.
+            skipBeforeMs: number | undefined;
+            sawAttachment: boolean;
+            unavailableReported: boolean;
+            systemPrompt: string | undefined;
+          }
+        >();
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -9325,6 +9314,137 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const claudeProjectsDir = Effect.gen(function* () {
+          const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+          return path.join(
+            configuredDir.length > 0
+              ? path.resolve(session.cwd, configuredDir)
+              : path.join(yield* HostProcess.HomeDirectory, ".claude"),
+            "projects",
+          );
+        });
+
+        /** What the CLI appended to its session log since the last read; undefined when there is no log. */
+        const readClaudeSessionLog = Effect.fn("ClaudeAdapterV2.readClaudeSessionLog")(function* (
+          nativeThreadId: string,
+          state: { offset: number },
+        ) {
+          const projectsDir = yield* claudeProjectsDir;
+          for (const project of yield* fileSystem.readDirectory(projectsDir)) {
+            const logPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
+            if (!(yield* fileSystem.exists(logPath).pipe(Effect.orElseSucceed(() => false)))) {
+              continue;
+            }
+            const bytes = Buffer.concat(
+              yield* fileSystem.stream(logPath, { offset: state.offset }).pipe(Stream.runCollect),
+            );
+            // A record still being written stays unread until its newline lands.
+            const complete = bytes.subarray(0, bytes.lastIndexOf(10) + 1);
+            state.offset += complete.length;
+            return parseClaudeSessionLogContext(complete.toString("utf8").split("\n"));
+          }
+          return undefined;
+        });
+
+        /** Shows, as notification items on the settling turn, what the CLI's session log says it added to the model's input. */
+        const emitClaudeAddedContext = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          liveQuery: ClaudeLiveQueryContext,
+        ) {
+          const state = sessionLogReads.get(liveQuery.nativeThreadId);
+          if (state === undefined) return;
+          const read = yield* readClaudeSessionLog(liveQuery.nativeThreadId, state).pipe(
+            Effect.timeoutOption("2 seconds"),
+            Effect.map(Option.getOrUndefined),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.claude-session-log-read-failed", { cause }).pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          );
+          const skipBeforeMs = state.skipBeforeMs;
+          const entries =
+            read === undefined
+              ? []
+              : read.entries.filter(
+                  (entry) =>
+                    skipBeforeMs === undefined ||
+                    entry.timestamp === undefined ||
+                    !(Date.parse(entry.timestamp) < skipBeforeMs),
+                );
+          const notices: Array<{
+            readonly nativeItemId: string;
+            readonly summary: string;
+            readonly detail: string;
+          }> = [];
+          const added = entries.filter((entry) => entry.kind === "context");
+          if (added.length > 0) {
+            notices.push({
+              nativeItemId: `added-context:${context.providerTurnId}`,
+              summary: `Claude Code added context to this turn: ${added.map((entry) => `${entry.label} (${entry.text.length.toLocaleString("en-US")} characters)`).join(", ")}`,
+              detail: added
+                .map((entry) => `[${entry.label}, sent as ${entry.role}]\n${entry.text}`)
+                .join("\n\n"),
+            });
+          }
+          const prompt = entries.findLast((entry) => entry.kind === "systemPrompt");
+          if (prompt !== undefined && prompt.text !== state.systemPrompt) {
+            state.systemPrompt = prompt.text;
+            notices.push({
+              nativeItemId: `system-prompt:${context.providerTurnId}`,
+              summary: `Claude Code system prompt (${prompt.blocks.length} blocks, ${prompt.text.length.toLocaleString("en-US")} characters)`,
+              detail: prompt.text,
+            });
+          }
+          if (read !== undefined) {
+            state.skipBeforeMs = undefined;
+            state.sawAttachment ||= read.attachmentRecords > 0;
+          }
+          if (!state.sawAttachment && !state.unavailableReported) {
+            state.unavailableReported = true;
+            notices.push({
+              nativeItemId: `added-context-unavailable:${liveQuery.nativeThreadId}`,
+              summary: "Claude Code's record of added context is not available for this session",
+              detail: `T3 Code reads what Claude Code added from its session log. ${read === undefined ? "That log could not be found or read" : "That log records no added context"} (Claude Code ${liveQuery.claudeCodeVersion ?? "version unknown"}).`,
+            });
+          }
+          for (const notice of notices) {
+            const now = yield* DateTime.now;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId: notice.nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: notice.nativeItemId,
+                  strength: "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, notice.nativeItemId),
+                type: "notification",
+                status: "completed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: notice.summary,
+                detail: capNotificationDetail(notice.detail),
+              },
+            });
+          }
+        });
+
         const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -10579,16 +10699,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
-          if (
-            message.type === "system" &&
-            message.subtype === "hook_response" &&
-            input.replayed !== true
-          ) {
-            const notification = claudeHookContextNotification(message);
-            if (notification !== undefined) {
-              pendingHookNotices.push({ nativeItemId: message.uuid, notification });
-            }
-          }
           // Track before routing: idle-wake Monitors report tasks before replaying their tool calls.
           yield* trackClaudeMonitorCalls(message);
           yield* trackClaudeScheduledWakeup(liveQuery.nativeThreadId, message);
@@ -10754,38 +10864,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (context === (yield* Ref.get(activeTurn))) {
-            for (const notice of pendingHookNotices.splice(0)) {
-              const now = yield* DateTime.now;
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: {
-                  id: idAllocator.derive.turnItemFromProviderItem({
-                    driver: CLAUDE_PROVIDER,
-                    nativeItemId: notice.nativeItemId,
-                  }),
-                  threadId: context.input.threadId,
-                  runId: context.input.runId,
-                  nodeId: context.input.rootNodeId,
-                  providerThreadId: context.input.providerThread.id,
-                  providerTurnId: context.providerTurnId,
-                  nativeItemRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: notice.nativeItemId,
-                    strength: "strong",
-                  },
-                  parentItemId: null,
-                  ordinal: yield* resolveItemOrdinal(context, notice.nativeItemId),
-                  type: "notification",
-                  status: "completed",
-                  title: null,
-                  startedAt: now,
-                  completedAt: now,
-                  updatedAt: now,
-                  ...notice.notification,
-                },
-              });
-            }
             const lifecycle = claudePromptLifecycle(message);
             if (
               (message.type === "system" &&
@@ -12098,6 +12176,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt }
                 : resultFailure;
+            yield* emitClaudeAddedContext(context, liveQuery);
             yield* finalizeActiveTurn({
               context,
               status: interrupted
@@ -13084,6 +13163,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             options: queryOptions,
             ...(turnInput.resume ? { resume: true } : {}),
           });
+          if (!sessionLogReads.has(nativeThreadId)) {
+            sessionLogReads.set(nativeThreadId, {
+              offset: 0,
+              skipBeforeMs: yield* Clock.currentTimeMillis,
+              sawAttachment: false,
+              unavailableReported: false,
+              systemPrompt: undefined,
+            });
+          }
           // The SDK spawns the CLI per turn, so only the open waits for a provider update.
           const querySession = yield* (
             adapterOptions.installationGate === undefined
@@ -14070,13 +14158,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const claudeTranscriptState = Effect.fn("ClaudeAdapterV2.claudeTranscriptState")(function* (
           nativeThreadId: string,
         ) {
-          const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
-          const projectsDir = path.join(
-            configuredDir.length > 0
-              ? path.resolve(session.cwd, configuredDir)
-              : path.join(yield* HostProcess.HomeDirectory, ".claude"),
-            "projects",
-          );
+          const projectsDir = yield* claudeProjectsDir;
           // Any message in any transcript copy means Claude may still resume it.
           let found = false;
           let unreadable = false;

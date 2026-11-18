@@ -46,7 +46,7 @@
   "e65db2bf38a82f13": "T3 Code informe chaque session d’agent de ses propres outils : délégation, fils, navigateur, appareils, liaison de pull requests et informations d’exécution. Désactivé, cela est retiré des nouvelles sessions. Les outils restent disponibles.",
   "02e24e2e3f3df184": "Transferts lors d’un changement de fournisseur ou de modèle, contexte de discussion annexe, notes de redémarrage et bloc d’objectif. Affiché dans le fil sous « T3 Code added context to this turn ». Actif tant que la fonction est utilisée.",
   "60fce9ed7ab0736b": "Réveils des tâches déléguées, mises à jour des pull requests surveillées, poursuite d’objectif, compaction en veille et reprise après redémarrage. Affichés dans le fil comme envoyés par T3 Code. Chacun suit son propre réglage.",
-  "25335b92f9ae5d60": "La CLI de l’agent ajoute les fichiers d’instructions du projet, la mémoire, la sortie des hooks et les rappels système. T3 Code ne les contrôle pas. La sortie des hooks de début de session de Claude Code est affichée dans le fil.",
+  "a87fb7aa6ea86f0f": "La CLI de l’agent ajoute les fichiers d’instructions, la mémoire, la sortie des hooks et les rappels système. Pour Claude Code, le fil affiche ce qu’il a ajouté à chaque tour ainsi que son prompt système. Les autres harnesses ne sont pas affichés.",
   "987bf459488d3371": "Le fournisseur du modèle peut ajouter son propre texte après qu’une requête a quitté cette machine. T3 Code ne peut ni le voir ni le désactiver.",
   "425f7ce2f24cb248": "Sections des paramètres",
   "ee3e8bd8b7918aec": "Rechercher",

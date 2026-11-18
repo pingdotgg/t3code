@@ -46,7 +46,7 @@
   "e65db2bf38a82f13": "T3 Code informiert jede Agentensitzung über seine eigenen Tools: Delegierung, Threads, Browser, Geräte, Pull-Request-Verknüpfung und Laufzeitinformationen. Aus entfernt dies aus neuen Sitzungen. Die Tools bleiben verfügbar.",
   "02e24e2e3f3df184": "Übergaben beim Wechsel von Anbieter oder Modell, Side-Chat-Kontext, Neustarthinweise und der Zielblock. Im Thread als „T3 Code added context to this turn“ angezeigt. Aktiv, solange die Funktion genutzt wird.",
   "60fce9ed7ab0736b": "Weckrufe von delegierten Aufgaben, Updates beobachteter Pull Requests, Zielfortsetzung, Leerlaufkomprimierung und Fortsetzung nach Neustart. Im Thread als von T3 Code gesendet angezeigt. Jede folgt ihrer eigenen Einstellung.",
-  "25335b92f9ae5d60": "Die Agenten-CLI fügt Projektanweisungsdateien, Speicher, Hook-Ausgaben und Systemhinweise hinzu. T3 Code steuert sie nicht. Die Ausgabe von Claude Code-Sitzungsstart-Hooks wird im Thread angezeigt.",
+  "a87fb7aa6ea86f0f": "Die Agenten-CLI fügt Anweisungsdateien, Speicher, Hook-Ausgaben und Systemhinweise hinzu. Für Claude Code zeigt der Thread, was es jedem Turn hinzugefügt hat, sowie seinen System-Prompt. Andere Harnesses werden nicht angezeigt.",
   "987bf459488d3371": "Der Modellanbieter kann eigenen Text hinzufügen, nachdem eine Anfrage diesen Rechner verlassen hat. T3 Code kann ihn weder sehen noch abschalten.",
   "425f7ce2f24cb248": "Einstellungsbereiche",
   "ee3e8bd8b7918aec": "Suchen",

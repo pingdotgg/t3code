@@ -46,7 +46,7 @@
   "e65db2bf38a82f13": "T3 Code informa a cada sesión de agente sobre sus propias herramientas: delegación, hilos, navegador, dispositivos, vinculación de pull requests e información de ejecución. Al desactivarlo se quita de las sesiones nuevas. Las herramientas siguen disponibles.",
   "02e24e2e3f3df184": "Traspasos al cambiar de proveedor o modelo, contexto de chat lateral, notas de reinicio y el bloque de objetivo. Se muestra en el hilo como «T3 Code added context to this turn». Activo mientras la función esté en uso.",
   "60fce9ed7ab0736b": "Avisos de tareas delegadas, novedades de pull requests vigilados, continuación de objetivos, compactación por inactividad y continuación tras reinicio. Se muestran en el hilo como enviados por T3 Code. Cada uno sigue su propio ajuste.",
-  "25335b92f9ae5d60": "La CLI del agente añade archivos de instrucciones del proyecto, memoria, salida de hooks y recordatorios del sistema. T3 Code no los controla. La salida de los hooks de inicio de sesión de Claude Code se muestra en el hilo.",
+  "a87fb7aa6ea86f0f": "La CLI del agente añade archivos de instrucciones, memoria, salida de hooks y recordatorios del sistema. Para Claude Code, el hilo muestra lo que añadió a cada turno y su prompt del sistema. Los demás harnesses no se muestran.",
   "987bf459488d3371": "El proveedor del modelo puede añadir su propio texto después de que una solicitud salga de este equipo. T3 Code no puede verlo ni desactivarlo.",
   "425f7ce2f24cb248": "Secciones de ajustes",
   "ee3e8bd8b7918aec": "Buscar",

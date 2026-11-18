@@ -2074,9 +2074,9 @@ export function ThreadsSettingsPanel() {
             title={gt("Harness additions")}
             description={
               <T>
-                The agent CLI adds project instruction files, memory, hook output and system
-                reminders. T3 Code does not control them. Claude Code session-start hook output is
-                shown in the thread.
+                The agent CLI adds instruction files, memory, hook output and system reminders. For
+                Claude Code, the thread shows what it added to each turn and its system prompt.
+                Other harnesses are not shown.
               </T>
             }
           />

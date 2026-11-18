@@ -8684,6 +8684,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("shows what the CLI's session log says it added, reading only new records", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-log-" });
+      const projectDir = NodePath.join(configDir, "projects", "project");
+      yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+      const logPath = NodePath.join(projectDir, `${WAKE_NATIVE_SESSION}.jsonl`);
+      const record = (attachment: object, rest: object = {}) =>
+        `${JSON.stringify({ type: "attachment", attachment, ...rest })}\n`;
+      const snapshot = record({ type: "prompt_snapshot", systemPrompt: ["one", "two"] });
+      yield* fileSystem.writeFileString(
+        logPath,
+        record(
+          { type: "hook_success", hookName: "SessionStart:startup" },
+          { rendered: [{ content: "hook text" }], renderedRole: "system" },
+        ) + snapshot,
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      const notices = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "notification"
+            ? [{ summary: event.turnItem.summary, detail: event.turnItem.detail }]
+            : [],
+        );
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-added-context-1"),
+          text: "First.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000701", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepStrictEqual(notices(), [
+        {
+          summary:
+            "Claude Code added context to this turn: hook SessionStart:startup (9 characters)",
+          detail: "[hook SessionStart:startup, sent as system]\nhook text",
+        },
+        { summary: "Claude Code system prompt (2 blocks, 8 characters)", detail: "one\n\ntwo" },
+      ]);
+
+      yield* fileSystem.writeFileString(
+        logPath,
+        snapshot + record({ type: "date" }, { rendered: [{ content: "today" }] }),
+        { flag: "a" },
+      );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-added-context-2"),
+          text: "Second.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepStrictEqual(notices().slice(2), [
+        {
+          summary: "Claude Code added context to this turn: date (5 characters)",
+          detail: "[date, sent as unknown]\ntoday",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("shows a 403 permission error instead of the login hint", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

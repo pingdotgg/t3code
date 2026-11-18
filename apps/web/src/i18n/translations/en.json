@@ -46,7 +46,7 @@
   "e65db2bf38a82f13": "T3 Code tells each agent session about its own tools: delegation, threads, browser, devices, pull request linking and runtime info. Off removes this from new sessions. The tools stay available.",
   "02e24e2e3f3df184": "Handoffs when you change provider or model, side-chat context, restart notes and the goal block. Shown in the thread as \"T3 Code added context to this turn\". On while the feature is in use.",
   "60fce9ed7ab0736b": "Wake-ups from delegated tasks, pull request watch updates, goal continuation, idle compaction and restart continuation. Shown in the thread as sent by T3 Code. Each follows its own setting.",
-  "25335b92f9ae5d60": "The agent CLI adds project instruction files, memory, hook output and system reminders. T3 Code does not control them. Claude Code session-start hook output is shown in the thread.",
+  "a87fb7aa6ea86f0f": "The agent CLI adds instruction files, memory, hook output and system reminders. For Claude Code, the thread shows what it added to each turn and its system prompt. Other harnesses are not shown.",
   "987bf459488d3371": "The model provider can add its own text after a request leaves this machine. T3 Code cannot see it or turn it off.",
   "425f7ce2f24cb248": "Settings sections",
   "ee3e8bd8b7918aec": "Search",

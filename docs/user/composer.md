@@ -419,7 +419,9 @@ own CLI, and some from the model provider.
   sent by T3 Code and follow their own features and settings.
 - **What the agent's CLI adds.** Project instruction files, memory, hook output and system
   reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
-  the thread shows what a session-start hook added.
+  the thread shows a row named **Claude Code added context to this turn** and a row with its
+  system prompt when that changes; open either to read the text. If Claude Code kept no record,
+  a row says so. Other harnesses are not shown.
 - **What the provider adds.** A provider can add text after a request leaves your machine.
   T3 Code cannot show it or turn it off.
 
