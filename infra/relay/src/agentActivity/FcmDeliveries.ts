@@ -39,6 +39,7 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
+  replayBaseline: Schema.optional(Schema.NullOr(RelayAgentActivityAggregateState)),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -120,7 +121,10 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
-    }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
+    }) => Effect.Effect<
+      RelayDeliveryResult | null,
+      FcmDeliveryError | AgentActivityRows.AgentActivityRowListPersistenceError
+    >;
     readonly process: (
       body: unknown,
     ) => Effect.Effect<
@@ -162,13 +166,27 @@ const make = Effect.gen(function* () {
         };
       }
       const now = yield* DateTime.now;
+      const preferences = decodePreferences(input.target.preferences_json);
+      const replayBaseline =
+        input.replay &&
+        input.state === null &&
+        Option.isSome(preferences) &&
+        preferences.value.liveActivitiesEnabled
+          ? makeAggregateState({
+              activeStates: yield* rows.listForUser({ userId: input.target.user_id }),
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            })
+          : null;
       yield* sender
         .send({
           userId: input.target.user_id,
           deviceId: input.target.device_id,
           token: input.target.push_token,
           state: input.state,
-          ...(input.replay ? { replay: true } : {}),
+          ...(input.replay
+            ? { replay: true, ...(input.state === null ? { replayBaseline } : {}) }
+            : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -213,8 +231,45 @@ const make = Effect.gen(function* () {
         : null;
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
       // Deletions update the card but must not consume another thread's pending completion alert.
-      let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
-      if (job.state && preferences.value.notificationsEnabled) {
+      let acknowledgeAggregate = job.state !== null || aggregate === null;
+      let acknowledgedAggregate = aggregate;
+      if (job.replay) {
+        acknowledgeAggregate = aggregate === null;
+        acknowledgedAggregate = aggregate === null ? null : previousAggregate;
+        if (
+          aggregate &&
+          !previousAggregate &&
+          job.state === null &&
+          job.replayBaseline !== undefined
+        ) {
+          acknowledgedAggregate = job.replayBaseline;
+          acknowledgeAggregate = true;
+        } else if (job.state && aggregate) {
+          const replayState = job.state;
+          const owned = aggregate.activities.filter(
+            (row) =>
+              row.environmentId === replayState.environmentId &&
+              row.threadId === replayState.threadId &&
+              row.phase === replayState.phase &&
+              row.updatedAt === replayState.updatedAt,
+          );
+          if (owned.length > 0) {
+            acknowledgedAggregate = {
+              ...(previousAggregate ?? aggregate),
+              activities: [
+                ...(previousAggregate?.activities ?? []).filter(
+                  (row) =>
+                    row.environmentId !== replayState.environmentId ||
+                    row.threadId !== replayState.threadId,
+                ),
+                ...owned,
+              ],
+            };
+            acknowledgeAggregate = true;
+          }
+        }
+      }
+      if (job.state && !job.replay && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -328,7 +383,7 @@ const make = Effect.gen(function* () {
           deviceId: job.deviceId,
           kind: active ? "live_activity_update" : "live_activity_end",
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
-          aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
+          aggregate: preferences.value.liveActivitiesEnabled ? acknowledgedAggregate : null,
           deliveredAt: DateTime.formatIso(now),
         });
       }

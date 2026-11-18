@@ -44,6 +44,7 @@ import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import { withSpanAttributes } from "../observability.ts";
 
 import {
@@ -89,12 +90,22 @@ type ChosenPushNotificationDelivery = {
 type ChosenDelivery = ChosenLiveActivityDelivery | ChosenPushNotificationDelivery;
 
 export type ApnsDeliveryError =
+  | WidgetRefreshDeliveryError
   | ApnsDeliveryQueue.ApnsDeliveryQueueError
   | ApnsDeliveryJobVerificationError
   | ApnsDeliveryJobClaimInFlight
   | DeliveryAttempts.DeliveryAttemptRecordPersistenceError
   | LiveActivities.LiveActivityTargetListPersistenceError
   | LiveActivities.LiveActivityDeliveryMarkPersistenceError;
+
+export class WidgetRefreshDeliveryError extends Schema.TaggedError<WidgetRefreshDeliveryError>()(
+  "WidgetRefreshDeliveryError",
+  { deviceId: Schema.String, sourceJobId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to deliver widget refresh for device ${this.deviceId}.`;
+  }
+}
 
 export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedError<ApnsDeliveryJobClaimInFlight>()(
   "ApnsDeliveryJobClaimInFlight",
@@ -417,6 +428,8 @@ function expectedCurrentToken(input: {
     case "live_activity_update":
     case "live_activity_end":
       return input.target.activity_push_token;
+    case "widget_refresh":
+      return null;
     case "push_notification":
       return input.target.push_token;
   }
@@ -426,6 +439,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly replayState?: RelayAgentActivityState | null | undefined;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -513,6 +527,7 @@ const make = Effect.gen(function* () {
   const mac = yield* Mac.Mac;
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
+  const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
 
   const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
     const now = yield* DateTime.now;
@@ -751,11 +766,37 @@ const make = Effect.gen(function* () {
         }),
       );
     if (result.ok) {
+      let acknowledgedAggregate = aggregate;
+      if (input.replayState !== undefined && aggregate !== null) {
+        const previous = parseAggregate(currentTarget.last_aggregate_json);
+        const replayState = input.replayState;
+        // Quiet replay acknowledges only its thread, leaving other transitions eligible to alert.
+        acknowledgedAggregate =
+          replayState === null
+            ? (previous ?? aggregate)
+            : {
+                ...(previous ?? aggregate),
+                activities: [
+                  ...(previous?.activities ?? []).filter(
+                    (row) =>
+                      row.environmentId !== replayState.environmentId ||
+                      row.threadId !== replayState.threadId,
+                  ),
+                  ...aggregate.activities.filter(
+                    (row) =>
+                      row.environmentId === replayState.environmentId &&
+                      row.threadId === replayState.threadId &&
+                      row.phase === replayState.phase &&
+                      row.updatedAt === replayState.updatedAt,
+                  ),
+                ],
+              };
+      }
       yield* liveActivities.markDelivery({
         userId: input.target.user_id,
         deviceId: input.target.device_id,
         kind: input.kind,
-        aggregate,
+        aggregate: acknowledgedAggregate,
         deliveredAt: iso,
       });
     } else if (isPermanentApnsTokenFailure(result)) {
@@ -946,6 +987,17 @@ const make = Effect.gen(function* () {
     });
     return yield* Effect.suspend(() => {
       switch (payload.kind) {
+        case "widget_refresh":
+          return widgets.process(payload).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WidgetRefreshDeliveryError({
+                  deviceId: payload.target.deviceId,
+                  sourceJobId: payload.jobId,
+                  cause,
+                }),
+            ),
+          );
         case "live_activity_update":
           if (payload.aggregate === null) {
             return Effect.fail(
@@ -969,6 +1021,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            replayState: payload.replayState,
           });
         case "live_activity_end":
           return sendLiveActivity({
@@ -983,6 +1036,7 @@ const make = Effect.gen(function* () {
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
+            replayState: payload.replayState,
           });
         case "push_notification":
           if (payload.notification === null) {
@@ -1078,6 +1132,7 @@ const make = Effect.gen(function* () {
         apsEnvironment: input.target.aps_environment,
         aggregate: delivery.aggregate,
         alert,
+        ...(input.replay ? { replayState: input.state ?? null } : {}),
       });
       if (delivery.kind === "live_activity_end" && notification && input.target.push_token) {
         yield* deliveryQueue.enqueuePushNotification({

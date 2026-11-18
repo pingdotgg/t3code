@@ -1,4 +1,14 @@
+import { publishAgentActivityWidget as publishWidget } from "../../widgets/publishAgentActivityWidget";
 import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+
+export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
+  try {
+    return publishWidget(props);
+  } catch {
+    // Personal-team builds have no widget extension.
+    return false;
+  }
+}
 
 export function dismissEndedAgentLiveActivities() {
   AgentActivity.dismissEnded();

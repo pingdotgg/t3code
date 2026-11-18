@@ -1,0 +1,60 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2610035a-6d8b-403c-8e02-7a174c4dd0f2",
+  "prevIds": ["c7a49add-50ec-43e9-b15b-63e241877094"],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_widget_revocations"],
+      "writes": [
+        "s|tbl|public.relay_widget_revocations",
+        "n|tbl|public.relay_widget_revocations",
+        "e|tbl|public.relay_widget_revocations",
+        "n|rel|public.relay_widget_revocations",
+        "n|type|public.relay_widget_revocations",
+        "n|rel|public.relay_widget_revocations_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "relay_widget_revocations",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_widget_revocations",
+        "name": "token_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_widget_revocations",
+        "name": "relay_widget_revocations_pkey",
+        "columns": ["token_hash"],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

@@ -50,6 +50,9 @@ function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActiv
     title: "T3 Code",
     subtitle: state.phase === "failed" ? "Agent work failed" : "Agent work completed",
     activeCount: 0,
+    workingCount: 0,
+    attentionCount: 0,
+    totalCount: 1,
     updatedAt: state.updatedAt,
     activities: [aggregateRowForState(state)],
   });
@@ -68,7 +71,7 @@ function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): b
   if (Number.isNaN(updatedAtMs)) {
     return false;
   }
-  return nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
+  return state.retained === true || nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
 }
 
 export function makeAggregateState(input: {
@@ -80,7 +83,10 @@ export function makeAggregateState(input: {
     (state) => !isTerminalPhase(state) && !isExpiredAgentActivityState(state, input.nowMs),
   );
   if (activeStates.length === 0) {
-    if (input.terminalState !== null) {
+    if (
+      input.terminalState !== null &&
+      !input.activeStates.some((state) => isRecentTerminalState(state, input.nowMs))
+    ) {
       return terminalAggregateState(input.terminalState);
     }
     // Alerts compare with the delivered aggregate; replays must repaint without buzzing.
@@ -95,6 +101,9 @@ export function makeAggregateState(input: {
       title: "T3 Code",
       subtitle: newest.phase === "failed" ? "Agent work failed" : "Agent work completed",
       activeCount: 0,
+      workingCount: 0,
+      attentionCount: 0,
+      totalCount: recentTerminal.length,
       updatedAt: newest.updatedAt,
       activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
     });
@@ -104,7 +113,11 @@ export function makeAggregateState(input: {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const displayedStates = [
     ...activeStates
-      .toSorted((a, b) => activityPhasePriority(a.phase) - activityPhasePriority(b.phase))
+      .toSorted(
+        (a, b) =>
+          activityPhasePriority(a.phase) - activityPhasePriority(b.phase) ||
+          b.updatedAt.localeCompare(a.updatedAt),
+      )
       .slice(0, MAX_ACTIVITY_ROWS),
     ...recentTerminalStates,
   ].slice(0, MAX_ACTIVITY_ROWS);
@@ -115,6 +128,13 @@ export function makeAggregateState(input: {
     title: "T3 Code",
     subtitle: "Agent work in progress",
     activeCount: activeStates.length,
+    workingCount: activeStates.filter(
+      (state) => state.phase === "running" || state.phase === "starting",
+    ).length,
+    attentionCount: activeStates.filter(
+      (state) => state.phase === "waiting_for_input" || state.phase === "waiting_for_approval",
+    ).length,
+    totalCount: activeStates.length + recentTerminalStates.length,
     updatedAt,
     activities: displayedStates.map(aggregateRowForState),
   });

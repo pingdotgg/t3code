@@ -1,5 +1,6 @@
 import {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPhase,
 } from "@t3tools/contracts/relay";
 import { stableStringify } from "@t3tools/shared/relaySigning";
@@ -19,6 +20,7 @@ const ApnsDeliveryKindSchema = Schema.Literals([
   "live_activity_update",
   "live_activity_end",
   "push_notification",
+  "widget_refresh",
 ]);
 const LiveActivityStartOrUpdateKindSchema = Schema.Literals(["live_activity_update"]);
 const LiveActivityKindSchema = Schema.Literals(["live_activity_update", "live_activity_end"]);
@@ -60,6 +62,7 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
   alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
+  replayState: Schema.optional(Schema.NullOr(RelayAgentActivityState)),
   createdAt: Schema.String,
   expiresAt: Schema.String,
 });
@@ -235,6 +238,7 @@ export function makeApnsDeliveryJobPayload(input: {
   readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
   readonly notification?: ApnsNotificationPayload | null;
   readonly alert?: ApnsLiveActivityAlert | null | undefined;
+  readonly replayState?: ApnsDeliveryJobPayload["replayState"];
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly jobId: string;
@@ -254,6 +258,7 @@ export function makeApnsDeliveryJobPayload(input: {
     notification: input.notification ?? null,
     // Omit absent fields to preserve signatures from older relay builds.
     ...(input.alert ? { alert: input.alert } : {}),
+    ...(input.replayState !== undefined ? { replayState: input.replayState } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
   };
@@ -282,6 +287,8 @@ function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobI
           deviceId: payload.target.deviceId,
         });
       }
+      return null;
+    case "widget_refresh":
       return null;
     case "live_activity_end":
       if (payload.notification !== null) {

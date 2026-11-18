@@ -1,0 +1,151 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "c7a49add-50ec-43e9-b15b-63e241877094",
+  "prevIds": ["4413755a-63f1-4f93-bdc9-d1357283c23e"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_mobile_devices", "widget_access_token_hash"],
+      "writes": [
+        "s|col|public.relay_mobile_devices.widget_access_token_hash",
+        "n|col|public.relay_mobile_devices.widget_access_token_hash",
+        "e|col|public.relay_mobile_devices.widget_access_token_hash"
+      ],
+      "reads": ["n|tbl|public.relay_mobile_devices", "n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_mobile_devices", "widget_push_token"],
+      "writes": [
+        "s|col|public.relay_mobile_devices.widget_push_token",
+        "n|col|public.relay_mobile_devices.widget_push_token",
+        "e|col|public.relay_mobile_devices.widget_push_token"
+      ],
+      "reads": ["n|tbl|public.relay_mobile_devices", "n|sch|public"]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_mobile_devices",
+        "idx_relay_mobile_devices_widget_access_token"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_mobile_devices_widget_access_token",
+        "n|idx|public.idx_relay_mobile_devices_widget_access_token",
+        "e|idx|public.idx_relay_mobile_devices_widget_access_token",
+        "n|rel|public.idx_relay_mobile_devices_widget_access_token"
+      ],
+      "reads": [
+        "n|tbl|public.relay_mobile_devices",
+        "n|sch|public",
+        "n|col|public.relay_mobile_devices.widget_access_token_hash"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_mobile_devices",
+        "idx_relay_mobile_devices_widget_push_token"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_mobile_devices_widget_push_token",
+        "n|idx|public.idx_relay_mobile_devices_widget_push_token",
+        "e|idx|public.idx_relay_mobile_devices_widget_push_token",
+        "n|rel|public.idx_relay_mobile_devices_widget_push_token"
+      ],
+      "reads": [
+        "n|tbl|public.relay_mobile_devices",
+        "n|sch|public",
+        "n|col|public.relay_mobile_devices.widget_push_token"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "widget_access_token_hash",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "widget_push_token",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "idx_relay_mobile_devices_widget_access_token",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "widget_access_token_hash",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "idx_relay_mobile_devices_widget_push_token",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "widget_push_token",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

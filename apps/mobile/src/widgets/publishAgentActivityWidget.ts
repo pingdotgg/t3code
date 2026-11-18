@@ -1,9 +1,11 @@
 import type { MessageResolver } from "../i18n/messages";
-import type { AgentActivityWidgetSource } from "./agentActivityWidgetTimeline";
+import type { AgentActivityProps } from "./AgentActivity";
 
-export async function publishAgentActivityWidget(
-  _source: AgentActivityWidgetSource,
+export function publishAgentActivityWidget(
+  _props: AgentActivityProps,
   _resolve?: MessageResolver,
-) {}
+): boolean {
+  return false;
+}
 
 export async function republishAgentActivityWidget(_resolve: MessageResolver) {}

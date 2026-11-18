@@ -31,16 +31,25 @@ export const relayMobileDevices = pgTable(
     apsEnvironment: varchar("aps_environment", { length: 16 }).$type<"sandbox" | "production">(),
     pushToken: text("push_token"),
     pushToStartToken: text("push_to_start_token"),
+    widgetAccessTokenHash: text("widget_access_token_hash"),
+    widgetPushToken: text("widget_push_token"),
     preferencesJson: jsonb("preferences_json").notNull().$type<RelayAgentAwarenessPreferences>(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
+    uniqueIndex("idx_relay_mobile_devices_widget_access_token").on(table.widgetAccessTokenHash),
+    uniqueIndex("idx_relay_mobile_devices_widget_push_token").on(table.widgetPushToken),
     uniqueIndex("idx_relay_mobile_devices_push_token").on(table.pushToken),
     uniqueIndex("idx_relay_mobile_devices_push_to_start_token").on(table.pushToStartToken),
   ],
 );
+
+// Revocation must survive a registration that arrives after sign-out's DELETE.
+export const relayWidgetRevocations = pgTable("relay_widget_revocations", {
+  tokenHash: text("token_hash").primaryKey(),
+});
 
 export const relayLiveActivities = pgTable(
   "relay_live_activities",
@@ -154,6 +163,7 @@ export const relayAgentActivityRows = pgTable(
     environmentPublicKey: text("environment_public_key").notNull(),
     threadId: varchar("thread_id", { length: 512 }).notNull(),
     stateJson: jsonb("state_json").notNull().$type<RelayAgentActivityState>(),
+    deliveryPending: boolean("delivery_pending").notNull().default(true),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
