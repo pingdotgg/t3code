@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { MaximizeIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import { observeResize } from "~/lib/observeResize";
@@ -11,20 +11,21 @@ export default function PreviewImageContent(props: {
   readonly mimeType?: string;
   readonly onError?: () => void;
 }) {
-  const [failed, setFailed] = useState(false);
+  // A renewed URL for the same file retries a failed load without resetting zoom.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the image viewport before paint and observe resizes to keep fit-to-view scaling accurate.
   useLayoutEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const update = () => setViewport({ width: node.clientWidth, height: node.clientHeight });
+    if (!viewportElement) return;
+    const update = () =>
+      setViewport({ width: viewportElement.clientWidth, height: viewportElement.clientHeight });
     update();
-    return observeResize(node, update);
-  }, []);
+    return observeResize(viewportElement, update);
+  }, [viewportElement]);
   const fit = natural.width
     ? Math.min(
         1,
@@ -34,7 +35,7 @@ export default function PreviewImageContent(props: {
     : 1;
   const scale = zoom ?? fit;
   const changeZoom = (factor: number) => setZoom(Math.max(0.05, Math.min(8, scale * factor)));
-  if (failed) return <FileSurfaceFailure message="Unable to load image." />;
+  if (failedSrc === props.src) return <FileSurfaceFailure message="Unable to load image." />;
   return (
     <>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
@@ -75,7 +76,7 @@ export default function PreviewImageContent(props: {
           </FileSurfaceAction>
         </div>
       </div>
-      <div ref={ref} className="min-h-0 flex-1 overflow-auto">
+      <div ref={setViewportElement} className="min-h-0 flex-1 overflow-auto">
         <div
           className="flex min-h-full min-w-full items-center justify-center p-4"
           style={{
@@ -107,7 +108,7 @@ export default function PreviewImageContent(props: {
                 })
               }
               onError={() => {
-                setFailed(true);
+                setFailedSrc(props.src);
                 props.onError?.();
               }}
             />
