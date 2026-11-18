@@ -26,6 +26,19 @@ export const ServerProviderResetCredits = Schema.Struct({
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * How many of `availableCount` would act if redeemed now. Absent when the
+   * provider does not say; Codex reports 0 while no limit is reached.
+   */
+  usableNowCount: Schema.optional(NonNegativeInt),
+  /** Fork: Claude resets that clear only the Fable bucket, counted apart. */
+  fable: Schema.optional(
+    Schema.Struct({
+      availableCount: NonNegativeInt,
+      nextExpiresAt: Schema.optional(IsoDateTime),
+      nextCreditId: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 

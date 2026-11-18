@@ -237,32 +237,51 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
+/** A redemption's progress and its answer, once there is one. */
+export interface ResetCreditRedeemState {
+  readonly busy: boolean;
+  readonly status: string | null;
+}
+
+const IDLE_REDEEM: ResetCreditRedeemState = { busy: false, status: null };
+
+/**
+ * Where a redemption's progress lives when it must outlast the component
+ * that started it, such as a row that remounts once the reset moves it.
+ */
+export interface ResetCreditRedeemStore {
+  readonly state: ResetCreditRedeemState | null;
+  readonly onChange: (next: ResetCreditRedeemState) => void;
+}
+
 export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
+  store?: ResetCreditRedeemStore,
 ) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [own, setOwn] = useState<ResetCreditRedeemState>(IDLE_REDEEM);
+  const { busy, status } = store ? (store.state ?? IDLE_REDEEM) : own;
+  const update = store ? store.onChange : setOwn;
 
   const redeem = async () => {
     setConfirming(false);
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setBusy(true);
-    setStatus(null);
+    update({ busy: true, status: null });
     const result = await consume({ environmentId, input });
-    setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      update({ busy: false, status: result.value.warning ?? OUTCOME_TEXT[result.value.outcome] });
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
+    update({
+      busy: false,
+      status:
+        "error" in result.cause && result.cause.error instanceof Error
+          ? result.cause.error.message
+          : "Could not use the reset credit.",
+    });
   };
 
   return { canManageProviders, confirming, setConfirming, busy, status, redeem };
@@ -323,17 +342,21 @@ export function ResetCredits({
   input,
   credits,
   now,
+  store,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  /** Keeps the redemption's progress and answer outside this component. */
+  readonly store?: ResetCreditRedeemStore;
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
     input,
+    store,
   );
-  if (credits.availableCount === 0 && status === null) return null;
+  if (credits.availableCount === 0 && status === null && !busy) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>

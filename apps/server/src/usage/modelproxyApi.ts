@@ -7,14 +7,18 @@
  */
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   ProviderDriverKind,
   TrimmedNonEmptyString,
+  type ServerProviderResetCredits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
   type UsageLimitSourceProxyAccountState,
   type UsageLimitSourceProxyStatus,
 } from "@lathe/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -28,6 +32,18 @@ import {
 const Runway = Schema.Struct({
   kind: Schema.Literals(["at", "idle", "beyondHorizon", "resetsFirst", "unknown", "disabled"]),
   at: Schema.optional(Schema.String),
+});
+const ResetCredit = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  expiresAt: Schema.optional(Schema.String),
+});
+/** The gateway's banked limit resets for one subscription account. */
+const ResetCredits = Schema.Struct({
+  weekly: Schema.Number,
+  usableNow: Schema.Number,
+  fable: Schema.optional(Schema.Number),
+  nextWeekly: Schema.optional(ResetCredit),
+  nextFable: Schema.optional(ResetCredit),
 });
 const Account = Schema.Struct({
   name: Schema.String,
@@ -51,6 +67,9 @@ const Account = Schema.Struct({
   coolingUntil: Schema.optional(Schema.String),
   circuits: Schema.optional(Schema.Array(Schema.Struct({ state: Schema.String }))),
   health: Schema.optional(Schema.Struct({ state: Schema.String })),
+  // Absent from gateways that predate reset credits, and until a probe reads them.
+  // One the build cannot read is dropped rather than costing the whole status.
+  resetCredits: ForwardCompatibleOptional(ResetCredits),
 });
 /** `model` routes rename a request; `fallback` routes spill a spent model elsewhere. */
 const Route = Schema.Struct({
@@ -77,6 +96,16 @@ type ModelproxyAccount = typeof Account.Type;
 const decodeStatus = Schema.decodeUnknownEffect(ModelproxyStatus);
 const decodeStatusJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ModelproxyStatus));
 
+/** The gateway's answer to a redemption; the outcome stays open so a newer gateway's word still reads. */
+const RedeemReply = Schema.Struct({ outcome: Schema.String });
+const decodeRedeemReplyJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RedeemReply));
+
+/** The gateway spends the credit and re-probes the account (bounded at 30s) before it answers. */
+const REDEEM_TIMEOUT = "90 seconds";
+const REDEEM_MAY_HAVE_APPLIED =
+  "The reset may have applied. Trying again will not spend a second credit.";
+const REDEEM_UNANSWERED = `The gateway did not answer. ${REDEEM_MAY_HAVE_APPLIED}`;
+
 const STREAM_IDLE_TIMEOUT = "45 seconds";
 
 export class ModelproxyReadError extends Schema.TaggedError<ModelproxyReadError>()(
@@ -93,6 +122,8 @@ export class ModelproxyReadError extends Schema.TaggedError<ModelproxyReadError>
     transient: Schema.optional(Schema.Boolean),
     /** The gateway predates the status stream; only the polled read works there. */
     unsupported: Schema.optional(Schema.Boolean),
+    /** The HTTP status of a redeem the gateway answered with an error. */
+    status: Schema.optional(Schema.Number),
   },
 ) {
   override get message(): string {
@@ -161,6 +192,40 @@ function windows(account: ModelproxyAccount, nowMs: number): ServerProviderUsage
   return out;
 }
 
+const count = (value: number | undefined) => Math.max(0, Math.round(value ?? 0));
+
+/** A timestamp the contract accepts, or nothing. */
+function isoOrNone(value: string | undefined): { nextExpiresAt?: string } {
+  const at = value ? DateTime.make(value) : Option.none();
+  return Option.isSome(at) ? { nextExpiresAt: DateTime.formatIso(at.value) } : {};
+}
+
+/**
+ * The gateway resolves the real grant, so the credit id Lathe holds names
+ * only the kind: "weekly" or "fable".
+ */
+function resetCredits(account: ModelproxyAccount): ServerProviderResetCredits | undefined {
+  const credits = account.resetCredits;
+  if (!credits) return undefined;
+  const weekly = count(credits.weekly);
+  const fable = count(credits.fable);
+  return {
+    availableCount: weekly,
+    usableNowCount: Math.min(weekly, count(credits.usableNow)),
+    ...(weekly > 0 ? { nextCreditId: "weekly" } : {}),
+    ...(weekly > 0 ? isoOrNone(credits.nextWeekly?.expiresAt) : {}),
+    ...(fable > 0
+      ? {
+          fable: {
+            availableCount: fable,
+            nextCreditId: "fable",
+            ...isoOrNone(credits.nextFable?.expiresAt),
+          },
+        }
+      : {}),
+  };
+}
+
 function accountState(
   account: ModelproxyAccount,
   nowMs: number,
@@ -200,17 +265,19 @@ export function mapModelproxyStatus(
     const driver = driverFor(account.provider);
     if (driver === null) continue;
     const observed = windows(account, input.nowMs);
+    const credits = resetCredits(account);
+    const limits =
+      observed.length > 0
+        ? makeUsageLimits({ checkedAt: input.checkedAt, windows: observed })
+        : makeUnavailableUsageLimits({
+            checkedAt: input.checkedAt,
+            reason: "probeFailed",
+            message: "The gateway has not observed this account's windows yet.",
+          });
     accounts.push({
       id: account.name,
       driver,
-      usageLimits:
-        observed.length > 0
-          ? makeUsageLimits({ checkedAt: input.checkedAt, windows: observed })
-          : makeUnavailableUsageLimits({
-              checkedAt: input.checkedAt,
-              reason: "probeFailed",
-              message: "The gateway has not observed this account's windows yet.",
-            }),
+      usageLimits: credits ? { ...limits, resetCredits: credits } : limits,
       proxy: {
         state: accountState(account, input.nowMs),
         ...(account.coolingUntil && !elapsed(account.coolingUntil, input.nowMs)
@@ -396,7 +463,87 @@ export const makeModelproxyApi = Effect.gen(function* () {
       }),
     );
 
-  return { readStatus, streamStatus };
+  /** Spends one of a pooled account's banked resets; answers the gateway's outcome. */
+  const redeemResetCredit = Effect.fn("ModelproxyApi.redeemResetCredit")(function* (
+    baseUrl: string,
+    accessToken: string,
+    input: {
+      readonly account: string;
+      readonly kind: "weekly" | "fable";
+      readonly requestId: string;
+    },
+  ): Effect.fn.Return<string, ModelproxyReadError> {
+    const url = yield* Effect.try({
+      try: () =>
+        new URL(
+          `/api/accounts/${encodeURIComponent(input.account)}/reset-credits/redeem`,
+          baseUrl,
+        ).toString(),
+      catch: () => new ModelproxyReadError({ detail: "The gateway URL is not valid." }),
+    });
+    const exchange = Effect.gen(function* () {
+      const response = yield* client
+        .execute(
+          HttpClientRequest.post(url).pipe(
+            HttpClientRequest.setHeader("Authorization", `Bearer ${accessToken}`),
+            HttpClientRequest.bodyJsonUnsafe({ kind: input.kind, requestId: input.requestId }),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            () => new ModelproxyReadError({ detail: REDEEM_UNANSWERED, transient: true }),
+          ),
+        );
+      if (response.status === 401 || response.status === 403) {
+        return yield* new ModelproxyReadError({
+          detail: `The gateway rejected the session (HTTP ${response.status}).`,
+          unauthorized: true,
+          status: response.status,
+        });
+      }
+      if (response.status < 200 || response.status >= 300) {
+        const reason = yield* response.json.pipe(
+          Effect.map((body) =>
+            typeof body === "object" && body !== null && "error" in body ? String(body.error) : "",
+          ),
+          Effect.orElseSucceed(() => ""),
+        );
+        return yield* new ModelproxyReadError({
+          detail:
+            response.status === 404
+              ? "The gateway cannot redeem resets for this account."
+              : `The gateway could not redeem the reset (HTTP ${response.status})${reason ? `: ${reason}` : "."}`,
+          status: response.status,
+          ...(response.status >= 500 ? { transient: true } : {}),
+        });
+      }
+      const text = yield* response.text.pipe(
+        Effect.mapError(
+          () => new ModelproxyReadError({ detail: REDEEM_UNANSWERED, transient: true }),
+        ),
+      );
+      const body = yield* decodeRedeemReplyJson(text).pipe(
+        Effect.mapError(
+          () =>
+            new ModelproxyReadError({
+              detail: `The gateway's answer was not understood. ${REDEEM_MAY_HAVE_APPLIED}`,
+            }),
+        ),
+      );
+      return body.outcome;
+    });
+    // The gateway spends the credit and then re-probes the account, which
+    // can take up to a minute. One bound covers the request and its body.
+    return yield* exchange.pipe(
+      Effect.timeoutOrElse({
+        duration: REDEEM_TIMEOUT,
+        orElse: () =>
+          Effect.fail(new ModelproxyReadError({ detail: REDEEM_UNANSWERED, transient: true })),
+      }),
+    );
+  });
+
+  return { readStatus, streamStatus, redeemResetCredit };
 });
 
 export type ModelproxyApi = Effect.Success<typeof makeModelproxyApi>;

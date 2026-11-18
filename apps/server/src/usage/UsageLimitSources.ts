@@ -13,6 +13,7 @@ import {
   type UsageLimitSourceConsumeResetCreditInput,
   CliproxyUsageLimitSourceConfig,
   type ModelproxyUsageLimitSourceConfig,
+  type ProviderConsumeResetCreditOutcome,
   type ProviderConsumeResetCreditResult,
   type ServerSettings,
   type UsageLimitSourceConfig,
@@ -30,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -143,11 +145,30 @@ function missingManagementKey(config: CliproxyUsageLimitSourceConfig): string {
     : "Could not read the management key from its secret provider.";
 }
 
+const GATEWAY_REDEEM_OUTCOMES: Record<string, ProviderConsumeResetCreditOutcome> = {
+  reset: "reset",
+  nothingToReset: "nothingToReset",
+  noCredit: "noCredit",
+  alreadyRedeemed: "alreadyRedeemed",
+};
+const GATEWAY_REDEEM_REFUSALS: Record<string, string> = {
+  coolingDown: "Resets on this account are cooling down. Try again later.",
+  rateLimited: "The provider is rate limiting resets. Try again soon.",
+  signedOut: "The account must log in again on the gateway before it can redeem resets.",
+  unconfirmed:
+    "The provider could not confirm the reset. If the account is still limited in a moment, try again.",
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const modelproxy = yield* makeModelproxyApi;
   const modelproxyAuth = yield* makeModelproxyAuth;
+  // Fork: one request id per account and kind until the gateway gives a
+  // settled answer, so a retry after "unconfirmed" or a dropped connection
+  // cannot spend a second credit.
+  const pendingRedeems = yield* Ref.make(new Map<string, string>());
+  const random = yield* SecureRandom.SecureRandom;
   const accountLogins = yield* makeModelproxyAccountLogin;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
@@ -389,6 +410,24 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Publishes one source's read the way `refresh` does, so a failed read
+   * after a redemption keeps the last good accounts and the gateway's routes.
+   * The caller holds the refresh lock.
+   */
+  const publishRead = Effect.fn("UsageLimitSources.publishRead")(function* (
+    id: UsageLimitSourceId,
+    read: SourceRead,
+  ) {
+    const settle = {
+      nowMs: DateTime.toEpochMillis(yield* DateTime.now),
+      intervalMs: yield* intervalMs,
+    };
+    yield* publishWith((previous) =>
+      previous.map((source) => (source.id === id ? settleRead(read, previous, settle) : source)),
+    );
+  });
+
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
@@ -397,6 +436,74 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
     const config = settings.usageLimitSources[input.sourceId];
+    if (config?.enabled && config.kind === "modelproxy") {
+      const kind =
+        input.creditId === "weekly" || input.creditId === "fable" ? input.creditId : null;
+      if (kind === null) {
+        return yield* new UsageLimitSourceError({
+          detail: "A gateway account redeems weekly or Fable resets only.",
+        });
+      }
+      const key = `${input.sourceId}\u0000${input.accountId}\u0000${kind}`;
+      const requestId = (yield* Ref.get(pendingRedeems)).get(key) ?? (yield* random.uuidV4());
+      yield* Ref.update(pendingRedeems, (pending) => new Map(pending).set(key, requestId));
+      const redeemWith = (forceRefresh: boolean) =>
+        modelproxyAuth.accessToken(input.sourceId, config, { forceRefresh }).pipe(
+          Effect.flatMap((token) =>
+            modelproxy.redeemResetCredit(config.url, token, {
+              account: input.accountId,
+              kind,
+              requestId,
+            }),
+          ),
+        );
+      // Only a settled answer releases the id. Everything else (unconfirmed,
+      // a refusal, a 502, a dropped connection) keeps it, because an earlier
+      // attempt under the same id may have spent the credit, and the gateway
+      // binds the id to that credit so a retry can never spend a second one.
+      let redeemed = yield* redeemWith(false).pipe(Effect.result);
+      // A token its expiry still vouches for can be rejected (a revoked
+      // session, a rotated signing key). The gateway refused the request
+      // before spending anything, so the same id goes out again with a fresh one.
+      if (
+        redeemed._tag === "Failure" &&
+        redeemed.failure._tag === "ModelproxyReadError" &&
+        redeemed.failure.unauthorized
+      ) {
+        redeemed = yield* redeemWith(true).pipe(Effect.result);
+      }
+      if (redeemed._tag === "Failure") {
+        const failure = redeemed.failure;
+        if (failure._tag === "ModelproxyReadError" && failure.status === 400) {
+          yield* Effect.logWarning("gateway refused a reset redemption as malformed", {
+            source: input.sourceId,
+            account: input.accountId,
+            kind,
+            detail: failure.detail,
+          });
+        }
+        return yield* new UsageLimitSourceError({ detail: failure.detail });
+      }
+      const outcome = redeemed.success;
+      // Own keys only, so an outcome such as "constructor" never reads as settled.
+      const known = Object.hasOwn(GATEWAY_REDEEM_OUTCOMES, outcome)
+        ? GATEWAY_REDEEM_OUTCOMES[outcome]
+        : undefined;
+      if (known) {
+        yield* Ref.update(pendingRedeems, (pending) => {
+          const next = new Map(pending);
+          next.delete(key);
+          return next;
+        });
+      }
+      yield* publishRead(input.sourceId, yield* readSource(input.sourceId, config));
+      if (known) return { outcome: known };
+      return yield* new UsageLimitSourceError({
+        detail: Object.hasOwn(GATEWAY_REDEEM_REFUSALS, outcome)
+          ? (GATEWAY_REDEEM_REFUSALS[outcome] ?? "")
+          : `The gateway answered "${outcome}".`,
+      });
+    }
     if (!config?.enabled || config.kind !== "cliproxy") {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
@@ -411,9 +518,7 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
-    const { snapshot } = yield* readSource(input.sourceId, config);
-    const previous = yield* Ref.get(stateRef);
-    yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
+    yield* publishRead(input.sourceId, yield* readSource(input.sourceId, config));
     return result;
   }, refreshLock.withPermits(1));
 

@@ -5,12 +5,15 @@
  * window's reset governs, else the fleet forecast, else the horizon.
  */
 import type {
+  ServerProviderResetCredits,
   ServerProviderUsageWindow,
   UsageLimitSourceAccount,
   UsageLimitSourceAccountLogin,
   UsageLimitSourceSnapshot,
 } from "@lathe/contracts";
 import { formatDuration } from "@lathe/shared/usageLimits";
+
+import type { ResetCreditRedeemState } from "../usage/UsageLimits";
 
 export type ProxyTone = "ok" | "warn" | "crit" | "muted";
 export type ProxyWindowGlyph = "feather";
@@ -51,6 +54,8 @@ export interface ProxyAccountView {
   readonly needsLogin: boolean;
   /** The account's open login on the gateway, if any. */
   readonly login: ProxyLoginView | null;
+  /** Banked limit resets, or null when none are known or banked. */
+  readonly resetCredits: ProxyResetCreditsView | null;
 }
 
 /**
@@ -67,6 +72,30 @@ export interface ProxyLoginView {
   readonly verificationUrl: string | null;
   /** What to tell the user beside the step; null when the step says it all. */
   readonly message: string | null;
+}
+
+/** One row's reset chip and what the card may redeem. */
+export interface ProxyResetCreditsView {
+  /** `↻1`, or `↻1 · F3` when Fable resets are banked too. */
+  readonly text: string;
+  /** None of the weekly resets would act now (Codex before a limit is hit). */
+  readonly muted: boolean;
+  readonly tooltip: string;
+  /** Weekly resets to redeem, credit id "weekly"; null when none. */
+  readonly weekly: ServerProviderResetCredits | null;
+  /** Fable resets to redeem, credit id "fable"; null when none. */
+  readonly fable: ServerProviderResetCredits | null;
+}
+
+/** The bucket a gateway credit id names; the gateway resolves the real grant. */
+export type ProxyResetCreditKind = "weekly" | "fable";
+
+/** One bucket a card row offers to redeem, with the redemption it holds, if any. */
+export interface ProxyResetCreditSlot {
+  readonly kind: ProxyResetCreditKind;
+  /** The bucket, or an empty one once the last credit is spent. */
+  readonly credits: ServerProviderResetCredits;
+  readonly redeem: ResetCreditRedeemState | null;
 }
 
 export interface ProxyAccountGroup {
@@ -185,6 +214,64 @@ function countdown(at: string | undefined, now: number, seconds = false): string
   if (!Number.isFinite(ms)) return "";
   if (ms <= 0) return "now";
   return seconds ? formatCountdownSeconds(ms) : formatDuration(ms);
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** `, next expires in 2h 0m`, `, next expires now` once passed, or nothing when unreadable. */
+function expiry(at: string | undefined, now: number): string {
+  const left = countdown(at, now, false);
+  if (left === "") return "";
+  return left === "now" ? ", next expires now" : `, next expires in ${left}`;
+}
+
+export function resetCreditsView(
+  credits: ServerProviderResetCredits | undefined,
+  now: number,
+): ProxyResetCreditsView | null {
+  if (!credits) return null;
+  const { fable: _fable, ...weeklyBucket } = credits;
+  const weekly = credits.availableCount;
+  const fable = credits.fable?.availableCount ?? 0;
+  if (weekly === 0 && fable === 0) return null;
+  const muted = weekly > 0 && credits.usableNowCount === 0;
+  const lines: string[] = [];
+  if (weekly > 0)
+    lines.push(`${plural(weekly, "weekly reset")}${expiry(credits.nextExpiresAt, now)}`);
+  if (fable > 0) {
+    lines.push(`${plural(fable, "Fable reset")}${expiry(credits.fable?.nextExpiresAt, now)}`);
+  }
+  if (muted) lines.push("None usable until a limit is reached");
+  return {
+    text: `↻${weekly}${fable > 0 ? ` · F${fable}` : ""}`,
+    muted,
+    tooltip: lines.join("\n"),
+    weekly: weekly > 0 ? weeklyBucket : null,
+    fable: credits.fable && fable > 0 ? { ...credits.fable } : null,
+  };
+}
+
+/** Where the card keeps one account's redemption of one kind. */
+export const resetRedeemKey = (accountId: string, kind: ProxyResetCreditKind) =>
+  `${accountId}:${kind}`;
+
+/**
+ * The buckets a card row shows: each one with resets banked, and each one
+ * whose redemption is in flight or answered. A reset can spend the last
+ * credit and move the account to another group in one update, so the answer
+ * outlives both the count and the row it was started from.
+ */
+export function resetCreditSlots(
+  account: Pick<ProxyAccountView, "id" | "resetCredits">,
+  redeems: ReadonlyMap<string, ResetCreditRedeemState>,
+): ProxyResetCreditSlot[] {
+  return (["weekly", "fable"] as const).flatMap((kind) => {
+    const bucket = account.resetCredits?.[kind] ?? null;
+    const held = redeems.get(resetRedeemKey(account.id, kind)) ?? null;
+    const redeem = held && (held.busy || held.status !== null) ? held : null;
+    if (bucket === null && redeem === null) return [];
+    return [{ kind, credits: bucket ?? { availableCount: 0 }, redeem }];
+  });
 }
 
 function spent(window: ServerProviderUsageWindow, threshold: number, now: number): boolean {
@@ -312,6 +399,7 @@ function accountView(
     resumesAtMs: resumesAt && Number.isFinite(Date.parse(resumesAt)) ? Date.parse(resumesAt) : null,
     needsLogin: proxy?.state === "reauthentication",
     login: input.login ? loginView(input.login) : null,
+    resetCredits: resetCreditsView(account.usageLimits.resetCredits, input.now),
   };
 }
 

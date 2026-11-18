@@ -1,9 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  HttpClient,
+  HttpClientError,
+  type HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import { makeModelproxyApi, mapModelproxyStatus, ModelproxyStatus } from "./modelproxyApi.ts";
 
@@ -158,6 +165,7 @@ const raw = {
   generatedAt: iso(0),
 };
 const decodeStatus = Schema.decodeUnknownSync(ModelproxyStatus);
+const decodeTypedStatus = Schema.decodeSync(ModelproxyStatus);
 const status = decodeStatus(raw);
 
 describe("mapModelproxyStatus", () => {
@@ -233,6 +241,85 @@ describe("mapModelproxyStatus", () => {
     expect(mapModelproxyStatus(decoded, { checkedAt: iso(0), nowMs: now }).proxy.routes).toBe(
       undefined,
     );
+  });
+});
+
+describe("mapModelproxyStatus reset credits", () => {
+  const base = {
+    current: "",
+    threshold: 0.9,
+    inflightTotal: 0,
+    queueDepth: 0,
+    forecast: { fleet: { kind: "idle" as const } },
+  };
+  const subscription = (name: string, provider: string, extra: Record<string, unknown>) => ({
+    name,
+    type: "oauth",
+    provider,
+    current: false,
+    disabled: false,
+    util5h: 0.1,
+    has5h: true,
+    util7d: 0.2,
+    has7d: true,
+    spendUsd: 0,
+    inflight: 0,
+    ...extra,
+  });
+
+  it("maps weekly, usable-now and Fable counts, keyed by kind", () => {
+    const status = decodeTypedStatus({
+      ...base,
+      accounts: [
+        subscription("claude-1", "anthropic", {
+          resetCredits: {
+            weekly: 1,
+            usableNow: 1,
+            fable: 2,
+            nextWeekly: { id: "full-reset-2611", expiresAt: "2026-12-10T22:00:00Z" },
+            nextFable: { id: "launch-2610-fable", expiresAt: "2027-03-09T07:59:00Z" },
+          },
+        }),
+        subscription("codex-james", "openai", { resetCredits: { weekly: 3, usableNow: 0 } }),
+        subscription("old", "anthropic", {}),
+      ],
+    });
+    const { accounts } = mapModelproxyStatus(status, { checkedAt: iso(0), nowMs: now });
+    const byId = new Map(accounts.map((account) => [account.id, account]));
+
+    expect(byId.get("claude-1")?.usageLimits.resetCredits).toEqual({
+      availableCount: 1,
+      usableNowCount: 1,
+      nextCreditId: "weekly",
+      nextExpiresAt: "2026-12-10T22:00:00.000Z",
+      fable: {
+        availableCount: 2,
+        nextCreditId: "fable",
+        nextExpiresAt: "2027-03-09T07:59:00.000Z",
+      },
+    });
+    expect(byId.get("codex-james")?.usageLimits.resetCredits).toEqual({
+      availableCount: 3,
+      usableNowCount: 0,
+      nextCreditId: "weekly",
+    });
+    expect(byId.get("old")?.usageLimits.resetCredits).toBeUndefined();
+  });
+
+  it("drops reset credits it cannot read without losing the status", () => {
+    const status = decodeTypedStatus({
+      ...base,
+      accounts: [
+        subscription("drifted", "anthropic", { resetCredits: { weekly: "one" } }),
+        subscription("nulled", "anthropic", { resetCredits: null }),
+      ],
+    });
+    const { accounts } = mapModelproxyStatus(status, { checkedAt: iso(0), nowMs: now });
+    expect(accounts.map((account) => account.id)).toEqual(["drifted", "nulled"]);
+    for (const account of accounts) {
+      expect(account.usageLimits.resetCredits).toBeUndefined();
+      expect(account.usageLimits.windows.length).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -372,6 +459,89 @@ describe("makeModelproxyApi.streamStatus", () => {
         ),
       );
       expect(page.unsupported).toBe(true);
+    }),
+  );
+});
+
+describe("makeModelproxyApi.redeemResetCredit", () => {
+  const redeemWith = (
+    respond: (
+      request: HttpClientRequest.HttpClientRequest,
+    ) => Effect.Effect<Response, HttpClientError.HttpClientError>,
+  ) =>
+    makeModelproxyApi.pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          respond(request).pipe(
+            Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+          ),
+        ),
+      ),
+    );
+  const input = { account: "claude-1", kind: "weekly" as const, requestId: "req-1" };
+  /** A 200 whose body never finishes arriving. */
+  const stalledBody = () => new Response(new ReadableStream({ start: () => {} }), { status: 200 });
+
+  it.effect("waits for a redeem that takes a minute", () =>
+    Effect.gen(function* () {
+      const api = yield* redeemWith(() =>
+        Effect.as(Effect.sleep("60 seconds"), Response.json({ outcome: "reset" })),
+      );
+      const fiber = yield* api
+        .redeemResetCredit("https://iris.test", "token", input)
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("61 seconds");
+      expect(yield* Fiber.join(fiber)).toBe("reset");
+    }),
+  );
+
+  it.effect(
+    "bounds the request and its body by one timeout, and says the reset may have applied",
+    () =>
+      Effect.gen(function* () {
+        const api = yield* redeemWith(() => Effect.as(Effect.sleep("60 seconds"), stalledBody()));
+        const fiber = yield* api
+          .redeemResetCredit("https://iris.test", "token", input)
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust("89 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust("1 second");
+        const failure = yield* Fiber.join(fiber);
+        expect(failure.transient).toBe(true);
+        expect(failure.detail).toContain("may have applied");
+        expect(failure.detail).toContain("will not spend a second credit");
+      }),
+  );
+
+  it.effect("says the reset may have applied when the connection fails", () =>
+    Effect.gen(function* () {
+      const api = yield* redeemWith((request) =>
+        Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, description: "reset by peer" }),
+          }),
+        ),
+      );
+      const failure = yield* api
+        .redeemResetCredit("https://iris.test", "token", input)
+        .pipe(Effect.flip);
+      expect(failure.transient).toBe(true);
+      expect(failure.detail).toContain("may have applied");
+      expect(failure.detail).toContain("will not spend a second credit");
+    }),
+  );
+
+  it.effect("carries the HTTP status of a refusal", () =>
+    Effect.gen(function* () {
+      const api = yield* redeemWith(() =>
+        Effect.succeed(new Response(JSON.stringify({ error: "bad kind" }), { status: 400 })),
+      );
+      const failure = yield* api
+        .redeemResetCredit("https://iris.test", "token", input)
+        .pipe(Effect.flip);
+      expect(failure.status).toBe(400);
+      expect(failure.detail).toContain("bad kind");
     }),
   );
 });
