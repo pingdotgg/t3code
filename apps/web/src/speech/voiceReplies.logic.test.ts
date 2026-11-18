@@ -1,7 +1,7 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { latestReply } from "./voiceReplies.logic";
+import { latestReply, markSpokenReply } from "./voiceReplies.logic";
 
 type Run = OrchestrationV2ThreadProjection["runs"][number];
 type Item = OrchestrationV2ThreadProjection["turnItems"][number];
@@ -52,4 +52,11 @@ it("waits while the answer is still streaming", () => {
 it("has nothing to read without a completed run or an answer", () => {
   expect(latestReply(projection([run("run-1", 1, "interrupted")], []))).toBeNull();
   expect(latestReply(projection([run("run-1", 1)], [answer("run-1", 1, "   ")]))).toBeNull();
+});
+
+it("marks typed messages for spoken replies only while voice is on", () => {
+  expect(markSpokenReply("Check the build", true)).toBe("🔊  Check the build");
+  expect(markSpokenReply("Check the build", false)).toBe("Check the build");
+  expect(markSpokenReply("/compact", true)).toBe("/compact");
+  expect(markSpokenReply("🎙  spoken words", true)).toBe("🎙  spoken words");
 });

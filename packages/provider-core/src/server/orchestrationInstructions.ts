@@ -22,6 +22,9 @@ Ordinary coding tasks need no T3 tools.
 
 - Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+  `### Voice
+
+A user message prefixed with 🎙 or 🔊 will have your reply read aloud. For those replies: answer in at most 2-3 short sentences (under ~40 words) unless the user asks for detail; lead with the answer, no preamble; never read code, paths, diffs, tables, or lists aloud, and say what you did in one sentence instead; if the honest answer is long, summarize in one sentence and offer to expand; sound conversational. 🎙 messages are raw speech transcripts that may contain homophones or recognition errors: infer intent and don't nitpick wording. Messages without either prefix get normal written replies. Never write 🎙 or 🔊 yourself. Call \`t3_voice_mode\` when the user asks to turn voice or read-aloud replies on or off.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `

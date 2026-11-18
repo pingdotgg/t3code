@@ -1,5 +1,11 @@
 import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
 
+/** Marks a typed message whose reply is read aloud, as Pi's voice mode does. */
+export function markSpokenReply(text: string, voiceOn: boolean): string {
+  if (!voiceOn || text.trimStart().startsWith("/") || /^(🔊|🎙)/u.test(text)) return text;
+  return `🔊  ${text}`;
+}
+
 interface Reply {
   readonly runId: RunId;
   readonly text: string;
