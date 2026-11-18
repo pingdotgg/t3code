@@ -252,7 +252,7 @@ describe("attachmentUploadQueue", () => {
     ["expired", { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } }],
   ])(
     "keeps the %s upload failed when write access is revoked during verification",
-    async (_, result) => {
+    async (kind, result) => {
       const image = makeImage("revoke-during-verification");
       useAttachmentUploadStore.setState({
         uploadsByImageId: {
@@ -292,6 +292,10 @@ describe("attachmentUploadQueue", () => {
       expect(request).toBeDefined();
       request?.complete();
       await settled;
+      const removedIds = mocks.runAtomCommand.mock.calls.flatMap(([, command, target]) =>
+        command === mocks.removeUpload ? [target.input.attachmentId] : [],
+      );
+      expect(removedIds).toEqual(kind === "damaged" ? ["pending-original"] : []);
       expect(
         getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
       ).toMatchObject([{ id: "pending-environment-1-revoke-during-verification.png" }]);
@@ -658,6 +662,35 @@ describe("attachmentUploadQueue", () => {
     releaseAttachmentUpload(image.id);
     expect(readAttachmentUpload(image.id)).toBeUndefined();
     expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes a damaged draft upload only once when removed after access returns", () => {
+    const file = {
+      ...makeFile("remove-damaged"),
+      uploadEnvironmentId: firstEnvironment,
+      uploadedAttachmentId: "pending-original",
+    };
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "failed",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+          reason: "This connection cannot upload attachments.",
+          retryMode: "replace",
+        },
+      },
+    });
+
+    releaseDraftAttachment(file);
+
+    expect(readAttachmentUpload(file.id)).toBeUndefined();
+    expect(mocks.runAtomCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      mocks.removeUpload,
+      { environmentId: firstEnvironment, input: { attachmentId: "pending-original" } },
+      expect.anything(),
+    );
   });
 
   it("does not delete a persisted upload using another environment's grant", () => {

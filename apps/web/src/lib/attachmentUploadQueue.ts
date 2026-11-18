@@ -508,7 +508,8 @@ export function releasePersistedAttachmentUpload(input: {
 }): void {
   const upload = readAttachmentUpload(input.id);
   if (
-    upload?.status === "ready" &&
+    upload &&
+    upload.status !== "uploading" &&
     upload.environmentId === input.environmentId &&
     upload.attachmentId === input.attachmentId
   ) {
@@ -626,6 +627,7 @@ export async function refreshExpiredAttachmentUploads(input: {
             status: "failed",
             environmentId: input.environmentId,
             retryMode: "replace",
+            ...(verification.status === "mismatched" ? { attachmentId: upload.attachmentId } : {}),
             ...uploadFailureReason(msg("This connection cannot upload attachments.")),
           });
           return;
