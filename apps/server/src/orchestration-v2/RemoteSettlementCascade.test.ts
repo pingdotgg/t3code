@@ -76,6 +76,8 @@ interface World {
   card: Partial<OrchestrationV2AppThread>;
   /** Member handshakes this server ran again for the MacBook. */
   refreshes: number;
+  /** The filter of each thread list asked of the MacBook over the link. */
+  lists: Array<unknown>;
 }
 
 const world = (): World => ({
@@ -83,6 +85,7 @@ const world = (): World => ({
   reachable: true,
   linkReachable: true,
   refreshes: 0,
+  lists: [],
   card: { id: card, settledOverride: "settled", settledAt, deletedAt: null },
 });
 
@@ -105,6 +108,8 @@ const makeLayer = (
     readonly handshake?: AuthMcpClientAccess;
     /** The linked MacBook runs a version whose thread list has no parentEnvironmentId. */
     readonly legacyPeer?: boolean;
+    /** The linked MacBook lists remote parents but runs a version from before `childrenOf`. */
+    readonly beforeChildrenOf?: boolean;
   } = {},
 ) => {
   let link =
@@ -144,9 +149,30 @@ const makeLayer = (
           );
         }
         if (input.tool === "t3_thread_list") {
+          const filter = input.arguments.childrenOf as
+            | { readonly environmentId: string; readonly threadIds: ReadonlyArray<string> }
+            | undefined;
+          state.lists.push(filter ?? "all");
+          if (filter !== undefined && (options.legacyPeer === true || options.beforeChildrenOf)) {
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: 'Unknown argument "childrenOf". Accepted arguments: allProjects, cursor.',
+              }),
+            );
+          }
           // A chat launched from a linked machine carries `delegatedFrom`, which the real list
           // leaves out unless subagents are asked for.
-          const listed = input.arguments.includeSubagents === false ? [] : macBookThreads;
+          const listed =
+            filter !== undefined
+              ? macBookThreads.filter(
+                  (thread) =>
+                    thread.parentEnvironmentId === filter.environmentId &&
+                    filter.threadIds.includes(thread.parentThreadId),
+                )
+              : input.arguments.includeSubagents === false
+                ? []
+                : macBookThreads;
           const threads = listed.map((thread) => ({
             threadId: thread.id,
             parentThreadId: options.legacyPeer === true ? null : thread.parentThreadId,
@@ -407,6 +433,25 @@ it.effect("a card settles its children on a linked machine the app is not connec
     yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     expect(targets(state.calls, "link")).toEqual(settledChildren);
   }).pipe(Effect.provide(layerWorker(state, { link: "full-access" })));
+});
+
+const childrenOfCard = { environmentId: devBox, threadIds: [card, "aged"] };
+
+it.effect.each([
+  { name: "a linked machine lists only the card's children", peer: {}, lists: [childrenOfCard] },
+  {
+    name: "a linked machine from before the parent filter lists all its chats instead",
+    peer: { beforeChildrenOf: true },
+    lists: [childrenOfCard, "all"],
+  },
+])("$name", ({ peer, lists }) => {
+  const state = world();
+  return Effect.gen(function* () {
+    yield* queue("settle");
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    expect(targets(state.calls, "link")).toEqual(settledChildren);
+    expect(state.lists).toEqual(lists);
+  }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access", ...peer })));
 });
 
 it.effect("a parent on a machine with no app settles its children on a linked machine", () => {

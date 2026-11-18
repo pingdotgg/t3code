@@ -3450,10 +3450,12 @@ const make = Effect.gen(function* () {
       }
       const listFailure = (error: unknown) =>
         failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`);
+      const { childrenOf } = input;
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
-          includeSubagents: input.includeSubagents !== false,
+          // A chat launched from another environment carries `delegatedFrom`, listed only so.
+          includeSubagents: childrenOf !== undefined || input.includeSubagents !== false,
         })
         .pipe(Effect.mapError(listFailure));
       const nowMs = yield* Clock.currentTimeMillis;
@@ -3463,7 +3465,15 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      const parents = childrenOf === undefined ? null : new Set<string>(childrenOf.threadIds);
       const candidates = projectThreads
+        .filter(
+          (thread) =>
+            parents === null ||
+            (thread.parentEnvironmentId === childrenOf?.environmentId &&
+              thread.parentThreadId != null &&
+              parents.has(thread.parentThreadId)),
+        )
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,
