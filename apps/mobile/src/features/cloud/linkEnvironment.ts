@@ -168,7 +168,7 @@ const decodeRelayOkResponse = Schema.decodeUnknownEffect(RelayOkResponse);
 export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
   "linkEnvironment.updateLinkedEnvironmentLiveActivityPreference",
 )(function* (connection: SavedRemoteConnection, liveActivitiesEnabled: boolean) {
-  if (!connection.bearerToken) return false;
+  if (!connection.bearerToken) return "unlinked" as const;
 
   const client = yield* makeEnvironmentHttpApiClient(connection.httpBaseUrl);
   return yield* client.connect
@@ -180,11 +180,11 @@ export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
     .pipe(
       Effect.flatMap((response) =>
         Effect.gen(function* () {
-          if (response.status === 404) return false;
+          if (response.status === 404) return "unsupported" as const;
           if (response.status === 200) {
             const json = yield* response.json;
             const result = yield* decodeRelayOkResponse(json);
-            return result.ok;
+            return result.ok ? ("updated" as const) : ("unlinked" as const);
           }
           return yield* new CloudEnvironmentLinkError({
             message: m(msg("Environment returned HTTP {status}."), { status: response.status }),

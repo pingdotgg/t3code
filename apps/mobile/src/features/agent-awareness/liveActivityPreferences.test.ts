@@ -35,7 +35,7 @@ vi.mock("expo-device", () => ({}));
 vi.mock("../cloud/linkEnvironment", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../cloud/linkEnvironment")>()),
   linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
-  updateLinkedEnvironmentLiveActivityPreference: vi.fn(() => Effect.succeed(true)),
+  updateLinkedEnvironmentLiveActivityPreference: vi.fn(() => Effect.succeed("updated" as const)),
 }));
 
 vi.mock("./remoteRegistration", () => ({
@@ -117,7 +117,7 @@ describe("liveActivityPreferences", () => {
 
   it.effect("only creates missing links when the session can configure Connect", () => {
     vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockReturnValueOnce(
-      Effect.succeed(false),
+      Effect.succeed("unlinked" as const),
     );
     const readOnlyConnection: SavedRemoteConnection = {
       ...connection,
@@ -144,6 +144,24 @@ describe("liveActivityPreferences", () => {
       });
     }).pipe(Effect.provide(layerTest));
   });
+
+  it.effect("reports older environments whose preferences could not be updated", () =>
+    Effect.gen(function* () {
+      vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockReturnValueOnce(
+        Effect.succeed("unsupported"),
+      );
+      const partial = yield* setLiveActivityUpdatesEnabled({
+        enabled: false,
+        previousEnabled: true,
+        clerkToken: "clerk-token",
+        connections: [connection],
+        canConfigureEnvironment: () => false,
+        canUpdateEnvironment: () => true,
+      });
+      expect(partial).toBe(true);
+      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("checks current relay access after updating the device registration", () => {
     let canConfigureEnvironment = true;

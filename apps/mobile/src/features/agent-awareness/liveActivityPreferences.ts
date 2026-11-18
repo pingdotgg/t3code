@@ -26,20 +26,20 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       enabled: boolean,
       clerkToken: string | null,
     ) {
-      if (
-        input.canUpdateEnvironment(connection.environmentId) &&
-        (yield* updateLinkedEnvironmentLiveActivityPreference(connection, enabled))
-      ) {
-        return;
+      const result = input.canUpdateEnvironment(connection.environmentId)
+        ? yield* updateLinkedEnvironmentLiveActivityPreference(connection, enabled)
+        : "unlinked";
+      if (result === "updated") return false;
+      if (!enabled || !clerkToken || !input.canConfigureEnvironment(connection.environmentId)) {
+        return result === "unsupported";
       }
-      if (!enabled || !clerkToken || !input.canConfigureEnvironment(connection.environmentId))
-        return;
 
       yield* linkEnvironmentToCloudWithPreference({
         clerkToken,
         connection,
         liveActivitiesEnabled: enabled,
       });
+      return false;
     });
 
     const updateRelayPreference = Effect.fn("updateRelayPreference")(function* (enabled: boolean) {
@@ -48,13 +48,14 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       });
 
       const clerkToken = input.clerkToken;
-      if (!clerkToken) return;
+      if (!clerkToken) return false;
 
-      yield* Effect.forEach(
+      const results = yield* Effect.forEach(
         linkedConnections,
         (connection) => updateEnvironmentPreference(connection, enabled, clerkToken),
         { concurrency: "unbounded" },
       );
+      return results.some(Boolean);
     });
 
     const restoreRelayPreference = Effect.fn("restoreRelayPreference")(function* () {
@@ -84,7 +85,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       );
     });
 
-    yield* updateRelayPreference(input.enabled).pipe(
+    return yield* updateRelayPreference(input.enabled).pipe(
       Effect.onError(() => restoreRelayPreference()),
     );
   },

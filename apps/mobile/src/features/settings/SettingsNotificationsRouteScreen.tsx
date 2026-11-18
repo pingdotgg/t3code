@@ -352,7 +352,14 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
     // Environment linking can precede device registration; only registered devices can receive Live Activities.
-    if (getAgentAwarenessRegistrationStatus() === "registered") {
+    if (updateResult.value) {
+      Dialog.alert(
+        gt("Some environments need an update"),
+        gt(
+          "The device preference was saved. Update older environment servers to apply the setting there.",
+        ),
+      );
+    } else if (getAgentAwarenessRegistrationStatus() === "registered") {
       Dialog.alert(
         Platform.OS === "android" ? gt("Ongoing activity enabled") : gt("Live Activities enabled"),
         environmentCount > 0
@@ -428,6 +435,14 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     savePreferences({ liveActivitiesEnabled: false });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("disabled");
+    if (updateResult.value) {
+      Dialog.alert(
+        gt("Some environments need an update"),
+        gt(
+          "The device preference was saved. Update older environment servers to apply the setting there.",
+        ),
+      );
+    }
   }
 
   // Both writers settle their own failures, so awaiting them never throws.
