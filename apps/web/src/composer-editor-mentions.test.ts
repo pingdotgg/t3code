@@ -1,5 +1,6 @@
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { formatNativeAppMention } from "@t3tools/shared/nativeAppMentions";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,6 +8,18 @@ import {
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
 import { formatTerminalContextReference } from "./lib/terminalContext";
+
+it("keeps a native application reference as one composer token", () => {
+  const source = formatNativeAppMention(
+    { name: "Helium", launchPath: "C:\\Apps\\Helium\\chrome.exe" },
+    "windows",
+  );
+  expect(splitPromptIntoComposerSegments(`use ${source} please`)).toEqual([
+    { type: "text", text: "use " },
+    { type: "application", href: source.slice(source.indexOf("](") + 2, -1), source },
+    { type: "text", text: " please" },
+  ]);
+});
 
 const terminalReference = formatTerminalContextReference({
   id: "ctx-1",

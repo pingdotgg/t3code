@@ -15,6 +15,10 @@
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"
     },
+    "./nativeAppMentions": {
+      "types": "./src/nativeAppMentions.ts",
+      "import": "./src/nativeAppMentions.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
@@ -630,6 +634,10 @@
     "./paletteSearchCopy": {
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
+    },
+    "./cuaDriverHostOptions": {
+      "types": "./src/cuaDriverHostOptions.ts",
+      "import": "./src/cuaDriverHostOptions.ts"
     },
     "./cuaDriverRelease": {
       "types": "./src/cuaDriverRelease.ts",

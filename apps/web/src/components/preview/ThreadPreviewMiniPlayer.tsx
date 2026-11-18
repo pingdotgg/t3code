@@ -1,10 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
-import {
-  type CuaWindowPreviewFrame,
-  FILL_PREVIEW_VIEWPORT,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
@@ -70,6 +66,7 @@ import type { ComputerUsePreview } from "./computerUsePreview";
 import { previewBridge } from "./previewBridge";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { showPreviewPopup } from "./showPreviewPopup";
+import { useComputerPreviewFrame } from "./useComputerPreviewFrame";
 import {
   type PreviewMiniPlayerGesture,
   settlePreviewMiniPlayerResize,
@@ -253,9 +250,9 @@ export function ThreadPreviewMiniPlayer({
 
 /**
  * The window an agent drives on the host computer. While a computer use turn
- * runs, the server captures that window every second and a half and streams
- * it here; the capture runs only while this card is mounted. Between turns the
- * card keeps the last frame instead of going blank.
+ * runs, the server captures that window at an adaptive rate and streams
+ * it here; the capture runs only while this card is mounted. Chat dismisses
+ * the card when the turn settles.
  */
 function ComputerMiniPlayer({
   threadRef,
@@ -264,11 +261,10 @@ function ComputerMiniPlayer({
 }: Props & { readonly preview: ComputerUsePreview | null }) {
   const gt = useGT();
   const live = useCuaWindowPreview(threadRef);
-  const [lastFrame, setLastFrame] = useState<CuaWindowPreviewFrame | null>(null);
   const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
-  if (liveFrame !== null && liveFrame !== lastFrame) setLastFrame(liveFrame);
-  const frame = liveFrame ?? lastFrame;
-  const src = frame ? `data:${frame.mimeType};base64,${frame.dataBase64}` : null;
+  const painted = useComputerPreviewFrame(liveFrame);
+  const frame =
+    live.status === "unavailable" || (live.status === "live" && !liveFrame) ? null : painted.frame;
   const sourceSize =
     frame && frame.width > 0 && frame.height > 0
       ? { width: frame.width, height: frame.height }
@@ -286,12 +282,12 @@ function ComputerMiniPlayer({
       true,
     );
   }, [viewportKey, sourceSize.width, sourceSize.height]);
-  const label = frame?.appName ?? preview?.appName ?? gt("Computer");
+  const label = frame?.appName ?? gt("Computer");
   const caption =
     frame?.windowTitle && frame.windowTitle !== label ? `${label} · ${frame.windowTitle}` : label;
   const appIcon = useAssetUrlState(
     threadRef.environmentId,
-    preview?.app ? { _tag: "native-app-icon", app: preview.app } : null,
+    frame?.app ? { _tag: "native-app-icon", app: frame.app } : null,
   );
 
   return (
@@ -307,21 +303,19 @@ function ComputerMiniPlayer({
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] bg-muted"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
         >
-          {src ? (
-            <img
-              src={src}
-              alt={caption}
-              decoding="async"
-              draggable={false}
-              className="size-full select-none object-contain"
-            />
-          ) : (
+          <canvas
+            ref={painted.canvasRef}
+            role="img"
+            aria-label={caption}
+            className={cn("size-full select-none object-contain", !frame && "hidden")}
+          />
+          {!frame ? (
             <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
               {live.status === "unavailable"
                 ? gt("Preview unavailable")
                 : gt("Waiting for the agent…")}
             </div>
-          )}
+          ) : null}
           {live.status === "unavailable" && live.detail ? (
             <div className="pointer-events-none absolute inset-x-0 top-0 truncate bg-background/80 px-2.5 py-1 text-2xs text-muted-foreground">
               {live.detail}
