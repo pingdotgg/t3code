@@ -2343,9 +2343,29 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           take: Effect.never,
         }),
       );
-      const watch = yield* watchNested(runtime);
+      // One reader: the runtime's event queue hands each event to only one taker.
+      const launchSeen = yield* Deferred.make<void>();
+      const marked = yield* Deferred.make<boolean | undefined>();
+      yield* runtime.events.pipe(
+        Stream.tap((e) =>
+          e.type !== "provider_thread.updated"
+            ? Effect.void
+            : Effect.gen(function* () {
+                const variant =
+                  e.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
+                if (variant === "thinking") yield* Deferred.succeed(launchSeen, undefined);
+                const listed = e.providerThread.pendingBackgroundTasks?.find(
+                  (task) => task.taskId === shellID,
+                );
+                // The first roster that lists the shell must hold the thread already.
+                if (listed !== undefined) yield* Deferred.succeed(marked, listed.awaited);
+              }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(() => watch.rootVariant === "thinking");
+      yield* Deferred.await(launchSeen);
       assert.deepEqual(
         yield* runtime.awaitBackgroundTasks!({
           providerThread: thread,
@@ -2354,19 +2374,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
         { matched: [shellID] },
       );
-      const marked = yield* runtime.events.pipe(
-        Stream.filter(
-          (e) =>
-            e.type === "provider_thread.updated" &&
-            e.providerThread.pendingBackgroundTasks?.some(
-              (task) => task.taskId === shellID && task.awaited === true,
-            ) === true,
-        ),
-        Stream.runHead,
-        Effect.forkScoped,
-      );
       yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
-      yield* Fiber.join(marked);
+      assert.isTrue(yield* Deferred.await(marked));
     }),
   );
 

@@ -1000,15 +1000,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
     const wakeLaunchingShell = (state: ThreadState, taskId: string) =>
-      sessionsOf(state)
-        .flatMap((session) => session.wakes)
-        .find((wake) =>
-          wake.events.some(
-            (event) =>
-              event.type === "session.tool.success" &&
-              stringField(event.data.metadata, "shellID") === taskId,
-          ),
-        );
+      (shellInfo.get(taskId)?.status ?? "running") !== "running"
+        ? undefined
+        : sessionsOf(state)
+            .flatMap((session) => session.wakes)
+            .find((wake) =>
+              wake.events.some(
+                (event) =>
+                  event.type === "session.tool.success" &&
+                  stringField(event.data.metadata, "shellID") === taskId,
+              ),
+            );
+    let replaying: Wake | undefined;
 
     const owesWork = (state: ThreadState) =>
       [...shells.values()].some((shell) => shell.state === state && shell.running) ||
@@ -1955,7 +1958,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               awaited:
                 state.providerThread.pendingBackgroundTasks?.some(
                   (task) => task.taskId === info.id && task.awaited === true,
-                ) === true,
+                ) === true || wakeLaunchingShell(state, info.id)?.awaited.has(info.id) === true,
               running: true,
               output: "",
               cursor: 0,
@@ -2852,6 +2855,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               toolId: event.data.id,
               tool,
               command: stringField(tool.input, "command") ?? "Shell command",
+              ...(replaying?.awaited.has(shellId) === true ? { awaited: true } : {}),
               running: true,
               output: "",
               cursor: 0,
@@ -4419,11 +4423,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
-      for (const taskId of wake.awaited) {
-        const shell = shells.get(taskId);
-        if (shell !== undefined) shell.awaited = true;
-      }
+      replaying = wake;
+      yield* Effect.forEach(wake.events, (event) => route(event, sessionOfEvent(event), true), {
+        discard: true,
+      }).pipe(Effect.ensuring(Effect.sync(() => (replaying = undefined))));
     });
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
