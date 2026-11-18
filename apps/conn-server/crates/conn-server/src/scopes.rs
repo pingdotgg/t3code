@@ -35,11 +35,14 @@ use generated::{ACCESS_SETTINGS, PAYLOAD_RULES, PROVIDER_SETTINGS, SCOPES};
 /// The methods [`from_payload`] decides. A test checks this list against the T3 server's own
 /// (`generated::PAYLOAD_RULES`), so a new or dropped payload rule upstream fails the build.
 #[cfg(test)]
-const HAND_PAYLOAD_RULES: [&str; 6] = [
+const HAND_PAYLOAD_RULES: [&str; 9] = [
     "assets.createUrl",
+    "device.easAccount",
+    "device.simlockIdentity",
     "git.preparePullRequestThread",
     "git.runStackedAction",
     "projects.mutate",
+    "server.listTextGeneratorModels",
     "server.retryResourceTelemetry",
     "server.updateSettings",
 ];
@@ -145,6 +148,13 @@ fn from_payload(tag: &str, payload: &Value) -> Option<Vec<&'static str>> {
             }
             scopes
         }
+        // These send the credential they are given to a URL the caller names, as a saved
+        // setting would (`containsSecretReference`).
+        "device.simlockIdentity" | "device.easAccount" | "server.listTextGeneratorModels"
+            if contains_secret_reference(payload) =>
+        {
+            vec![SETTINGS_WRITE, PROVIDERS_MANAGE]
+        }
         "git.preparePullRequestThread"
             if text(payload, "mode").as_deref() == Some("worktree")
                 && payload.get("threadId").is_some() =>
@@ -162,6 +172,19 @@ fn from_payload(tag: &str, payload: &Value) -> Option<Vec<&'static str>> {
         }
         _ => return None,
     })
+}
+
+/// `containsSecretReference`: a `{ provider, reference }` anywhere in the payload.
+fn contains_secret_reference(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            (map.get("provider").is_some_and(Value::is_string)
+                && map.get("reference").is_some_and(Value::is_string))
+                || map.values().any(contains_secret_reference)
+        }
+        Value::Array(items) => items.iter().any(contains_secret_reference),
+        _ => false,
+    }
 }
 
 /// `requiredScopesForServerSettingsPatch`: a patch needs the scope of every domain it changes.
@@ -356,6 +379,28 @@ mod tests {
         // Each hand rule answers for a payload that has none of the optional parts.
         for tag in HAND_PAYLOAD_RULES {
             assert!(is_declared(tag), "`{tag}`");
+        }
+    }
+
+    #[test]
+    fn caller_selected_secret_consumers_need_settings_and_provider_authority() {
+        for method in [
+            "device.easAccount",
+            "device.simlockIdentity",
+            "server.listTextGeneratorModels",
+        ] {
+            assert_eq!(
+                from_payload(
+                    method,
+                    &json!({"nested": [{"provider": "vault", "reference": "token"}]})
+                ),
+                Some(vec![SETTINGS_WRITE, PROVIDERS_MANAGE])
+            );
+            assert_eq!(
+                from_payload(method, &json!({"credential": "literal"})),
+                None
+            );
+            assert_eq!(from_payload(method, &json!({"provider": "vault"})), None);
         }
     }
 
