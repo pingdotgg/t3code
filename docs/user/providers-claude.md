@@ -56,7 +56,9 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Claude Code also
-compacts automatically. To see context usage, see
+compacts automatically. A message steered into a turn while Claude compacts
+automatically waits for the compaction to finish, then reaches the same turn.
+To see context usage, see
 [commands and skills](./composer.md#commands-and-skills).
 
 When you return to a large thread after Claude's prompt cache expires, a
