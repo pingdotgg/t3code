@@ -530,6 +530,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: Pick<DeviceToolPaths, "entryPath">,
     nodePath: string,
+    currentEndpoint?: DeviceHost.AgentDaemonEndpoint,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
     | DeviceHost.DeviceHostError
@@ -567,8 +568,28 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      if (alive) {
+        const endpoint = toEndpoint(existing.value);
+        if (
+          currentEndpoint?.baseUrl === endpoint.baseUrl &&
+          currentEndpoint.token === endpoint.token
+        ) {
+          return endpoint;
+        }
+        // A previous server's in-memory device sessions cannot be recovered by this host.
+        yield* stopAgentDeviceDaemon;
+        if (yield* fs.exists(daemonFilePath()).pipe(Effect.orElseSucceed(() => true))) {
+          return yield* new DeviceHost.AgentDeviceStartError({
+            hostId,
+            stateDir,
+            exitCode: null,
+            reason: "daemon_retirement_unconfirmed",
+            cause: new Error("The previous agent-device daemon retained its registration."),
+          });
+        }
+      } else {
+        yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      }
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
@@ -758,6 +779,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           const agentDevice = yield* startAgentDeviceDaemon(
             running.agentDevice,
             running.hub.nodePath,
+            running.agentDevice,
           );
           yield* Ref.set(runningRef, { ...running, agentDevice });
           return { ...toReady(running), agentDevice };

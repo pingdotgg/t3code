@@ -52,6 +52,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const daemonStop = { output: processOutput(0), removeRecord: true };
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
@@ -109,7 +110,18 @@ const agentFixture = Effect.fn("agentFixture")(function* (
         return input.args.includes("devices")
           ? startup(stateDir)
           : input.args.includes("daemon")
-            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
+            ? Deferred.succeed(daemonStopRequested, input.args).pipe(
+                Effect.andThen(() =>
+                  daemonStop.removeRecord &&
+                  daemonStop.output.code === 0 &&
+                  !daemonStop.output.timedOut
+                    ? fs
+                        .remove(path.join(stateDir, "daemon.json"), { force: true })
+                        .pipe(Effect.orDie)
+                    : Effect.void,
+                ),
+                Effect.as(daemonStop.output),
+              )
             : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
     }),
@@ -130,27 +142,36 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
+  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStop, daemonStopRequested, runs };
 });
 
 describe("AgentDevice startup", () => {
-  it.effect("restarts a cached daemon that no longer answers its health check", () =>
+  it.effect("replaces an inherited daemon and reuses only its own healthy daemon", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, daemonHealthy } = yield* agentFixture((stateDir) =>
-        Effect.gen(function* () {
-          attempts++;
-          yield* fs
-            .writeFileString(
-              `${stateDir}/daemon.json`,
-              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
-            )
-            .pipe(Effect.orDie);
-          return processOutput(0);
-        }),
+      const { host, daemonHealthy, runs } = yield* agentFixture(
+        (stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+              )
+              .pipe(Effect.orDie);
+            return processOutput(0);
+          }),
+        processOutput(0),
+        {
+          httpPort: 12345,
+          token: "previous-token",
+          pid: process.pid,
+          version: AGENT_DEVICE_VERSION,
+        },
       );
       const first = yield* host.ensureAgentReady(() => Effect.void);
+      expect(first.agentDevice?.token).toBe("token-1");
       expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice).toEqual(
         first.agentDevice,
       );
@@ -159,10 +180,39 @@ describe("AgentDevice startup", () => {
       yield* Ref.set(daemonHealthy, false);
       const restarted = yield* host.ensureAgentReady(() => Effect.void);
       expect(attempts).toBe(2);
+      expect(runs.filter((run) => run.args.includes("daemon"))).toHaveLength(1);
       expect(restarted.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { scenario: "failed stop", output: processOutput(1) },
+    { scenario: "timed-out stop", output: processOutput(0, "", "", true) },
+    { scenario: "retained registration", output: processOutput(0) },
+  ])("does not adopt the previous daemon after a $scenario", ({ output }) =>
+    Effect.gen(function* () {
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: AGENT_DEVICE_VERSION,
+      };
+      const { host, fs, stateDir, daemonStop } = yield* agentFixture(
+        () => Effect.die("Do not start a replacement until the old daemon has retired"),
+        processOutput(0),
+        previous,
+      );
+      daemonStop.output = output;
+      daemonStop.removeRecord = false;
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AgentDeviceStartError",
+        reason: "daemon_retirement_unconfirmed",
+      });
+      expect(JSON.parse(yield* fs.readFileString(`${stateDir}/daemon.json`))).toEqual(previous);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
