@@ -185,17 +185,12 @@ it("saves a newly enabled retention rule only once its age is committed", async 
   await expect.element(ruleSwitch(screen)).toBeChecked();
 });
 
-it("discards a retention draft on Escape, on leaving it untouched, or when switched back off", async () => {
+it("discards a retention draft on Escape or when switched back off", async () => {
   setup();
   await using screen = await render(panel());
   await userEvent.click(ruleSwitch(screen));
   await expect.element(daysInput(screen)).toHaveFocus();
   await userEvent.keyboard("{Escape}");
-  await expect.element(ruleSwitch(screen)).not.toBeChecked();
-
-  await userEvent.click(ruleSwitch(screen));
-  await expect.element(daysInput(screen)).toHaveFocus();
-  await userEvent.click(screen.getByRole("heading", { name: rule }));
   await expect.element(ruleSwitch(screen)).not.toBeChecked();
 
   await userEvent.click(ruleSwitch(screen));
@@ -216,6 +211,16 @@ it("saves an edited draft when focus leaves its row, not when it reaches the swi
   expect(state.update).not.toHaveBeenCalled();
   await userEvent.tab();
   expect(saves()).toEqual([{ browserArtifactsAfterDays: 30 }]);
+});
+
+it("saves an untouched draft's shown age when focus leaves its row", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(ruleSwitch(screen));
+  await expect.element(daysInput(screen)).toHaveFocus();
+  await userEvent.click(screen.getByRole("heading", { name: rule }));
+  expect(saves()).toEqual([{ browserArtifactsAfterDays: 8 }]);
+  await expect.element(ruleSwitch(screen)).toBeChecked();
 });
 
 it("saves a stepped first age only once it is committed", async () => {
