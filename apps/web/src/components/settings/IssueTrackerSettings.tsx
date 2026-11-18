@@ -283,14 +283,22 @@ function ProjectBindings({
       ?.trackers.find((candidate) => candidate.tracker === tracker.tracker);
     return connection?.connected && connection.account !== null ? connection : null;
   };
+  const scopesOn = (environmentId: EnvironmentId) => usableOn(environmentId)?.scopes ?? [];
   const projects = groups.flatMap((group) => {
-    const members = group.memberProjects.filter(
-      (member) =>
-        environmentIds.includes(member.environmentId) && usableOn(member.environmentId) !== null,
+    const inScope = group.memberProjects.filter((member) =>
+      environmentIds.includes(member.environmentId),
     );
-    return members.length === 0
-      ? []
-      : [{ key: group.projectKey, title: group.displayName, members }];
+    const members = inScope.filter((member) => usableOn(member.environmentId) !== null);
+    if (members.length === 0) return [];
+    // Only scopes every copy's environment reaches, so one pick binds them all.
+    const scopes = scopesOn(members[0]!.environmentId).filter((scope) =>
+      members.every((member) =>
+        scopesOn(member.environmentId).some((candidate) => candidate.key === scope.key),
+      ),
+    );
+    // Editing before every copy's environment has loaded would silently skip that copy.
+    const loading = inScope.some((member) => !connections.has(member.environmentId));
+    return [{ key: group.projectKey, title: group.displayName, members, scopes, loading }];
   });
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
@@ -311,7 +319,7 @@ function ProjectBindings({
           // Clearing leaves a copy bound to another tracker alone.
           scope === UNBOUND
             ? boundScope(member) !== UNBOUND
-            : usableOn(member.environmentId)?.scopes.some((candidate) => candidate.key === scope),
+            : scopesOn(member.environmentId).some((candidate) => candidate.key === scope),
         )
         .map((member) =>
           bind({
@@ -344,7 +352,7 @@ function ProjectBindings({
             control={
               <Select
                 value={value}
-                disabled={pending === project.key}
+                disabled={pending === project.key || project.loading}
                 onValueChange={(next) => {
                   if (next !== null) void change(project, next);
                 }}
@@ -357,12 +365,12 @@ function ProjectBindings({
                   <SelectValue>
                     {value === UNBOUND
                       ? "Not bound"
-                      : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)}
+                      : (project.scopes.find((scope) => scope.key === value)?.name ?? value)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectItem value={UNBOUND}>Not bound</SelectItem>
-                  {tracker.scopes.map((scope) => (
+                  {project.scopes.map((scope) => (
                     <SelectItem key={scope.key} value={scope.key}>
                       {scope.name} ({scope.key})
                     </SelectItem>
