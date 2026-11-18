@@ -129,6 +129,8 @@ test(
 
     await t3.open("/issues?selectedProjectId=demo&tracker=github&scope=example/demo&key=42");
     const loadOlder = screen.getByRole("button", "Load older comments", { exact: true });
+    // The issues route compiles on first open, which can outlast the 30 s action timeout.
+    await loadOlder.waitFor({ timeout: 60_000 });
     await loadOlder.tap();
     await screen.getByText("First older comment", { exact: true }).waitFor();
     await loadOlder.tap();
