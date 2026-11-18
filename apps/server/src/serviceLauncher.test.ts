@@ -1485,9 +1485,13 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  it.effect.each(["wal", "delete"] as const)(
-    "backs up a %s-mode database (online when WAL) and restores its final state",
-    (journalMode) =>
+  it.effect.each([
+    { journalMode: "wal", canClone: false },
+    { journalMode: "delete", canClone: false },
+    { journalMode: "wal", canClone: true },
+  ] as const)(
+    "backs up a $journalMode-mode database with clone support $canClone and restores its final state",
+    ({ journalMode, canClone }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1535,6 +1539,7 @@ if (context.update?.status === "pending") {
       backupsAtStop: readdirSync(backupRoot).map((entry) => readdirSync(backupRoot + "/" + entry)),
       rows: db.prepare("SELECT count(*) AS n FROM events").get().n,
     }));
+    ${canClone ? 'process.kill(process.pid, "SIGKILL");' : ""}
     db.close();
     process.exit(0);
   });
@@ -1562,7 +1567,7 @@ if (context.update?.status === "pending") {
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
           {
-            backupSpaceProbe: { canClone: async () => false },
+            backupSpaceProbe: { canClone: async () => canClone },
           },
         );
         yield* Effect.promise(() =>
@@ -1576,13 +1581,9 @@ if (context.update?.status === "pending") {
         assert.equal(state.update?.status, "rolled-back");
         const observed = JSON.parse(yield* fs.readFileString(observationsPath));
         // A WAL database's main file is copied before the server is asked to stop; others fall back offline.
-        assert.deepEqual(observed.backupsAtStop, journalMode === "wal" ? [["database"]] : []);
+        const online = journalMode === "wal" && !canClone;
+        assert.deepEqual(observed.backupsAtStop, online ? [["database"]] : []);
         assert.isAbove(observed.rows, 501);
-        // Only the online copy holds no -shm: the offline fallback copies the one the server left.
-        assert.deepEqual(
-          JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
-          journalMode === "wal" ? ["database", "database-wal"] : ["database"],
-        );
         const restored = new NodeSqlite.DatabaseSync(databasePath);
         try {
           assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
@@ -1601,6 +1602,15 @@ if (context.update?.status === "pending") {
         } finally {
           restored.close();
         }
+        // Only the online copy holds no -shm: the offline fallback copies the one the server left.
+        assert.deepEqual(
+          JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
+          online
+            ? ["database", "database-wal"]
+            : journalMode === "wal"
+              ? ["database", "database-shm", "database-wal"]
+              : ["database"],
+        );
       }),
   );
 

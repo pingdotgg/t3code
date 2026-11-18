@@ -2027,6 +2027,35 @@ it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusio
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each(["capture", "delete"] as const)(
+  "checkpoint %s changes only the named ref when it is symbolic",
+  (operation) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-symbolic-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const branchRef = (yield* git(["symbolic-ref", "HEAD"])).stdout.trim();
+      const originalHead = (yield* git(["rev-parse", "HEAD"])).stdout;
+      yield* git(["symbolic-ref", checkpointRef, branchRef]);
+
+      if (operation === "capture")
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      else yield* driver.checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: [checkpointRef] });
+
+      const branch = yield* driver.execute({
+        operation: "checkpoint-test.read-branch",
+        cwd,
+        args: ["rev-parse", "--verify", branchRef],
+        allowNonZeroExit: true,
+      });
+      assert.equal(branch.stdout, originalHead);
+      assert.equal(branch.exitCode, 0);
+      const refs = (yield* git(["for-each-ref", "--format=%(refname)", "refs/t3/"])).stdout;
+      assert.equal(refs, operation === "capture" ? `${checkpointRef}\n` : "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("restores and deletes checkpoints inside populated submodules", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

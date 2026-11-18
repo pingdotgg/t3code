@@ -39,6 +39,7 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -178,9 +179,31 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, shared: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, createFails: true },
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true, failureAfterCreate: "session" },
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true, failureAfterCreate: "files" },
+  {
+    order: "cleanup-first",
+    restoreFiles: true,
+    leavesFolder: true,
+    failureAfterCreate: "interrupt",
+  },
+  {
+    order: "cleanup-first",
+    restoreFiles: true,
+    leavesFolder: true,
+    failureAfterCreate: "committed",
+  },
 ])("locks rollback with %s", (row) =>
   Effect.gen(function* () {
-    const { order, restoreFiles, unmanaged, leavesFolder, shared, createFails } = row;
+    const {
+      order,
+      restoreFiles,
+      unmanaged,
+      leavesFolder,
+      shared,
+      createFails,
+      failureAfterCreate,
+    } = row;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.realPath(
@@ -201,9 +224,30 @@ it.effect.each([
     const branch = "feature/rollback";
     const release = Deferred.makeUnsafe<void>();
     const openEntered = Deferred.makeUnsafe<void>();
+    const committed = yield* Deferred.make<void>();
+    const releaseCommit = yield* Deferred.make<void>();
+    const eventStore = yield* EventStore.EventStoreV2;
+    const persistedProjections = yield* ProjectionStore.ProjectionStoreV2;
     const calls: string[] = [];
     let cleanupEntered = false;
-    const providerThread = { id: providerThreadId, providerSessionId, providerInstanceId };
+    const now = yield* DateTime.now;
+    const providerThread = {
+      id: providerThreadId,
+      driver: ProviderDriverKind.make("codex"),
+      providerSessionId,
+      providerInstanceId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle" as const,
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
     const projection = {
       thread: {
         id: threadId,
@@ -266,15 +310,47 @@ it.effect.each([
                   yield* fileSystem.exists(path.join(worktreePath, ".git")).pipe(Effect.orDie),
                 );
                 calls.push("files");
+                if (failureAfterCreate === "files")
+                  return yield* new CheckpointService.CheckpointRestoreError({
+                    scopeId,
+                    checkpointId,
+                    cause: "checkpoint ref is unavailable",
+                  });
+                yield* fileSystem
+                  .writeFileString(path.join(worktreePath, "restored.txt"), "checkpoint")
+                  .pipe(Effect.orDie);
               }),
           }),
-          Layer.mock(EventSink.EventSinkV2)({
-            write: () =>
-              Effect.sync(() => {
-                calls.push("projection");
-                return [];
+          failureAfterCreate === "committed"
+            ? EventSink.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(ProjectionStore.ProjectionStoreV2, persistedProjections),
+                    Layer.succeed(
+                      EventStore.EventStoreV2,
+                      EventStore.EventStoreV2.of({
+                        ...eventStore,
+                        publishCommitted: (events) =>
+                          eventStore.publishCommitted(events).pipe(
+                            Effect.tap(() => {
+                              calls.push("projection");
+                              return Deferred.succeed(committed, undefined).pipe(
+                                Effect.andThen(Deferred.await(releaseCommit)),
+                              );
+                            }),
+                          ),
+                      }),
+                    ),
+                  ),
+                ),
+              )
+            : Layer.mock(EventSink.EventSinkV2)({
+                write: () =>
+                  Effect.sync(() => {
+                    calls.push("projection");
+                    return [];
+                  }),
               }),
-          }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
@@ -310,6 +386,9 @@ it.effect.each([
                   });
                 }
                 calls.push("session");
+                if (failureAfterCreate === "session")
+                  return yield* Effect.die("the provider rejected the session");
+                if (failureAfterCreate === "interrupt") return yield* Effect.interrupt;
                 yield* Deferred.succeed(openEntered, undefined);
                 if (order === "rollback-first") yield* Deferred.await(release);
                 return {} as never;
@@ -356,6 +435,34 @@ it.effect.each([
       if (order === "rollback-first") assert.isFalse(cleanupEntered);
       yield* Deferred.succeed(release, undefined);
       if (cleanup !== undefined) yield* Fiber.join(cleanup);
+      if (failureAfterCreate === "committed") {
+        yield* Deferred.await(committed).pipe(
+          Effect.andThen(
+            Fiber.interrupt(rollback).pipe(Effect.forkChild({ startImmediately: true })),
+          ),
+          Effect.ensuring(Deferred.succeed(releaseCommit, undefined)),
+        );
+        assert.equal((yield* Fiber.await(rollback))._tag, "Failure");
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepEqual(
+          yield* sql`SELECT event_type FROM orchestration_events WHERE stream_id = ${threadId}`,
+          [{ event_type: "provider-thread.updated" }],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT json_extract(payload_json, '$.lastRunOrdinal') AS ordinal
+            FROM orchestration_v2_projection_provider_threads
+            WHERE provider_thread_id = ${providerThreadId}`,
+          [{ ordinal: null }],
+        );
+        assert.isTrue(yield* fileSystem.exists(path.join(worktreePath, ".git")));
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "restored.txt")),
+          "checkpoint",
+        );
+        assert.isFalse(yield* fileSystem.exists(path.join(worktreePath, "unsaved.txt")));
+        assert.deepEqual(yield* fileSystem.readDirectory(path.dirname(worktreePath)), ["feature"]);
+        return;
+      }
       if (unmanaged || shared) {
         const error = yield* Fiber.join(rollback).pipe(Effect.flip);
         assert.equal(error._tag, "CheckpointRollbackExecutionError");
@@ -366,9 +473,15 @@ it.effect.each([
         }
         return;
       }
-      if (createFails) {
-        yield* Fiber.join(rollback).pipe(Effect.exit);
-        assert.deepEqual(calls, ["cleanup", "prune", "create"]);
+      if (createFails || failureAfterCreate !== undefined) {
+        assert.equal((yield* Fiber.join(rollback).pipe(Effect.exit))._tag, "Failure");
+        assert.deepEqual(calls, [
+          "cleanup",
+          "prune",
+          "create",
+          ...(failureAfterCreate === undefined ? [] : ["session"]),
+          ...(failureAfterCreate === "files" ? ["files"] : []),
+        ]);
         assert.equal(
           yield* fileSystem.readFileString(path.join(worktreePath, "unsaved.txt")),
           "keep",
@@ -392,7 +505,17 @@ it.effect.each([
         assert.isTrue(yield* fileSystem.exists(path.join(worktreePath, "unsaved.txt")));
       }
     }).pipe(Effect.provide(testLayer));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(

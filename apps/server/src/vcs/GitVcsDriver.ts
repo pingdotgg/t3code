@@ -1762,7 +1762,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
+          args: [...durableWrite, "update-ref", "--no-deref", input.checkpointRef, commitOid],
         });
         if (untracked !== undefined) {
           yield* untrackedBlobs.remember({
@@ -2264,7 +2264,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             execute({
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
               cwd: input.cwd,
-              args: ["update-ref", "-d", checkpointRef],
+              args: ["update-ref", "--no-deref", "-d", checkpointRef],
               allowNonZeroExit: true,
             }),
           { discard: true },
