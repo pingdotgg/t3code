@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { linksAnotherLinearWorkspace } from "@t3tools/client-runtime/issue-links";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
@@ -465,10 +466,13 @@ export function IssueDetailPanel({
   reference,
   threadRef = null,
   listEntry = null,
+  linkUrl,
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
+  /** The link this issue was opened from, when a click in text opened it. */
+  linkUrl?: string | undefined;
   /** The list row this issue was opened from, shown until the detail arrives. */
   listEntry?: IssueListEntry | null;
   threadRef?: ScopedThreadRef | null;
@@ -508,6 +512,16 @@ export function IssueDetailPanel({
       );
     }
     return <IssueDetailGhost seed={listEntry} />;
+  }
+
+  if (linkUrl !== undefined && linksAnotherLinearWorkspace(linkUrl, detail.url)) {
+    return (
+      <PullRequestsUnavailableState
+        title={gt("This issue is in another Linear workspace")}
+        error={gt("The connected Linear account has an issue with the same key, not this one.")}
+        host={{ url: linkUrl, openLabel: gt("Open on Linear") }}
+      />
+    );
   }
 
   const timeline: ReadonlyArray<TimelineItem> = [

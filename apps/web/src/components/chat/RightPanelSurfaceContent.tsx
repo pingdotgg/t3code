@@ -199,6 +199,7 @@ export function RightPanelSurfaceContent(props: {
             scope: surface.scope,
             key: surface.key,
           }}
+          linkUrl={surface.url}
           threadRef={threadRef}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {

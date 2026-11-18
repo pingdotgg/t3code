@@ -133,3 +133,17 @@ function resolveLinearIssueLink<Project extends LinkProject>(input: {
     },
   };
 }
+
+/**
+ * Whether a Linear link names another workspace than the issue it opened. Team keys repeat across
+ * workspaces, so the connected one can hold an issue under the same key; only the issue's own
+ * URL says which workspace it is in, as in the server's `IssueService.resolveUrl`. Any link
+ * that is not a Linear issue link is never another workspace's.
+ */
+export function linksAnotherLinearWorkspace(linkUrl: string, issueUrl: string): boolean {
+  if (!URL.canParse(linkUrl)) return false;
+  const link = parseLinearIssueUrl(new URL(linkUrl));
+  if (link === null) return false;
+  const issue = URL.canParse(issueUrl) ? parseLinearIssueUrl(new URL(issueUrl)) : null;
+  return issue?.workspace !== link.workspace;
+}

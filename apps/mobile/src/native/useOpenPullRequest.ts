@@ -1,5 +1,8 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
-import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import {
+  linksAnotherLinearWorkspace,
+  resolveIssueLinkTarget,
+} from "@t3tools/client-runtime/issue-links";
 import {
   nativePullRequestDestination,
   pullRequestCandidateForIssueLink,
@@ -10,6 +13,7 @@ import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { issueEnvironment } from "../state/issues";
 import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { composerPullRequests } from "../state/pull-requests";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -33,6 +37,10 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     reportFailure: false,
     reportDefect: false,
   });
+  const readIssue = useAtomQueryRunner(issueEnvironment.detail, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
@@ -52,10 +60,12 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
             })
           : null;
       let issue = resolveIssue();
+      let standalone = false;
       if (!issue && environmentId) {
         // Linear links resolve through the projects bound to a team in Settings.
         const trackers = await readTrackers({ environmentId, input: {} });
         if (trackers._tag === "Success") issue = resolveIssue(trackers.value.bindings);
+        standalone = issue !== null;
       }
       if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
       const candidate = pullRequestCandidateForIssueLink(url, issue.ref);
@@ -75,6 +85,13 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
         }
         // A dropped connection says nothing about what the link names; the browser knows.
         if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
+      }
+      if (standalone) {
+        // Team keys repeat across Linear workspaces; another workspace's issue is not ours to show.
+        const detail = await readIssue({ environmentId, input: issue.ref });
+        if (detail._tag === "Success" && linksAnotherLinearWorkspace(url, detail.value.url)) {
+          return tryOpenExternalUrl(url, "pull-request");
+        }
       }
       const issueParams = {
         environmentId,

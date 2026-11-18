@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveIssueLinkTarget } from "./issueLinks.ts";
+import { linksAnotherLinearWorkspace, resolveIssueLinkTarget } from "./issueLinks.ts";
 
 const project = (id: string, repository: string) =>
   ({
@@ -103,5 +103,28 @@ describe("resolveIssueLinkTarget", () => {
     "https://linear.app/acme/issue/ENG-12",
   ])("leaves %s an ordinary link", (url) => {
     expect(resolveIssueLinkTarget({ url, projects })).toBeNull();
+  });
+});
+
+describe("linksAnotherLinearWorkspace", () => {
+  it.each([
+    {
+      link: "https://linear.app/acme/issue/ENG-12",
+      issue: "https://linear.app/acme/issue/ENG-12/a-title",
+      expected: false,
+    },
+    {
+      link: "https://linear.app/other/issue/ENG-12",
+      issue: "https://linear.app/acme/issue/ENG-12/a-title",
+      expected: true,
+    },
+    { link: "https://linear.app/acme/issue/ENG-12", issue: "not a url", expected: true },
+    {
+      link: "https://github.com/acme/web/issues/7",
+      issue: "https://github.com/acme/web/issues/7",
+      expected: false,
+    },
+  ])("$link opening $issue is another workspace's: $expected", ({ link, issue, expected }) => {
+    expect(linksAnotherLinearWorkspace(link, issue)).toBe(expected);
   });
 });

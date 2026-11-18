@@ -788,6 +788,7 @@ export function IssuesPage() {
                   scope: renderedSurface.scope,
                   key: renderedSurface.key,
                 }}
+                linkUrl={renderedSurface.url}
                 onSelectPullRequest={(reference) => {
                   useRightPanelStore.getState().openPullRequest(rightPanelRef, {
                     projectId: reference.projectId,
