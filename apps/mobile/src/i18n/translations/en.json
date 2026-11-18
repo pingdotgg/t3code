@@ -3536,6 +3536,8 @@
   "006f2c2416a56768": "Preview browser",
   "19e1f74805f4a1fb": "Agent browser access",
   "74d09db9719594eb": "Allow agents to use the in-app preview browser.",
+  "5511e975ba69f726": "Computer",
+  "53d1d96a2699764a": "Allow agents to use apps on the selected environments' computers through Cua Driver. On macOS, grant Accessibility and Screen Recording on each host.",
   "13087312bc6a0b45": "Pull requests",
   "efb65f53a2382026": "Remove agent credits when merging",
   "88631d9ea293eccd": "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
