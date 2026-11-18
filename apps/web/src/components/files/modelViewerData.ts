@@ -1,3 +1,7 @@
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
+
 /** Mesh files above this size show the preview image; the 3D view downloads files whole. */
 export const MODEL_VIEWER_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -7,7 +11,7 @@ export async function readModelBytes(
   limit: number,
   signal: AbortSignal,
 ) {
-  if (!response.ok || !response.body) throw new Error("The file could not be loaded.");
+  if (!response.ok || !response.body) throw new Error(m(msg("The file could not be loaded.")));
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -17,7 +21,7 @@ export async function readModelBytes(
       const next = await reader.read();
       if (next.done) break;
       length += next.value.length;
-      if (length > limit) throw new Error("This file is too large for the 3D view.");
+      if (length > limit) throw new Error(m(msg("This file is too large for the 3D view.")));
       chunks.push(next.value);
     }
   } finally {

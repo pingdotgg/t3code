@@ -1,10 +1,12 @@
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { modelPreviewCopy } from "@t3tools/client-runtime/file-preview";
 import type { ModelPreviewFormat } from "@t3tools/shared/filePreview";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
+import { m } from "../../i18n/messages";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAssetUrlState } from "../../state/assets";
@@ -26,7 +28,7 @@ function modelViewerPageUrl(downloadUrl: string, name: string, appearance: strin
 /** How long after the page loads the viewer has to say it is running. */
 const VIEWER_READY_TIMEOUT_MS = 10_000;
 
-const NO_VIEWER_PAGE = "This server cannot show 3D views yet.";
+const NO_VIEWER_PAGE = msg("This server cannot show 3D views yet.");
 
 type ViewerMessage =
   | { readonly type: "ready" }
@@ -56,6 +58,7 @@ function ModelWebView(props: {
   readonly name: string;
   readonly onUnavailable: (reason: string) => void;
 }) {
+  const gt = useGT();
   const { themeAppearance } = useAppearancePreferences();
   const [loaded, setLoaded] = useState(false);
   const [ready, setReady] = useState(false);
@@ -64,7 +67,7 @@ function ModelWebView(props: {
   useEffect(() => {
     if (!loaded || ready) return;
     // Older servers answer this path with their own app, which never reports in.
-    const timer = setTimeout(() => onUnavailable(NO_VIEWER_PAGE), VIEWER_READY_TIMEOUT_MS);
+    const timer = setTimeout(() => onUnavailable(m(NO_VIEWER_PAGE)), VIEWER_READY_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [loaded, ready, onUnavailable]);
   const uri =
@@ -78,7 +81,7 @@ function ModelWebView(props: {
         <View className="flex-1" pointerEvents={ready ? "auto" : "none"}>
           <WebView<object>
             source={{ uri }}
-            accessibilityLabel={`3D view of ${props.name}`}
+            accessibilityLabel={gt("3D view of {name}", { name: props.name })}
             style={{ flex: 1, backgroundColor: "transparent" }}
             // The page handles every gesture itself; nothing should scroll or zoom the WebView.
             scrollEnabled={false}
@@ -96,11 +99,11 @@ function ModelWebView(props: {
               else if (message?.type === "unavailable") props.onUnavailable(message.reason);
             }}
             // Servers from before the 3D view have no viewer page.
-            onHttpError={() => props.onUnavailable(NO_VIEWER_PAGE)}
-            onError={() => props.onUnavailable("The 3D view could not be loaded.")}
-            onRenderProcessGone={() => props.onUnavailable("The 3D view stopped unexpectedly.")}
+            onHttpError={() => props.onUnavailable(m(NO_VIEWER_PAGE))}
+            onError={() => props.onUnavailable(gt("The 3D view could not be loaded."))}
+            onRenderProcessGone={() => props.onUnavailable(gt("The 3D view stopped unexpectedly."))}
             onContentProcessDidTerminate={() =>
-              props.onUnavailable("The 3D view stopped unexpectedly.")
+              props.onUnavailable(gt("The 3D view stopped unexpectedly."))
             }
           />
         </View>
@@ -147,7 +150,9 @@ export function WorkspaceModelPreview(props: {
   readonly name: string;
   readonly previewUri: string | null;
 }) {
-  const copy = modelPreviewCopy(props.format);
+  const gt = useGT();
+  const messages = useMessages();
+  const copy = modelPreviewCopy(props.format, messages);
   const { environmentId, threadId, cwd, relativePath } = props;
   // The 3D view downloads the raw file; the picture is the inline preview URL.
   const download = useMemo<AssetResource | null>(() => {
@@ -167,14 +172,16 @@ export function WorkspaceModelPreview(props: {
   const [reported, setReported] = useState<string | null>(null);
   const problem =
     reported ??
-    (downloadUrl._tag === "Failure" ? "The file could not be loaded for the 3D view." : null);
+    (downloadUrl._tag === "Failure" ? gt("The file could not be loaded for the 3D view.") : null);
 
   if (canShow3d && mode === "3d" && problem === null) {
     return (
       <View className="flex-1 bg-card">
         <ModeBar
-          hint="Drag to orbit · pinch to zoom · two fingers pan · double-tap resets"
-          action="Picture"
+          hint={gt("Drag to orbit · pinch to zoom · two fingers pan · double-tap resets")}
+          action={gt("Picture", {
+            $context: "button that shows the rendered preview image of a 3D file",
+          })}
           onPress={() => setMode("picture")}
         />
         <ModelWebView
@@ -189,14 +196,18 @@ export function WorkspaceModelPreview(props: {
   return (
     <View className="flex-1 bg-card">
       {canShow3d && problem === null ? (
-        <ModeBar hint={copy.notice} action="3D view" onPress={() => setMode("3d")} />
+        <ModeBar
+          hint={copy.notice}
+          action={gt("3D view", { $context: "button that opens the interactive 3D viewer" })}
+          onPress={() => setMode("3d")}
+        />
       ) : (
         <FilePreviewNotice>{problem ?? copy.notice}</FilePreviewNotice>
       )}
       <WorkspaceFileImagePreview
         accessibilityLabel={props.name}
         uri={props.previewUri}
-        unavailableTitle="No preview for this file"
+        unavailableTitle={gt("No preview for this file")}
         unavailableDetail={copy.unavailable}
       />
     </View>
