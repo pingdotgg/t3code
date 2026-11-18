@@ -139,6 +139,46 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect.each([
+    { tag: "v1.3.0", availableVersion: "1.3.0" },
+    { tag: "v1.2.3", availableVersion: null },
+  ])(
+    "a build without a feed reports a newer stable release only: $tag",
+    ({ tag, availableVersion }) => {
+      const harness = makeHarness({
+        env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+        latestStableTag: tag,
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          assert.deepEqual(harness.releaseLookups, []);
+
+          yield* TestClock.adjust("15 seconds");
+          const state = yield* updates.getState;
+          assert.deepEqual(harness.releaseLookups, [
+            "https://api.github.com/repos/pingdotgg/t3code/releases/latest",
+          ]);
+          assert.equal(state.enabled, false);
+          assert.equal(state.status, "disabled");
+          assert.equal(state.availableVersion, availableVersion);
+          assert.equal(
+            state.message,
+            availableVersion === null
+              ? "Automatic updates are not available because no update feed is configured."
+              : "T3 Code 1.3.0 is out. This build does not update itself: rebase it onto v1.3.0 and rebuild.",
+          );
+          assert.equal(harness.checkCount(), 0);
+
+          yield* TestClock.adjust("4 hours");
+          assert.equal(harness.releaseLookups.length, 2);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
+
   it.effect("re-checks an offered update without announcing it again", () => {
     const harness = makeHarness();
 

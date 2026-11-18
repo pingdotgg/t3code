@@ -273,11 +273,25 @@ export function getDesktopUpdateDisabledReason(
   );
 }
 
+/** A build that cannot update itself still learns of a newer stable release to rebuild from. */
+export function getDesktopStableReleaseToBuild(
+  state: Pick<DesktopUpdateState, "enabled" | "availableVersion"> | null,
+): string | null {
+  return state !== null && !state.enabled ? state.availableVersion : null;
+}
+
 export function getDesktopUpdateIdleTooltip(
-  state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message" | "availableVersion"> | null,
   managedDenial?: string,
   resolve: MessageResolver = m,
 ) {
+  const stableRelease = getDesktopStableReleaseToBuild(state);
+  if (managedDenial === undefined && stableRelease !== null) {
+    return {
+      title: resolve(msg("T3 Code {version} available", { version: stableRelease })),
+      detail: state?.message ?? null,
+    };
+  }
   const disabledReason = getDesktopUpdateDisabledReason(state, managedDenial, resolve);
   return disabledReason
     ? { title: resolve(msg("Updates unavailable")), detail: disabledReason }

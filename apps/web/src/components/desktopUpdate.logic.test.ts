@@ -4,6 +4,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateIdleTooltip,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateActionError,
   getDesktopUpdateReleaseUrl,
@@ -163,6 +164,32 @@ describe("desktop update UI helpers", () => {
       );
     },
   );
+});
+
+describe("getDesktopUpdateIdleTooltip", () => {
+  const selfUpdateOff: DesktopUpdateState = {
+    ...baseState,
+    enabled: false,
+    status: "disabled",
+    availableVersion: "1.1.0",
+    message:
+      "T3 Code 1.1.0 is out. This build does not update itself: rebase it onto v1.1.0 and rebuild.",
+  };
+
+  it("names the stable release a build without updates should rebuild from", () => {
+    expect(resolveDesktopUpdateButtonAction(selfUpdateOff)).toBe("none");
+    expect(getDesktopUpdateIdleTooltip(selfUpdateOff)).toEqual({
+      title: "T3 Code 1.1.0 available",
+      detail: selfUpdateOff.message,
+    });
+  });
+
+  it("gives an administrator's denial precedence over the stable release", () => {
+    expect(getDesktopUpdateIdleTooltip(selfUpdateOff, "Updates are managed.")).toEqual({
+      title: "Updates unavailable",
+      detail: "Updates are managed.",
+    });
+  });
 });
 
 describe("canCheckForUpdate", () => {

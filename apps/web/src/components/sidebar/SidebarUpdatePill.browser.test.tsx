@@ -1,4 +1,4 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -166,5 +166,34 @@ describe("SidebarUpdatePill update everything", () => {
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
+  });
+});
+
+describe("SidebarUpdatePill stable release", () => {
+  it("opens the release page of a stable release a build without updates should rebuild from", async () => {
+    const openExternal = vi.fn(async () => true);
+    window.desktopBridge = { openExternal } as unknown as DesktopBridge;
+    const message =
+      "T3 Code 0.1.11 is out. This build does not update itself: rebase it onto v0.1.11 and rebuild.";
+    setup({
+      ...nightlyUpdate([]),
+      enabled: false,
+      status: "disabled",
+      channel: "latest",
+      currentVersion: "0.1.10",
+      availableVersion: "0.1.11",
+      message,
+    });
+    try {
+      await using screen = await render(<SidebarUpdatePill />);
+      await userEvent.click(
+        screen.getByRole("button", { name: `T3 Code 0.1.11 available: ${message}` }),
+      );
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://github.com/pingdotgg/t3code/releases/tag/v0.1.11",
+      );
+    } finally {
+      delete (window as { desktopBridge?: unknown }).desktopBridge;
+    }
   });
 });

@@ -20,9 +20,11 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDownloadedVersion,
+  getDesktopStableReleaseToBuild,
   getDesktopUpdateIdleTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   installDesktopUpdate,
+  getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -86,12 +88,14 @@ function resolveSidebarUpdatePresentation({
   run,
   isDownloading,
   showCheckIcon,
+  showsStableRelease,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
   readonly showsEverything: boolean;
   readonly run: UpdateEverythingRun | null;
   readonly isDownloading: boolean;
   readonly showCheckIcon: boolean;
+  readonly showsStableRelease: boolean;
 }) {
   const showUpdateDetails = action !== "none" || showsEverything || run !== null || isDownloading;
   const iconStatus: DesktopUpdateStatusIconState = showCheckIcon
@@ -106,14 +110,14 @@ function resolveSidebarUpdatePresentation({
           ? "everything"
           : action === "install"
             ? "downloaded"
-            : action === "download"
+            : action === "download" || showsStableRelease
               ? "available"
               : "idle";
 
   return {
     iconStatus,
     showUpdateDetails,
-    showUpdateIconState: showUpdateDetails && !showCheckIcon,
+    showUpdateIconState: (showUpdateDetails || showsStableRelease) && !showCheckIcon,
   } as const;
 }
 
@@ -249,12 +253,14 @@ function SidebarUpdateControl() {
     isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
+  const stableRelease = getDesktopStableReleaseToBuild(state);
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
     action,
     showsEverything: runsEverything,
     run,
     isDownloading,
     showCheckIcon,
+    showsStableRelease: stableRelease !== null,
   });
   const idleTooltip =
     !showUpdateDetails && !showCheckIcon
@@ -275,7 +281,7 @@ function SidebarUpdateControl() {
       ? false
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
-        : !canCheckForUpdate(state);
+        : stableRelease === null && !canCheckForUpdate(state);
   const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
@@ -303,6 +309,11 @@ function SidebarUpdateControl() {
     }
 
     if (!bridge || !state) return;
+    if (stableRelease !== null) {
+      const releaseUrl = getDesktopUpdateReleaseUrl(stableRelease);
+      if (releaseUrl !== null) void bridge.openExternal(releaseUrl);
+      return;
+    }
     setIsActionPending(true);
 
     if (action === "download") {

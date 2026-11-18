@@ -6,6 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -44,6 +46,8 @@ export interface UpdatesHarnessOptions {
   readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
   /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
   readonly wslBackend?: boolean;
+  /** The tag GitHub reports as pingdotgg/t3code's latest stable release. */
+  readonly latestStableTag?: string;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -57,6 +61,21 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  const releaseLookups: string[] = [];
+  const layerHttpClient = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        releaseLookups.push(request.url);
+        return HttpClientResponse.fromWeb(
+          request,
+          options.latestStableTag === undefined
+            ? new Response(null, { status: 404 })
+            : Response.json({ tag_name: options.latestStableTag }),
+        );
+      }),
+    ),
+  );
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -295,6 +314,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
+    Layer.provide(layerHttpClient),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
@@ -337,6 +357,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         0,
       ),
     sentStates,
+    releaseLookups,
     emit: (eventName: string, payload?: unknown) => {
       for (const listener of listeners.get(eventName) ?? []) {
         listener(payload);

@@ -26,6 +26,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
@@ -65,6 +67,8 @@ const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
+const LATEST_STABLE_RELEASE_URL = "https://api.github.com/repos/pingdotgg/t3code/releases/latest";
+const LatestStableRelease = Schema.Struct({ tag_name: Schema.String });
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -388,6 +392,7 @@ export const make = Effect.gen(function* () {
   const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
+  const httpClient = yield* HttpClient.HttpClient;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1121,6 +1126,29 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
+  const reportNewerStableRelease = httpClient
+    .get(LATEST_STABLE_RELEASE_URL, { headers: { accept: "application/vnd.github+json" } })
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(LatestStableRelease)),
+      Effect.flatMap(({ tag_name }) => {
+        const version = tag_name.replace(/^v/, "");
+        return compareSemverVersions(version, environment.appVersion) > 0
+          ? updateState((state) => ({
+              ...state,
+              availableVersion: version,
+              message: `T3 Code ${version} is out. This build does not update itself: rebase it onto v${version} and rebuild.`,
+            }))
+          : Effect.void;
+      }),
+      Effect.catch((error) =>
+        logUpdaterWarning("could not look up the latest stable release", {
+          errorTag: errorTag(error),
+        }),
+      ),
+      Effect.withSpan("desktop.updates.reportNewerStableRelease"),
+    );
+
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
     raw: unknown,
   ) {
@@ -1361,6 +1389,16 @@ export const make = Effect.gen(function* () {
         ),
       );
       if (Option.isSome(disabledReason)) {
+        if (policy.mode !== "off" && environment.isPackaged && !(yield* hasUpdateFeedConfig)) {
+          yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
+            Effect.andThen(
+              reportNewerStableRelease.pipe(
+                Effect.repeat(Schedule.spaced(AUTO_UPDATE_POLL_INTERVAL)),
+              ),
+            ),
+            Effect.forkScoped,
+          );
+        }
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
