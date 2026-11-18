@@ -164,6 +164,21 @@ export const make = Effect.gen(function* () {
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
+      // The AppImage unmounts the moment main exits, crash included, and an out-of-process
+      // network service still running from it faults with SIGBUS. In process, it dies with main.
+      // Chromium keeps only the last --enable-features value, so pass the merged list.
+      if (Option.isSome(linuxDesktopEntryConfig.appImagePath)) {
+        const enableFeatures = readCommandLineSwitchValue(
+          Electron.app.commandLine,
+          "enable-features",
+        );
+        Electron.app.commandLine.appendSwitch(
+          "enable-features",
+          enableFeatures
+            ? `${enableFeatures},NetworkServiceInProcess2`
+            : "NetworkServiceInProcess2",
+        );
+      }
       // Chromium keeps only the last --disable-features value, so pass the merged list.
       const disableFeatures = DesktopEarlyElectronStartup.resolveLinuxDisableFeaturesSwitch({
         env: process.env,
