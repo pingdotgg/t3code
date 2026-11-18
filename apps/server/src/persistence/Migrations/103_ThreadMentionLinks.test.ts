@@ -31,6 +31,7 @@ const insertMessage = (
   runId: string | null,
   records: ReadonlyArray<unknown>,
   streaming = 0,
+  role: "user" | "assistant" = "user",
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -39,7 +40,7 @@ const insertMessage = (
         message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
       )
       VALUES (
-        ${id}, ${threadId}, ${runId}, NULL, 'user', ${streaming}, ${NOW}, ${NOW},
+        ${id}, ${threadId}, ${runId}, NULL, ${role}, ${streaming}, ${NOW}, ${NOW},
         ${JSON.stringify({ text: "x", context: { version: 1, records } })}
       )
     `;
@@ -117,6 +118,25 @@ it.effect("backfills thread chips and applies the read filters", () =>
   }).pipe(freshDatabase),
 );
 
+it.effect("backfills safely when a message payload is malformed", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations({ toMigrationInclusive: 102 });
+    yield* seedThreads;
+    // 100's partial index rejects non-JSON user payloads; assistant rows can still hold one.
+    yield* insertMessage("malformed", "a", null, [chip("b")], 1, "assistant");
+    yield* sql`
+      UPDATE orchestration_v2_projection_messages SET payload_json = 'not json {'
+      WHERE message_id = 'malformed'
+    `;
+    yield* runMigrations();
+    assert.deepStrictEqual(
+      yield* sql`SELECT * FROM orchestration_v2_thread_mentions WHERE message_id = 'malformed'`,
+      [],
+    );
+  }).pipe(freshDatabase),
+);
+
 it.effect("follows inserts, context edits and deletes", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -149,7 +169,50 @@ it.effect("follows inserts, context edits and deletes", () =>
     ]);
 
     yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'm4'`;
-    assert.isFalse(yield* mentionedByC);
+    assert.deepStrictEqual(
+      yield* sql`SELECT * FROM orchestration_v2_thread_mentions WHERE message_id = 'm4'`,
+      [],
+    );
+  }).pipe(freshDatabase),
+);
+
+it.effect("deduplicates thread chips on message upsert inserts and updates", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* seedThreads;
+    for (const target of ["b", "a"]) {
+      const payload = JSON.stringify({
+        text: "x",
+        context: {
+          version: 1,
+          records: [chip(target), { ...chip(target), contextId: "another-context" }],
+        },
+      });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, run_id, node_id, role, streaming,
+          created_at, updated_at, payload_json, search_text
+        )
+        VALUES ('upsert', 'c', NULL, NULL, 'user', 0, ${NOW}, ${NOW}, ${payload}, 'x')
+        ON CONFLICT(message_id)
+        DO UPDATE SET
+          thread_id = excluded.thread_id,
+          run_id = excluded.run_id,
+          node_id = excluded.node_id,
+          role = excluded.role,
+          streaming = excluded.streaming,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          payload_json = excluded.payload_json,
+          search_text = excluded.search_text
+      `;
+      const rows = yield* sql<{ readonly target: string }>`
+        SELECT target_thread_id AS target FROM orchestration_v2_thread_mentions
+        WHERE message_id = 'upsert'
+      `;
+      assert.deepStrictEqual(rows, [{ target }]);
+    }
   }).pipe(freshDatabase),
 );
 
@@ -211,7 +274,7 @@ it.effect("does no JSON work while a message streams", () =>
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
     yield* seedThreads;
-    yield* insertMessage("m7", "c", null, [chip("b")], 1);
+    yield* insertMessage("m7", "c", null, [chip("b")], 1, "assistant");
     yield* sql`
       UPDATE orchestration_v2_projection_messages
       SET payload_json = 'not json {', streaming = 1
@@ -259,40 +322,60 @@ it.effect("re-indexes a context changed mid-stream when the message finishes", (
   }).pipe(freshDatabase),
 );
 
-it.effect("drops rolled-back, deleted, side-chat and project-deleted threads", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* backfillFixture;
+it.effect(
+  "drops rolled-back, never-started cancelled, deleted, side-chat and project-deleted threads",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* backfillFixture;
 
-    yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'rolled_back'`;
-    assert.deepStrictEqual(yield* links("b"), []);
-    yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed'`;
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'rolled_back'`;
+      assert.deepStrictEqual(yield* links("b"), []);
+      yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET status = 'cancelled', payload_json = json_set(payload_json, '$.startedAt', NULL)
+    `;
+      assert.deepStrictEqual(yield* links("b"), []);
+      assert.deepStrictEqual(yield* links("a"), []);
+      yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET payload_json = json_set(payload_json, '$.startedAt', ${NOW})
+      WHERE run_id = 'run-a1'
+    `;
+      assert.deepStrictEqual(yield* links("b"), [
+        { threadId: ThreadId.make("a"), direction: "mentionedBy" },
+      ]);
+      assert.deepStrictEqual(yield* links("a"), [
+        { threadId: ThreadId.make("arch"), direction: "mentions" },
+        { threadId: ThreadId.make("b"), direction: "mentions" },
+      ]);
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed'`;
 
-    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'a'`;
-    assert.deepStrictEqual(yield* links("b"), []);
-    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'a'`;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'a'`;
+      assert.deepStrictEqual(yield* links("b"), []);
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'a'`;
 
-    const onlyArch = [{ threadId: ThreadId.make("arch"), direction: "mentions" as const }];
-    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'b'`;
-    assert.deepStrictEqual(yield* links("a"), onlyArch);
-    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'b'`;
+      const onlyArch = [{ threadId: ThreadId.make("arch"), direction: "mentions" as const }];
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${NOW} WHERE thread_id = 'b'`;
+      assert.deepStrictEqual(yield* links("a"), onlyArch);
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = 'b'`;
 
-    yield* sql`
+      yield* sql`
       UPDATE orchestration_v2_projection_threads
       SET payload_json = json_set(payload_json, '$.lineage', json('{"sideChat":true}'))
       WHERE thread_id = 'b'
     `;
-    assert.deepStrictEqual(yield* links("a"), onlyArch);
-    yield* sql`
+      assert.deepStrictEqual(yield* links("a"), onlyArch);
+      yield* sql`
       UPDATE orchestration_v2_projection_threads
       SET payload_json = json_remove(payload_json, '$.lineage')
       WHERE thread_id = 'b'
     `;
-    assert.strictEqual((yield* links("a")).length, 2);
+      assert.strictEqual((yield* links("a")).length, 2);
 
-    yield* sql`UPDATE projection_projects SET deleted_at = ${NOW} WHERE project_id = 'p1'`;
-    assert.deepStrictEqual(yield* links("b"), []);
-  }).pipe(freshDatabase),
+      yield* sql`UPDATE projection_projects SET deleted_at = ${NOW} WHERE project_id = 'p1'`;
+      assert.deepStrictEqual(yield* links("b"), []);
+    }).pipe(freshDatabase),
 );
 
 it.effect("lists both directions when two threads mention each other", () =>
