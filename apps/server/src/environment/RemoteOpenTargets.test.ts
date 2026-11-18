@@ -162,6 +162,32 @@ describe("RemoteOpenTargets", () => {
     }),
   );
 
+  it.effect("drops the tailnet name after `tailscale down` while sshd listens", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: false },
+        tailscale: {
+          // After `tailscale down`, status still exits 0 and keeps Self from the last netmap.
+          status: {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              BackendState: "Stopped",
+              Self: {
+                DNSName: "bb-1.tail1234.ts.net.",
+                TailscaleIPs: ["100.64.1.2"],
+                Online: false,
+              },
+            }),
+          },
+          prefs: prefsJson({ RunSSH: false, WantRunning: false }),
+        },
+        hostname: "bb-1",
+        username: "t3-user",
+      });
+      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
+    }),
+  );
+
   it.effect("accepts an sshd bound to IPv6 loopback only", () =>
     Effect.gen(function* () {
       const targets = yield* resolveTargets({

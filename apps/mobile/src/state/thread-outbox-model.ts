@@ -1,4 +1,6 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
@@ -244,7 +246,7 @@ export function resolveThreadOutboxDispatchStep(input: {
   }
   const maxBytes = input.serverConfig.maxFileUploadBytes;
   if (maxBytes === undefined) {
-    return { step: "restore", reason: "This server does not support file attachments." };
+    return { step: "restore", reason: m(msg("This server does not support file attachments.")) };
   }
   const effectiveMaxBytes = clampFileAttachmentUploadBytes(maxBytes);
   const oversized = input.fileAttachments.find(
@@ -288,6 +290,9 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
       case "EnvironmentRpcUnavailableError":
       case "EnvironmentNotRegisteredError":
         return true;
+      // A shared upload's failure decides by what made the upload fail.
+      case "AttachmentUploadError":
+        return "cause" in error && shouldRetryThreadOutboxDelivery(error.cause);
       default:
         break;
     }

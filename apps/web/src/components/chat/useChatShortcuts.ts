@@ -22,6 +22,15 @@ type ChatShortcutHandler = (context: {
 
 export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcutHandler>>;
 
+/** Window-level commands the main chat still runs while focus is in its side chat pane. */
+const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
+  "rightPanel.toggle",
+  "rightPanel.close",
+  "rightPanel.toggleMaximized",
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
+]);
+
 interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
@@ -53,18 +62,6 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
-  /** A side chat pane runs its own chat shortcuts; only tab switching reaches the panel's owner. */
-  const handleSideChatPaneShortcut = (event: KeyboardEvent) => {
-    if (event.defaultPrevented) return;
-    const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
-      context: input.getShortcutContext(event.target),
-    });
-    if (command !== "rightPanel.nextTab" && command !== "rightPanel.previousTab") return;
-    const run = input.commands[command];
-    if (!run || run({ event, terminalFocusOwner: null }) === false) return;
-    event.preventDefault();
-    event.stopPropagation();
-  };
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -77,15 +74,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
     if (!input.enabled || isCommandPaletteOpen()) return;
-    if (isInSideChatPane(event.target)) {
-      handleSideChatPaneShortcut(event);
-      return;
-    }
+    const inSideChatPane = isInSideChatPane(event.target);
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
 
     if (
+      !inSideChatPane &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
       shouldTypeToFocusComposer(event) &&
@@ -96,10 +91,20 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
-    });
-    if (!command) return;
+    const command =
+      resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+        context: shortcutContext,
+      }) ??
+      (inSideChatPane
+        ? resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+            context: {
+              ...shortcutContext,
+              composerFocus:
+                document.activeElement?.getAttribute("data-testid") === "composer-editor",
+            },
+          })
+        : undefined);
+    if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
