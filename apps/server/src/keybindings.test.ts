@@ -215,6 +215,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+f", command: "chat.find", when: "!terminalFocus && !previewFocus" },
+          { key: "mod+f", command: "preview.find", when: "previewFocus" },
+          { key: "mod+h", command: "chat.find", when: "composerFocus" },
           { key: "mod+shift+y", command: "terminal.toggle" },
           { key: "mod+shift+r", command: "script.run-tests.run" },
           { key: "mod+shift+b", command: "script.custom-panel.run" },
@@ -230,6 +233,24 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
         const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
         const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
+
+        assert.deepEqual(byCommand.get("preview.find"), {
+          key: "mod+f",
+          command: "preview.find",
+          when: "previewFocus && !fileFindFocus",
+        });
+
+        assert.deepEqual(
+          persisted.filter((entry) => entry.command === "chat.find"),
+          [
+            {
+              key: "mod+f",
+              command: "chat.find",
+              when: "!terminalFocus && !previewFocus && !fileFindFocus",
+            },
+            { key: "mod+h", command: "chat.find", when: "composerFocus" },
+          ],
+        );
 
         const persistedToggle = byCommand.get("terminal.toggle");
         assert.isNotNull(persistedToggle);
