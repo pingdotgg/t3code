@@ -6,9 +6,11 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
+  CheckpointId,
   EnvironmentId,
   MessageId,
   NodeId,
+  type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -757,6 +759,9 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
+      const rewoundAfter: Array<string> = [];
+      let rewindFails = false;
+      let createdAgents = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -783,11 +788,21 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-device",
+          open: (openInput) => {
+            const agentId = openInput.agentId ?? `native-cursor-device-${++createdAgents}`;
+            return Effect.succeed({
+              agentId,
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              rewindAfterRun: (runId) =>
+                rewindFails
+                  ? Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "agent.rewind",
+                        cause: "store unavailable",
+                      }),
+                    )
+                  : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
                 Effect.sync(() => {
                   sentMessages.push(
@@ -795,7 +810,7 @@ describe("CursorAdapterV2", () => {
                   );
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   return {
-                    agentId: "native-cursor-device",
+                    agentId,
                     runId,
                     wait: Effect.succeed({
                       id: runId,
@@ -807,7 +822,8 @@ describe("CursorAdapterV2", () => {
                     cancel: Effect.void,
                   };
                 }),
-            }),
+            });
+          },
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
       );
@@ -817,7 +833,7 @@ describe("CursorAdapterV2", () => {
         modelSelection,
         runtimePolicy,
       });
-      const providerThread = yield* runtime.ensureThread({
+      let providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy,
@@ -848,13 +864,15 @@ describe("CursorAdapterV2", () => {
       };
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
-      const send = Effect.fnUntraced(function* (compact = false) {
+      let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      const send = Effect.fnUntraced(function* (compact = false, nativeThreadHasTurns?: boolean) {
         runOrdinal += 1;
         const turnInput = {
           threadId,
           providerThread,
           modelSelection,
           runtimePolicy,
+          ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           runId: RunId.make(`cursor-device-run-${runOrdinal}`),
           runOrdinal,
           providerTurnOrdinal: runOrdinal,
@@ -870,10 +888,13 @@ describe("CursorAdapterV2", () => {
           },
         };
         yield* compact ? runtime.compactThread!(turnInput) : runtime.startTurn(turnInput);
-        yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "turn.terminal"),
-          Stream.runHead,
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
         );
+        const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
+        if (providerTurn?.type === "provider_turn.updated")
+          lastProviderTurn = providerTurn.providerTurn;
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
@@ -896,6 +917,61 @@ describe("CursorAdapterV2", () => {
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
       assert.deepEqual(yield* send(), told(false, false));
+
+      const keptTurn = lastProviderTurn!;
+      yield* send();
+      const rollbackToKept = runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("cursor-device-kept-checkpoint"),
+          appRunOrdinal: runOrdinal - 1,
+          providerTurn: keptTurn,
+        },
+        providerThreadTurns: [keptTurn],
+      });
+      rewindFails = true;
+      yield* Effect.flip(rollbackToKept);
+      rewindFails = false;
+      assert.deepEqual(
+        yield* send(false, true),
+        told(false, false),
+        "a failed rewind leaves the conversation, and what it was told, unchanged",
+      );
+      const rewound = yield* rollbackToKept;
+      assert.deepEqual(rewoundAfter, [keptTurn.nativeTurnRef?.nativeId]);
+      assert.deepEqual(
+        rewound.providerThread.nativeThreadRef,
+        providerThread.nativeThreadRef,
+        "Cursor rewinds the same agent",
+      );
+      assert.deepEqual(
+        yield* send(false, true),
+        told(true, true),
+        "the rewound conversation may have dropped instructions a later turn carried",
+      );
+
+      const rolledBack = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("cursor-device-checkpoint"),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns: [],
+      });
+      assert.strictEqual(rolledBack.providerThread.id, providerThread.id);
+      assert.notStrictEqual(
+        rolledBack.providerThread.nativeThreadRef?.nativeId,
+        providerThread.nativeThreadRef?.nativeId,
+        "a rollback to the thread's start has no checkpoint to rewind onto",
+      );
+      providerThread = rolledBack.providerThread;
+      assert.deepEqual(
+        yield* send(false, false),
+        told(true, true),
+        "the fresh agent after a rollback has been told nothing",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -904,11 +980,14 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("carries an interrupted prompt into the steer that restarts the turn", () =>
+  it.effect("carries a dropped prompt forward, and resumes a checkpointed one natively", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
       const sentMessages: Array<string> = [];
+      const resumedRuns: Array<number> = [];
+      // Cursor keeps a cancelled run in the conversation only once it saved a checkpoint.
+      const checkpointedRuns = new Set<string>();
       const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-steer-thread");
@@ -929,8 +1008,15 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-steer",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              runCheckpointed: (runId) =>
+                Effect.succeed(
+                  runId === undefined
+                    ? checkpointedRuns.has(`native-cursor-run-${sentMessages.length}`)
+                    : checkpointedRuns.has(runId),
+                ),
               send: (input) =>
                 Effect.gen(function* () {
+                  if (input.resume === true) resumedRuns.push(sentMessages.length + 1);
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
@@ -1011,6 +1097,24 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
+      const { message: _message, ...resumeBase } = turnInput(4, "");
+      const resumeInput = (runOrdinal: number) => ({
+        ...resumeBase,
+        runId: RunId.make(`cursor-steer-run-${runOrdinal}`),
+        runOrdinal,
+        providerTurnOrdinal: runOrdinal,
+        attemptId: RunAttemptId.make(`cursor-steer-attempt-${runOrdinal}`),
+        messageId: MessageId.make(`cursor-steer-message-${runOrdinal}`),
+      });
+      const unknown = yield* Effect.flip(runtime.resumeTurn!(resumeInput(1)));
+      assert(unknown._tag === "ProviderAdapterTurnStartError");
+      assert.strictEqual(
+        (unknown.cause as { readonly _tag?: string })._tag,
+        "ProviderResumeUnsupportedError",
+        "nothing Cursor checkpointed and no known stopped request: nothing to resume",
+      );
+      assert.lengthOf(sentMessages, 0);
+
       const firstPrompt = "Write me a 1000 word story about a dog.";
       const steerText = "No wait, a pig please.";
 
@@ -1041,6 +1145,59 @@ describe("CursorAdapterV2", () => {
       );
       yield* runtime.startTurn(turnInput(3, "Now a cow."));
       assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+
+      const interruptRunning = Effect.gen(function* () {
+        const running = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+            ),
+            Stream.runHead,
+          ),
+        );
+        assert(running.type === "provider_turn.updated");
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: running.providerTurn.id });
+      });
+
+      // Stopped before Cursor checkpointed it: resume replays the exact request Cursor dropped.
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(4));
+      assert.deepEqual(resumedRuns, []);
+      assert.strictEqual(sentMessages[3], sentMessages[2]);
+
+      // Stopped after a checkpoint: Cursor's own ResumeAction continues it, with no message.
+      checkpointedRuns.add("native-cursor-run-4");
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(5));
+      assert.deepEqual(resumedRuns, [5]);
+      assert.strictEqual(sentMessages[4], "");
+
+      // The resumed run is stopped before its own checkpoint; the request is still in history.
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(6));
+      assert.deepEqual(resumedRuns, [5, 6]);
+
+      yield* interruptRunning;
+      yield* runtime.startTurn(turnInput(7, "Make it shorter."));
+      assert.notInclude(
+        sentMessages[6]!,
+        "Now a cow.",
+        "a request Cursor checkpointed is not carried forward",
+      );
+
+      // A turn that ended without a Stop (a usage limit, say) resumes from Cursor's checkpoint,
+      // and stays resumable when that resume is stopped before saving its own.
+      checkpointedRuns.add("native-cursor-run-7");
+      yield* Deferred.succeed(runEnds[6]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.resumeTurn!(resumeInput(8));
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(9));
+      assert.deepEqual(resumedRuns, [5, 6, 8, 9]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -2417,6 +2574,51 @@ describe("CursorAdapterV2", () => {
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
     assert.notInclude(logged, "secret-cursor-mcp-token");
+  });
+
+  it("loads project settings only when runtime policy permits unrestricted execution", () => {
+    const input = {
+      modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+      threadId: ThreadId.make("cursor-project-settings"),
+      mcpSession: undefined,
+      platform: "linux" as const,
+    };
+    const policy = { cwd: "/workspace", interactionMode: "default" as const };
+    for (const runtimeMode of [
+      "approval-required",
+      "auto",
+      "auto-accept-edits",
+      "full-access",
+    ] as const) {
+      const options = makeCursorAgentOptions({
+        ...input,
+        runtimePolicy: { ...policy, runtimeMode },
+      });
+      assert.equal(
+        options.local?.settingSources?.includes("project"),
+        runtimeMode === "full-access",
+      );
+    }
+    const unrestrictedOverrides = makeCursorAgentOptions({
+      ...input,
+      runtimePolicy: {
+        ...policy,
+        runtimeMode: "auto-accept-edits",
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      },
+    });
+    assert.notInclude(unrestrictedOverrides.local?.settingSources ?? [], "project");
+    for (const restriction of [
+      { approvalPolicy: "on-request" as const },
+      { sandboxPolicy: { type: "readOnly" as const } },
+    ]) {
+      const options = makeCursorAgentOptions({
+        ...input,
+        runtimePolicy: { ...policy, runtimeMode: "full-access", ...restriction },
+      });
+      assert.notInclude(options.local?.settingSources ?? [], "project");
+    }
   });
 
   it.effect.skipIf(!symlinksSupported)(

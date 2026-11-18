@@ -1,3 +1,6 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
 const textEncoder = new TextEncoder();
 
 export type PastedTextDisposition = "attachment" | "inline";
@@ -49,9 +52,17 @@ export function pastedTextDisposition(input: {
  * "5 KB (~5,000 chars)". Sizes come first because the threshold also counts
  * UTF-8 bytes, so non-Latin text and emoji fold with fewer characters.
  */
-export function pastedTextThresholdLabel(thresholdBytes: number) {
+export function pastedTextThresholdLabel(
+  thresholdBytes: number,
+  resolve: MFunctionType = mFallback,
+) {
   const kilobytes = Math.floor(thresholdBytes / 1000);
-  return `${kilobytes} KB (~${(kilobytes * 1000).toLocaleString("en-US")} chars)`;
+  return resolve(
+    msg("{kilobytes} KB (~{characters} chars)", {
+      kilobytes,
+      characters: (kilobytes * 1000).toLocaleString(),
+    }),
+  );
 }
 
 export function nextPastedTextFileName(existingNames: ReadonlyArray<string>): string {
