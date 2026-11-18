@@ -73,6 +73,19 @@ const needsPerson = (node: WorkflowRunNode): boolean =>
  * has not run yet is still listed, since the list is also how one learns what exists. `runs` is
  * newest first and that order is kept.
  */
+/**
+ * The runs a list shows: without those a workflow skipped as not its to do, unless asked for
+ * them. A skipped run that another run invoked stays, as a step of that one.
+ */
+export function listedWorkflowRuns(
+  runs: ReadonlyArray<WorkflowRun>,
+  showSkipped: boolean,
+): { readonly runs: ReadonlyArray<WorkflowRun>; readonly skipped: number } {
+  const hidden = (run: WorkflowRun) => run.status === "skipped" && run.parentRunId === null;
+  const skipped = runs.filter(hidden).length;
+  return { runs: showSkipped ? runs : runs.filter((run) => !hidden(run)), skipped };
+}
+
 export function groupWorkflowRuns(
   workflows: ReadonlyArray<WorkflowSummary>,
   runs: ReadonlyArray<WorkflowRun>,
@@ -266,6 +279,8 @@ export function workflowRunState(
       return { word: resolve(msg("Done", { $context: "workflow run status" })), tone: "done" };
     case "stopped":
       return { word: resolve(msg("Stopped", { $context: "workflow run status" })), tone: "quiet" };
+    case "skipped":
+      return { word: resolve(msg("Skipped", { $context: "workflow run status" })), tone: "quiet" };
     case "cancelled":
       return {
         word: resolve(msg("Cancelled", { $context: "workflow run status" })),
@@ -324,6 +339,7 @@ export function workflowRunNow(node: WorkflowRunNode, resolve: MFunctionType = m
       return firstLine(line.label === null ? line.value : `${line.label}: ${line.value}`);
     }
     case "stopped":
+    case "skipped":
     case "cancelled":
       return detail === "" ? resolve(msg("Ended early")) : firstLine(detail);
   }

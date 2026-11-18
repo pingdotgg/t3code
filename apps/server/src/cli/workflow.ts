@@ -88,7 +88,9 @@ const startCommand = Command.make("start", {
 const listCommand = Command.make("list", {
   ...projectLocationFlags,
   status: Flag.String("status").pipe(
-    Flag.withDescription("Only runs in this state, such as paused or waiting."),
+    Flag.withDescription(
+      "Only runs in this state, such as paused or waiting. Skipped runs are listed only with `skipped`.",
+    ),
     Flag.optional,
   ),
   json: jsonFlag,
@@ -106,8 +108,12 @@ const listCommand = Command.make("list", {
           },
           RunsResult,
         );
-        if (flags.json) return yield* printJson(runs);
-        for (const run of runs) yield* Console.log(runLine(run));
+        // A workflow skips what was never its to do, and that is most of what a trigger brings.
+        const listed = Option.isSome(flags.status)
+          ? runs
+          : runs.filter((run) => run.status !== "skipped" || run.parentRunId !== null);
+        if (flags.json) return yield* printJson(listed);
+        for (const run of listed) yield* Console.log(runLine(run));
       }),
     ).pipe(reportThreadErrors),
   ),

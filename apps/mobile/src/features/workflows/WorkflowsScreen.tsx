@@ -1,6 +1,7 @@
 import {
   defaultWorkflowListTab,
   groupWorkflowRuns,
+  listedWorkflowRuns,
   workflowChip,
   workflowRunLists,
   workflowRunNow,
@@ -113,6 +114,7 @@ function EnvironmentRuns(props: {
   const navigation = useNavigation();
   const gt = useGT();
   const m = useMessages();
+  const [showSkipped, setShowSkipped] = useState(false);
   const live = useEnvironmentQuery(
     serverEnvironment.workflowsLive({ environmentId: props.environmentId, input: {} }),
   );
@@ -133,7 +135,8 @@ function EnvironmentRuns(props: {
       />
     );
   }
-  const groups = groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions);
+  const visible = listedWorkflowRuns(snapshot.runs, showSkipped);
+  const groups = groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions);
   const lists = workflowRunLists(groups);
   const tab = props.tab ?? defaultWorkflowListTab(groups);
   const listed = lists[tab];
@@ -168,6 +171,19 @@ function EnvironmentRuns(props: {
           />
         ))
       )}
+      {tab === "all" && visible.skipped > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          className="items-center px-5 py-4"
+          onPress={() => setShowSkipped(!showSkipped)}
+        >
+          <Text className="text-xs text-foreground-muted">
+            {showSkipped
+              ? gt("Hide skipped")
+              : gt("Show {count} skipped", { count: visible.skipped })}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

@@ -427,7 +427,9 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
               ? gt("Finished", { $context: "how a workflow run ended" })
               : run.status === "stopped"
                 ? gt("Stopped", { $context: "how a workflow run ended" })
-                : gt("Cancelled", { $context: "how a workflow run ended" })}
+                : run.status === "skipped"
+                  ? gt("Skipped", { $context: "how a workflow run ended" })
+                  : gt("Cancelled", { $context: "how a workflow run ended" })}
           </Text>
           {run.status !== "completed" && run.detail !== null ? (
             <Text className="text-sm text-foreground-secondary">{run.detail}</Text>

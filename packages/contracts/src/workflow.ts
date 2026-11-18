@@ -6,6 +6,8 @@ export const WorkflowRunStatus = Schema.Literals([
   "paused",
   "completed",
   "stopped",
+  /** Ended by the workflow as not its to do. Lists leave these out unless asked. */
+  "skipped",
   "cancelled",
 ]);
 export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;

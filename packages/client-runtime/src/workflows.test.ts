@@ -8,6 +8,7 @@ import {
   defaultWorkflowListTab,
   defaultWorkflowRunId,
   groupWorkflowRuns,
+  listedWorkflowRuns,
   readWorkflowQuestion,
   workflowAgentSummary,
   workflowAnswer,
@@ -207,6 +208,16 @@ describe("the list of runs", () => {
         groupWorkflowRuns([], [run("old", { status: "completed", endedAt: at(1) })], []),
       ),
     ).toBe("all");
+  });
+
+  it("leaves out what a workflow skipped, but not a skipped step of another run", () => {
+    const runs = [
+      run("ignored", { status: "skipped", endedAt: at(1) }),
+      run("parent"),
+      run("child", { status: "skipped", endedAt: at(1), parentRunId: "parent" }),
+    ];
+    expect(listedWorkflowRuns(runs, false)).toEqual({ runs: [runs[1], runs[2]], skipped: 1 });
+    expect(listedWorkflowRuns(runs, true)).toEqual({ runs, skipped: 1 });
   });
 
   it("marks a workflow with the same letters and colour every time", () => {

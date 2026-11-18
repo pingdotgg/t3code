@@ -410,7 +410,9 @@ export function WorkflowRunFeed({
                         ? gt("Finished", { $context: "how a workflow run ended" })
                         : run.status === "stopped"
                           ? gt("Stopped", { $context: "how a workflow run ended" })
-                          : gt("Cancelled", { $context: "how a workflow run ended" })
+                          : run.status === "skipped"
+                            ? gt("Skipped", { $context: "how a workflow run ended" })
+                            : gt("Cancelled", { $context: "how a workflow run ended" })
                     }
                     sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
                   />

@@ -23,6 +23,7 @@ import {
   defaultWorkflowListTab,
   defaultWorkflowRunId,
   groupWorkflowRuns,
+  listedWorkflowRuns,
   workflowRunLists,
   workflowRunNow,
   workflowTriggerLine,
@@ -90,6 +91,7 @@ export function WorkflowRunsView({
   const [workflow, setWorkflow] = useState(EVERY_WORKFLOW);
   const gt = useGT();
   const m = useMessages();
+  const [showSkipped, setShowSkipped] = useState(false);
   const snapshot = live.data;
   if (live.error) {
     return <WorkflowsEmpty title={gt("Could not load workflow runs")} description={live.error} />;
@@ -130,7 +132,12 @@ export function WorkflowRunsView({
       />
     );
   }
-  const groups = groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions);
+  // A skipped run opened by its link is shown all the same.
+  const openedSkipped = snapshot.runs.some(
+    (run) => run.runId === selectedRunId && run.status === "skipped",
+  );
+  const visible = listedWorkflowRuns(snapshot.runs, showSkipped || openedSkipped);
+  const groups = groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions);
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
@@ -253,6 +260,15 @@ export function WorkflowRunsView({
                   ))}
                 </ul>
               )}
+              {tab === "all" && visible.skipped > 0 && !openedSkipped ? (
+                <div className="flex justify-center pt-2">
+                  <Button size="xs" variant="ghost" onClick={() => setShowSkipped(!showSkipped)}>
+                    {showSkipped
+                      ? gt("Hide skipped")
+                      : gt("Show {count} skipped", { count: visible.skipped })}
+                  </Button>
+                </div>
+              ) : null}
             </nav>
           </ScrollArea>
         </div>
