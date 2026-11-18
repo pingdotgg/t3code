@@ -448,7 +448,7 @@ switch (args[1]) {
       // earlier launch writes through the log descriptor it still holds (fd 3).
       yield* fs.writeFileString(
         NodePath.join(bin, "node"),
-        '#!/bin/sh\n[ "$1" = - ] || exit 0\ncat >/dev/null\ncase "$2" in\n  */port) echo 37731 ;;\n  37731) { printf "EARLIER_PROCESS\\n" >&3; } 2>/dev/null; exit 1 ;;\n  *) exit 1 ;;\nesac\n',
+        '#!/bin/sh\ncase "$2" in __ssh-helper) [ "$3" = home-dir ] && printf "%s" "$HOME/.t3"; exit ;; esac\n[ "$1" = - ] || exit 0\ncat >/dev/null\ncase "$2" in\n  */port) echo 37731 ;;\n  37731) { printf "EARLIER_PROCESS\\n" >&3; } 2>/dev/null; exit 1 ;;\n  *) exit 1 ;;\nesac\n',
         { mode: 0o755 },
       );
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -575,18 +575,7 @@ switch (args[1]) {
       NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
         cwd: release,
       });
-      for (const tool of [
-        "sh",
-        "mkdir",
-        "mktemp",
-        "cat",
-        "rm",
-        "grep",
-        "cut",
-        checksum,
-        "tar",
-        "mv",
-      ]) {
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm", "grep", "cut", checksum, "mv"]) {
         NodeFS.symlinkSync(
           NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
             encoding: "utf8",
@@ -594,6 +583,12 @@ switch (args[1]) {
           NodePath.join(bin, tool),
         );
       }
+      // Some tar builds decompress gzip internally, even when PATH has no gzip binary.
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "tar"),
+        '#!/bin/sh\nprintf "Cannot exec gzip\\n" >&2\nexit 1\n',
+        { mode: 0o755 },
+      );
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
@@ -1677,7 +1672,9 @@ const canBind = (port) =>
     return;
   }
   const [helper, a, b, c] = args.slice(1);
-  if (helper === "pick-port") {
+  if (helper === "home-dir") {
+    return process.stdout.write(path.join(process.env.HOME, ".t3"));
+  } else if (helper === "pick-port") {
     const start = Number(fs.existsSync(a) ? fs.readFileSync(a, "utf8") : b);
     for (let port = start; port < start + Number(c); port += 1) {
       if (await canBind(port)) return process.stdout.write(String(port));
