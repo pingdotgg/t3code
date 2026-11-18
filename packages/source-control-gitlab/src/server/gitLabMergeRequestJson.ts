@@ -73,6 +73,7 @@ const RawMergeRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
+  detailed_merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   merge_status: Schema.optional(Schema.NullOr(Schema.String)),
   has_conflicts: Schema.optional(Schema.NullOr(Schema.Boolean)),
   created_at: Schema.String,
@@ -208,6 +209,7 @@ export interface GitLabMergeRequestListItem {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -484,6 +486,7 @@ export function decodePipelineStageChecksJson(
 function toListItem(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
 ): GitLabMergeRequestListItem {
+  const detailedMergeStatus = raw.detailed_merge_status?.trim().toLowerCase();
   return {
     number: raw.iid,
     title: raw.title,
@@ -494,6 +497,12 @@ function toListItem(
     state: toState(raw),
     isDraft: raw.draft ?? raw.work_in_progress ?? false,
     mergeability: toMergeability(raw),
+    rebaseRequired:
+      detailedMergeStatus === "need_rebase"
+        ? true
+        : detailedMergeStatus === "mergeable"
+          ? false
+          : undefined,
     additions: 0,
     deletions: 0,
     createdAt: raw.created_at,
@@ -1005,6 +1014,8 @@ export interface GitLabMergeRequestPatch {
   readonly patch: string;
   readonly truncated: boolean;
   readonly rawCount: number;
+  /** Files GitLab sent without their diff because they are too large or collapsed. */
+  readonly withheldPaths: ReadonlyArray<string>;
 }
 
 export function decodeMergeRequestDiffsJson(
@@ -1035,6 +1046,7 @@ export function decodeMergeRequestChangesJson(
 
 function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestPatch {
   const sections: string[] = [];
+  const withheldPaths: string[] = [];
   let truncated = false;
   for (const entry of entries) {
     const file = decodeDiffEntry(entry);
@@ -1044,8 +1056,9 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
     }
     const value = file.value;
     const hunks = value.diff ?? "";
-    if (hunks.length === 0) {
-      truncated = truncated || value.too_large === true || value.collapsed === true;
+    if (hunks.length === 0 && (value.too_large === true || value.collapsed === true)) {
+      truncated = true;
+      withheldPaths.push(value.new_path);
     }
     const { from, to } = diffHeaderPaths(value);
     const header = [
@@ -1069,6 +1082,7 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
     patch: sections.join("\n"),
     truncated,
     rawCount: entries.length,
+    withheldPaths,
   };
 }
 
@@ -1290,10 +1304,31 @@ const RawAwardSchema = Schema.Struct({
 
 const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
 
+type GitLabAward = typeof RawAwardSchema.Type;
+
+/** A page of REST `award_emoji`; a row that cannot be read is skipped. */
+export function decodeAwardListJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitLabAward>, DecodeFailure> {
+  return Result.map(decodeUnknownList(raw), (rows) =>
+    rows.flatMap((entry) => {
+      const award = decodeAward(entry);
+      return Exit.isSuccess(award) ? [award.value] : [];
+    }),
+  );
+}
+
+export function awardReactions(
+  awards: ReadonlyArray<GitLabAward>,
+  viewer: string | null,
+): ReadonlyArray<PullRequestReaction> {
+  return toReactions({ nodes: awards }, viewer);
+}
+
 export function decodeOwnAwardIdJson(
   raw: string,
   input: { readonly content: PullRequestReactionContent; readonly viewer: string },
-): Result.Result<number | null, DecodeFailure> {
+): Result.Result<{ readonly id: number | null; readonly empty: boolean }, DecodeFailure> {
   const decoded = decodeUnknownList(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -1305,9 +1340,9 @@ export function decodeOwnAwardIdJson(
     const value = award.value;
     if (trimmed(value.name)?.toLowerCase() !== name) continue;
     if (trimmed(value.user?.username) !== input.viewer) continue;
-    return Result.succeed(value.id);
+    return Result.succeed({ id: value.id, empty: false });
   }
-  return Result.succeed(null);
+  return Result.succeed({ id: null, empty: decoded.success.length === 0 });
 }
 
 export const REPOSITORY_BLOBS_GRAPHQL_QUERY = `query($fullPath: ID!, $ref: String!, $paths: [String!]!) {
@@ -2063,7 +2098,7 @@ export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
 export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
-      state mergeStatusEnum conflicts diffHeadSha
+      state mergeStatusEnum detailedMergeStatus conflicts diffHeadSha
       userPermissions { updateMergeRequest }
       headPipeline {
         id status
@@ -2097,6 +2132,7 @@ const decodeMergeRequestWatchFingerprint = decodeJsonResult(
             Schema.Struct({
               state: Schema.String,
               mergeStatusEnum: Schema.NullOr(Schema.String),
+              detailedMergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
               conflicts: Schema.Boolean,
               diffHeadSha: Schema.NullOr(Schema.String),
               userPermissions: Schema.Struct({ updateMergeRequest: Schema.Boolean }),
@@ -2182,6 +2218,7 @@ export function decodeMergeRequestWatchFingerprintJson(
     status: [
       mr.state,
       mr.mergeStatusEnum ?? "",
+      mr.detailedMergeStatus ?? "",
       mr.conflicts,
       mr.diffHeadSha ?? "",
       pipeline?.id ?? "",
