@@ -1,10 +1,14 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "./i18n/messages";
 
 export function buildCollapsedProposedPlanPreview(
   planMarkdown: string,
   options?: {
     maxLines?: number;
   },
+  resolve: MessageResolver = m,
 ) {
   const maxLines = options?.maxLines ?? 8;
   const lines = stripDisplayedPlanMarkdown(planMarkdown)
@@ -33,7 +37,7 @@ export function buildCollapsedProposedPlanPreview(
 
   if (previewLines.length === 0) {
     return {
-      markdown: proposedPlanTitle(planMarkdown) ?? "Plan preview unavailable.",
+      markdown: proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable.")),
       truncated: false,
     };
   }

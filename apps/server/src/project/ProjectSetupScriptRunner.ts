@@ -503,6 +503,8 @@ export const make = Effect.gen(function* () {
       }),
       // Before client attachment, truecolor probes wait for terminal replies nobody can send.
       COLORTERM: "",
+      // Project scripts keep the default shell; the preference is for interactive terminals only.
+      T3CODE_TERMINAL_SHELL: "",
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
