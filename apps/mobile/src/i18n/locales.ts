@@ -6,15 +6,19 @@ export const DEFAULT_LOCALE = gtConfig.defaultLocale;
 export const SUPPORTED_LOCALES: ReadonlyArray<string> = [DEFAULT_LOCALE, ...gtConfig.locales];
 
 // GT's getLocale() reads the last saved UI locale, so get the device languages directly.
-export function readSystemLocales(): ReadonlyArray<string> {
+export function readDeviceLocales() {
+  let locales: ReadonlyArray<string> = [];
   try {
-    const locales =
+    locales =
       TurboModuleRegistry.get<{ getNativeLocales(): string[] } & TurboModule>(
         "GtReactNative",
       )?.getNativeLocales() ?? [];
-    // On iOS, NSLocale.currentLocale gets its language from the app bundle. Preferred languages follow it.
-    return Platform.OS === "ios" ? locales.slice(1) : locales;
   } catch {
-    return [];
+    // The native module is optional.
   }
+  return {
+    regionalLocale: locales[0],
+    // On iOS, NSLocale.currentLocale gets its language from the app bundle. Preferred languages follow it.
+    preferredLanguages: Platform.OS === "ios" ? locales.slice(1) : locales,
+  };
 }

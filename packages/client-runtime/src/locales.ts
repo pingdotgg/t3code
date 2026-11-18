@@ -44,22 +44,38 @@ export function resolveLocale(
   return fallback;
 }
 
-/** Prefer a compatible system variant, then use the system region for a bare UI language. */
-export function formattingLocale(uiLocale: string, systemLocales: ReadonlyArray<string>): string {
+function parseSystemLocale(tag: string): Intl.Locale | undefined {
+  try {
+    // iOS locale identifiers can contain underscores and ICU keywords such as @calendar.
+    return new Intl.Locale(tag.trim().replace(/@.*$/, "").replaceAll("_", "-"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Prefer a compatible system variant unless a formatting region was selected separately. */
+export function formattingLocale(
+  uiLocale: string,
+  systemLocales: ReadonlyArray<string>,
+  regionalLocale?: string,
+): string {
   const ui = new Intl.Locale(uiLocale);
   const compatible = [uiLocale, ui.language];
+  const preferredRegion = regionalLocale ? parseSystemLocale(regionalLocale)?.region : undefined;
   let region: string | undefined;
+  let variant: string | undefined;
   for (const tag of systemLocales) {
-    let system: Intl.Locale;
-    try {
-      system = new Intl.Locale(tag.trim().replaceAll("_", "-"));
-    } catch {
-      continue;
-    }
+    const system = parseSystemLocale(tag);
+    if (!system) continue;
     region ??= system.region;
-    if (matchSupportedLocale(system.baseName, compatible)) return system.baseName;
+    if (matchSupportedLocale(system.baseName, compatible)) {
+      variant = system.baseName;
+      break;
+    }
   }
-  if (ui.region || !region) return uiLocale;
-  const regional = new Intl.Locale(uiLocale, { region }).baseName;
-  return matchSupportedLocale(regional, compatible) ? regional : uiLocale;
+  const locale = variant ?? uiLocale;
+  const formattingRegion = preferredRegion ?? (variant ? undefined : region);
+  if (ui.region || !formattingRegion) return locale;
+  const regional = new Intl.Locale(locale, { region: formattingRegion }).baseName;
+  return matchSupportedLocale(regional, compatible) ? regional : locale;
 }

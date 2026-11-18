@@ -7,7 +7,7 @@ import { useDeferredValue, useEffect, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
-import { DEFAULT_LOCALE, readSystemLocales, SUPPORTED_LOCALES } from "./locales";
+import { DEFAULT_LOCALE, readDeviceLocales, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
@@ -45,7 +45,12 @@ export function I18nProvider(props: { readonly children: ReactNode }) {
   // GT suspends while a locale's catalog loads. Deferring the switch keeps the current language
   // on screen until then, instead of GT's full-screen spinner.
   const locale = useDeferredValue(
-    resolveLocale(useLanguagePreference(), readSystemLocales(), SUPPORTED_LOCALES, DEFAULT_LOCALE),
+    resolveLocale(
+      useLanguagePreference(),
+      readDeviceLocales().preferredLanguages,
+      SUPPORTED_LOCALES,
+      DEFAULT_LOCALE,
+    ),
   );
   return (
     <GTProvider locale={locale} fallback={<View className="flex-1 bg-screen" />}>

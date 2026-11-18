@@ -49,6 +49,3 @@ export function createMessageTimeFormatter(is24Hour: boolean | undefined, dateLo
     return `${sameYear ? f.date.format(timestamp) : dateWithYear} ${time}`;
   };
 }
-
-/** Message timestamps in the device's locale and hour cycle. */
-export const formatMessageTimestamp = createMessageTimeFormatter(undefined);
