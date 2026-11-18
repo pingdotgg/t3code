@@ -923,11 +923,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     });
     if (result._tag === "Failure") {
       Dialog.alert(
-        "Could not mark thread unread",
-        "The thread could not be marked unread. Try again.",
+        gt("Could not mark thread unread"),
+        gt("The thread could not be marked unread. Try again."),
       );
     }
-  }, [canMarkUnread, markThreadUnread, thread.environmentId, thread.id]);
+  }, [canMarkUnread, gt, markThreadUnread, thread.environmentId, thread.id]);
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
