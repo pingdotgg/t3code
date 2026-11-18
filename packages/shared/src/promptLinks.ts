@@ -82,8 +82,9 @@ const PATH_SEGMENT = /^[A-Za-z0-9._-]{1,100}$/;
 
 // Other hosts, such as GitLab, nest repositories under groups and allow `_` in their names.
 function hostedRepositoryOf(value: string): PromptLinkRepository | null {
-  if (!/^https?:\/\//i.test(value) || !URL.canParse(value)) return null;
-  const url = new URL(value);
+  if (!/^https?:\/\//i.test(value)) return null;
+  const url = parseUrl(value);
+  if (url === null) return null;
   if (url.username || url.password || url.search || url.hash) return null;
   const segments = url.pathname.replace(/\/$/, "").split("/").slice(1);
   const name = segments.pop()?.replace(/\.git$/i, "");

@@ -179,6 +179,12 @@ describe("link round trips", () => {
       expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBe("/new?prompt=hi");
       expect(promptLinkAppPath("https://app.t3.codes/")).toBeNull();
       expect(promptLinkAppPath("not a url")).toBeNull();
+      const parsed = parseNewThreadLink("?prompt=hi&repo=https://gitlab.example.com/acme/mono");
+      expect(parsed.ok && parsed.value.kind === "new" && parsed.value.repository).toEqual({
+        host: "gitlab.example.com",
+        owner: "acme",
+        name: "mono",
+      });
     } finally {
       URL.canParse = canParse;
     }
