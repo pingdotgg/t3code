@@ -352,6 +352,17 @@ export interface ProjectionRuntimeResponseContext {
   readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
 }
 
+const PROMPT_NARROWING_BLOCKING_FILTERS = [
+  "runIds",
+  "runStatuses",
+  "latestRunLimit",
+  "turnItemRunId",
+  "turnItemRunIds",
+  "turnItemNodeIds",
+  "turnItemRequestIds",
+  "turnItemStatuses",
+] as const satisfies ReadonlyArray<keyof ProjectionRecordFilter>;
+
 export interface ProjectionRecordFilter {
   readonly providerThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly providerTurnIds?: ReadonlyArray<ProviderTurnId>;
@@ -398,7 +409,7 @@ export interface ProjectionRecordFilter {
   /**
    * For a compacted thread, reads attempts, nodes, messages and provider turns of the recent runs
    * and the runs named here. Turn items are the failed errors of every run and the prompts of the
-   * recent, fresh-context and model-switch runs. `turnItemTypes` does not apply. A read without `runs`, or with another turn-item
+   * recent, fresh-context and model-switch runs. `turnItemTypes` does not apply. A read without `runs`, or with a run or turn-item
    * filter, keeps its filtered items. Runs stay whole.
    */
   readonly sinceLastCompaction?: {
@@ -3775,14 +3786,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? yield* runIdsSinceLastCompaction(threadId, filter.sinceLastCompaction)
             : null;
         const recentRunIds = recentRuns === null ? null : encodeIdList(recentRuns);
-        const promptRuns =
+        const readsWholeHistory =
           (fields === undefined || fields.includes("runs")) &&
-          filter?.turnItemRequestIds === undefined &&
-          filter?.turnItemStatuses === undefined &&
-          filter?.turnItemRunIds === undefined &&
-          filter?.turnItemNodeIds === undefined
-            ? recentRuns
-            : null;
+          PROMPT_NARROWING_BLOCKING_FILTERS.every((key) => filter?.[key] === undefined);
+        const promptRuns = readsWholeHistory ? recentRuns : null;
         const inRecentRuns = (column: string) =>
           recentRunIds === null
             ? sql``

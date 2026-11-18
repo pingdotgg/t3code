@@ -1157,6 +1157,8 @@ it.effect("a compacted thread reads every run, but records and prompts only for 
         .pipe(Effect.map((records) => ordinals(records.turnItems.map((row) => row.runId))));
     assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [runId(5)] }), [5]);
     assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [] }), []);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunId: runId(5) }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { runIds: [runId(15)] }), [1, ...all]);
     assert.deepEqual(yield* itemRuns(["turnItems"], {}), [1, ...all]);
 
     // A command also skips the node and the provider thread of each settled task. Tasks ended on
