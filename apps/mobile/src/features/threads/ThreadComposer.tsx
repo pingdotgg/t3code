@@ -458,8 +458,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const hasDictationRequest = props.takeDictationRequest !== undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a Start Dictation shortcut opens this draft already listening, once
   useEffect(() => {
-    if (hasDictationRequest) startRequestedDictation();
-  }, [hasDictationRequest]);
+    if (hasDictationRequest && voiceInput.isAvailable) startRequestedDictation();
+  }, [hasDictationRequest, voiceInput.isAvailable]);
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const voicePresentation = resolveVoiceComposerPresentation(
