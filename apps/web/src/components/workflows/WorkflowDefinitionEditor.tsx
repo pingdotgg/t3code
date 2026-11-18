@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, Var } from "gt-react";
 import { FileCode2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -65,7 +66,11 @@ function ProblemList({
         {problems.map((problem) => (
           <li key={`${problem.line}:${problem.message}`} className="whitespace-pre-wrap">
             {problem.line === undefined ? null : (
-              <span className="font-mono text-foreground">Line {problem.line}: </span>
+              <span className="font-mono text-foreground">
+                <T>
+                  Line <Var>{problem.line}</Var>:
+                </T>{" "}
+              </span>
             )}
             {problem.message}
           </li>
@@ -101,6 +106,7 @@ function Surface({
   readonly actions: HTMLElement | null;
 }) {
   const { resolvedTheme } = useTheme();
+  const gt = useGT();
   const canSave = useAtomValue(
     serverEnvironment.saveWorkflowDefinition.permissionAtom(environmentId),
   );
@@ -183,11 +189,11 @@ function Surface({
     },
   };
   const status = saving
-    ? "Checking…"
+    ? gt("Checking…")
     : dirty
-      ? "Unsaved changes"
+      ? gt("Unsaved changes")
       : savedOnce && problems.length === 0
-        ? "Saved and running"
+        ? gt("Saved and running")
         : null;
 
   return (
@@ -197,16 +203,16 @@ function Surface({
         : createPortal(
             <>
               <span className="shrink-0 text-xs text-muted-foreground" role="status">
-                {canSave ? status : "Read-only"}
+                {canSave ? status : gt("Read-only")}
               </span>
               {canSave && onDelete !== undefined ? (
                 <Button size="sm" variant="ghost" disabled={saving} onClick={onDelete}>
-                  Delete
+                  <T context="verb, delete the workflow file">Delete</T>
                 </Button>
               ) : null}
               {canSave ? (
                 <Button size="sm" disabled={!dirty || saving} onClick={() => void saveNow()}>
-                  Save
+                  <T context="verb, save the workflow file">Save</T>
                 </Button>
               ) : null}
             </>,
@@ -215,24 +221,24 @@ function Surface({
       {stale ? (
         <div role="status" className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs">
           <span className="min-w-0 flex-1 text-muted-foreground">
-            The file changed on disk while you were editing. Saving replaces that change.
+            <T>The file changed on disk while you were editing. Saving replaces that change.</T>
           </span>
           <Button size="xs" variant="outline" onClick={adopt}>
-            Load the file and drop my changes
+            <T>Load the file and drop my changes</T>
           </Button>
         </div>
       ) : null}
       {onDisk.length > 0 && problems.length === 0 ? (
         <ProblemList
-          title="The file on disk does not load. The last version that did keeps running."
+          title={gt("The file on disk does not load. The last version that did keeps running.")}
           problems={onDisk}
         />
       ) : null}
       {problems.length > 0 ? (
-        <ProblemList title="Not saved. Nothing changed on the server." problems={problems} />
+        <ProblemList title={gt("Not saved. Nothing changed on the server.")} problems={problems} />
       ) : null}
       {failure === null ? null : (
-        <ProblemList title="Could not save" problems={[{ message: failure }]} />
+        <ProblemList title={gt("Could not save")} problems={[{ message: failure }]} />
       )}
       <EditProvider createEditor={createEditor}>
         <Virtualizer
@@ -295,15 +301,18 @@ export default function WorkflowDefinitionEditor({
   const remove = useAtomCommand(serverEnvironment.deleteWorkflowDefinition, {
     label: "workflow definition delete",
   });
+  const gt = useGT();
   const [naming, setNaming] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   if (query.error) {
-    return <WorkflowsEmpty title="Could not read the workflow files" description={query.error} />;
+    return (
+      <WorkflowsEmpty title={gt("Could not read the workflow files")} description={query.error} />
+    );
   }
   if (!query.data) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
-        Loading the workflow files…
+        <T>Loading the workflow files…</T>
       </p>
     );
   }
@@ -316,7 +325,7 @@ export default function WorkflowDefinitionEditor({
   };
   const removeFile = async (target: string) => {
     const confirmed = await (requestConfirmDialog(
-      `Delete ${target}? The workflows it defines can no longer be started.`,
+      gt("Delete {file}? The workflows it defines can no longer be started.", { file: target }),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
@@ -335,8 +344,8 @@ export default function WorkflowDefinitionEditor({
       <ProblemList
         title={
           refusal.length > 0
-            ? "Not deleted. Nothing changed on the server."
-            : "These files do not fit together. What ran before keeps running."
+            ? gt("Not deleted. Nothing changed on the server.")
+            : gt("These files do not fit together. What ran before keeps running.")
         }
         problems={refusal.length > 0 ? refusal : problems}
       />
@@ -372,13 +381,18 @@ export default function WorkflowDefinitionEditor({
         <div className="mx-auto w-full max-w-3xl space-y-3 p-4 sm:p-6">
           <div className="flex items-start gap-3">
             <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-              Every file in <code className="font-mono text-foreground">{directory}</code> defines
-              workflows. A change to one is picked up without a restart.
+              <T>
+                Every file in{" "}
+                <code className="font-mono text-foreground">
+                  <Var>{directory}</Var>
+                </code>{" "}
+                defines workflows. A change to one is picked up without a restart.
+              </T>
             </p>
             {single || !canChange ? null : naming === null ? (
               <Button size="sm" variant="outline" onClick={() => setNaming("")}>
                 <PlusIcon />
-                New file
+                <T>New file</T>
               </Button>
             ) : (
               <form
@@ -391,7 +405,7 @@ export default function WorkflowDefinitionEditor({
                 <Input
                   autoFocus
                   size="sm"
-                  aria-label="File name"
+                  aria-label={gt("File name")}
                   placeholder="release.ts"
                   value={naming}
                   onChange={(event) => setNaming(event.target.value)}
@@ -400,15 +414,17 @@ export default function WorkflowDefinitionEditor({
                   }}
                 />
                 <Button size="sm" type="submit" variant="outline">
-                  Create
+                  <T context="verb, create the workflow file">Create</T>
                 </Button>
               </form>
             )}
           </div>
           {files.length === 0 ? (
             <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              No workflows yet. Make the first file here, or ask an agent to write one in that
-              folder.
+              <T>
+                No workflows yet. Make the first file here, or ask an agent to write one in that
+                folder.
+              </T>
             </p>
           ) : (
             <ul className="divide-y rounded-lg border">
@@ -424,13 +440,13 @@ export default function WorkflowDefinitionEditor({
                       <span className="block truncate font-mono text-sm">{candidate.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {candidate.workflows.length === 0
-                          ? "Defines no workflows"
+                          ? gt("Defines no workflows")
                           : candidate.workflows.map((tag) => tag.replace(/@\d+$/, "")).join(", ")}
                       </span>
                     </span>
                     {candidate.problems.length > 0 ? (
                       <span className="shrink-0 text-xs font-medium text-destructive-foreground">
-                        Does not load
+                        <T>Does not load</T>
                       </span>
                     ) : null}
                   </button>

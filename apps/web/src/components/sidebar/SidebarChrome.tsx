@@ -223,13 +223,16 @@ function SidebarUtilityItem({
   count?: number;
   onClick: () => void;
 }) {
+  const gt = useGT();
   return (
     <SidebarMenuItem className="relative shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              aria-label={count > 0 ? `${label}, ${count} waiting on you` : label}
+              aria-label={
+                count > 0 ? gt("{label}, {count} waiting on you", { label, count }) : label
+              }
               onClick={onClick}
               size="icon"
             >
@@ -340,7 +343,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {workflowCounts !== undefined && workflowCounts !== null && workflowCounts.total > 0 ? (
             <SidebarUtilityItem
               icon={<WorkflowIcon />}
-              label="Workflows"
+              label={gt("Workflows")}
               count={workflowCounts.needsYou}
               onClick={handleWorkflowsClick}
             />

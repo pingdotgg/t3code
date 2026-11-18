@@ -1,4 +1,5 @@
 import { type EnvironmentId } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -32,14 +33,17 @@ import {
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
 const EVERY_WORKFLOW = "";
 const TABS: ReadonlyArray<{ readonly value: WorkflowListTab; readonly label: string }> = [
-  { value: "needs-you", label: "Needs you" },
-  { value: "running", label: "Running" },
-  { value: "all", label: "All" },
+  {
+    value: "needs-you",
+    label: msg("Needs you", { $context: "tab: workflow runs that wait on the user" }),
+  },
+  { value: "running", label: msg("Running", { $context: "tab: workflow runs under way" }) },
+  { value: "all", label: msg("All", { $context: "tab: every workflow run" }) },
 ];
 const NOTHING: Record<WorkflowListTab, string> = {
-  "needs-you": "Nothing waits on you.",
-  running: "Nothing is running.",
-  all: "No runs yet.",
+  "needs-you": msg("Nothing waits on you."),
+  running: msg("Nothing is running."),
+  all: msg("No runs yet."),
 };
 
 export function WorkflowsEmpty({
@@ -84,23 +88,25 @@ export function WorkflowRunsView({
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const [pickedTab, setPickedTab] = useState<WorkflowListTab | null>(null);
   const [workflow, setWorkflow] = useState(EVERY_WORKFLOW);
+  const gt = useGT();
+  const m = useMessages();
   const snapshot = live.data;
   if (live.error) {
-    return <WorkflowsEmpty title="Could not load workflow runs" description={live.error} />;
+    return <WorkflowsEmpty title={gt("Could not load workflow runs")} description={live.error} />;
   }
   if (!snapshot) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
-        Loading workflow runs…
+        <T>Loading workflow runs…</T>
       </p>
     );
   }
   if (snapshot.runs.length === 0 && snapshot.workflows.length === 0) {
     return (
       <WorkflowsEmpty
-        title="No workflow runs yet"
+        title={gt("No workflow runs yet")}
         description={
-          <>
+          <T>
             A workflow ties agents, code, schedules and questions to you into one run that survives
             restarts. Write one under{" "}
             <button
@@ -119,7 +125,7 @@ export function WorkflowRunsView({
             >
               Read the guide
             </a>
-          </>
+          </T>
         }
       />
     );
@@ -156,13 +162,15 @@ export function WorkflowRunsView({
           className="flex shrink-0 items-center gap-3 border-b bg-destructive/4 px-4 py-2 text-xs"
         >
           <span className="min-w-0 flex-1 text-muted-foreground">
-            <span className="font-medium text-destructive-foreground">
-              A workflow file has a problem.
-            </span>{" "}
-            The last version that did keeps running.
+            <T>
+              <span className="font-medium text-destructive-foreground">
+                A workflow file has a problem.
+              </span>{" "}
+              The last version that did keeps running.
+            </T>
           </span>
           <Button size="xs" variant="outline" onClick={onOpenDefinitions}>
-            Open the file
+            <T>Open the file</T>
           </Button>
         </div>
       )}
@@ -177,7 +185,7 @@ export function WorkflowRunsView({
         >
           <div className="space-y-2 p-2 pb-1">
             <ToggleGroup
-              aria-label="Which runs"
+              aria-label={gt("Which runs")}
               className="w-full *:flex-1"
               value={[tab]}
               onValueChange={(next) => {
@@ -187,7 +195,7 @@ export function WorkflowRunsView({
             >
               {TABS.map(({ value, label }) => (
                 <Toggle key={value} value={value}>
-                  {label}
+                  {m(label)}
                 </Toggle>
               ))}
             </ToggleGroup>
@@ -196,13 +204,20 @@ export function WorkflowRunsView({
                 value={workflow}
                 onValueChange={(value) => setWorkflow(value ?? EVERY_WORKFLOW)}
               >
-                <SelectTrigger size="sm" aria-label="Workflow">
+                <SelectTrigger
+                  size="sm"
+                  aria-label={gt("Workflow", { $context: "picker that filters runs by workflow" })}
+                >
                   <SelectValue>
-                    {section === null ? `All ${groups.workflows.length} workflows` : section.name}
+                    {section === null
+                      ? gt("All {count} workflows", { count: groups.workflows.length })
+                      : section.name}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value={EVERY_WORKFLOW}>All workflows</SelectItem>
+                  <SelectItem value={EVERY_WORKFLOW}>
+                    <T>All workflows</T>
+                  </SelectItem>
                   {groups.workflows.map((candidate) => (
                     <SelectItem key={candidate.name} value={candidate.name}>
                       <span className="flex items-center gap-2">
@@ -215,14 +230,16 @@ export function WorkflowRunsView({
               </Select>
             ) : null}
             {section === null ? null : (
-              <p className="px-1 text-xs text-muted-foreground">{workflowTriggerLine(section)}</p>
+              <p className="px-1 text-xs text-muted-foreground">
+                {workflowTriggerLine(section, m)}
+              </p>
             )}
           </div>
           <ScrollArea className="min-h-0 flex-1">
-            <nav aria-label="Workflow runs" className="p-2 pt-1">
+            <nav aria-label={gt("Workflow runs")} className="p-2 pt-1">
               {listed.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  {section?.neverRan ? "Has not run yet." : NOTHING[tab]}
+                  {section?.neverRan ? gt("Has not run yet.") : m(NOTHING[tab])}
                 </p>
               ) : (
                 <ul className="space-y-0.5">
@@ -273,6 +290,7 @@ function WorkflowRunListItem({
   readonly onSelect: (runId: string | null) => void;
 }) {
   const { run } = node;
+  const m = useMessages();
   return (
     <li>
       <button
@@ -291,7 +309,7 @@ function WorkflowRunListItem({
         </span>
         <span className="truncate text-sm text-foreground">{run.title}</span>
         <span className="flex min-w-0 gap-1.5 text-xs text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">{workflowRunNow(node)}</span>
+          <span className="min-w-0 flex-1 truncate">{workflowRunNow(node, m)}</span>
           <span className="shrink-0">
             <RelativeLabel value={run.updatedAt} />
           </span>

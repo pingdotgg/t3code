@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   ArrowLeftIcon,
   BotIcon,
@@ -29,6 +30,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
+import { type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -125,7 +127,8 @@ const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
 };
 
 export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) {
-  const state = workflowRunState(node);
+  const m = useMessages();
+  const state = workflowRunState(node, m);
   return (
     <span
       className={cn(
@@ -143,8 +146,12 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
   );
 }
 
-const ordinal = (count: number) =>
-  count === 1 ? "1st" : count === 2 ? "2nd" : count === 3 ? "3rd" : `${count}th`;
+const nthTry = (count: number, resolve: MessageResolver) =>
+  resolve(
+    msg("{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}", {
+      count,
+    }),
+  );
 
 export function WorkflowRunFeed({
   environmentId,
@@ -163,6 +170,8 @@ export function WorkflowRunFeed({
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
 }) {
   const { run } = node;
+  const gt = useGT();
+  const m = useMessages();
   const nowMs = useNowMs();
   const article = useRef<HTMLElement | null>(null);
   const detail = useEnvironmentQuery(
@@ -179,19 +188,19 @@ export function WorkflowRunFeed({
     setBusy(true);
     const result = await resume(target);
     setBusy(false);
-    reportFailure("Could not resume the run", result);
+    reportFailure(gt("Could not resume the run"), result);
   };
   const cancelRun = async () => {
     if (busy) return;
     const confirmed = await (requestConfirmDialog(
-      `Cancel ${run.title}? Its agents stop and the run cannot be resumed.`,
+      gt("Cancel {title}? Its agents stop and the run cannot be resumed.", { title: run.title }),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
     setBusy(true);
     const result = await cancel(target);
     setBusy(false);
-    reportFailure("Could not cancel the run", result);
+    reportFailure(gt("Could not cancel the run"), result);
   };
   const ended = run.endedAt !== null;
   const ranMs = (ended ? Date.parse(run.endedAt) : nowMs) - Date.parse(run.startedAt);
@@ -207,7 +216,7 @@ export function WorkflowRunFeed({
             nowMs,
           }),
         );
-  const path = feed === null ? [] : workflowPath(feed);
+  const path = feed === null ? [] : workflowPath(feed, m);
   const beats = (feed ?? []).flatMap((row) =>
     row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row],
   );
@@ -275,10 +284,10 @@ export function WorkflowRunFeed({
           variant="ghost"
           className="md:hidden"
           onClick={() => onSelect(null)}
-          aria-label="Back to the list of runs"
+          aria-label={gt("Back to the list of runs")}
         >
           <ArrowLeftIcon />
-          Runs
+          <T context="noun, the list of workflow runs">Runs</T>
         </Button>
         {parent === null ? null : (
           <button
@@ -286,7 +295,9 @@ export function WorkflowRunFeed({
             className="block cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
             onClick={() => onSelect(parent.runId)}
           >
-            Part of {parent.title}
+            <T>
+              Part of <Var>{parent.title}</Var>
+            </T>
           </button>
         )}
         <div className="flex items-start gap-3">
@@ -298,14 +309,25 @@ export function WorkflowRunFeed({
           <span>{run.workflow}</span>
           <span aria-hidden>·</span>
           <span>
-            started <RelativeLabel value={run.startedAt} />
+            <T>
+              started{" "}
+              <Var>
+                <RelativeLabel value={run.startedAt} />
+              </Var>
+            </T>
           </span>
           <span aria-hidden>·</span>
-          <span>{ended ? `took ${formatDuration(ranMs)}` : `${formatDuration(ranMs)} so far`}</span>
+          <span>
+            {ended
+              ? gt("took {duration}", { duration: formatDuration(ranMs) })
+              : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+          </span>
           {run.retired ? (
             <>
               <span aria-hidden>·</span>
-              <span>its version is no longer registered</span>
+              <span>
+                <T>its version is no longer registered</T>
+              </span>
             </>
           ) : null}
           {ended ? null : (
@@ -317,7 +339,7 @@ export function WorkflowRunFeed({
                 className="cursor-pointer underline underline-offset-2 hover:text-destructive disabled:cursor-default disabled:opacity-60"
                 onClick={() => void cancelRun()}
               >
-                Cancel run
+                <T>Cancel run</T>
               </button>
             </>
           )}
@@ -326,12 +348,12 @@ export function WorkflowRunFeed({
 
       {path.length > 1 ? <WorkflowPath nodes={path} onPick={scrollTo} /> : null}
 
-      <section aria-label="What happened" className="mt-4">
+      <section aria-label={gt("What happened")} className="mt-4">
         {detail.error ? (
           <p className="text-xs text-destructive">{detail.error}</p>
         ) : feed === null ? (
           <p className="text-xs text-muted-foreground" role="status">
-            Loading steps…
+            <T>Loading steps…</T>
           </p>
         ) : (
           <ol className="min-w-0 space-y-2">
@@ -340,7 +362,9 @@ export function WorkflowRunFeed({
                 <WorkflowQuickStepsRow key={`quick:${row.steps[0]?.name}`} row={row} />
               ) : row.kind === "together" ? (
                 <li key={`together:${row.beats[0]?.name}`} className="space-y-1">
-                  <p className="px-1 text-xs text-muted-foreground">At the same time</p>
+                  <p className="px-1 text-xs text-muted-foreground">
+                    <T>At the same time</T>
+                  </p>
                   <ul className="grid grid-cols-1 gap-2 @xl/feed:grid-cols-2">
                     {row.beats.map((beat) => (
                       <li key={beat.name} data-step={beat.name} className="min-w-0">
@@ -368,7 +392,9 @@ export function WorkflowRunFeed({
               <li>{pause(null, run.pauses, run.detail)}</li>
             ) : null}
             {feed.length === 0 && loose.length === 0 && run.status !== "paused" && !ended ? (
-              <li className="text-xs text-muted-foreground">Nothing yet.</li>
+              <li className="text-xs text-muted-foreground">
+                <T>Nothing yet.</T>
+              </li>
             ) : null}
             {ended ? (
               <li>
@@ -381,10 +407,10 @@ export function WorkflowRunFeed({
                     }
                     name={
                       run.status === "completed"
-                        ? "Finished"
+                        ? gt("Finished", { $context: "how a workflow run ended" })
                         : run.status === "stopped"
-                          ? "Stopped"
-                          : "Cancelled"
+                          ? gt("Stopped", { $context: "how a workflow run ended" })
+                          : gt("Cancelled", { $context: "how a workflow run ended" })
                     }
                     sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
                   />
@@ -416,8 +442,9 @@ function WorkflowPath({
   readonly nodes: ReadonlyArray<WorkflowPathNode>;
   readonly onPick: (key: string) => void;
 }) {
+  const gt = useGT();
   return (
-    <nav aria-label="Steps so far" className="mt-3 flex flex-wrap items-center gap-y-1.5">
+    <nav aria-label={gt("Steps so far")} className="mt-3 flex flex-wrap items-center gap-y-1.5">
       {nodes.map((node, index) => (
         <span key={node.key} className="flex items-center">
           {index === 0 ? null : <span aria-hidden className="h-px w-3 bg-border" />}
@@ -553,11 +580,15 @@ function Hairline({
 }
 
 function WorkflowQuickStepsRow({ row }: { readonly row: WorkflowQuickSteps }) {
+  const gt = useGT();
   const names = row.steps.map((step) => step.name);
   const told =
     names.length <= 2
       ? names.join(", ")
-      : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+      : gt("{names} and {count} more", {
+          names: names.slice(0, 2).join(", "),
+          count: names.length - 2,
+        });
   return (
     <li>
       <Hairline
@@ -602,9 +633,11 @@ function WorkflowBeatCard({
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const under = beat.status === "running";
   const length = formatDuration(beat.endMs - beat.startMs);
-  const tries = beat.attempts > 1 ? ` · ${ordinal(beat.attempts)} try` : "";
+  const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
   switch (beat.kind) {
     case "agent":
       return (
@@ -620,19 +653,34 @@ function WorkflowBeatCard({
       if (answer === null)
         return (
           <Hairline>
-            nobody answered {beat.name} in {length}
+            {gt("nobody answered {step} in {duration}", { step: beat.name, duration: length })}
           </Hairline>
         );
       return (
         <FeedCard label={beat.name}>
           <CardHead
             mark={<CheckIcon className="size-3.5 text-success-foreground" />}
-            name="Answered"
-            sub={`${beat.name} · after ${length}`}
+            name={gt("Answered", { $context: "a person answered the workflow's question" })}
+            sub={gt("{step} · after {duration}", { step: beat.name, duration: length })}
           />
           <p className="mt-1 text-sm">
-            You said <span className="font-semibold">{answer.choice}</span>
-            {answer.reason === null ? "." : `: ${answer.reason}`}
+            {answer.reason === null ? (
+              <T>
+                You said{" "}
+                <span className="font-semibold">
+                  <Var>{answer.choice}</Var>
+                </span>
+                .
+              </T>
+            ) : (
+              <T>
+                You said{" "}
+                <span className="font-semibold">
+                  <Var>{answer.choice}</Var>
+                </span>
+                : <Var>{answer.reason}</Var>
+              </T>
+            )}
           </p>
         </FeedCard>
       );
@@ -641,7 +689,7 @@ function WorkflowBeatCard({
       if (!under)
         return (
           <Hairline>
-            slept {length} at {beat.name}
+            {gt("slept {duration} at {step}", { duration: length, step: beat.name })}
           </Hairline>
         );
       const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
@@ -649,11 +697,14 @@ function WorkflowBeatCard({
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
             mark={<MoonIcon className="size-3.5 text-muted-foreground" />}
-            name="Sleeping"
+            name={gt("Sleeping", { $context: "a workflow step is sleeping" })}
             sub={
               Number.isFinite(wakes) && wakes > nowMs
-                ? `${beat.name} · wakes in ${formatDuration(wakes - nowMs)}`
-                : `${beat.name} · about to wake`
+                ? gt("{step} · wakes in {duration}", {
+                    step: beat.name,
+                    duration: formatDuration(wakes - nowMs),
+                  })
+                : gt("{step} · about to wake", { step: beat.name })
             }
           />
         </FeedCard>
@@ -663,15 +714,15 @@ function WorkflowBeatCard({
       if (!under)
         return (
           <Hairline>
-            waited {length} for {beat.name}
+            {gt("waited {duration} for {step}", { duration: length, step: beat.name })}
           </Hairline>
         );
       return (
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
             mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
-            name="Waiting"
-            sub={`for ${beat.name} · ${length} so far`}
+            name={gt("Waiting", { $context: "a workflow step is waiting" })}
+            sub={gt("for {step} · {duration} so far", { step: beat.name, duration: length })}
           />
         </FeedCard>
       );
@@ -685,7 +736,7 @@ function WorkflowBeatCard({
             sub={
               child === null
                 ? `${beat.childRun?.workflow ?? ""} · ${length}`
-                : `${child.run.workflow} · ${workflowRunNow(child)}`
+                : `${child.run.workflow} · ${workflowRunNow(child, m)}`
             }
             action={
               <>
@@ -695,7 +746,7 @@ function WorkflowBeatCard({
                   variant="outline"
                   onClick={() => onSelect(beat.childRun?.runId ?? null)}
                 >
-                  Open run
+                  <T>Open run</T>
                 </Button>
               </>
             }
@@ -710,7 +761,7 @@ function WorkflowBeatCard({
             <CardHead
               mark={<span aria-hidden className="size-1.5 rounded-full bg-info" />}
               name={beat.name}
-              sub={`running for ${length}${tries}`}
+              sub={`${gt("running for {duration}", { duration: length })}${tries}`}
             />
           </FeedCard>
         );
@@ -718,7 +769,8 @@ function WorkflowBeatCard({
       const lines = workflowResultLines(beat.result);
       return (
         <Hairline detail={lines.length === 0 ? undefined : <ResultLines lines={lines} />}>
-          {beat.status === "failed" ? `${beat.name} failed` : beat.name} · {length}
+          {beat.status === "failed" ? gt("{step} failed", { step: beat.name }) : beat.name} ·{" "}
+          {length}
           {tries}
         </Hairline>
       );
@@ -737,6 +789,8 @@ function WorkflowAgentCard({
   readonly open: boolean;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [all, setAll] = useState(false);
   const elsewhere = beat.thread !== null && beat.thread.environmentId !== null;
   const threadEnvironmentId =
@@ -759,9 +813,11 @@ function WorkflowAgentCard({
   const start = summary.said === null ? null : workflowSaidStart(summary.said, SAID_SHOWN);
   const sub = [
     shell === null ? null : formatModelSlugName(shell.modelSelection.model),
-    under ? `working for ${length}` : length,
-    beat.attempts > 1 ? `${ordinal(beat.attempts)} try` : null,
-    elsewhere ? `on ${threadEnvironment?.label ?? threadEnvironmentId}` : null,
+    under ? gt("working for {duration}", { duration: length }) : length,
+    beat.attempts > 1 ? nthTry(beat.attempts, m) : null,
+    elsewhere
+      ? gt("on {environment}", { environment: threadEnvironment?.label ?? threadEnvironmentId })
+      : null,
   ]
     .filter((part) => part !== null)
     .join(" · ");
@@ -787,7 +843,11 @@ function WorkflowAgentCard({
         sub={sub}
         action={
           beat.thread === null ? null : threadEnvironment === null ? (
-            <span className="text-xs text-muted-foreground">Thread on {threadEnvironmentId}</span>
+            <span className="text-xs text-muted-foreground">
+              <T>
+                Thread on <Var>{threadEnvironmentId}</Var>
+              </T>
+            </span>
           ) : (
             <Button
               size="compact"
@@ -795,7 +855,9 @@ function WorkflowAgentCard({
               aria-pressed={open}
               onClick={() => beat.thread !== null && onOpenThread(beat.thread)}
             >
-              {under ? "Watch live" : "Transcript"}
+              {under
+                ? gt("Watch live")
+                : gt("Transcript", { $context: "button that opens an agent's thread" })}
             </Button>
           )
         }
@@ -820,7 +882,7 @@ function WorkflowAgentCard({
               className="mt-1 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
               onClick={() => setAll(!all)}
             >
-              {all ? "Show less" : "Show all of it"}
+              {all ? gt("Show less") : gt("Show all of it")}
             </button>
           ) : null}
         </div>
@@ -857,34 +919,40 @@ function WorkflowPauseCard({
   readonly disabled: boolean;
   readonly onResume: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const resumes = run.resumesAt === null ? Number.NaN : Date.parse(run.resumesAt);
   const next = run.retired
-    ? "cannot go on until its workflow version is registered again"
+    ? gt("cannot go on until its workflow version is registered again")
     : !Number.isFinite(resumes)
-      ? "waits for you to resume it"
+      ? gt("waits for you to resume it")
       : resumes > nowMs
-        ? `tries again by itself in ${formatDuration(resumes - nowMs)}`
-        : "about to try again by itself";
+        ? gt("tries again by itself in {duration}", { duration: formatDuration(resumes - nowMs) })
+        : gt("about to try again by itself");
   return (
-    <FeedCard tone="failed" label="Why it paused" reveal>
+    <FeedCard tone="failed" label={gt("Why it paused")} reveal>
       <CardHead
         mark={<CircleAlertIcon className="size-3.5 text-destructive" />}
-        name={name === null ? "Paused" : `Paused at ${name}`}
+        name={
+          name === null
+            ? gt("Paused", { $context: "a workflow run is paused" })
+            : gt("Paused at {step}", { step: name })
+        }
         sub={
           <>
-            {attempts > 0 ? `${ordinal(attempts)} try · ` : null}
+            {attempts > 0 ? `${nthTry(attempts, m)} · ` : null}
             <RelativeLabel value={run.updatedAt} /> · {next}
           </>
         }
         action={
           <Button size="compact" disabled={disabled} onClick={onResume}>
-            Resume now
+            <T>Resume now</T>
           </Button>
         }
       />
       {reason ? <p className="mt-1.5 text-sm break-words whitespace-pre-wrap">{reason}</p> : null}
       <p className="mt-1.5 text-xs text-muted-foreground">
-        Only the failed step runs again; what finished before it is kept.
+        <T>Only the failed step runs again; what finished before it is kept.</T>
       </p>
     </FeedCard>
   );
@@ -899,6 +967,7 @@ function WorkflowQuestionCard({
   readonly question: WorkflowQuestion;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
 }) {
+  const gt = useGT();
   const view = readWorkflowQuestion(question);
   const [reason, setReason] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -927,14 +996,22 @@ function WorkflowQuestionCard({
       },
     });
     setBusy(false);
-    reportFailure("Could not answer the question", result);
+    reportFailure(gt("Could not answer the question"), result);
   };
   return (
     <FeedCard tone="ask" label={view.title} reveal>
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>Input</span>
+        <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>
+          <T context="the workflow run waits on a person">Input</T>
+        </span>
         <span>
-          asked <RelativeLabel value={question.askedAt} /> · the run waits for you
+          <T>
+            asked{" "}
+            <Var>
+              <RelativeLabel value={question.askedAt} />
+            </Var>{" "}
+            · the run waits for you
+          </T>
         </span>
       </p>
       <h3 className="mt-1 text-sm font-semibold break-words">{view.title}</h3>
@@ -955,7 +1032,7 @@ function WorkflowQuestionCard({
         ))}
         {reason === null ? (
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReason("")}>
-            Add a reason
+            <T>Add a reason</T>
           </Button>
         ) : null}
         {question.thread === null || !reachable ? null : (
@@ -964,7 +1041,7 @@ function WorkflowQuestionCard({
             className="cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
             onClick={() => question.thread !== null && onOpenThread(question.thread)}
           >
-            Ask the agent first
+            <T>Ask the agent first</T>
           </button>
         )}
       </div>
@@ -975,8 +1052,8 @@ function WorkflowQuestionCard({
             autoFocus
             value={reason}
             disabled={busy || !canAnswer}
-            aria-label={`Reason for ${view.title}`}
-            placeholder="Why, in a sentence. It goes with whichever answer you pick."
+            aria-label={gt("Reason for {title}", { title: view.title })}
+            placeholder={gt("Why, in a sentence. It goes with whichever answer you pick.")}
             onChange={(event) => setReason(event.currentTarget.value)}
           />
         </div>

@@ -208,6 +208,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   NewTaskBranch: msg("Branch"),
   AddProject: msg("Add project"),
   ThreadFiles: msg("Files"),
+  WorkflowRun: msg("Run", { $context: "noun, page title for one workflow run" }),
   SettingsLegal: msg("Legal"),
   ConnectOnboarding: msg("Set up {product}", { product: "T3 Connect" }),
   Connections: msg("Environments"),
@@ -780,7 +781,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     WorkflowRun: createNativeStackScreen({
       screen: WorkflowRunRouteScreen,
       linking: { path: "workflows/:environmentId/:runId" },
-      options: pageRoute({ title: "Run" }),
+      options: pageRoute(),
     }),
     ThreadBackgroundWork: createNativeStackScreen({
       screen: ThreadBackgroundWorkSheet,

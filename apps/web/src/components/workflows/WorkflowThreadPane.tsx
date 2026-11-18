@@ -1,5 +1,6 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { Maximize2Icon, XIcon } from "lucide-react";
 
 import { ComposerHandleContext } from "../../composerHandleContext";
@@ -23,6 +24,7 @@ export default function WorkflowThreadPane({
   readonly onClose: () => void;
 }) {
   const navigate = useNavigate();
+  const gt = useGT();
   const shell = useQuietThreadShell(threadRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(threadRef.environmentId);
   const openFull = () =>
@@ -34,23 +36,30 @@ export default function WorkflowThreadPane({
     <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
       <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-3 pe-2">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {shell?.workflowRun?.step ?? shell?.title ?? "Agent"}
+          {shell?.workflowRun?.step ??
+            shell?.title ??
+            gt("Agent", { $context: "fallback title of a coding agent's thread" })}
         </span>
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Open as a full thread"
+          aria-label={gt("Open as a full thread")}
           onClick={openFull}
         >
           <Maximize2Icon />
         </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Close transcript" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={gt("Close transcript")}
+          onClick={onClose}
+        >
           <XIcon />
         </Button>
       </div>
       {shell === null ? (
         <p className="p-3 text-xs text-muted-foreground" role="status">
-          {snapshotLoaded ? "This thread is no longer there." : "Loading the thread…"}
+          {snapshotLoaded ? gt("This thread is no longer there.") : gt("Loading the thread…")}
         </p>
       ) : (
         <BackgroundThreadContext value>

@@ -11,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,15 +27,18 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 
 const TABS = [
-  { value: "needs-you", label: "Needs you" },
-  { value: "running", label: "Running" },
-  { value: "all", label: "All" },
+  {
+    value: "needs-you",
+    label: msg("Needs you", { $context: "tab, workflow runs waiting on the user" }),
+  },
+  { value: "running", label: msg("Running", { $context: "tab, workflow runs under way" }) },
+  { value: "all", label: msg("All", { $context: "tab, all workflow runs" }) },
 ] as const satisfies ReadonlyArray<{ readonly value: WorkflowListTab; readonly label: string }>;
 
 const NOTHING: Record<WorkflowListTab, string> = {
-  "needs-you": "Nothing waits on you.",
-  running: "Nothing is running.",
-  all: "No runs yet.",
+  "needs-you": msg("Nothing waits on you."),
+  running: msg("Nothing is running."),
+  all: msg("No runs yet."),
 };
 
 export const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
@@ -66,7 +70,8 @@ export function WorkflowChip(props: { readonly name: string }) {
 
 function RunRow(props: { readonly node: WorkflowRunNode; readonly onOpen: () => void }) {
   const { run } = props.node;
-  const state = workflowRunState(props.node);
+  const m = useMessages();
+  const state = workflowRunState(props.node, m);
   return (
     <Pressable
       accessibilityRole="button"
@@ -88,7 +93,7 @@ function RunRow(props: { readonly node: WorkflowRunNode; readonly onOpen: () => 
       </Text>
       <View className="flex-row items-center gap-2">
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-          {workflowRunNow(props.node)}
+          {workflowRunNow(props.node, m)}
         </Text>
         <Text className="text-xs text-foreground-muted">
           <RelativeTime timestamp={run.updatedAt} />
@@ -106,6 +111,8 @@ function EnvironmentRuns(props: {
   readonly onTab: (tab: WorkflowListTab) => void;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
+  const m = useMessages();
   const live = useEnvironmentQuery(
     serverEnvironment.workflowsLive({ environmentId: props.environmentId, input: {} }),
   );
@@ -119,8 +126,10 @@ function EnvironmentRuns(props: {
     return (
       <EmptyState
         variant="plain"
-        title="No workflow runs yet"
-        detail="A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions."
+        title={gt("No workflow runs yet")}
+        detail={gt(
+          "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one on your computer, under Workflows, then Definitions.",
+        )}
       />
     );
   }
@@ -134,10 +143,17 @@ function EnvironmentRuns(props: {
         {props.label === null ? null : (
           <Text className="font-t3-medium text-xs text-foreground-muted">{props.label}</Text>
         )}
-        <SegmentedControl options={TABS} selected={tab} onSelect={props.onTab} role="tab" />
+        <SegmentedControl
+          options={TABS.map((option) => ({ ...option, label: m(option.label) }))}
+          selected={tab}
+          onSelect={props.onTab}
+          role="tab"
+        />
       </View>
       {listed.length === 0 ? (
-        <Text className="px-5 py-6 text-center text-sm text-foreground-muted">{NOTHING[tab]}</Text>
+        <Text className="px-5 py-6 text-center text-sm text-foreground-muted">
+          {m(NOTHING[tab])}
+        </Text>
       ) : (
         listed.map((node) => (
           <RunRow
@@ -161,12 +177,13 @@ export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
   const [tab, setTab] = useState<WorkflowListTab | null>(null);
   const insets = useSafeAreaInsets();
+  const gt = useGT();
   if (isReady && environments.length === 0) {
     return (
       <EmptyState
         variant="plain"
-        title="No environment connected"
-        detail="Connect an environment to see its workflow runs."
+        title={gt("No environment connected")}
+        detail={gt("Connect an environment to see its workflow runs.")}
       />
     );
   }

@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type {
   WorkflowQuestion,
   WorkflowRun,
@@ -170,12 +172,15 @@ export function defaultWorkflowRunId(groups: WorkflowRunGroups): string | null {
 }
 
 /** What starts a workflow, in words. */
-export function workflowTriggerLine(section: WorkflowSection): string {
-  if (section.triggers === null) return "No longer registered on this server";
-  if (section.invokedOnly) return "Runs as part of other workflows";
+export function workflowTriggerLine(
+  section: WorkflowSection,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (section.triggers === null) return resolve(msg("No longer registered on this server"));
+  if (section.invokedOnly) return resolve(msg("Runs as part of other workflows"));
   return section.triggers.length === 0
-    ? "Started by hand"
-    : `Starts on ${section.triggers.join(", ")}`;
+    ? resolve(msg("Started by hand"))
+    : resolve(msg("Starts on {triggers}", { triggers: section.triggers.join(", ") }));
 }
 
 export type WorkflowListTab = "needs-you" | "running" | "all";
@@ -219,44 +224,69 @@ export function workflowChip(name: string): { readonly letters: string; readonly
 export type WorkflowRunTone = "input" | "failed" | "working" | "quiet" | "done";
 
 /** A run's state as the one word the thread list would use for it. */
-export function workflowRunState(node: WorkflowRunNode): {
+export function workflowRunState(
+  node: WorkflowRunNode,
+  resolve: MFunctionType = mFallback,
+): {
   readonly word: string;
   readonly tone: WorkflowRunTone;
 } {
   const { run } = node;
-  if (node.questions.length > 0) return { word: "Input", tone: "input" };
+  const input = {
+    word: resolve(msg("Input", { $context: "workflow run status: it waits on a person" })),
+    tone: "input",
+  } as const;
+  const working = {
+    word: resolve(msg("Working", { $context: "workflow run status" })),
+    tone: "working",
+  } as const;
+  if (node.questions.length > 0) return input;
   switch (run.status) {
     case "paused":
-      return { word: "Paused", tone: "failed" };
+      return {
+        word: resolve(msg("Paused", { $context: "workflow run status" })),
+        tone: "failed",
+      };
     case "running":
-      return { word: "Working", tone: "working" };
+      return working;
     case "waiting": {
       const detail = run.detail ?? "";
-      if (detail.startsWith("agent ")) return { word: "Working", tone: "working" };
-      if (detail.startsWith("sleep ")) return { word: "Sleeping", tone: "quiet" };
+      if (detail.startsWith("agent ")) return working;
+      if (detail.startsWith("sleep ")) {
+        return {
+          word: resolve(msg("Sleeping", { $context: "workflow run status" })),
+          tone: "quiet",
+        };
+      }
       // Something below it holds it up; say that, not that it idles.
-      if (node.children.some(needsPerson)) return { word: "Input", tone: "input" };
-      return { word: "Waiting", tone: "quiet" };
+      if (node.children.some(needsPerson)) return input;
+      return { word: resolve(msg("Waiting", { $context: "workflow run status" })), tone: "quiet" };
     }
     case "completed":
-      return { word: "Done", tone: "done" };
+      return { word: resolve(msg("Done", { $context: "workflow run status" })), tone: "done" };
     case "stopped":
-      return { word: "Stopped", tone: "quiet" };
+      return { word: resolve(msg("Stopped", { $context: "workflow run status" })), tone: "quiet" };
     case "cancelled":
-      return { word: "Cancelled", tone: "quiet" };
+      return {
+        word: resolve(msg("Cancelled", { $context: "workflow run status" })),
+        tone: "quiet",
+      };
   }
 }
 
 const firstLine = (text: string) => text.trim().split("\n", 1)[0]!.trim();
 
 /** What a run is at right now, as the line under its title. */
-export function workflowRunNow(node: WorkflowRunNode): string {
+export function workflowRunNow(node: WorkflowRunNode, resolve: MFunctionType = mFallback): string {
   const { run } = node;
   const detail = run.detail?.trim() ?? "";
   const asked = node.questions[0];
   if (asked !== undefined) {
     const more = node.questions.length - 1;
-    return `Asks: ${readWorkflowQuestion(asked).title}${more > 0 ? ` and ${more} more` : ""}`;
+    const question = readWorkflowQuestion(asked).title;
+    return more > 0
+      ? resolve(msg("Asks: {question} and {more} more", { question, more }))
+      : resolve(msg("Asks: {question}", { question }));
   }
   const below = flattenWorkflowRunNodes(node.children);
   const holding = below.find(
@@ -264,26 +294,38 @@ export function workflowRunNow(node: WorkflowRunNode): string {
   );
   switch (run.status) {
     case "paused":
-      return detail === "" ? "A step failed" : firstLine(detail);
+      return detail === "" ? resolve(msg("A step failed")) : firstLine(detail);
     case "running":
-      return "Running its own steps";
+      return resolve(msg("Running its own steps"));
     case "waiting":
-      if (holding !== undefined) return `${holding.run.title}: ${workflowRunNow(holding)}`;
-      if (detail.startsWith("agent ")) return `${detail.slice(6)} is working`;
-      if (detail.startsWith("sleep ")) return `Sleeping at ${detail.slice(6)}`;
+      if (holding !== undefined) {
+        return `${holding.run.title}: ${workflowRunNow(holding, resolve)}`;
+      }
+      if (detail.startsWith("agent ")) {
+        return resolve(msg("{step} is working", { step: detail.slice(6) }));
+      }
+      if (detail.startsWith("sleep ")) {
+        return resolve(msg("Sleeping at {step}", { step: detail.slice(6) }));
+      }
       if (below.some((child) => child.run.endedAt === null)) {
         const open = below.filter((child) => child.run.endedAt === null);
-        return open.length === 1 ? `Runs ${open[0]!.run.title}` : `${open.length} runs under way`;
+        return open.length === 1
+          ? resolve(msg("Runs {run}", { run: open[0]!.run.title }))
+          : resolve(msg("{count} runs under way", { count: open.length }));
       }
-      return detail === "" ? "Waiting" : `Waiting for ${detail}`;
+      return detail === ""
+        ? resolve(msg("Waiting", { $context: "what a workflow run is doing now" }))
+        : resolve(msg("Waiting for {step}", { step: detail }));
     case "completed": {
       const line = workflowResultLines(run.result)[0];
-      if (line === undefined) return "Finished";
+      if (line === undefined) {
+        return resolve(msg("Finished", { $context: "what a workflow run is doing now" }));
+      }
       return firstLine(line.label === null ? line.value : `${line.label}: ${line.value}`);
     }
     case "stopped":
     case "cancelled":
-      return detail === "" ? "Ended early" : firstLine(detail);
+      return detail === "" ? resolve(msg("Ended early")) : firstLine(detail);
   }
 }
 
@@ -482,6 +524,7 @@ export interface WorkflowPathNode {
 /** Where the run has been and where it is: one stop per beat, in order. Nothing is predicted. */
 export function workflowPath(
   rows: ReadonlyArray<WorkflowFeedRow>,
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<WorkflowPathNode> {
   const statusOf = (beats: ReadonlyArray<WorkflowBeat>): WorkflowPathNode["status"] =>
     beats.some((beat) => beat.status === "failed")
@@ -500,7 +543,7 @@ export function workflowPath(
         label:
           row.beats.length === 2
             ? `${row.beats[0]!.name} + ${row.beats[1]!.name}`
-            : `${row.beats.length} at once`,
+            : resolve(msg("{count} at once", { count: row.beats.length })),
         status: statusOf(row.beats),
       },
     ];
