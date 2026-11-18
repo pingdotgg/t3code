@@ -10,6 +10,8 @@ import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { clientHostEnvironmentAtom } from "~/state/clientHostEnvironment";
 import { readPreparedConnection } from "~/state/session";
 
 export { normalizeHostname, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
@@ -85,4 +87,32 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
   } catch {
     return rawUrl;
   }
+}
+
+/** A loopback URL that names the environment's machine, which is not this client's. */
+export function isEnvironmentHostLoopbackUrl(environmentId: EnvironmentId, url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!isLoopbackHost(parsed.hostname)) return false;
+  const connection = readPreparedConnection(environmentId);
+  if (!connection || reachesEnvironmentLoopback(connection.target)) return false;
+  // Desktop's own server can be reached over any route, T3 Connect included.
+  if (appAtomRegistry.get(clientHostEnvironmentAtom(environmentId))) return false;
+  const environmentUrl = new URL(connection.httpBaseUrl);
+  if (parsed.origin === environmentUrl.origin) return false;
+  // An SSH forward puts the T3 server on this client's loopback, but not the host's other ports.
+  if (connection.target._tag === "SshConnectionTarget") return true;
+  return !isLocalLoopbackHost(environmentUrl.hostname);
+}
+
+/** The address of a link for a browser on this client, such as the system browser. */
+export function resolveClientBrowserUrl(environmentId: EnvironmentId, url: string): string {
+  return isEnvironmentHostLoopbackUrl(environmentId, url)
+    ? resolveDiscoveredServerUrl(environmentId, url)
+    : url;
 }

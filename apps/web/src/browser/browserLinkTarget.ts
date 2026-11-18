@@ -20,14 +20,16 @@ export interface ResolveLinkTargetInput {
   };
   readonly preference: BrowserLinkTarget;
   readonly canOpenInApp: boolean;
+  /** The environment's browser reaches the host's loopback whatever it binds, so a plain click goes there. */
+  readonly opensInEnvironmentBrowser?: boolean;
 }
 
 export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTarget {
   if (input.event.metaKey || input.event.ctrlKey || input.event.button === 1) return "system";
-  if (input.preference !== "app") return "system";
   if (!input.canOpenInApp) return "system";
   if (!isWebUrl(input.url)) return "system";
-  return "app";
+  if (input.opensInEnvironmentBrowser) return "app";
+  return input.preference;
 }
 
 /** Before hydration, the default "system" would ignore a saved "app" link target. */

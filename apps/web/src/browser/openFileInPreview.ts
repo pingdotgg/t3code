@@ -3,6 +3,7 @@ import type {
   AssetResource,
   EnvironmentId,
   PreviewOpenInput,
+  PreviewRuntime,
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -64,6 +65,8 @@ export async function openUrlInPreview<E>(input: {
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
+  /** Overrides the environment's default, as for its loopback links (see previewTargetForLink). */
+  readonly runtime?: PreviewRuntime | undefined;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
   const threadRef = rightPanelHostRef(input.threadRef);
@@ -73,7 +76,7 @@ export async function openUrlInPreview<E>(input: {
   if (isBrowserSettingsReadError(defaults)) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
-  const runtime = previewRuntimeFor(threadRef.environmentId);
+  const runtime = input.runtime ?? previewRuntimeFor(threadRef.environmentId);
   const previousActiveTabId = readThreadPreviewState(threadRef).activeTabId;
   // The server changes the active tab, not panel selection; selection changes come from the user.
   const selectedSurface = () =>

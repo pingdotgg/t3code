@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
+import {
+  isEnvironmentHostLoopbackUrl,
+  resolveClientBrowserUrl,
+} from "~/browser/browserTargetResolver";
 import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -19,6 +23,27 @@ export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime 
     return undefined;
   }
   return "server";
+}
+
+/** The host's own browser is the only one sure to reach the host's loopback, whatever it binds. */
+export function opensInEnvironmentBrowser(environmentId: EnvironmentId, url: string): boolean {
+  return (
+    readEnvironmentSupportsServerBrowser(environmentId) &&
+    isEnvironmentHostLoopbackUrl(environmentId, url)
+  );
+}
+
+/** Where an in-app tab for a link runs, and the address it loads there. */
+export function previewTargetForLink(
+  environmentId: EnvironmentId,
+  url: string,
+): { readonly url: string; readonly runtime: PreviewRuntime | undefined } {
+  if (opensInEnvironmentBrowser(environmentId, url)) return { url, runtime: "server" };
+  const runtime = previewRuntimeFor(environmentId);
+  return {
+    url: runtime === "server" ? url : resolveClientBrowserUrl(environmentId, url),
+    runtime,
+  };
 }
 
 export function alternatePreviewRuntime(

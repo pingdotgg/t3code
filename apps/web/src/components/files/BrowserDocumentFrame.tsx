@@ -45,6 +45,7 @@ import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePrevie
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
+import { resolveClientBrowserUrl } from "~/browser/browserTargetResolver";
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
@@ -353,7 +354,9 @@ export function HtmlRenderDocument(props: {
   const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
     if (modifiers.metaKey || modifiers.ctrlKey) {
       void readLocalApi()
-        ?.shell.openExternal(url)
+        ?.shell.openExternal(
+          props.threadRef ? resolveClientBrowserUrl(props.threadRef.environmentId, url) : url,
+        )
         .catch((cause: unknown) => console.error(cause));
       return;
     }

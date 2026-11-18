@@ -4,9 +4,21 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
 const env = vi.hoisted(() => ({ isElectron: false }));
+const preview = vi.hoisted(() => ({ desktop: false, serverBrowser: false, clientHost: false }));
 
 vi.mock("~/state/session", () => ({ readPreparedConnection }));
 vi.mock("~/env", () => env);
+vi.mock("~/previewStateStore", () => ({ isPreviewSupportedInRuntime: () => preview.desktop }));
+vi.mock("~/state/clientHostEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { clientHostEnvironmentAtom: () => Atom.make(() => preview.clientHost) };
+});
+vi.mock("~/state/entities", () => ({
+  readEnvironmentSupportsServerBrowser: () => preview.serverBrowser,
+  useEnvironmentSupportsServerBrowser: () => preview.serverBrowser,
+}));
+
+const remoteBearer = { _tag: "BearerConnectionTarget", connectionId: "saved:remote" };
 
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
@@ -40,7 +52,8 @@ describe("browser target resolver", () => {
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
     // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    const { isEnvironmentHostLoopbackUrl, resolveDiscoveredServerUrl } =
+      await import("./browserTargetResolver");
     env.isElectron = true;
     try {
       for (const target of [
@@ -51,6 +64,12 @@ describe("browser target resolver", () => {
         expect(
           resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
         ).toBe("http://localhost:3001/");
+        expect(
+          isEnvironmentHostLoopbackUrl(
+            EnvironmentId.make("environment-1"),
+            "http://localhost:3001/",
+          ),
+        ).toBe(false);
       }
       readPreparedConnection.mockReturnValue({
         httpBaseUrl: "http://192.168.1.25:3773",
@@ -61,6 +80,90 @@ describe("browser target resolver", () => {
       ).toBe("http://192.168.1.25:3001/");
     } finally {
       env.isElectron = false;
+    }
+  });
+
+  it("treats loopback links as the host's only when the environment is on another machine", async () => {
+    const { isEnvironmentHostLoopbackUrl, resolveClientBrowserUrl } =
+      await import("./browserTargetResolver");
+    const environmentId = EnvironmentId.make("environment-1");
+    const ssh = { _tag: "SshConnectionTarget" };
+    const cases = [
+      ["http://100.101.102.103:3773", remoteBearer, "http://127.0.0.1:5173/", true],
+      ["https://devbox.tail1234.ts.net", remoteBearer, "http://localhost:5173/app", true],
+      ["https://relay.example.com", { _tag: "RelayConnectionTarget" }, "http://[::1]:5173/", true],
+      // The SSH forward's own origin is this client's route to the server, not the host's loopback.
+      ["http://127.0.0.1:49152", ssh, "http://localhost:5173/", true],
+      ["http://127.0.0.1:49152", ssh, "http://127.0.0.1:49152/assets/a.html", false],
+      [
+        "http://localhost:3773",
+        { _tag: "PrimaryConnectionTarget" },
+        "http://localhost:5173/",
+        false,
+      ],
+      ["http://100.101.102.103:3773", remoteBearer, "https://example.com/", false],
+      ["http://100.101.102.103:3773", remoteBearer, "mailto:dev@example.com", false],
+    ] as const;
+    for (const [httpBaseUrl, target, url, expected] of cases) {
+      readPreparedConnection.mockReturnValue({ httpBaseUrl, target });
+      expect({
+        httpBaseUrl,
+        url,
+        hostOnly: isEnvironmentHostLoopbackUrl(environmentId, url),
+      }).toEqual({ httpBaseUrl, url, hostOnly: expected });
+    }
+
+    // The desktop's own server reached through T3 Connect is still this machine.
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "https://relay.example.com",
+      target: { _tag: "RelayConnectionTarget" },
+    });
+    preview.clientHost = true;
+    try {
+      expect(isEnvironmentHostLoopbackUrl(environmentId, "http://127.0.0.1:5173/")).toBe(false);
+    } finally {
+      preview.clientHost = false;
+    }
+
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://100.101.102.103:3773",
+      target: remoteBearer,
+    });
+    expect(resolveClientBrowserUrl(environmentId, "http://127.0.0.1:5173/play?seed=1#map")).toBe(
+      "http://100.101.102.103:5173/play?seed=1#map",
+    );
+    expect(resolveClientBrowserUrl(environmentId, "https://example.com/a")).toBe(
+      "https://example.com/a",
+    );
+  });
+
+  it("opens the host's loopback links in the host's browser, which reaches any bind", async () => {
+    const { previewTargetForLink } = await import("./previewRuntime");
+    const environmentId = EnvironmentId.make("environment-1");
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://100.101.102.103:3773",
+      target: remoteBearer,
+    });
+    preview.desktop = true;
+    try {
+      preview.serverBrowser = true;
+      expect(previewTargetForLink(environmentId, "http://127.0.0.1:5173/")).toEqual({
+        url: "http://127.0.0.1:5173/",
+        runtime: "server",
+      });
+      // The desktop still opens a remote environment's other links on this computer.
+      expect(previewTargetForLink(environmentId, "https://example.com/")).toEqual({
+        url: "https://example.com/",
+        runtime: undefined,
+      });
+      preview.serverBrowser = false;
+      expect(previewTargetForLink(environmentId, "http://127.0.0.1:5173/")).toEqual({
+        url: "http://100.101.102.103:5173/",
+        runtime: undefined,
+      });
+    } finally {
+      preview.desktop = false;
+      preview.serverBrowser = false;
     }
   });
 

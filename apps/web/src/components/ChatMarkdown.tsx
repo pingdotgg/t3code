@@ -193,7 +193,12 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { textDirection } from "~/textDirection";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { isPreviewAvailableFor } from "../browser/previewRuntime";
+import { resolveClientBrowserUrl } from "../browser/browserTargetResolver";
+import {
+  isPreviewAvailableFor,
+  opensInEnvironmentBrowser,
+  previewTargetForLink,
+} from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
@@ -763,7 +768,11 @@ function useChatMarkdownState({
         ),
       );
     }
-    return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
+    return openUrlInPreview({
+      threadRef,
+      ...previewTargetForLink(threadRef.environmentId, url),
+      openPreview,
+    }).then((result) => {
       if (result._tag === "Success") recordVisitForThread(threadRef, url);
       else if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -1262,6 +1271,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const onClick = props.onClick;
       const canOpenInPreview =
         canOperatePreview && Boolean(threadRef && isPreviewAvailableFor(threadRef.environmentId));
+      // The authored href names the agent's machine; this client's browsers need its address.
+      const clientHref =
+        href && environmentId ? resolveClientBrowserUrl(environmentId, href) : href;
       const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
       const link = (
         <a
@@ -1269,7 +1281,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           className={cn(props.className, pullRequestAutolink === "commit" && "font-mono")}
           data-markdown-copy={pullRequestCopy}
           data-markdown-image-link={!hasText || undefined}
-          href={href}
+          href={clientHref}
           target={isSameDocumentLink ? undefined : "_blank"}
           rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
           onClick={(event) => {
@@ -1314,6 +1326,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 event,
                 preference: linkTargetPreference,
                 canOpenInApp: canOpenInPreview,
+                opensInEnvironmentBrowser:
+                  threadRef !== undefined &&
+                  opensInEnvironmentBrowser(threadRef.environmentId, href),
               }) !== "app"
             ) {
               // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
@@ -1321,7 +1336,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 event.preventDefault();
                 event.stopPropagation();
                 void readLocalApi()
-                  ?.shell.openExternal(href)
+                  ?.shell.openExternal(clientHref ?? href)
                   .catch((cause) =>
                     reportMarkdownActionFailure(
                       { operation: "open-link-external", target: href },
@@ -1340,7 +1355,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 result.cause,
               );
               if (isBrowserSettingsReadError(squashAtomCommandFailure(result))) return;
-              void readLocalApi()?.shell.openExternal(href);
+              void readLocalApi()?.shell.openExternal(clientHref ?? href);
             });
           }}
           onContextMenu={(event) => {
@@ -1372,7 +1387,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                   );
                 }
               },
-              openExternal: (target) => api.shell.openExternal(target),
+              openExternal: () => api.shell.openExternal(clientHref ?? href),
               copyLink: (target) =>
                 writeTextToClipboard(target, {
                   target: "link",

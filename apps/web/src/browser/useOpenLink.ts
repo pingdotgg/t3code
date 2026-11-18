@@ -13,7 +13,9 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
+import { resolveClientBrowserUrl } from "./browserTargetResolver";
 import { isBrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { opensInEnvironmentBrowser, previewTargetForLink } from "./previewRuntime";
 import { msg } from "gt-react";
 import { m } from "~/i18n/messages";
 
@@ -39,9 +41,15 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       event: options.event ?? NO_MODIFIER,
       preference: await resolveBrowserLinkTargetPreference(),
       canOpenInApp: canOpenLinksInApp(targetThreadRef),
+      opensInEnvironmentBrowser:
+        targetThreadRef != null && opensInEnvironmentBrowser(targetThreadRef.environmentId, url),
     });
     if (target === "app" && targetThreadRef) {
-      const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });
+      const result = await openUrlInPreview({
+        threadRef: targetThreadRef,
+        ...previewTargetForLink(targetThreadRef.environmentId, url),
+        openPreview,
+      });
       if (isAtomCommandInterrupted(result)) return;
       if (result._tag === "Success") {
         recordVisitForThread(targetThreadRef, url);
@@ -53,6 +61,8 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
     }
     const api = readLocalApi();
     if (!api) throw new Error(m(msg("Link opening is unavailable.")));
-    await api.shell.openExternal(url);
+    await api.shell.openExternal(
+      targetThreadRef ? resolveClientBrowserUrl(targetThreadRef.environmentId, url) : url,
+    );
   };
 }

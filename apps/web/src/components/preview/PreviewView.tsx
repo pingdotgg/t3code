@@ -46,7 +46,10 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  resolveClientBrowserUrl,
+  resolveDiscoveredServerUrl,
+} from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -451,7 +454,9 @@ export function PreviewView({
 
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+    // A server tab's loopback address names the environment's machine.
+    const target = isServerTab ? resolveClientBrowserUrl(threadRef.environmentId, url) : url;
+    void localApi.shell.openExternal(target).catch(() => undefined);
   };
 
   const moveTarget = alternatePreviewRuntime(

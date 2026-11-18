@@ -154,6 +154,7 @@ vi.mock("../state/terminalSessions", async () => {
 vi.mock("../state/session", () => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
+  readPreparedConnection: () => null,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
