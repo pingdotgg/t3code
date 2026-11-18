@@ -389,7 +389,7 @@ export function useSelectedThreadGitActions() {
     if (!refName) return null;
     return runSelectedThreadGitMutation(
       "switch_ref",
-      "Changing push remote",
+      m(msg("Changing push remote")),
       async ({ thread, cwd }) => {
         const result = await setPushRemote({
           environmentId: thread.environmentId,

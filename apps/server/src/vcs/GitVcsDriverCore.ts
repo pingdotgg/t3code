@@ -1691,17 +1691,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  // Repo-wide, so cached per common dir; per-branch config is read by `resolveStatusPushRemote`.
-  const readStatusRemotes = (cwd: string, gitArgs: ReadonlyArray<string> = []) =>
+  // Worktree config can override remote.pushDefault, so cache by checkout path.
+  const readStatusRemotes = (cwd: string) =>
     Effect.all(
       [
-        executeGit("GitVcsDriver.statusDetails.remotes", cwd, [...gitArgs, "remote"], {
+        executeGit("GitVcsDriver.statusDetails.remotes", cwd, ["remote"], {
           allowNonZeroExit: true,
         }),
         executeGit(
           "GitVcsDriver.statusDetails.remotePushDefault",
           cwd,
-          [...gitArgs, "config", "--get", "remote.pushDefault"],
+          ["config", "--get", "remote.pushDefault"],
           { allowNonZeroExit: true },
         ),
       ],
@@ -1728,22 +1728,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   } = {
     hasRemote: false,
   };
-  const remotesCache = yield* Cache.makeWith(
-    (gitCommonDir: string) =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fetchCwd =
-          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* readStatusRemotes(fetchCwd, ["--git-dir", gitCommonDir]);
-      }),
-    {
-      capacity: 2_048,
-      timeToLive: Exit.match({
-        onSuccess: () => STATUS_REMOTES_CACHE_TTL,
-        onFailure: () => Duration.zero,
-      }),
-    },
-  );
+  const remotesCache = yield* Cache.makeWith(readStatusRemotes, {
+    capacity: 2_048,
+    timeToLive: Exit.match({
+      onSuccess: () => STATUS_REMOTES_CACHE_TTL,
+      onFailure: () => Duration.zero,
+    }),
+  });
   const invalidateStatusStaticCaches = Effect.fn("GitVcsDriverCore.invalidateStatusStaticCaches")(
     function* (cwd: string, gitCommonDir?: string | null) {
       const commonDir =
@@ -1754,7 +1745,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
-      yield* Cache.invalidate(remotesCache, cacheKey);
+      yield* Cache.invalidate(remotesCache, normalizeRepositoryPathsCacheKey(cwd));
     },
   );
 
@@ -2569,7 +2560,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
           : resolvePrimaryDefaultBranchName(cwd).pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
-          ? Cache.get(remotesCache, statusCacheKey).pipe(
+          ? Cache.get(remotesCache, normalizeRepositoryPathsCacheKey(cwd)).pipe(
               Effect.orElseSucceed(() => NO_STATUS_REMOTES),
             )
           : readStatusRemotes(cwd).pipe(Effect.orElseSucceed(() => NO_STATUS_REMOTES)),

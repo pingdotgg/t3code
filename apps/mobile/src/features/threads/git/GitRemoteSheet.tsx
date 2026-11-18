@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+import { useGT } from "gt-react-native";
 import type { GitStackedAction } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
@@ -26,6 +28,7 @@ type GitRemoteSheetProps = StaticScreenProps<{
 export function GitRemoteSheet(props: GitRemoteSheetProps) {
   const { environmentId, threadId, action, commitMessage, featureBranch, filePaths } =
     props.route.params;
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -40,23 +43,33 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
         })
       : null,
   );
+  const selecting = useRef(false);
+  const [isSelecting, setIsSelecting] = useState(false);
   const remotes = gitStatus.data?.remotes ?? [];
   const pushRemote = gitStatus.data?.pushRemote;
 
   const selectRemote = async (remoteName: string) => {
-    if (action) {
-      navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
-      await gitActions.onRunSelectedThreadGitAction({
-        action,
-        pushRemote: remoteName,
-        ...(commitMessage ? { commitMessage } : {}),
-        ...(featureBranch === "true" ? { featureBranch: true } : {}),
-        ...(filePaths ? { filePaths: JSON.parse(filePaths) as string[] } : {}),
-      });
-      return;
+    if (selecting.current) return;
+    selecting.current = true;
+    setIsSelecting(true);
+    try {
+      if (action) {
+        navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+        await gitActions.onRunSelectedThreadGitAction({
+          action,
+          pushRemote: remoteName,
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(featureBranch === "true" ? { featureBranch: true } : {}),
+          ...(filePaths ? { filePaths: JSON.parse(filePaths) as string[] } : {}),
+        });
+        return;
+      }
+      const result = await gitActions.onSetSelectedThreadPushRemote(remoteName);
+      if (result !== null) navigation.goBack();
+    } finally {
+      selecting.current = false;
+      setIsSelecting(false);
     }
-    const result = await gitActions.onSetSelectedThreadPushRemote(remoteName);
-    if (result !== null) navigation.goBack();
   };
 
   return (
@@ -77,8 +90,9 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
           <ListSection
             {...(action
               ? {
-                  footer:
+                  footer: gt(
                     "This repository has several remotes and the branch has none chosen yet. It will track the one you pick.",
+                  ),
                 }
               : {})}
           >
@@ -87,7 +101,7 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
                 key={remoteName}
                 label={remoteName}
                 selected={remoteName === pushRemote}
-                disabled={!gitActions.canWriteSourceControl}
+                disabled={isSelecting || !gitActions.canWriteSourceControl}
                 onPress={() => void selectRemote(remoteName)}
               />
             ))}
@@ -95,7 +109,7 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
         </ScrollView>
       </ScreenContent>
       <SheetHeader
-        title={action ? "Push to which remote?" : "Push remote"}
+        title={action ? gt("Push to which remote?") : gt("Push remote")}
         onClose={() => navigation.goBack()}
       />
     </View>

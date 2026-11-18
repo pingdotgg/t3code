@@ -2258,7 +2258,7 @@ export const make = Effect.gen(function* () {
     return { baseBranch: "main", baseRef: "main" };
   });
 
-  // A base read from the branch remote's host can exist only on that remote.
+  // Same-host forks target the primary repository; other hosts use their own base.
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
     cwd: string,
     baseBranch: string,
@@ -2268,9 +2268,23 @@ export const make = Effect.gen(function* () {
     const primaryRemoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
-    const remoteNames = [...new Set([primaryRemoteName, branchRemoteName])].filter(
-      (remoteName) => remoteName !== null,
-    );
+    const primary = yield* sourceControlProviders.resolveHandle({ cwd });
+    const branchUrl = branchRemoteName
+      ? yield* readRemoteUrl(cwd, branchRemoteName).pipe(Effect.orElseSucceed(() => null))
+      : null;
+    const branchProvider = branchUrl ? sourceControlDefinitions.recognizeRemote(branchUrl) : null;
+    const preferBranchRemote =
+      branchProvider !== null &&
+      (branchProvider.kind !== primary.provider.kind ||
+        primary.context === null ||
+        !sameBaseUrlHost(branchProvider.baseUrl, primary.context.provider.baseUrl));
+    const remoteNames = [
+      ...new Set(
+        preferBranchRemote
+          ? [branchRemoteName, primaryRemoteName]
+          : [primaryRemoteName, branchRemoteName],
+      ),
+    ].filter((remoteName) => remoteName !== null);
     for (const remoteName of remoteNames) {
       const commitSha = yield* gitCore
         .resolveRemoteTrackingCommit({ cwd, refName: baseBranch, fallbackRemoteName: remoteName })

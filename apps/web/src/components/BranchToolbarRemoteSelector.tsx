@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -35,6 +36,7 @@ export function BranchToolbarRemoteSelector({
   displayMode?: "toolbar" | "panel";
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const isPanel = displayMode === "panel";
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -57,8 +59,8 @@ export function BranchToolbarRemoteSelector({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to change push remote.",
-          description: cause instanceof Error ? cause.message : "An error occurred.",
+          title: gt("Failed to change push remote."),
+          description: cause instanceof Error ? cause.message : gt("An error occurred."),
         }),
       );
     }
@@ -70,12 +72,12 @@ export function BranchToolbarRemoteSelector({
         render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
         className={isPanel ? undefined : "min-w-0 flex-initial"}
         disabled={!canWriteSourceControl}
-        aria-label={`Push remote: ${pushRemote ?? "not chosen"}`}
+        aria-label={gt("Push remote: {remote}", { remote: pushRemote ?? gt("not chosen") })}
         data-composer-context-control
       >
         <CloudIcon className={cn("size-3 shrink-0", isPanel && THREAD_DETAILS_PANEL_ICON_CLASS)} />
         <ComposerContextLabel displayMode={displayMode}>
-          {pushRemote ?? "Choose remote"}
+          {pushRemote ?? gt("Choose remote")}
         </ComposerContextLabel>
       </MenuTrigger>
       <MenuPopup
@@ -85,7 +87,9 @@ export function BranchToolbarRemoteSelector({
         {...(!isPanel ? composerFloatingLayerProps : {})}
       >
         <MenuGroup>
-          <MenuGroupLabel>Push to</MenuGroupLabel>
+          <MenuGroupLabel>
+            <T>Push to</T>
+          </MenuGroupLabel>
           <MenuRadioGroup
             value={pushRemote ?? ""}
             onValueChange={(remoteName: string) => void selectRemote(remoteName)}

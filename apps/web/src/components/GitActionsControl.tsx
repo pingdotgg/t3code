@@ -982,6 +982,7 @@ function PushRemoteDialog({
   onClose: () => void;
   onPush: (remoteName: string) => void;
 }) {
+  const gt = useGT();
   const [remoteName, setRemoteName] = useState<string | null>(null);
   return (
     <Dialog
@@ -995,16 +996,20 @@ function PushRemoteDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Push to which remote?</DialogTitle>
+          <DialogTitle>
+            <T>Push to which remote?</T>
+          </DialogTitle>
           <DialogDescription>
-            This repository has several remotes and the branch has none chosen yet. It will track
-            the one you pick.
+            <T>
+              This repository has several remotes and the branch has none chosen yet. It will track
+              the one you pick.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Select value={remoteName} onValueChange={setRemoteName}>
-            <SelectTrigger aria-label="Remote">
-              <SelectValue placeholder="Choose a remote" />
+            <SelectTrigger aria-label={gt("Remote")}>
+              <SelectValue placeholder={gt("Choose a remote")} />
             </SelectTrigger>
             <SelectPopup>
               {choices?.map((choice) => (
@@ -1017,7 +1022,7 @@ function PushRemoteDialog({
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             size="sm"
@@ -1026,7 +1031,7 @@ function PushRemoteDialog({
               if (remoteName) onPush(remoteName);
             }}
           >
-            Push
+            <T>Push</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

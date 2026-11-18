@@ -9766,11 +9766,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["branch.topic.pushRemote", "remote.pushDefault"] as const)(
+    it.effect.each(["branch.topic.pushRemote", "remote.pushDefault", "worktree"] as const)(
       "pushes a branch tracking its upstream head to the %s remote",
       (configKey) =>
         Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
+          let cwd = yield* makeTmpDir();
           const upstreamRemote = yield* makeTmpDir("git-upstream-remote-");
           const forkRemote = yield* makeTmpDir("git-fork-remote-");
           yield* initRepoWithCommit(cwd);
@@ -9783,7 +9783,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["push", "upstream", "topic"]);
           yield* git(cwd, ["push", "fork", "topic"]);
           yield* git(cwd, ["branch", "--set-upstream-to=upstream/topic"]);
-          yield* git(cwd, ["config", configKey, "fork"]);
+          if (configKey === "worktree") {
+            yield* git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+            yield* git(cwd, ["config", "remote.pushDefault", "upstream"]);
+            const worktreeCwd = yield* makeTmpDir();
+            yield* git(cwd, ["worktree", "add", "--force", worktreeCwd, "topic"]);
+            cwd = worktreeCwd;
+            yield* git(cwd, ["config", "--worktree", "remote.pushDefault", "fork"]);
+          } else {
+            yield* git(cwd, ["config", configKey, "fork"]);
+          }
+          assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
           const upstreamTopicSha = yield* git(cwd, ["rev-parse", "HEAD"]);
           yield* writeTextFile(cwd, "fork.txt", "fork\n");
           yield* git(cwd, ["add", "-A"]);
