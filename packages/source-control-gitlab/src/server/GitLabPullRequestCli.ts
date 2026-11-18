@@ -1106,6 +1106,7 @@ export const make = Effect.gen(function* () {
         ...filterParams(input),
         ["order_by", "updated_at"],
         ["sort", "desc"],
+        ["with_labels_details", "true"],
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
@@ -1590,6 +1591,7 @@ export const make = Effect.gen(function* () {
       host: input.host,
       path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}?${query([
         ["include_diverged_commits_count", "true"],
+        ["with_labels_details", "true"],
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {

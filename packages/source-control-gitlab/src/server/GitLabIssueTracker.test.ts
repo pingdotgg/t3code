@@ -26,7 +26,15 @@ const ISSUE = {
 /** Every endpoint the detail read touches, answered by the path `glab api` is given. */
 function answer(path: string): string {
   if (path === "user") return encode({ username: "julius" });
-  if (path === "projects/acme%2Fweb/issues/42") return encode(ISSUE);
+  if (path === "projects/acme%2Fweb/issues/42?with_labels_details=true") {
+    return encode({
+      ...ISSUE,
+      labels: [
+        { name: "bug", color: "#E24329", description: "Something is broken" },
+        { name: " ", color: "#000000" },
+      ],
+    });
+  }
   if (path.startsWith("projects/acme%2Fweb/issues/42/notes")) {
     return encode([
       {
@@ -175,7 +183,7 @@ describe("GitLabIssueTracker", () => {
         ],
         author: { login: "octocat", name: "Octo Cat" },
         assignees: [{ login: "theo" }],
-        labels: [{ name: "bug", color: null }],
+        labels: [{ name: "bug", color: "#E24329", description: "Something is broken" }],
         commentCount: 3,
         viewer: "julius",
         viewerPermissions: { setState: true, edit: true, labels: true, assignees: true },
@@ -309,7 +317,7 @@ describe("GitLabIssueTracker", () => {
         cursor: "3",
       });
       expect(paths[0]).toBe(
-        "projects/acme%2Fweb/issues?state=opened&assignee_username=julius&order_by=updated_at&sort=desc&per_page=1&page=3",
+        "projects/acme%2Fweb/issues?state=opened&assignee_username=julius&order_by=updated_at&sort=desc&with_labels_details=true&per_page=1&page=3",
       );
       // A named assignee takes the one parameter GitLab reads, so "assigned to me" drops rows here.
       const both = yield* api.listIssues({
@@ -325,10 +333,12 @@ describe("GitLabIssueTracker", () => {
         limit: 1,
       });
       expect(paths[1]).toBe(
-        "projects/acme%2Fweb/issues?state=opened&labels=bug%2Cneeds%20triage&assignee_username=theo&order_by=created_at&sort=desc&per_page=1&page=1",
+        "projects/acme%2Fweb/issues?state=opened&labels=bug%2Cneeds%20triage&assignee_username=theo&order_by=created_at&sort=desc&with_labels_details=true&per_page=1&page=1",
       );
       expect(both.items).toEqual([]);
       expect(page.items[0]?.key).toBe("42");
+      // A host that ignores with_labels_details still sends names, which keep their chips.
+      expect(page.items[0]?.labels).toEqual([{ name: "bug", color: null }]);
       expect(page.nextCursor).toBe("4");
     }),
   );

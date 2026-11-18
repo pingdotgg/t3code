@@ -495,6 +495,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
+      expect(path).toContain("with_labels_details=true");
       expect(path).toContain("per_page=11");
       expect(path).toContain("page=1");
     }),
@@ -2330,6 +2331,28 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(detail.maintainerCanModify).toBe(allowCollaboration);
       expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("asks the merge request detail for label colours", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ labels: [{ name: "bug", color: "#E24329" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(labelPermission));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      expect(argsOfCall(0)[1]).toContain("with_labels_details=true");
+      expect(detail.labels).toEqual([{ name: "bug", color: "#E24329", description: null }]);
     }),
   );
 
