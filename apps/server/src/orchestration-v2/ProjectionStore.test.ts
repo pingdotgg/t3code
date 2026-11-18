@@ -1147,6 +1147,18 @@ it.effect("a compacted thread reads every run, but records and prompts only for 
       expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
     );
 
+    // Only an unfiltered read with runs narrows its prompts; any other read keeps its filter.
+    const itemRuns = (fields: ReadonlyArray<"runs" | "turnItems">, filter: object) =>
+      store
+        .getThreadRecords(threadId, fields, {
+          sinceLastCompaction: { keepRunIds: [], keepMessageId: messageId(0) },
+          ...filter,
+        })
+        .pipe(Effect.map((records) => ordinals(records.turnItems.map((row) => row.runId))));
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [runId(5)] }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [] }), []);
+    assert.deepEqual(yield* itemRuns(["turnItems"], {}), [1, ...all]);
+
     // A command also skips the node and the provider thread of each settled task. Tasks ended on
     // both sides of the compaction; one ran in the provider thread the thread's own runs use.
     const addProviderThread = (id: ProviderThreadId, appThreadId: ThreadId) =>

@@ -398,7 +398,8 @@ export interface ProjectionRecordFilter {
   /**
    * For a compacted thread, reads attempts, nodes, messages and provider turns of the recent runs
    * and the runs named here. Turn items are the failed errors of every run and the prompts of the
-   * recent, fresh-context and model-switch runs. `turnItemTypes` does not apply. Runs stay whole.
+   * recent, fresh-context and model-switch runs. `turnItemTypes` does not apply. A read without `runs`, or with another turn-item
+   * filter, keeps its filtered items. Runs stay whole.
    */
   readonly sinceLastCompaction?: {
     readonly keepRunIds: ReadonlyArray<RunId>;
@@ -3774,6 +3775,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? yield* runIdsSinceLastCompaction(threadId, filter.sinceLastCompaction)
             : null;
         const recentRunIds = recentRuns === null ? null : encodeIdList(recentRuns);
+        const promptRuns =
+          (fields === undefined || fields.includes("runs")) &&
+          filter?.turnItemRequestIds === undefined &&
+          filter?.turnItemStatuses === undefined &&
+          filter?.turnItemRunIds === undefined &&
+          filter?.turnItemNodeIds === undefined
+            ? recentRuns
+            : null;
         const inRecentRuns = (column: string) =>
           recentRunIds === null
             ? sql``
@@ -3792,7 +3801,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const boundedTurnItemRows: ReadonlyArray<WindowPayloadRow> =
           (fields !== undefined && !fields.includes("turnItems")) ||
           // A compacted thread reads its items once its runs are known.
-          recentRuns !== null ||
+          promptRuns !== null ||
           (window === undefined &&
             matchesNothing(
               filter?.turnItemRequestIds,
@@ -4509,16 +4518,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
         const turnItems =
-          recentRuns === null || (fields !== undefined && !fields.includes("turnItems"))
+          promptRuns === null || (fields !== undefined && !fields.includes("turnItems"))
             ? storedTurnItems
-            : yield* commandTurnItems(threadId, runs, recentRuns);
+            : yield* commandTurnItems(threadId, runs, promptRuns);
         const messageOrdinals = new Map<string, number>();
         // Only user items can name a user message, so a user-only read needs no assistant items.
         const userOnly = messages.every((message) => message.role === "user");
         // The loaded items already order the messages when they hold every item the lookup reads.
         const loadsEveryItemOf = (type: OrchestrationV2TurnItem["type"]) =>
           window === undefined &&
-          recentRuns === null &&
+          promptRuns === null &&
           (fields === undefined || fields.includes("turnItems")) &&
           filter?.turnItemRequestIds === undefined &&
           filter?.turnItemStatuses === undefined &&
