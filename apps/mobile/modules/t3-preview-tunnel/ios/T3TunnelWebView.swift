@@ -174,7 +174,7 @@ private final class T3EnvironmentProxy {
       socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
     )
     // Only loopback belongs to the environment; everything else loads directly.
-    proxy.matchDomains = ["localhost", "127.0.0.1", "::1"]
+    proxy.matchDomains = ["localhost", "127.0.0.1", "::1", "t3-loopback.test"]
     proxy.allowFailover = false
     store.proxyConfigurations = [proxy]
     dataStore = store
