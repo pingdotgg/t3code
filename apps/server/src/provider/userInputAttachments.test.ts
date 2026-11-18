@@ -1049,9 +1049,10 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
+              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page><draw:page><text:p>Second</text:p><presentation:notes><draw:page-thumbnail/></presentation:notes></draw:page></office:document>",
           },
-          expected: ["## Slide 1\nFirst slide\n\n## Slide 2\nSecond"],
+          expected: ["## Slide 1\nFirst slide\nNotes:\nSpeaker only\n\n## Slide 2\nSecond"],
+          absent: ["Second\nNotes:"],
         },
         {
           ext: "ods",

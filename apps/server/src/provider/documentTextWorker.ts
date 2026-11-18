@@ -552,8 +552,20 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           yield extension === ".ods"
             ? `\n\n## Sheet: ${part.attrs.name ?? "Untitled"}\n`
             : `\n\n## Slide ${++index}\n`;
-          if (extension === ".ods") yield* table(part);
-          else yield* paragraphs(part);
+          if (extension === ".ods") {
+            yield* table(part);
+            continue;
+          }
+          const speakerNotes = children(part).find((child) => child.name === "notes");
+          yield* paragraphs(
+            speakerNotes
+              ? { ...part, children: part.children.filter((child) => child !== speakerNotes) }
+              : part,
+          );
+          if (speakerNotes?.hasText) {
+            yield "Notes:\n";
+            yield* paragraphs(speakerNotes);
+          }
         }
       }
     } else if (extension === ".xlsx") {
