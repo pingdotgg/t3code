@@ -2856,6 +2856,7 @@
   "a0fd24f965eb070b": "Thread-Verlauf konnte nicht importiert werden.",
   "b79e42281b0acc9e": "{count, plural, one {{count} Thread importiert.} other {{count} Threads importiert.}}",
   "686dd0744640be73": "{count, plural, one {{count} Thread konnte nicht importiert werden.} other {{count} Threads konnten nicht importiert werden.}}",
+  "ed2f3077617c32f8": "Ein Teil des Thread-Verlaufs konnte nicht importiert werden.",
   "a58e4704fffba164": "{count, plural, one {{count} Thread wurde noch nicht importiert.} other {{count} Threads wurden noch nicht importiert.}}",
   "8b8a18b159e8e1de": "Um sie zu importieren, öffne die Willkommensseite erneut über Einstellungen → Info und wähle ihre Projekte unter „Alle prüfen“ aus.",
   "9c867852bab1ce60": "Die Zwischenablage-API ist beim Kopieren des Fehlerberichts nicht verfügbar.",

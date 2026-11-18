@@ -2855,6 +2855,7 @@
   "a0fd24f965eb070b": "Impossible d’importer l’historique des fils.",
   "b79e42281b0acc9e": "{count, plural, one {{count} fil importé.} other {{count} fils importés.}}",
   "686dd0744640be73": "{count, plural, one {{count} fil n’a pas pu être importé.} other {{count} fils n’ont pas pu être importés.}}",
+  "ed2f3077617c32f8": "Une partie de l’historique n’a pas pu être importée.",
   "a58e4704fffba164": "{count, plural, one {{count} fil n’a pas encore été importé.} other {{count} fils n’ont pas encore été importés.}}",
   "8b8a18b159e8e1de": "Pour les importer, rouvrez la page d’accueil depuis Paramètres → À propos et sélectionnez leurs projets sous Passer en revue.",
   "9c867852bab1ce60": "L’API Presse-papiers n’est pas disponible pour copier le rapport d’erreur.",

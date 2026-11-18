@@ -2855,6 +2855,7 @@
   "a0fd24f965eb070b": "No se pudo importar el historial de hilos.",
   "b79e42281b0acc9e": "{count, plural, one {Se importó {count} hilo.} other {Se importaron {count} hilos.}}",
   "686dd0744640be73": "{count, plural, one {No se pudo importar {count} hilo.} other {No se pudieron importar {count} hilos.}}",
+  "ed2f3077617c32f8": "Parte del historial de hilos no se pudo importar.",
   "a58e4704fffba164": "{count, plural, one {Todavía no se importó {count} hilo.} other {Todavía no se importaron {count} hilos.}}",
   "8b8a18b159e8e1de": "Para importarlos, vuelve a abrir la página de bienvenida desde Ajustes → Acerca de y selecciona sus proyectos en Revisar.",
   "9c867852bab1ce60": "La API del portapapeles no está disponible al copiar el informe de error.",

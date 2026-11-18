@@ -239,23 +239,27 @@ describe("projectImportWarning", () => {
 
   it.each([
     {
-      totals: { imported: 100, failed: 0, deferred: 153 },
+      totals: { imported: 100, failed: 0, deferred: 153, requestFailed: false },
       warning: `Imported 100 threads. 153 threads were not imported yet. ${resume}`,
     },
     {
-      totals: { imported: 100, failed: 3, deferred: 1 },
+      totals: { imported: 100, failed: 3, deferred: 1, requestFailed: false },
       warning: `Imported 100 threads. 3 threads could not be imported. 1 thread was not imported yet. ${resume}`,
     },
     {
-      totals: { imported: 0, failed: 2, deferred: 0 },
+      totals: { imported: 100, failed: 0, deferred: 53, requestFailed: true },
+      warning: `Imported 100 threads. Some thread history could not be imported. 53 threads were not imported yet. ${resume}`,
+    },
+    {
+      totals: { imported: 0, failed: 2, deferred: 0, requestFailed: false },
       warning: "2 threads could not be imported.",
     },
     {
-      totals: { imported: 5, failed: 0, deferred: 0 },
+      totals: { imported: 5, failed: 0, deferred: 0, requestFailed: true },
       warning: "Imported 5 threads. Some thread history could not be imported.",
     },
     {
-      totals: { imported: 0, failed: 0, deferred: 0 },
+      totals: { imported: 0, failed: 0, deferred: 0, requestFailed: true },
       warning: "Could not import thread history.",
     },
   ])("separates deferred threads from failures: $warning", ({ totals, warning }) => {

@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { run } from "./shell.ts";
-import { runPromise, test, WEB } from "./t3.ts";
+import { makeState, runPromise, test, WEB } from "./t3.ts";
 
 // One more conversation than an import attempt reads.
 const SESSIONS = 101;
@@ -57,7 +57,8 @@ const seed = Effect.gen(function* () {
   }
 
   const settingsPath = path.join(T3_HOME, "userdata", "settings.json");
-  const settings = yield* decodeSettings(yield* fs.readFileString(settingsPath));
+  const original = yield* fs.readFileString(settingsPath);
+  const settings = yield* decodeSettings(original);
   const providerInstances = yield* decodeProviderInstances(settings.providerInstances);
   yield* fs.writeFileString(
     settingsPath,
@@ -73,14 +74,20 @@ const seed = Effect.gen(function* () {
       },
     }),
   );
-  return { root, workspace };
+  // The server is shared by later tests, so they get its settings back without this project.
+  const restore = Effect.gen(function* () {
+    yield* makeState(T3_HOME).cli(["project", "remove", workspace, "--force"]).pipe(Effect.ignore);
+    yield* fs.writeFileString(settingsPath, original);
+    yield* fs.remove(root, { recursive: true });
+  });
+  return { workspace, restore };
 });
 
 test(
   "Importing more conversations than one attempt reads reports the rest as not imported yet",
   WEB,
   async ({ t3, app, screen }) => {
-    const { root, workspace } = await runPromise(seed);
+    const { workspace, restore } = await runPromise(seed);
     try {
       await runPromise(
         run("git", ["init", "--quiet", "--initial-branch=main"], { cwd: workspace }),
@@ -97,9 +104,7 @@ test(
         "Imported 100 threads. 1 thread was not imported yet. To import them, open the Welcome page again from Settings → About and select their projects under Review all.",
       );
     } finally {
-      await runPromise(
-        Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(root, { recursive: true })),
-      );
+      await runPromise(restore);
     }
   },
 );

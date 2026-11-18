@@ -1621,6 +1621,7 @@ function useProjectImport({
         : 0;
     let skippedThreadCount = 0;
     let deferredThreadCount = 0;
+    let requestFailed = false;
     const refreshEnvironments = new Set<EnvironmentId>();
     // Resolves false when the run stopped early: a newer run, an unmount, or lost access.
     const importEach = async () => {
@@ -1657,6 +1658,7 @@ function useProjectImport({
           });
           if (importGeneration !== importGenerationRef.current) return false;
           if (result._tag !== "Success") {
+            requestFailed = true;
             if (!isAtomCommandInterrupted(result)) {
               projectAttempts.delete(candidate.key);
               refreshEnvironments.add(environmentId);
@@ -1691,9 +1693,12 @@ function useProjectImport({
             importedProjectsCount += 1;
             importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
           }
-        } else if (!isAtomCommandInterrupted(threadImportResult)) {
-          projectAttempts.delete(candidate.key);
-          refreshEnvironments.add(environmentId);
+        } else {
+          requestFailed = true;
+          if (!isAtomCommandInterrupted(threadImportResult)) {
+            projectAttempts.delete(candidate.key);
+            refreshEnvironments.add(environmentId);
+          }
         }
       }
       return true;
@@ -1713,6 +1718,7 @@ function useProjectImport({
         imported: importedThreadCount,
         failed: skippedThreadCount - deferredThreadCount,
         deferred: deferredThreadCount,
+        requestFailed,
       });
     }
     finishAfterImport();

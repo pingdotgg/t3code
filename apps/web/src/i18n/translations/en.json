@@ -2855,6 +2855,7 @@
   "a0fd24f965eb070b": "Could not import thread history.",
   "b79e42281b0acc9e": "{count, plural, one {Imported {count} thread.} other {Imported {count} threads.}}",
   "686dd0744640be73": "{count, plural, one {{count} thread could not be imported.} other {{count} threads could not be imported.}}",
+  "ed2f3077617c32f8": "Some thread history could not be imported.",
   "a58e4704fffba164": "{count, plural, one {{count} thread was not imported yet.} other {{count} threads were not imported yet.}}",
   "8b8a18b159e8e1de": "To import them, open the Welcome page again from Settings → About and select their projects under Review all.",
   "9c867852bab1ce60": "Clipboard API is unavailable while copying error-report.",

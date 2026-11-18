@@ -154,10 +154,15 @@ export function resolveOnboardingLandingProject<T>(
  * budget and import on a later attempt, so they are not reported as failures.
  */
 export function projectImportWarning(
-  totals: { readonly imported: number; readonly failed: number; readonly deferred: number },
+  totals: {
+    readonly imported: number;
+    readonly failed: number;
+    readonly deferred: number;
+    readonly requestFailed: boolean;
+  },
   resolve: MessageResolver = m,
 ): string {
-  const { imported, failed, deferred } = totals;
+  const { imported, failed, deferred, requestFailed } = totals;
   if (failed === 0 && deferred === 0) {
     return imported > 0
       ? resolve(
@@ -187,6 +192,8 @@ export function projectImportWarning(
         ),
       ),
     );
+  } else if (requestFailed) {
+    sentences.push(resolve(msg("Some thread history could not be imported.")));
   }
   if (deferred > 0) {
     sentences.push(

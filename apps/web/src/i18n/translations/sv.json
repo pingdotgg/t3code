@@ -2855,6 +2855,7 @@
   "a0fd24f965eb070b": "Kunde inte importera trådhistorik.",
   "b79e42281b0acc9e": "{count, plural, one {Importerade {count} tråd.} other {Importerade {count} trådar.}}",
   "686dd0744640be73": "{count, plural, one {{count} tråd kunde inte importeras.} other {{count} trådar kunde inte importeras.}}",
+  "ed2f3077617c32f8": "En del trådhistorik kunde inte importeras.",
   "a58e4704fffba164": "{count, plural, one {{count} tråd har inte importerats än.} other {{count} trådar har inte importerats än.}}",
   "8b8a18b159e8e1de": "Öppna välkomstsidan igen från Inställningar → Om och välj deras projekt under Granska alla för att importera dem.",
   "9c867852bab1ce60": "Urklipps-API:t är inte tillgängligt vid kopiering av felrapporten.",
