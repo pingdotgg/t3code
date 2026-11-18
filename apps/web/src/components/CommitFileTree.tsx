@@ -3,6 +3,7 @@ import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
 import { Checkbox } from "~/components/ui/checkbox";
 import { cn } from "~/lib/utils";
+import { StartTruncatedPath } from "./StartTruncatedPath";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   buildCommitFileTree,
@@ -43,9 +44,11 @@ export function CommitFileTree(props: {
     const isExpanded = isDirectory && !collapsedDirectories.has(node.path);
     const label = (
       <>
-        <span className={cn("min-w-0 flex-1 truncate", isExcluded && "text-muted-foreground")}>
-          {node.name}
-        </span>
+        <StartTruncatedPath
+          path={node.path}
+          label={node.name}
+          className={cn("flex-1", isExcluded && "text-muted-foreground")}
+        />
         <span className="shrink-0">
           {isExcluded ? (
             <span className="text-muted-foreground">

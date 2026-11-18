@@ -95,6 +95,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
@@ -1527,6 +1528,11 @@ export default function GitActionsControl({
       );
     })();
   };
+  const openChangedFileInEditorStable = useStableCallback(openChangedFileInEditor);
+  const changeCommitFileView = useStableCallback((next: ReadonlyArray<unknown>) => {
+    const view = next[0];
+    if (view === "list" || view === "tree") setCommitFileView(view);
+  });
 
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
@@ -1929,10 +1935,7 @@ export default function GitActionsControl({
                       {hasFileDirectories && (
                         <ToggleGroup
                           value={[commitFileView]}
-                          onValueChange={(next) => {
-                            const view = next[0];
-                            if (view === "list" || view === "tree") setCommitFileView(view);
-                          }}
+                          onValueChange={changeCommitFileView}
                           aria-label={gt("File view")}
                         >
                           <Toggle value="list" aria-label={gt("List view")}>
@@ -1973,7 +1976,7 @@ export default function GitActionsControl({
                               isEditing={isEditingFiles}
                               canOpenFile={canOperateThread && workingTreeRoot !== null}
                               onExcludedFilesChange={setExcludedFiles}
-                              onOpenFile={openChangedFileInEditor}
+                              onOpenFile={openChangedFileInEditorStable}
                             />
                           ) : (
                             allFiles.map((file) => {
