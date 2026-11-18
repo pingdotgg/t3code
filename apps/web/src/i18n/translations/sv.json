@@ -11639,9 +11639,12 @@
   "37ffec8201f153c1": "Misslyckades",
   "984b361806ce8d25": "Väckt",
   "c6e8abc00ae470d2": "Klar",
+  "353b08f4363dbb2c": "Pending",
   "8cf699ae75fd8067": "Fäst",
   "be451f475c514b37": "Stäng aviseringen Väckt",
   "e9ced65134f2f36c": "Väck tråden nu",
+  "374dac09151d4578": "Pending",
+  "a8f30f631e2b010e": "Waiting to sync with its environment",
   "aca5896600bf173e": "Du har en annan gren utcheckad just nu.",
   "f665b5be60d8c144": [
     "Överlämnad från ",
