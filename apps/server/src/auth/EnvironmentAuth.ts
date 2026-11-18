@@ -1,15 +1,16 @@
 import {
   AuthAccessTokenType,
   AuthAccessWriteScope,
+  AuthMcpClientAccess,
   AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   type AuthClientSession,
+  type AuthConnectDevice,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
-  type AuthMcpClientAccess,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -34,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -48,10 +50,16 @@ import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import {
+  MCP_APPROVAL_SUBJECT_PREFIX,
+  PEER_LINK_PAIRING_SUBJECT_PREFIX,
+} from "../persistence/AuthPairingLinks.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
+/** Sessions and pairing links T3 Connect minted for a device signed in to the linked account. */
+export const CLOUD_CONNECT_SUBJECT = "cloud-connect";
 
 export interface IssuedPairingLink {
   readonly id: string;
@@ -76,6 +84,12 @@ export interface IssuedBearerSession {
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+
+// A device pairing with its DPoP key renews the session itself, so the token can be short and
+// the device stays signed in while used. One idle for the whole window pairs again.
+const RENEWABLE_ACCESS_TOKEN_TTL = Duration.hours(1);
+const RENEWABLE_SESSION_WINDOW = Duration.days(30);
+const PAIRING_LINK_SUBJECT = "one-time-token";
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
@@ -334,6 +348,17 @@ export class ServerAuthCloudMintJwtSigningError extends Schema.TaggedError<Serve
   }
 }
 
+export class ServerAuthConnectDevicesError extends Schema.TaggedError<ServerAuthConnectDevicesError>()(
+  "ServerAuthConnectDevicesError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to update T3 Connect devices.";
+  }
+}
+
 export const ServerAuthInternalError = Schema.Union([
   ServerAuthBootstrapCredentialValidationError,
   ServerAuthSessionCredentialValidationError,
@@ -357,6 +382,7 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthCloudRelayIssuerMissingError,
   ServerAuthCloudHealthJwtSigningError,
   ServerAuthCloudMintJwtSigningError,
+  ServerAuthConnectDevicesError,
 ]);
 export type ServerAuthInternalError = typeof ServerAuthInternalError.Type;
 export const isServerAuthInternalError = Schema.is(ServerAuthInternalError);
@@ -428,6 +454,16 @@ export const serverAuthInvalidRequestReason = (
 ): "invalid_scope" | "scope_not_granted" =>
   error._tag === "ServerAuthInvalidScopeError" ? "invalid_scope" : "scope_not_granted";
 
+/** The credential is fine, but the host has not approved this T3 Connect device yet. */
+export class ServerAuthConnectApprovalPendingError extends Schema.TaggedError<ServerAuthConnectApprovalPendingError>()(
+  "ServerAuthConnectApprovalPendingError",
+  {},
+) {
+  override get message(): string {
+    return "This T3 Connect device is waiting for approval.";
+  }
+}
+
 export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAuthMcpApprovalCodeError>()(
   "ServerAuthMcpApprovalCodeError",
   { reason: Schema.Literals(["unknown_or_used", "not_a_pairing_code", "insufficient_scope"]) },
@@ -479,7 +515,18 @@ export class EnvironmentAuth extends Context.Service<
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
-      ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
+      | ServerAuthInvalidCredentialError
+      | ServerAuthInvalidRequestError
+      | ServerAuthConnectApprovalPendingError
+      | ServerAuthInternalError
+    >;
+    readonly renewAccessToken: (
+      accessToken: string,
+      proofKeyThumbprint: string,
+      consumeProof: Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>,
+    ) => Effect.Effect<
+      AuthAccessTokenResult,
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
@@ -488,10 +535,42 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
+      readonly mcpApproval?: AuthMcpClientAccess;
+      readonly requiresConnectApproval?: boolean;
     }) => Effect.Effect<
       IssuedPairingLink,
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
+    /**
+     * The one-time credential T3 Connect hands a device. With approval required, an untrusted
+     * device key gets one that waits for approval, and keeps it across retries.
+     */
+    readonly issueConnectCredential: (input: {
+      readonly proofKeyThumbprint: string;
+      readonly requireApproval: boolean;
+    }) => Effect.Effect<
+      { readonly credential: string; readonly expiresAt: DateTime.Utc },
+      ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    readonly approveConnectDevice: (
+      pairingLinkId: string,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /** Approves the waiting device that shows this code, for hosts without a client at hand. */
+    readonly approveConnectDeviceByCode: (
+      verificationCode: string,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /** Revokes the one trusted device that shows this code; two that share it are ambiguous. */
+    readonly revokeConnectDeviceByCode: (
+      verificationCode: string,
+    ) => Effect.Effect<"revoked" | "not-found" | "ambiguous", ServerAuthInternalError>;
+    readonly listConnectDevices: () => Effect.Effect<
+      ReadonlyArray<AuthConnectDevice>,
+      ServerAuthInternalError
+    >;
+    /** Stops trusting a device key and ends the sessions it holds. */
+    readonly revokeConnectDevice: (
+      proofKeyThumbprint: string,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
     ) => Effect.Effect<
@@ -559,14 +638,18 @@ export class EnvironmentAuth extends Context.Service<
       },
       ServerAuthInternalError
     >;
-    /** Spends a code covering all granted scopes. Rejects desktop grants and leaves refused proof-bound codes unspent. */
+    /**
+     * Spends a code covering all granted scopes and returns the level it approves. A level-bound
+     * code must name `access`. Rejects desktop grants and leaves refused codes unspent.
+     */
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
-    ) => Effect.Effect<void, ServerAuthMcpApprovalCodeError | ServerAuthInternalError>;
-    readonly authenticateBrowserSession: (
-      request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+      peerLink?: boolean,
+    ) => Effect.Effect<
+      AuthMcpClientAccess,
+      ServerAuthMcpApprovalCodeError | ServerAuthInternalError
+    >;
   }
 >()("t3/auth/EnvironmentAuth") {}
 
@@ -618,16 +701,15 @@ const rejectMcpClientAudience = <S extends { readonly subject: string }>(session
       ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
     : Effect.succeed(session);
 
+const toSessionVerificationError = (cause: SessionStore.SessionCredentialError) =>
+  SessionStore.isSessionCredentialInvalidError(cause)
+    ? new ServerAuthInvalidCredentialError({ cause })
+    : new ServerAuthSessionCredentialValidationError({ cause });
+
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
 ): Effect.Effect<A, ServerAuthInvalidCredentialError | ServerAuthInternalError, R> =>
-  effect.pipe(
-    Effect.mapError((cause) =>
-      SessionStore.isSessionCredentialInvalidError(cause)
-        ? new ServerAuthInvalidCredentialError({ cause })
-        : new ServerAuthSessionCredentialValidationError({ cause }),
-    ),
-  );
+  effect.pipe(Effect.mapError(toSessionVerificationError));
 
 export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
@@ -640,7 +722,7 @@ export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): 
 
 function parseDpopToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
-  if (typeof header !== "string" || !header.startsWith(DPOP_AUTHORIZATION_PREFIX)) {
+  if (typeof header !== "string" || !/^DPoP /i.test(header)) {
     return null;
   }
   const token = header.slice(DPOP_AUTHORIZATION_PREFIX.length).trim();
@@ -918,21 +1000,34 @@ export const make = Effect.gen(function* () {
       readonly proofKeyThumbprint?: string;
       readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly allowedSubject?: string;
+      /** Shown to approvers when the credential waits on T3 Connect device approval. */
+      readonly requestMetadata?: AuthClientMetadata;
     },
   ): Effect.Effect<
     ResolvedBootstrapGrant,
-    ServerAuthInvalidCredentialError | ServerAuthInternalError | ServerAuthScopeNotGrantedError
+    | ServerAuthInvalidCredentialError
+    | ServerAuthInternalError
+    | ServerAuthScopeNotGrantedError
+    | ServerAuthConnectApprovalPendingError
   > => {
     if (!devAuth?.matches(credential)) {
-      return bootstrapCredentials
-        .consume(credential, input)
-        .pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "BootstrapCredentialScopeNotGrantedError"
-              ? new ServerAuthScopeNotGrantedError({})
+      return bootstrapCredentials.consume(credential, input).pipe(
+        Effect.catchTags({
+          BootstrapCredentialConnectApprovalPendingError: (pending) =>
+            recordConnectRequest(pending.pairingLinkId, input?.requestMetadata).pipe(
+              Effect.andThen(Effect.fail(new ServerAuthConnectApprovalPendingError({}))),
+            ),
+        }),
+        Effect.mapError((cause) =>
+          cause._tag === "BootstrapCredentialScopeNotGrantedError"
+            ? new ServerAuthScopeNotGrantedError({})
+            : cause._tag === "ServerAuthConnectApprovalPendingError" ||
+                cause._tag === "ServerAuthConnectDevicesError"
+              ? cause
               : toBootstrapExchangeError(cause),
-          ),
-        );
+        ),
+      );
     }
     return sessions.verify(credential).pipe(
       mapSessionVerificationErrors,
@@ -953,12 +1048,64 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // T3 Connect credential issuance, DPoP exchanges and device revocation take turns. Two mints
+  // at once would open two requests with one code, and a revoke landing between an exchange
+  // spending its credential and trusting the key would be undone by that exchange.
+  const connectTrustLock = yield* Semaphore.make(1);
+
+  const toAccessTokenResult = (session: SessionStore.IssuedSession) =>
+    DateTime.now.pipe(
+      Effect.map(
+        (now) =>
+          ({
+            access_token: session.token,
+            issued_token_type: AuthAccessTokenType,
+            token_type: session.proofKeyThumbprint ? "DPoP" : "Bearer",
+            expires_in: Math.max(
+              0,
+              Math.floor((session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000),
+            ),
+            scope: encodeOAuthScope(session.scopes),
+          }) satisfies AuthAccessTokenResult,
+      ),
+    );
+
+  const renewAccessToken: EnvironmentAuth["Service"]["renewAccessToken"] = Effect.fn(
+    "EnvironmentAuth.renewAccessToken",
+  )(function* (accessToken, proofKeyThumbprint, consumeProof) {
+    const session = yield* sessions
+      .renew(accessToken, {
+        proofKeyThumbprint,
+        ttl: RENEWABLE_ACCESS_TOKEN_TTL,
+        renewalWindow: RENEWABLE_SESSION_WINDOW,
+        consumeProof,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          isServerAuthCredentialError(cause) || isServerAuthInternalError(cause)
+            ? cause
+            : toSessionVerificationError(cause),
+        ),
+      );
+    return yield* toAccessTokenResult(session);
+  });
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
         ...input,
+        requestMetadata,
         ...(requestedScopes !== undefined ? { requestedScopes } : {}),
       }).pipe(
+        // Every T3 Connect key that gets in is remembered, so turning approval on later
+        // keeps the devices already in use and lists them for review.
+        Effect.tap((grant) =>
+          grant.subject === CLOUD_CONNECT_SUBJECT && input?.proofKeyThumbprint
+            ? bootstrapCredentials
+                .trustConnectDevice(input.proofKeyThumbprint, requestMetadata)
+                .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })))
+            : Effect.void,
+        ),
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
             const grantedScopes =
@@ -968,6 +1115,12 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
+            // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
+            const renewable =
+              input?.proofKeyThumbprint !== undefined &&
+              grant.method === "one-time-token" &&
+              grant.subject === PAIRING_LINK_SUBJECT;
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
@@ -976,9 +1129,10 @@ export const make = Effect.gen(function* () {
                 ...(input?.proofKeyThumbprint
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
+                      ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
                     }
                   : {}),
+                ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -992,25 +1146,9 @@ export const make = Effect.gen(function* () {
               );
           }),
         ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
-                    ),
-                  ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
-            ),
-          ),
-        ),
+        Effect.flatMap(toAccessTokenResult),
+        (exchange) =>
+          input?.proofKeyThumbprint ? connectTrustLock.withPermits(1)(exchange) : exchange,
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
       );
     };
@@ -1032,6 +1170,8 @@ export const make = Effect.gen(function* () {
         ...(input?.label ? { label: input.label } : {}),
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
         ...(input?.purpose ? { purpose: input.purpose } : {}),
+        ...(input?.mcpApproval ? { mcpApproval: input.mcpApproval } : {}),
+        ...(input?.requiresConnectApproval ? { requiresConnectApproval: true } : {}),
       });
       return {
         id: issued.id,
@@ -1066,7 +1206,11 @@ export const make = Effect.gen(function* () {
           INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
         ];
         return pairingLinks
-          .filter((pairingLink) => !excludedSubjects.includes(pairingLink.subject))
+          .filter(
+            (pairingLink) =>
+              !excludedSubjects.includes(pairingLink.subject) &&
+              !pairingLink.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX),
+          )
           .map((link) => ({ ...link, ...authScopeResponse(link.scopes) }))
           .toSorted(
             (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
@@ -1081,6 +1225,106 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })),
       Effect.withSpan("EnvironmentAuth.revokePairingLink"),
     );
+
+  const recordConnectRequest = (pairingLinkId: string, client: AuthClientMetadata | undefined) =>
+    client === undefined
+      ? Effect.void
+      : bootstrapCredentials
+          .recordConnectRequestClient(pairingLinkId, client)
+          .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+
+  const issueConnectCredential: EnvironmentAuth["Service"]["issueConnectCredential"] = Effect.fn(
+    "EnvironmentAuth.issueConnectCredential",
+  )(function* ({ proofKeyThumbprint, requireApproval }) {
+    return yield* issueConnectCredentialLocked({ proofKeyThumbprint, requireApproval }).pipe(
+      connectTrustLock.withPermits(1),
+    );
+  });
+  // Untraced: the issueConnectCredential span above already covers it.
+  const issueConnectCredentialLocked = Effect.fnUntraced(function* ({
+    proofKeyThumbprint,
+    requireApproval,
+  }: Parameters<EnvironmentAuth["Service"]["issueConnectCredential"]>[0]) {
+    const mustWait =
+      requireApproval &&
+      !(yield* bootstrapCredentials
+        .isConnectDeviceTrusted(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause }))));
+    if (mustWait) {
+      const pending = yield* bootstrapCredentials
+        .findPendingConnect(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+      if (Option.isSome(pending)) {
+        return { credential: pending.value.credential, expiresAt: pending.value.expiresAt };
+      }
+    }
+    const issued = yield* createPairingLink({
+      scopes: AuthStandardClientScopes,
+      subject: CLOUD_CONNECT_SUBJECT,
+      // Long enough for someone to notice the request and approve it.
+      ttl: mustWait ? Duration.minutes(10) : Duration.minutes(2),
+      label: "T3 Connect",
+      proofKeyThumbprint,
+      ...(mustWait ? { requiresConnectApproval: true } : {}),
+    });
+    return { credential: issued.credential, expiresAt: issued.expiresAt };
+  });
+
+  const approveConnectDevice: EnvironmentAuth["Service"]["approveConnectDevice"] = (
+    pairingLinkId,
+  ) =>
+    bootstrapCredentials.approveConnectRequest(pairingLinkId).pipe(
+      Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })),
+      Effect.withSpan("EnvironmentAuth.approveConnectDevice"),
+    );
+
+  const approveConnectDeviceByCode: EnvironmentAuth["Service"]["approveConnectDeviceByCode"] =
+    Effect.fn("EnvironmentAuth.approveConnectDeviceByCode")(function* (verificationCode) {
+      const wanted = normalizeVerificationCode(verificationCode);
+      const links = yield* bootstrapCredentials
+        .listActive()
+        .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
+      const matches = links.filter(
+        (link) =>
+          link.connectDeviceRequest !== undefined &&
+          normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted,
+      );
+      // Two waiting devices that share a code are ambiguous; approve neither.
+      if (matches.length !== 1) return false;
+      return yield* approveConnectDevice(matches[0]!.id);
+    });
+
+  const listConnectDevices: EnvironmentAuth["Service"]["listConnectDevices"] = () =>
+    bootstrapCredentials.listConnectDevices().pipe(
+      Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })),
+      Effect.withSpan("EnvironmentAuth.listConnectDevices"),
+    );
+
+  const revokeConnectDevice: EnvironmentAuth["Service"]["revokeConnectDevice"] = Effect.fn(
+    "EnvironmentAuth.revokeConnectDevice",
+  )(function* (proofKeyThumbprint) {
+    return yield* Effect.gen(function* () {
+      const removed = yield* bootstrapCredentials
+        .revokeConnectDevice(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+      const revokedSessions = yield* sessions
+        .revokeByProofKey(proofKeyThumbprint)
+        .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+      return removed || revokedSessions > 0;
+    }).pipe(connectTrustLock.withPermits(1));
+  });
+
+  const revokeConnectDeviceByCode: EnvironmentAuth["Service"]["revokeConnectDeviceByCode"] =
+    Effect.fn("EnvironmentAuth.revokeConnectDeviceByCode")(function* (verificationCode) {
+      const wanted = normalizeVerificationCode(verificationCode);
+      const matches = (yield* listConnectDevices()).filter(
+        (device) => normalizeVerificationCode(device.verificationCode) === wanted,
+      );
+      if (matches.length === 0) return "not-found" as const;
+      if (matches.length > 1) return "ambiguous" as const;
+      yield* revokeConnectDevice(matches[0]!.proofKeyThumbprint);
+      return "revoked" as const;
+    });
 
   const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
     sessions
@@ -1132,11 +1376,21 @@ export const make = Effect.gen(function* () {
 
   const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
     createPairingLink({
-      scopes: input?.scopes ?? AuthStandardClientScopes,
-      subject: "one-time-token",
+      scopes: input?.access
+        ? mcpClientScopes(input.access)
+        : (input?.scopes ?? AuthStandardClientScopes),
+      subject:
+        input?.purpose === "peer-link" && input.access
+          ? `${PEER_LINK_PAIRING_SUBJECT_PREFIX}${input.access}`
+          : "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
+      ...(input?.access && input.purpose !== "peer-link" ? { mcpApproval: input.access } : {}),
     }).pipe(
-      Effect.map(toPairingCredential),
+      Effect.map((issued) => ({
+        ...toPairingCredential(issued),
+        ...(input?.access ? { access: input.access } : {}),
+        ...(input?.access && input.purpose === "peer-link" ? { purpose: input.purpose } : {}),
+      })),
       Effect.withSpan("EnvironmentAuth.issuePairingCredential"),
     );
 
@@ -1188,15 +1442,33 @@ export const make = Effect.gen(function* () {
     if (currentSessionId === targetSessionId) {
       return yield* new ServerAuthForbiddenOperationError({});
     }
+    const proofKeyThumbprint = yield* sessions
+      .proofKeyThumbprintOf(targetSessionId)
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+    // A T3 Connect device would otherwise mint itself a new session right away.
+    if (Option.isSome(proofKeyThumbprint)) {
+      const currentProofKey = yield* sessions
+        .proofKeyThumbprintOf(currentSessionId)
+        .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+      if (Option.getOrUndefined(currentProofKey) !== proofKeyThumbprint.value) {
+        return yield* revokeConnectDevice(proofKeyThumbprint.value);
+      }
+    }
     return yield* revokeSession(targetSessionId);
   });
 
-  const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
-    currentSessionId,
-  ) =>
-    revokeOtherSessionsExcept(currentSessionId).pipe(
-      Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
-    );
+  const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] =
+    Effect.fn("EnvironmentAuth.revokeOtherClientSessions")(function* (currentSessionId) {
+      const currentProofKey = yield* sessions
+        .proofKeyThumbprintOf(currentSessionId)
+        .pipe(Effect.mapError((cause) => new ServerAuthOtherSessionsRevocationError({ cause })));
+      return yield* Effect.gen(function* () {
+        yield* bootstrapCredentials
+          .revokeConnectDevicesExcept(Option.getOrNull(currentProofKey))
+          .pipe(Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })));
+        return yield* revokeOtherSessionsExcept(currentSessionId);
+      }).pipe(connectTrustLock.withPermits(1));
+    });
 
   const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
     issueStartupPairingCredential().pipe(
@@ -1341,29 +1613,19 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
       );
 
-  const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
-    request,
-  ) => {
-    const credential = resolveRequestCredential(request);
-    if (!credential || !isBrowserCookieCredential(credential.source)) {
-      return Effect.fail(new ServerAuthMissingCredentialError({}));
-    }
-    return authenticateRequest(request).pipe(
-      Effect.filterOrFail(
-        (session) => session.method === "browser-session-cookie",
-        () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
-      ),
-      Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
-    );
-  };
-
   const consumeMcpApprovalCode: EnvironmentAuth["Service"]["consumeMcpApprovalCode"] = (
     code,
     access,
+    peerLink = false,
   ) =>
-    resolveBootstrapGrant(code.trim(), { requiredScopes: mcpClientScopes(access) }).pipe(
+    resolveBootstrapGrant(code.trim(), {
+      requiredScopes: mcpClientScopes(access),
+      allowedSubject: `${peerLink ? PEER_LINK_PAIRING_SUBJECT_PREFIX : MCP_APPROVAL_SUBJECT_PREFIX}${access}`,
+    }).pipe(
       Effect.catchTags({
         ServerAuthInvalidCredentialError: () =>
+          Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
+        ServerAuthConnectApprovalPendingError: () =>
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
         ServerAuthScopeNotGrantedError: () =>
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
@@ -1371,7 +1633,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((grant) =>
         grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
           ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-          : Effect.void,
+          : Effect.succeed(mcpApprovalLevel(grant.subject) ?? access),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
@@ -1388,7 +1650,14 @@ export const make = Effect.gen(function* () {
     getSessionState,
     createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
+    renewAccessToken,
     createPairingLink,
+    issueConnectCredential,
+    approveConnectDevice,
+    approveConnectDeviceByCode,
+    listConnectDevices,
+    revokeConnectDevice,
+    revokeConnectDeviceByCode,
     issuePairingCredential,
     issueStartupPairingCredential,
     listPairingLinks,
@@ -1406,12 +1675,23 @@ export const make = Effect.gen(function* () {
     authenticateMcpClient,
     issueMcpClientSession,
     consumeMcpApprovalCode,
-    authenticateBrowserSession,
   });
 });
 
+const isMcpClientAccess = Schema.is(AuthMcpClientAccess);
+
+const normalizeVerificationCode = (code: string) => code.toUpperCase().replace(/[^0-9A-Z]/g, "");
+
+/** The level an approval code's subject names, or undefined for any other code. */
+const mcpApprovalLevel = (subject: string): AuthMcpClientAccess | undefined => {
+  const level = subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX)
+    ? subject.slice(MCP_APPROVAL_SUBJECT_PREFIX.length)
+    : undefined;
+  return isMcpClientAccess(level) ? level : undefined;
+};
+
 /** Subjects of sessions and links a pairing link created, keyed by how the client paired. */
-const LINK_PAIRED_SUBJECTS = { link: "one-time-token", connect: "cloud-connect" } as const;
+const LINK_PAIRED_SUBJECTS = { link: "one-time-token", connect: CLOUD_CONNECT_SUBJECT } as const;
 
 /**
  * Revokes sessions and unused links from pairing the policy no longer allows, so a policy rolled
@@ -1440,8 +1720,11 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
         session.client.ipAddress !== undefined &&
         !isLocalLoopbackHost(session.client.ipAddress)),
   );
-  const links = (yield* stores.pairingLinks.listActive()).filter((link) =>
-    disallowed.has(link.subject),
+  const links = (yield* stores.pairingLinks.listActive()).filter(
+    (link) =>
+      disallowed.has(link.subject) ||
+      // Approval codes let an agent elsewhere sign in, as plain codes do.
+      (!remoteAllowed && link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX)),
   );
   yield* Effect.forEach(sessions, (session) => stores.sessions.revoke(session.sessionId), {
     discard: true,
@@ -1461,7 +1744,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 
-const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerConfig);
+const layerStorage = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistence.layerCliConfig);
 
 export const layerRuntime = layer.pipe(
   Layer.provideMerge(ManagedPolicy.layer),

@@ -21,7 +21,7 @@ Every fx instance on the same machine shares that machine's fx login. T3 Code do
 
 ## Update fx
 
-When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, T3 Code checks stable releases but leaves updates to your mise configuration.
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, T3 Code checks stable releases but leaves updates to your mise configuration. MacPorts and Nix installs are also left to their package manager.
 
 To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only; use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
 
@@ -34,6 +34,8 @@ fx also has an **Effort** control. A new thread starts at Medium.
 T3 Code does not show fx's backend selector. To use Codex, Grok, or Vercel AI Gateway, run `fx provider` on the environment's machine.
 
 Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case; to run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
+
+fx threads load the MCP servers from fx's profile config, `~/.fx/mcp.json`, on the machine that runs the T3 Code server.
 
 ## Permission modes
 
@@ -58,7 +60,6 @@ fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs 
 
 ## Not supported yet
 
-- Plan mode.
 - **Full access**.
 - **Auto-accept edits**.
 - Commit messages, pull request text, branch names, and thread titles. Pick another provider for those.

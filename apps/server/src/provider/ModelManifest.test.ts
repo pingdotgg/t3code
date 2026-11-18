@@ -87,6 +87,7 @@ describe("resolveProviderCatalog", () => {
               current: Effect.succeed(manifest),
               refresh: Effect.die("Catalog reads must not refresh the manifest"),
               forceRefresh: Effect.die("Catalog reads must not refresh the manifest"),
+              refreshOnDemand: Effect.die("Catalog reads must not refresh the manifest"),
               refreshInBackground: Effect.die("Catalog reads must not refresh the manifest"),
             }),
           ),
@@ -265,7 +266,7 @@ const layerService = (input: {
   );
 
 describe("ModelManifest service", () => {
-  it.live("prefers a fetched manifest over the bundle and caches it to disk", () =>
+  it.effect("prefers a fetched manifest over the bundle and caches it to disk", () =>
     Effect.gen(function* () {
       const service = yield* ModelManifest.make;
       const refreshed = yield* service.refresh;
@@ -284,29 +285,32 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("ignores older remote edits without replacing the current manifest or disk cache", () => {
-    let remote = { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" };
-    return Effect.gen(function* () {
-      const service = yield* ModelManifest.make;
-      assert.deepStrictEqual(yield* service.refresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
-      assert.deepStrictEqual(yield* service.current, ModelManifest.BUNDLED_MODEL_MANIFEST);
+  it.effect(
+    "ignores older remote edits without replacing the current manifest or disk cache",
+    () => {
+      let remote = { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" };
+      return Effect.gen(function* () {
+        const service = yield* ModelManifest.make;
+        assert.deepStrictEqual(yield* service.refresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
+        assert.deepStrictEqual(yield* service.current, ModelManifest.BUNDLED_MODEL_MANIFEST);
 
-      remote = { ...REMOTE_MANIFEST, updatedAt: REMOTE_UPDATED_AT };
-      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
-      remote = { ...REMOTE_MANIFEST, updatedAt: ModelManifest.BUNDLED_MODEL_MANIFEST.updatedAt! };
-      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
-      const rebooted = yield* ModelManifest.make;
-      assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerService({
-          prefix: "model-manifest-stale-fetch-test",
-          response: () => Response.json(remote),
-        }),
-      ),
-    );
-  });
+        remote = { ...REMOTE_MANIFEST, updatedAt: REMOTE_UPDATED_AT };
+        assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+        remote = { ...REMOTE_MANIFEST, updatedAt: ModelManifest.BUNDLED_MODEL_MANIFEST.updatedAt! };
+        assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+        const rebooted = yield* ModelManifest.make;
+        assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix: "model-manifest-stale-fetch-test",
+            response: () => Response.json(remote),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("preserves the last-good remote cache when later payloads are invalid", () => {
     let responseIndex = 0;
@@ -335,7 +339,35 @@ describe("ModelManifest service", () => {
     );
   });
 
-  it.live("drops a disk cache of a manifest older than the bundled one", () =>
+  it.effect("refetches for an opened model picker after five minutes, not an hour", () => {
+    let fetches = 0;
+    return Effect.gen(function* () {
+      const service = yield* ModelManifest.make;
+      yield* service.refresh;
+      yield* TestClock.adjust("4 minutes");
+      yield* service.refreshOnDemand;
+      assert.strictEqual(fetches, 1);
+
+      yield* TestClock.adjust("1 minute");
+      yield* service.refresh;
+      assert.strictEqual(fetches, 1);
+      yield* service.refreshOnDemand;
+      assert.strictEqual(fetches, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-on-demand-test",
+          response: () => {
+            fetches += 1;
+            return Response.json(REMOTE_MANIFEST);
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("drops a disk cache of a manifest older than the bundled one", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -371,7 +403,7 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("does not fetch when provider update checks are disabled", () =>
+  it.effect("does not fetch when provider update checks are disabled", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
       const service = yield* ModelManifest.make.pipe(

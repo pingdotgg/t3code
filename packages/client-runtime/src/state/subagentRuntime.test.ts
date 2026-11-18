@@ -158,6 +158,13 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       expect(members?.[0]?.speed).toBeUndefined();
     },
   );
+
+  it("titles an untitled subagent from its prompt without splitting an emoji", () => {
+    const [untitled] = projectedSubagentsToRuntime([
+      subagent({ title: null, prompt: `${"a".repeat(76)}😀 and more work.` }),
+    ]);
+    expect(untitled?.title).toBe(`${"a".repeat(76)}...`);
+  });
 });
 
 describe("deriveWorkflowGroups over a dynamic workflow", () => {
@@ -309,5 +316,17 @@ describe("resolveWorkflowOpening", () => {
       false,
     );
     expect(isWorkflowScriptMessage({ role: "assistant", text: SCRIPT })).toBe(false);
+    expect(
+      isWorkflowScriptMessage({ role: "user", text: `// a\r// b\u2028/* c\n * d */\r\n${SCRIPT}` }),
+    ).toBe(true);
+    expect(isWorkflowScriptMessage({ role: "user", text: "// export const meta = {}" })).toBe(
+      false,
+    );
+    // Divider comments ahead of ordinary code must reject without catastrophic backtracking.
+    const dividers = `${"/".repeat(40)}\n`.repeat(40);
+    expect(isWorkflowScriptMessage({ role: "user", text: `${dividers}const x = 1;` })).toBe(false);
+    expect(
+      isWorkflowScriptMessage({ role: "user", text: `${"/**/".repeat(200)}const x = 1;` }),
+    ).toBe(false);
   });
 });

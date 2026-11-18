@@ -5,11 +5,12 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import {
   homebrewOwnershipFromCommandPath,
-  isMiseCommandPath,
-  isMiseWrapperScript,
+  isNixStoreCommandPath,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   resolveHomebrewProviderMaintenance,
+  resolveMacPortsOwner,
+  resolveMiseProviderMaintenance,
   type ProviderMaintenanceCapabilitiesResolver,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { FX_DRIVER_KIND } from "./acpSupport.ts";
@@ -42,15 +43,26 @@ export const makeFxMaintenance = (
     ) {
       return manualOnly;
     }
-    if (
-      isMiseCommandPath(context.resolvedCommandPath, context.env) ||
-      isMiseCommandPath(context.realCommandPath, context.env) ||
-      (yield* isMiseWrapperScript(context))
-    ) {
+    // fx has no mise registry tool, so a mise-owned install stays manual-only.
+    if (yield* resolveMiseProviderMaintenance(input, undefined, context)) {
       return makeManualOnlyProviderMaintenanceCapabilities({
         ...input,
         installPath: context.realCommandPath,
         lookupLatestVersion,
+      });
+    }
+    if ([context.resolvedCommandPath, context.realCommandPath].some(isNixStoreCommandPath)) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...input,
+        installPath: context.realCommandPath,
+      });
+    }
+    const macPortsName = yield* resolveMacPortsOwner(context);
+    if (macPortsName !== null) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...input,
+        installPath: context.realCommandPath,
+        ...(macPortsName ? { manualCommand: `sudo port upgrade ${macPortsName}` } : {}),
       });
     }
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
