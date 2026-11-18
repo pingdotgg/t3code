@@ -1230,14 +1230,36 @@ export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
   webAuthn: MacWebAuthnEntitlements,
 ): string {
-  const keychainAccessGroups = webAuthn.touchIdKeychainAccessGroup
+  return renderMacEntitlements({ configuration, webAuthn });
+}
+
+/** What a signed build's entitlements carry, with or without a provisioning profile. */
+export interface MacEntitlementsInput {
+  readonly configuration?: MacPasskeySigningConfiguration;
+  readonly webAuthn?: MacWebAuthnEntitlements;
+}
+
+/**
+ * Every signed build needs the hardened runtime and camera/microphone keys, and computer use needs Apple
+ * Events. Only a build with a provisioning profile may also carry the app identifier and passkey grants.
+ */
+export function renderMacEntitlements(input: MacEntitlementsInput): string {
+  const { configuration, webAuthn } = input;
+  const identity = configuration
+    ? `
+    <key>com.apple.application-identifier</key>
+    <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>${escapeXml(configuration.teamId)}</string>`
+    : "";
+  const keychainAccessGroups = webAuthn?.touchIdKeychainAccessGroup
     ? `
     <key>keychain-access-groups</key>
     <array>
       <string>${escapeXml(webAuthn.touchIdKeychainAccessGroup)}</string>
     </array>`
     : "";
-  const browserPasskeys = webAuthn.browserPasskeys
+  const browserPasskeys = webAuthn?.browserPasskeys
     ? `
     <key>${BROWSER_PASSKEYS_ENTITLEMENT}</key>
     <true/>`
@@ -1246,11 +1268,7 @@ export function renderMacPasskeyEntitlements(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-  <dict>
-    <key>com.apple.application-identifier</key>
-    <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
-    <key>com.apple.developer.team-identifier</key>
-    <string>${escapeXml(configuration.teamId)}</string>${keychainAccessGroups}${browserPasskeys}
+  <dict>${identity}${keychainAccessGroups}${browserPasskeys}
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -1264,6 +1282,10 @@ export function renderMacPasskeyEntitlements(
     <key>com.apple.security.device.camera</key>
     <true/>
     <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Computer use drives other apps' controls through Apple Events, which the
+         hardened runtime denies unless the app claims them here. -->
+    <key>com.apple.security.automation.apple-events</key>
     <true/>
   </dict>
 </plist>
@@ -2623,10 +2645,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
-  macPasskeySigning:
+  macEntitlements:
     | {
         readonly entitlementsPath: string;
-        readonly provisioningProfilePath: string;
+        readonly provisioningProfilePath?: string;
       }
     | undefined,
   wslRuntimeBundled = false,
@@ -2698,7 +2720,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSCalendarsUsageDescription: `Commands you run in ${APP_NAME} may need access to your calendars.`,
         NSCalendarsFullAccessUsageDescription: `Commands you run in ${APP_NAME} may need to read and write your calendar events.`,
         NSCalendarsWriteOnlyAccessUsageDescription: `Commands you run in ${APP_NAME} may need to add events to your calendars.`,
-        NSScreenCaptureUsageDescription: `${APP_NAME} captures the active window when you use the window capture shortcut.`,
+        NSScreenCaptureUsageDescription: `${APP_NAME} reads the screen when you use the window capture shortcut or ask an agent to use this computer.`,
+        NSAppleEventsUsageDescription: `${APP_NAME} uses Apple Events to control other apps when you ask an agent to use this computer.`,
         NSCameraUsageDescription: `${APP_NAME} lets commands run by terminals and coding agents use the camera.`,
         NSMicrophoneUsageDescription: `${APP_NAME} lets commands run by terminals and coding agents use the microphone.`,
         // macOS lists an app under Default web browser only when it opens web
@@ -2726,10 +2749,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // scripts/notarize-macos.ts notarizes from afterSign with retries.
       notarize: false,
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
-      ...(macPasskeySigning
+      ...(macEntitlements
         ? {
-            entitlements: macPasskeySigning.entitlementsPath,
-            provisioningProfile: macPasskeySigning.provisioningProfilePath,
+            entitlements: macEntitlements.entitlementsPath,
+            ...(macEntitlements.provisioningProfilePath === undefined
+              ? {}
+              : { provisioningProfile: macEntitlements.provisioningProfilePath }),
           }
         : {}),
     };
@@ -3739,9 +3764,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         ),
       }
     : undefined;
-  const macEntitlementsPath = macPasskeySigning
-    ? path.join(stageAppDir, "entitlements.mac.plist")
-    : undefined;
+  const macEntitlementsPath =
+    options.platform === "mac" && options.signed
+      ? path.join(stageAppDir, "entitlements.mac.plist")
+      : undefined;
   let macWebAuthn: MacWebAuthnEntitlements | undefined;
   if (macPasskeySigning && macEntitlementsPath) {
     if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
@@ -3756,9 +3782,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* Effect.log(
       `[desktop-artifact] In-app browser passkeys: Touch ID ${macWebAuthn.touchIdKeychainAccessGroup ? "enabled" : "disabled"}, browser passkeys ${macWebAuthn.browserPasskeys ? "enabled" : "disabled"}.`,
     );
+  }
+  if (macEntitlementsPath) {
     yield* fs.writeFileString(
       macEntitlementsPath,
-      renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
+      renderMacEntitlements({
+        ...(macPasskeySigning ? { configuration: macPasskeySigning } : {}),
+        ...(macWebAuthn ? { webAuthn: macWebAuthn } : {}),
+      }),
     );
   }
 
@@ -3801,10 +3832,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
-      macPasskeySigning && macEntitlementsPath
+      macEntitlementsPath
         ? {
             entitlementsPath: macEntitlementsPath,
-            provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
+            ...(macPasskeySigning
+              ? { provisioningProfilePath: macPasskeySigning.provisioningProfilePath }
+              : {}),
           }
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
