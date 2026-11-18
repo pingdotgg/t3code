@@ -16,7 +16,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
-const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
+const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(30);
 const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 function faviconCacheKey(cwd: string, faviconPath?: string): string {

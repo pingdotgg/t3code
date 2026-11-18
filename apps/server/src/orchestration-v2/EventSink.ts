@@ -72,6 +72,9 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 interface ProviderBatchPublication {
   readonly publish: Array<Effect.Effect<void>>;
+  readonly projection: ProjectionStore.ProviderBatchProjection;
+  /** The projection high-water mark, recorded once before the batch commits. */
+  projectedSequence: number | undefined;
   eventCount: number;
 }
 const CurrentProviderBatch = Context.Reference<ProviderBatchPublication | undefined>(
@@ -409,16 +412,10 @@ const layerBase: Layer.Layer<
       );
     };
 
-    const applyStoredEvents =
-      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
-      Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
-        yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
-          concurrency: 1,
-        });
-        const sequence = storedEvents.at(-1)?.sequence;
-        if (sequence !== undefined) {
-          const now = DateTime.formatIso(yield* DateTime.now);
-          yield* sql`
+    // The enclosing write or commit span already traces this projection bookkeeping.
+    const recordProjectedSequence = Effect.fnUntraced(function* (sequence: number) {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (
               projection_name,
               schema_version,
@@ -437,6 +434,19 @@ const layerBase: Layer.Layer<
               last_sequence = excluded.last_sequence,
               updated_at = excluded.updated_at
           `;
+    });
+
+    const applyStoredEvents =
+      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
+      Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
+        yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
+          concurrency: 1,
+        });
+        const sequence = storedEvents.at(-1)?.sequence;
+        if (sequence !== undefined) {
+          const batch = yield* CurrentProviderBatch;
+          if (batch !== undefined) batch.projectedSequence = sequence;
+          else yield* recordProjectedSequence(sequence);
         }
         // Read lineage here, on the connection this transaction holds; see makeRunOutcomeRecorder.
         return yield* runOutcomes.prepare(storedEvents);
@@ -476,6 +486,7 @@ const layerBase: Layer.Layer<
       const batch = yield* CurrentProviderBatch;
       if (batch !== undefined) batch.eventCount += input.events.length;
       const { committed } = yield* commitThenPublish(
+        input.events.map((event) => event.threadId),
         Effect.gen(function* () {
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
@@ -530,6 +541,7 @@ const layerBase: Layer.Layer<
         });
 
         return yield* commitThenPublish(
+          [input.threadId, ...input.events.map((event) => event.threadId)],
           Effect.gen(function* () {
             const rows = yield* sql<{
               readonly status: string;
@@ -611,6 +623,7 @@ const layerBase: Layer.Layer<
       });
 
       return yield* commitThenPublish(
+        input.events.map((event) => event.threadId),
         Effect.gen(function* () {
           const rows = yield* sql<{
             readonly active_attempt_id: string | null;
@@ -664,6 +677,7 @@ const layerBase: Layer.Layer<
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) =>
       commitThenPublish(
+        events.map((event) => event.threadId),
         Effect.gen(function* () {
           const rows = yield* readStoredPayload;
           if (rows[0]?.payload_json !== expectedJson) {
@@ -764,6 +778,7 @@ const layerBase: Layer.Layer<
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
       const result = yield* commitThenPublish(
+        [input.threadId, ...input.events.map((event) => event.threadId)],
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
@@ -909,6 +924,7 @@ const layerBase: Layer.Layer<
     const commitProjectCommandEffect = Effect.fn("orchestrationV2.EventSink.commitProjectCommand")(
       function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
         const result = yield* commitThenPublish(
+          [],
           Effect.gen(function* () {
             const reserved: CommandReceiptStore.ProjectCommandReceiptV2 = {
               commandId: input.commandId,
@@ -1037,7 +1053,9 @@ const layerBase: Layer.Layer<
       );
     };
 
+    // Waits only for queued provider snapshots of `threadIds`, the threads this write touches.
     const commitThenPublish = <A, E, R>(
+      threadIds: ReadonlyArray<ThreadId>,
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
@@ -1046,7 +1064,7 @@ const layerBase: Layer.Layer<
           ? Effect.flatMap(Effect.serviceOption(sql.transactionService), (existing) =>
               Option.isSome(existing)
                 ? commitThenPublishNow(transaction, publish)
-                : coordinator.barrier(commitThenPublishNow(transaction, publish)),
+                : coordinator.barrier(commitThenPublishNow(transaction, publish), threadIds),
             )
           : transaction.pipe(
               Effect.tap((committed) =>
@@ -1061,12 +1079,33 @@ const layerBase: Layer.Layer<
       "orchestrationV2.EventSink.providerBatch",
     )(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
       if ((yield* CurrentProviderBatch) !== undefined) return yield* effect;
-      const batch: ProviderBatchPublication = { publish: [], eventCount: 0 };
+      const batch: ProviderBatchPublication = {
+        publish: [],
+        eventCount: 0,
+        projection: { nodeReads: new Map(), threadTouches: new Map() },
+        projectedSequence: undefined,
+      };
       let started = false;
       const result = yield* commitThenPublishNow(
         Effect.sync(() => {
           started = true;
-        }).pipe(Effect.andThen(Effect.provideService(effect, CurrentProviderBatch, batch))),
+        }).pipe(
+          Effect.andThen(
+            effect.pipe(
+              Effect.provideService(CurrentProviderBatch, batch),
+              Effect.provideService(ProjectionStore.ProviderBatchProjectionState, batch.projection),
+              Effect.tap(() =>
+                ProjectionStore.writeThreadTouches(sql, batch.projection.threadTouches).pipe(
+                  Effect.andThen(
+                    batch.projectedSequence === undefined
+                      ? Effect.void
+                      : recordProjectedSequence(batch.projectedSequence),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         () => Effect.forEach(batch.publish, (publish) => publish, { discard: true }),
       ).pipe(
         // Normalization mutates run-local state, so only retry before its transaction body starts.
@@ -1105,12 +1144,19 @@ const layerBase: Layer.Layer<
         const batch = yield* CurrentProviderBatch;
         const publicationCount = batch?.publish.length ?? 0;
         const eventCount = batch?.eventCount ?? 0;
+        const projectedSequence = batch?.projectedSequence;
+        const threadTouches = new Map(batch?.projection.threadTouches);
         return yield* sql.withTransaction(work).pipe(
           Effect.onError(() =>
             Effect.sync(() => {
               if (batch !== undefined) {
                 batch.publish.length = publicationCount;
                 batch.eventCount = eventCount;
+                batch.projectedSequence = projectedSequence;
+                batch.projection.nodeReads.clear();
+                batch.projection.threadTouches.clear();
+                for (const [threadId, updatedAt] of threadTouches)
+                  batch.projection.threadTouches.set(threadId, updatedAt);
               }
             }),
           ),

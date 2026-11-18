@@ -1380,6 +1380,8 @@ export const layerQueryRunner: Layer.Layer<
         Effect.map((result) => (result.code === 0 ? parseClaudeProcessTable(result.stdout) : [])),
         Effect.orElseSucceed(() => []),
       );
+    // Every live CLI polls on this interval, so polls share one `ps` run instead of one per CLI.
+    const pollProcessTable = yield* Effect.cachedWithTTL(readProcessTable, CLAUDE_DESCENDANT_POLL);
     // Without an agent scope, a job that left the CLI's group escapes the group kill and is
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
@@ -1389,8 +1391,9 @@ export const layerQueryRunner: Layer.Layer<
       // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
       const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(function* (
         cliRunning: boolean,
+        table: Effect.Effect<ReadonlyArray<ClaudeProcessRow>>,
       ) {
-        const rows = yield* readProcessTable;
+        const rows = yield* table;
         const running = new Set(rows.map(identity));
         const roots = [
           ...(cliRunning ? [cliPid] : []),
@@ -1399,14 +1402,19 @@ export const layerQueryRunner: Layer.Layer<
         for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
         return running;
       });
-      const stop = refresh(false).pipe(
+      const stop = refresh(false, readProcessTable).pipe(
         Effect.map((running) => {
           for (const row of tracked.values()) {
             if (running.has(identity(row))) killClaudeDescendant(row);
           }
         }),
       );
-      return { refresh: refresh(true).pipe(Effect.asVoid), stop };
+      // Close and cleanup act on what is running now, so only the poll reuses a shared table.
+      return {
+        poll: refresh(true, pollProcessTable).pipe(Effect.asVoid),
+        refresh: refresh(true, readProcessTable).pipe(Effect.asVoid),
+        stop,
+      };
     };
 
     return ClaudeAgentSdkQueryRunner.of({
@@ -1516,7 +1524,7 @@ export const layerQueryRunner: Layer.Layer<
                 if (unit === undefined && child.pid !== undefined) {
                   const tracker = trackDescendants(child.pid);
                   const polling = runFork(
-                    tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
+                    tracker.poll.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
                   );
                   child.once("exit", () =>
                     runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
