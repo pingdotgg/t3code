@@ -2,9 +2,8 @@ import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { type ClipboardEvent, useEffect, useRef, useState } from "react";
 
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useDiffThemeNames } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "./fileSurfaceChrome";
@@ -19,6 +18,7 @@ export default function ReadOnlySourcePreview(props: {
   readonly wordWrap?: boolean;
 }) {
   const resolvedTheme = useRenderedAppearance();
+  const diffThemeName = useDiffThemeNames()[resolvedTheme];
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const wordWrap = props.wordWrap ?? defaultWordWrap;
   const { text, onPostRender } = props;
@@ -83,7 +83,7 @@ export default function ReadOnlySourcePreview(props: {
             options={{
               disableFileHeader: true,
               overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
+              theme: diffThemeName,
               preferredHighlighter: PREFERRED_HIGHLIGHTER,
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
