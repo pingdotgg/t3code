@@ -8,6 +8,7 @@ import {
   type TextDirection,
 } from "@t3tools/shared/textDirection";
 import { useNavigation } from "@react-navigation/native";
+import { Plural, T, useGT, Var } from "gt-react-native";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -126,6 +127,7 @@ function QuestionText(props: {
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const gt = useGT();
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -178,7 +180,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
 
   const stopButton = props.onStopThread ? (
     <ControlPill
-      accessibilityLabel="Stop"
+      accessibilityLabel={gt("Stop", { $context: "verb, stops the thread" })}
       icon="stop.fill"
       variant="danger"
       className="h-9 w-9"
@@ -196,17 +198,32 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Expand user input, ${questionCount} question${
-          questionCount === 1 ? "" : "s"
-        }`}
+        accessibilityLabel={gt(
+          "{count, plural, one {Expand user input, {count} question} other {Expand user input, {count} questions}}",
+          { count: questionCount },
+        )}
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-          User input needed
+          <T>User input needed</T>
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
-          {questionCount} question{questionCount === 1 ? "" : "s"}
+          <T>
+            <Plural
+              n={questionCount}
+              one={
+                <>
+                  <Var>{questionCount}</Var> question
+                </>
+              }
+              other={
+                <>
+                  <Var>{questionCount}</Var> questions
+                </>
+              }
+            />
+          </T>
         </Text>
         <View className="flex-1" />
         <SymbolView
@@ -231,16 +248,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       <View className="flex-row items-start gap-2">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Collapse user input"
+          accessibilityLabel={gt("Collapse user input")}
           onPress={props.onToggleCollapsed}
           className="flex-1 flex-row items-start gap-2"
         >
           <View className="flex-1 gap-2.5">
             <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-              User input needed
+              <T>User input needed</T>
             </Text>
             <Text className="font-t3-bold text-lg text-foreground">
-              Fill in the pending answers
+              <T>Fill in the pending answers</T>
             </Text>
           </View>
           <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
@@ -265,8 +282,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       >
         {!canRespond ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            The provider process for this request is no longer available. Interrupt or restart the
-            run to continue.
+            <T>
+              The provider process for this request is no longer available. Interrupt or restart the
+              run to continue.
+            </T>
           </Text>
         ) : null}
         {props.pendingUserInput.questions.map((question) => {
@@ -366,7 +385,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         })}
       </ScrollView>
       <Button
-        label="Submit answers"
+        label={gt("Submit answers")}
         fullWidth
         tone={props.answers ? "primary" : "secondary"}
         disabled={!props.canOperateThread || responseDisabled || props.answers === null}
@@ -374,7 +393,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       />
       {props.pendingUserInput.dismissible ? (
         <Button
-          label="Dismiss without answering"
+          label={gt("Dismiss without answering")}
           tone="text"
           disabled={isResponding}
           onPress={() => void props.onDismiss()}
@@ -382,7 +401,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       ) : null}
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-tertiary">
-          This connection cannot submit answers.
+          <T>This connection cannot submit answers.</T>
         </Text>
       ) : null}
     </Animated.View>
