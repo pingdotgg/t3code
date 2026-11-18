@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useId, useState } from "react";
 import { normalizeProviderIconUrl, type ProviderDriverKind } from "@t3tools/contracts";
 import { Input } from "../ui/input";
@@ -11,6 +12,7 @@ export function ProviderIconUrlInput(props: {
   readonly disabled?: boolean;
   readonly onCommit: (value: string) => void;
 }) {
+  const gt = useGT();
   const errorId = useId();
   const [draft, setDraft] = useState<{ saved: string | undefined; value: string } | null>(null);
   const value = draft !== null && draft.saved === props.value ? draft.value : (props.value ?? "");
@@ -28,7 +30,7 @@ export function ProviderIconUrlInput(props: {
           iconUrl={props.value}
         />
         <Input
-          aria-label="Instance icon URL"
+          aria-label={gt("Instance icon URL")}
           aria-invalid={invalid || undefined}
           aria-describedby={invalid ? errorId : undefined}
           size="sm"
@@ -55,12 +57,12 @@ export function ProviderIconUrlInput(props: {
             props.onCommit("");
           }}
         >
-          Reset
+          <T>Reset</T>
         </Button>
       </div>
       {invalid ? (
         <p id={errorId} role="alert" className="text-xs text-destructive">
-          Enter an HTTPS image URL without credentials.
+          <T>Enter an HTTPS image URL without credentials.</T>
         </p>
       ) : null}
     </div>

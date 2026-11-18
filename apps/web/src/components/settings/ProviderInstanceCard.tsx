@@ -1400,8 +1400,10 @@ export function ProviderInstanceCard({
           }
         />
         <SettingsRow
-          title="Icon"
-          description="Use an HTTPS image URL for this instance. Reset to restore the provider icon."
+          title={gt("Icon")}
+          description={gt(
+            "Use an HTTPS image URL for this instance. Reset to restore the provider icon.",
+          )}
           control={
             <ProviderIconUrlInput
               value={instance.iconUrl}

@@ -723,8 +723,8 @@ export function AddProviderInstanceDialog({
                   }
                 />
                 <SettingsRow
-                  title="Icon"
-                  description="Optional HTTPS image URL for this instance."
+                  title={gt("Icon")}
+                  description={gt("Optional HTTPS image URL for this instance.")}
                   control={
                     <ProviderIconUrlInput
                       value={iconUrl}
