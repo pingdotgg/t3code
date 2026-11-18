@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   isMicrophoneDevice,
@@ -123,13 +123,20 @@ const UNAVAILABLE_EXPLANATION =
 
 const LOCAL_ENGINE_EXPLANATION =
   Platform.OS === "android"
-    ? "Basic is Google’s standard speech model. Advanced uses Gemini Nano on supported phones and is usually more accurate. Your keyboard’s voice typing is separate."
-    : "Your keyboard’s dictation is separate.";
+    ? msg(
+        "Basic is Google’s standard speech model. Advanced uses Gemini Nano on supported phones and is usually more accurate. Your keyboard’s voice typing is separate.",
+      )
+    : msg("Your keyboard’s dictation is separate.");
 
-function localEngineLabel(engine: LocalVoiceEngine) {
-  if (engine.kind === "apple") return "Apple on-device speech";
-  const language = engine.downloaded ? engine.language : "Downloads on first use";
-  return `Google on-device speech · ${engine.advanced ? "Advanced" : "Basic"} · ${language}`;
+function localEngineLabel(engine: LocalVoiceEngine, resolve: MessageResolver) {
+  if (engine.kind === "apple") return resolve(msg("Apple on-device speech"));
+  const language = engine.downloaded ? engine.language : resolve(msg("Downloads on first use"));
+  return resolve(
+    msg("Google on-device speech · {mode} · {language}", {
+      mode: engine.advanced ? resolve(msg("Advanced")) : resolve(msg("Basic")),
+      language,
+    }),
+  );
 }
 
 function saveDestination(id: EnvironmentId | null) {
@@ -314,18 +321,20 @@ export function SettingsVoiceRouteScreen() {
       >
         <SettingsSection
           title={gt("Transcribe on")}
-          footer={localEngine ? LOCAL_ENGINE_EXPLANATION : undefined}
+          footer={localEngine ? m(LOCAL_ENGINE_EXPLANATION) : undefined}
         >
           <ListChoiceRow
             label={gt("This device")}
             accessibilityLabel={
-              localEngine ? `This device, ${localEngineLabel(localEngine)}` : undefined
+              localEngine
+                ? gt("This device, {engine}", { engine: localEngineLabel(localEngine, m) })
+                : undefined
             }
             description={gt("Audio stays on this device and is transcribed here.")}
             meta={
               localEngine ? (
                 <Text textRole="footnote" className="text-foreground">
-                  {localEngineLabel(localEngine)}
+                  {localEngineLabel(localEngine, m)}
                 </Text>
               ) : undefined
             }
