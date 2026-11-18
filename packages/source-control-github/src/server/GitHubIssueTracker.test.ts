@@ -397,7 +397,6 @@ describe("GitHubIssueTracker", () => {
           scope: "acme/web",
           state: "open",
           involvement: "all",
-          viewer: "julius",
           labels: ['needs "repro"'],
           assignee: "theo",
           sort: "created",
