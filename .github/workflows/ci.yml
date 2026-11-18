@@ -47,6 +47,8 @@ jobs:
           sparse-checkout: |
             /pnpm-workspace.yaml
             /.github/scripts/ci-changes.cjs
+            /.github/workflows/ci.yml
+            /.github/scripts/ci-check.test.cjs
             /.github/scripts/web-test.cjs
             /.github/scripts/web-test.test.cjs
             /.github/actions/ci-changes/
@@ -59,9 +61,8 @@ jobs:
         id: detect
         uses: ./.github/actions/ci-changes
 
-      # Cheap and always runs, so a change to the wrapper is tested even when no web test runs.
-      - name: Test the web test wrapper
-        run: node --test .github/scripts/web-test.test.cjs
+      - name: Test CI scripts
+        run: node --test .github/scripts/ci-check.test.cjs .github/scripts/web-test.test.cjs
 
   # Lint and the desktop build each get a runner so they run side by side.
   # Typecheck shares the build's install. Lint always runs: it formats every
@@ -72,6 +73,8 @@ jobs:
       contents: read
       id-token: write
     name: Lint
+    # Fork: Build and Typecheck runs these checks, so a full run stays within GitHub's 20 parallel jobs.
+    if: ${{ github.repository == 'pingdotgg/t3code' }}
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
@@ -127,7 +130,7 @@ jobs:
       id-token: write
     name: Build and Typecheck
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
+    if: ${{ !cancelled() && (github.repository != 'pingdotgg/t3code' || needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
@@ -220,6 +223,17 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      # Knip reads the built tree while the fork's smoke checks wait for startup.
+      - name: Start unused code check
+        id: knip
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && steps.electron.outcome == 'success' }}
+        run: |
+          (
+            set +e
+            vp run knip:check
+            echo "$?" > "$RUNNER_TEMP/knip-status"
+          ) > "$RUNNER_TEMP/knip.log" 2>&1 < /dev/null &
+
       # The release launch check, run unpackaged against the same old-state fixture, for
       # startup and sidebar changes. Packaging and signing stay release-only.
       - name: Open the seeded thread in the built desktop app
@@ -281,6 +295,35 @@ jobs:
           until test -s "$RUNNER_TEMP/typecheck-status"; do sleep 1; done
           cat "$RUNNER_TEMP/typecheck.log"
           exit "$(cat "$RUNNER_TEMP/typecheck-status")"
+
+      # Fork: the Lint job's checks.
+      - name: Reject repository-owned PR assets
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' }}
+        run: |
+          files="$(git ls-files .github/pr-assets)"
+          if test -n "$files"; then
+            printf 'PR evidence must be uploaded to GitHub, not committed:\n%s\n' "$files" >&2
+            exit 1
+          fi
+
+      - name: Check unused code
+        if: ${{ !cancelled() && steps.knip.outcome == 'success' }}
+        run: |
+          until test -s "$RUNNER_TEMP/knip-status"; do sleep 1; done
+          cat "$RUNNER_TEMP/knip.log"
+          exit "$(cat "$RUNNER_TEMP/knip-status")"
+
+      - name: Check generated GitHub GraphQL operations
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && steps.electron.outcome == 'success' }}
+        run: vp run --filter @t3tools/source-control-github generate --check
+
+      - name: Check generated Expo GraphQL operations
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && steps.electron.outcome == 'success' }}
+        run: vp run --filter t3 generate --check
+
+      - name: Check
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && steps.electron.outcome == 'success' }}
+        run: vp check
 
   # Everything except `t3` (apps/server) and the web app, which has its own job
   # below. `--parallel` drops the package dependency ordering that `vp run`
@@ -447,7 +490,7 @@ jobs:
       contents: read
       id-token: write
     # The fork's 4 vCPU runners take about 9 minutes for the whole web suite,
-    # so the fork splits it over four runners to keep each job under 5 minutes.
+    # so the fork splits it over five runners to keep the full workflow under 5 minutes.
     name: Test Web${{ matrix.shard.total > 1 && format(' {0}', matrix.shard.index) || '' }}
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
@@ -456,7 +499,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(github.repository == 'pingdotgg/t3code' && '[{"index":1,"total":1}]' || '[{"index":1,"total":4},{"index":2,"total":4},{"index":3,"total":4},{"index":4,"total":4}]') }}
+        shard: ${{ fromJSON(github.repository == 'pingdotgg/t3code' && '[{"index":1,"total":1}]' || '[{"index":1,"total":5},{"index":2,"total":5},{"index":3,"total":5},{"index":4,"total":5},{"index":5,"total":5}]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -521,8 +564,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Fork: ten shards keep each GitHub-hosted runner under 5 minutes.
-        shard: ${{ fromJSON(github.repository == 'pingdotgg/t3code' && '[1,2,3,4,5,6,7,8]' || '[1,2,3,4,5,6,7,8,9,10]') }}
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       # Depth 2 brings the base commit the change is diffed against.
       - name: Checkout
@@ -592,11 +634,15 @@ jobs:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
           T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
-        # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
-        run: >-
-          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
-          --uncached apps/server/integration/transferBudgetV2.integration.test.ts
-          --verify-hits 1 apps/server
+        run: |
+          lead=()
+          if [ "$GITHUB_REPOSITORY" != pingdotgg/t3code ]; then
+            lead=(--lead-file apps/server/src/git/GitManager.test.ts
+                  --lead-file apps/server/src/vcs/GitVcsDriverCore.test.ts)
+          fi
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4 \
+            --uncached apps/server/integration/transferBudgetV2.integration.test.ts \
+            --verify-hits 1 "${lead[@]}" apps/server
 
       - name: Save Vitest module cache
         if: github.event_name == 'push' && steps.changes.outputs.test_server != 'false'
@@ -642,13 +688,15 @@ jobs:
   # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
   # for checks that take under 3s, on the critical path of every PR.
   rust:
-    name: Rust
+    name: ${{ github.repository == 'pingdotgg/t3code' && 'Rust' || 'Rust and Release Smoke' }}
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    # The fork shares the runner between the two independent checks.
+    if: ${{ !cancelled() && (needs.changes.outputs.rust != 'false' || (github.repository != 'pingdotgg/t3code' && needs.changes.outputs.release_smoke != 'false')) }}
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       - name: Checkout
+        id: checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
@@ -658,22 +706,34 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Rust
+        if: needs.changes.outputs.rust != 'false'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
           components: rustfmt
 
       - name: Check Rust formatting
+        if: needs.changes.outputs.rust != 'false'
         run: |
           for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
             cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
           done
 
       - name: Test Rust crates
+        if: needs.changes.outputs.rust != 'false'
         run: |
           for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
+
+      - name: Setup Vite+ for Release Smoke
+        id: release_deps
+        if: ${{ !cancelled() && github.repository != 'pingdotgg/t3code' && steps.checkout.outcome == 'success' && needs.changes.outputs.release_smoke != 'false' }}
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Exercise release-only workflow steps
+        if: ${{ !cancelled() && steps.release_deps.outcome == 'success' }}
+        run: node scripts/release-smoke.ts
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
@@ -711,7 +771,7 @@ jobs:
       id-token: write
     name: Release Smoke
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
+    if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
@@ -758,17 +818,21 @@ jobs:
       - name: Require every job to pass
         env:
           RESULTS: ${{ toJSON(needs) }}
+          FORK_CI: ${{ github.repository != 'pingdotgg/t3code' }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           # A job may skip only when `changes` said every gate it represents was
-          # not needed. Gates are keyed by job name, except merged Build and the
-          # macOS lint.
+          # not needed. Fork Build always runs Lint; fork Rust also runs Release Smoke.
           echo "$RESULTS" | jq -e '.changes.outputs as $gates
             | {build: ["build", "typecheck", "desktop_launch"], mobile_native_static_analysis: ["mobile_native"]} as $renamed
-            | all(to_entries[];
+            | (env.FORK_CI == "true") as $fork
+            | ($renamed + (if $fork then {rust: ["rust", "release_smoke"]} else {} end)) as $job_gates
+            | (if $fork then .build.result == "success" else true end)
+              and all(to_entries[];
                 .value.result == "success"
                 or (.value.result == "skipped"
-                  and (($renamed[.key] // [.key]) | all(.[]; $gates[.] == "false"))))' > /dev/null
+                  and (($fork and (.key == "lint" or .key == "release_smoke"))
+                    or (($job_gates[.key] // [.key]) | all(.[]; $gates[.] == "false")))))' > /dev/null
 
       # thread-transfer-report.yml reads this artifact after CI, so a run whose
       # server tests ran must have produced it.

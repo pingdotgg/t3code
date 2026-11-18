@@ -16,6 +16,7 @@ const { values, positionals } = NodeUtil.parseArgs({
     "group-size": { type: "string", default: "1" },
     concurrency: { type: "string", default: "1" },
     shard: { type: "string" },
+    "lead-file": { type: "string", multiple: true, default: [] },
     "verify-hits": { type: "string", default: "0" },
     uncached: { type: "string", multiple: true, default: [] },
     help: { type: "boolean", short: "h" },
@@ -23,7 +24,7 @@ const { values, positionals } = NodeUtil.parseArgs({
 });
 if (values.help) {
   console.log(
-    "vp run test:cached [--group-size 1] [--concurrency 1] [--shard index/count] [--uncached file] [test files or directories]",
+    "vp run test:cached [--group-size 1] [--concurrency 1] [--shard index/count] [--lead-file file] [--uncached file] [test files or directories]",
   );
   process.exit(0);
 }
@@ -37,6 +38,9 @@ if (![groupSize, concurrency].every((value) => Number.isSafeInteger(value) && va
 }
 if (values.shard && positionals.length !== 1) {
   throw new Error("Sharding requires exactly one test project directory");
+}
+if (values["lead-file"].length && (!values.shard || groupSize !== 1 || concurrency < 2)) {
+  throw new Error("A lead file requires sharding, one file per task and at least two workers");
 }
 const candidates = values.shard
   ? (await shardedTestFiles(NodePath.resolve(positionals[0]!), values.shard)).map((file) =>
@@ -67,19 +71,42 @@ console.log(
   `Cached tests: ${files.length} files, ${groupSize} per task, concurrency ${concurrency}`,
 );
 const run = NodeCrypto.randomBytes(16).toString("hex");
+const vp = NodePath.join(root, "node_modules/.bin/vp");
+const leadFiles = new Set(values["lead-file"].map((file) => NodePath.relative(root, file)));
+const lead = files.length > 1 ? files.find((file) => leadFiles.has(file)) : undefined;
+const started = performance.now();
+// The task scheduler doesn't prioritize long suites. Reserve one existing worker
+// for the first matching file in the shard's weighted order.
+const leadResult = lead
+  ? new Promise<number>((resolve) => {
+      console.log(`Starting lead test: ${lead}`);
+      const child = NodeChildProcess.spawn(
+        vp,
+        ["test", "run", NodePath.relative(positionals[0]!, lead)],
+        {
+          cwd: NodePath.resolve(positionals[0]!),
+          stdio: "inherit",
+        },
+      );
+      child.once("error", (error) => {
+        console.error(error);
+        resolve(1);
+      });
+      child.once("close", (code) => resolve(code ?? 1));
+    })
+  : undefined;
 const env = {
   ...process.env,
   T3_CACHED_TESTS: JSON.stringify({
     run,
-    files,
+    files: files.filter((file) => file !== lead),
     groupSize,
     uncached: values.uncached.map((file) => NodePath.relative(root, NodePath.resolve(file))),
   }),
 };
-const started = performance.now();
 const result = NodeChildProcess.spawnSync(
-  NodePath.join(root, "node_modules/.bin/vp"),
-  ["run", "--concurrency-limit", String(concurrency), "test-cache"],
+  vp,
+  ["run", "--concurrency-limit", String(concurrency - (lead ? 1 : 0)), "test-cache"],
   {
     cwd: root,
     env,
@@ -87,8 +114,9 @@ const result = NodeChildProcess.spawnSync(
   },
 );
 if (result.error) throw result.error;
+const leadExit = await leadResult;
 const cacheRunMs = performance.now() - started;
-process.exitCode = result.status ?? 1;
+process.exitCode = (result.status ?? 1) || leadExit || 0;
 if (verifyHits > 0) {
   const cacheRoot =
     process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
@@ -108,7 +136,7 @@ if (verifyHits > 0) {
     .toSorted((a, b) => rank(a.task_name).localeCompare(rank(b.task_name)))
     .slice(0, verifyHits);
   const verification: Array<{ task: string; exitCode: number; durationMs: number }> = [];
-  if (result.status === 0) {
+  if (process.exitCode === 0) {
     for (const task of verify) {
       console.log(`Verifying cached result without cache: ${task.task_name}`);
       const start = performance.now();

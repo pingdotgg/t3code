@@ -136,7 +136,11 @@ test("a closed browser reruns only the unfinished files and passes when they pas
   const run = await decideWith(
     { code: 1, output: closedWith(" Test Files  75 passed (81)") },
     { planned, finished: finishedFirst(75) },
-    { code: 0, output: " Test Files  6 passed (6)" },
+    {
+      code: 0,
+      output: " Test Files  6 passed (6)",
+      record: { finished: finishedFirst(81).slice(75) },
+    },
   );
   assert.equal(run.code, 0);
   assert.deepEqual(run.rerunCalls, [planned.slice(75).map((f) => f.file)]);
@@ -190,4 +194,32 @@ test("a closed browser after every file finished passes with a warning", async (
   assert.equal(run.code, 0);
   assert.equal(run.rerunCalls.length, 0);
   assert.match(run.lines[0], /^::warning title=Web tests::/);
+});
+
+test("a closed browser fails when a recorded file failed or the rerun missed a file", async () => {
+  const failedFile = await decideWith(
+    { code: 1, output: closedWith(" Test Files  75 passed (81)") },
+    { planned, finished: [...finishedFirst(74), { ...planned[74], state: "failed" }] },
+  );
+  assert.equal(failedFile.code, 1);
+  assert.equal(failedFile.rerunCalls.length, 0);
+
+  const tooFew = await decideWith(
+    { code: 1, output: closedWith(" Test Files  75 passed (81)") },
+    { planned, finished: finishedFirst(75) },
+    {
+      code: 0,
+      output: " Test Files  6 passed (6)",
+      record: {
+        finished: [
+          ...finishedFirst(80).slice(75),
+          { ...planned[80], project: "unit", state: "passed" },
+        ],
+      },
+    },
+  );
+  assert.equal(tooFew.code, 1);
+  assert.ok(
+    tooFew.lines.some((line) => line.includes("did not finish src/f80.browser.test.tsx (browser)")),
+  );
 });

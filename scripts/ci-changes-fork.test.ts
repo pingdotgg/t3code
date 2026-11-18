@@ -93,3 +93,23 @@ it("keeps client-runtime's workspace dependencies within the server's", () => {
   const server = new Set(workspaceDeps("apps/server"));
   expect(workspaceDeps("packages/client-runtime").filter((name) => !server.has(name))).toEqual([]);
 });
+
+it.each([
+  "patches/electron-updater@6.8.9.patch",
+  "apps/mobile/deps/react-native-screens-5.0.0-t3.58-conn.tgz",
+  ".github/actions/setup-ci-deps/action.yml",
+  ".github/workflows/ci.yml",
+  "apps/web/package.json",
+])("runs the full Linux checks when %s changes", (file) => {
+  expect(decide([file], readWorkspace(), false).outputs).toMatchObject({
+    typecheck: true,
+    build: true,
+    desktop_launch: true,
+    test: true,
+    test_packages: "",
+    test_web: true,
+    test_server: true,
+    rust: true,
+    release_smoke: true,
+  });
+});

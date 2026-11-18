@@ -8,10 +8,13 @@ import { OrbitPendingThreadView } from "./OrbitPendingThreadView";
 import { readStored, updateStarts, useOrbitThreadStarts } from "./orbitThreadStartStore";
 
 vi.mock("../state/entities", { spy: true });
-const gateway = vi.hoisted(() => ({ cancelOperation: vi.fn() }));
+const gateway = vi.hoisted(() => {
+  const cancelOperation = vi.fn();
+  return { cancelOperation, client: vi.fn(() => ({ cancelOperation })) };
+});
 vi.mock("./OrbitProfileSync", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./OrbitProfileSync")>()),
-  desktopOrbitGatewayClient: () => ({ cancelOperation: gateway.cancelOperation }),
+  desktopOrbitGatewayClient: gateway.client,
 }));
 
 const start = (patch: Partial<OrbitThreadStart> = {}): OrbitThreadStart => ({
@@ -103,13 +106,12 @@ describe("OrbitPendingThreadView", () => {
         errorCode: "instance.t3_unready",
       }),
     );
-    const fetchSpy = vi.spyOn(window, "fetch");
     await using screen = await render(view(), { router: "/orbit/s1" });
     await expect.element(screen.getByText("The Instance stays; remove it in Orbit.")).toBeVisible();
+    gateway.client.mockClear();
     await screen.getByRole("button", { name: "Dismiss" }).click();
     expect(readStored()).toEqual([]);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    fetchSpy.mockRestore();
+    expect(gateway.client).not.toHaveBeenCalled();
   });
 
   it("Change name keeps the failed start when the draft cannot open", async () => {
