@@ -189,7 +189,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   (props.triggerKind === "skill"
                     ? gt("No skills found. Try / to browse provider commands.")
                     : props.triggerKind === "saved-prompt"
-                      ? "No matching prompts. Add one in Settings → Prompts."
+                      ? gt("No matching prompts. Add one in Settings → Prompts.")
                       : props.triggerKind === "path"
                         ? gt("No matching files or folders.")
                         : gt("No matching command.")))}

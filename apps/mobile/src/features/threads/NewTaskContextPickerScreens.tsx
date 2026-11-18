@@ -322,7 +322,7 @@ export function NewTaskBranchPickerRouteScreen() {
       title={
         flow.vcsTerminology.systemName === "Jujutsu"
           ? flow.workspaceMode === "worktree"
-            ? `Base ${flow.vcsTerminology.refNoun}`
+            ? gt("Base {refNoun}", { refNoun: flow.vcsTerminology.refNoun })
             : flow.vcsTerminology.refNounTitle
           : flow.workspaceMode === "worktree"
             ? gt("Base branch")
@@ -401,10 +401,12 @@ export function BranchPickerScreen(props: {
     value: props.query,
     onChangeText: props.onQueryChange,
     placeholder:
-      terminology.systemName === "Jujutsu" ? `Find a ${terminology.refNoun}` : gt("Find a branch"),
+      terminology.systemName === "Jujutsu"
+        ? gt("Find a {refNoun}", { refNoun: terminology.refNoun })
+        : gt("Find a branch"),
     clearAccessibilityLabel:
       terminology.systemName === "Jujutsu"
-        ? `Clear ${terminology.refNoun} search`
+        ? gt("Clear {refNoun} search", { refNoun: terminology.refNoun })
         : gt("Clear branch search"),
     mode: "inline",
     compactToolbar: true,
@@ -491,16 +493,20 @@ export function BranchPickerScreen(props: {
           <Text className="text-center text-sm text-foreground-muted">
             {props.loading
               ? terminology.systemName === "Jujutsu"
-                ? `Loading ${terminology.refNounPlural}…`
+                ? gt("Loading {refNounPlural}…", { refNounPlural: terminology.refNounPlural })
                 : gt("Loading branches…")
               : props.error
                 ? props.error
                 : props.query
                   ? terminology.systemName === "Jujutsu"
-                    ? `No matching ${terminology.refNounPlural}`
+                    ? gt("No matching {refNounPlural}", {
+                        refNounPlural: terminology.refNounPlural,
+                      })
                     : gt("No matching branches")
                   : terminology.systemName === "Jujutsu"
-                    ? `No ${terminology.refNounPlural} available`
+                    ? gt("No {refNounPlural} available", {
+                        refNounPlural: terminology.refNounPlural,
+                      })
                     : gt("No branches available")}
           </Text>
           {!props.loading && props.error ? (

@@ -159,7 +159,7 @@ function gitSubtitle(
   }
   return terminology.systemName === "Git"
     ? resolve(msg("Base branch unavailable"))
-    : `Base ${terminology.refNoun} unavailable`;
+    : resolve(msg("Base {refNoun} unavailable", { refNoun: terminology.refNoun }));
 }
 
 function stripTrailingNewline(value: string): string {

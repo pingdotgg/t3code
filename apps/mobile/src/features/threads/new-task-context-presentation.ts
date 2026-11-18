@@ -40,14 +40,16 @@ export function resolveNewTaskWorkspaceLabel(
   if (input.workspaceMode === "worktree") {
     return terminology.systemName === "Git"
       ? resolve(msg("New worktree"))
-      : `New ${terminology.workspaceNoun}`;
+      : resolve(msg("New {workspaceNoun}", { workspaceNoun: terminology.workspaceNoun }));
   }
   if (terminology.systemName === "Git") {
     return input.worktreePath ? resolve(msg("Current worktree")) : resolve(msg("Current checkout"));
   }
   return input.worktreePath
-    ? `Current ${terminology.workspaceNoun}`
-    : `Current ${terminology.currentRefFallback}`;
+    ? resolve(msg("Current {workspaceNoun}", { workspaceNoun: terminology.workspaceNoun }))
+    : resolve(
+        msg("Current {currentRefFallback}", { currentRefFallback: terminology.currentRefFallback }),
+      );
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {
@@ -122,7 +124,7 @@ export function resolveNewTaskBranchLabel(
   }
   if (!input.branchName) {
     return input.terminology?.systemName === "Jujutsu"
-      ? `Choose ${input.terminology.refNoun}`
+      ? resolve(msg("Choose {refNoun}", { refNoun: input.terminology.refNoun }))
       : resolve(msg("Choose branch"));
   }
 
@@ -131,7 +133,7 @@ export function resolveNewTaskBranchLabel(
   }
 
   if (input.branchName === JJ_WORKING_COPY_REVISION) {
-    return `From ${JJ_WORKING_COPY_LABEL.toLowerCase()}`;
+    return resolve(msg("From {revision}", { revision: JJ_WORKING_COPY_LABEL.toLowerCase() }));
   }
   const baseRef = input.startFromOrigin ? `origin/${input.branchName}` : input.branchName;
   return resolve(msg("From {branchName}", { branchName: baseRef }));

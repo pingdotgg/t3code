@@ -946,7 +946,7 @@ function ScheduledTaskRow({
                   }
                 >
                   <CopyIcon />
-                  Copy to…
+                  {gt("Copy to…")}
                 </MenuItem>
               ) : null}
               <MenuSeparator />
@@ -1755,7 +1755,10 @@ function ScheduledTaskEditorForm({
       return;
     }
     if (copyFrom) {
-      toastManager.add({ type: "success", title: `Copied to ${environment?.label ?? "machine"}` });
+      toastManager.add({
+        type: "success",
+        title: gt("Copied to {machine}", { machine: environment?.label ?? "machine" }),
+      });
     }
     onClose();
   };
@@ -1764,11 +1767,17 @@ function ScheduledTaskEditorForm({
     <>
       <DialogHeader>
         <DialogTitle>
-          {draft.editingId ? gt("Edit task") : copyFrom ? "Copy task" : gt("New task")}
+          {draft.editingId ? gt("Edit task") : copyFrom ? gt("Copy task") : gt("New task")}
         </DialogTitle>
         <DialogDescription>
           {copyFrom ? (
-            `Copy “${copyFrom.task.title}” from ${copySourceEnvironment?.label ?? "this machine"}. Choose where it runs, then check the project, model, and paths there.`
+            gt(
+              "Copy “{title}” from {machine}. Choose where it runs, then check the project, model, and paths there.",
+              {
+                title: copyFrom.task.title,
+                machine: copySourceEnvironment?.label ?? "this machine",
+              },
+            )
           ) : (
             <T>
               Run a prompt automatically on an interval, at a fixed time, once at a set date, or

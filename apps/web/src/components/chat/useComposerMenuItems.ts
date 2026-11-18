@@ -438,7 +438,7 @@ export function useComposerMenuItems({
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
-    if (composerTriggerKind === "saved-prompt") return "No matching prompt.";
+    if (composerTriggerKind === "saved-prompt") return gt("No matching prompt.");
     if (composerTriggerKind === "skill") {
       return gt("No skills found. Try / to browse provider commands.");
     }

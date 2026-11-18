@@ -221,12 +221,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const convertToJj = useCallback(() => {
     if (!selectedThreadCwd || !selectedThread || isConverting) return;
     Dialog.alert(
-      "Enable Jujutsu?",
-      "Jujutsu will use this repository's Git store. Commits, branches, remotes, and uncommitted files stay in place. Existing Git worktrees continue to use Git.",
+      gt("Enable Jujutsu?"),
+      gt(
+        "Jujutsu will use this repository's Git store. Commits, branches, remotes, and uncommitted files stay in place. Existing Git worktrees continue to use Git.",
+      ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
-          text: "Enable Jujutsu",
+          text: gt("Enable Jujutsu"),
           onPress: () => {
             setIsConverting(true);
             void initRepository({
@@ -239,8 +241,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               } else if (!isAtomCommandInterrupted(result)) {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
-                  "Jujutsu initialization failed",
-                  error instanceof Error ? error.message : "An error occurred.",
+                  gt("Jujutsu initialization failed"),
+                  error instanceof Error ? error.message : gt("An error occurred."),
                 );
               }
             });
@@ -248,7 +250,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         },
       ],
     );
-  }, [gitActions, initRepository, isConverting, selectedThread, selectedThreadCwd]);
+  }, [gitActions, gt, initRepository, isConverting, selectedThread, selectedThreadCwd]);
 
   // Background refreshes also report pending; using that query flag would stick the RefreshControl spinner.
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -306,8 +308,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
             <ListRow
               icon="arrow.triangle.branch"
-              label="Enable Jujutsu"
-              description="Use Jujutsu with this Git repository"
+              label={gt("Enable Jujutsu")}
+              description={gt("Use Jujutsu with this Git repository")}
               disabled={!canWriteSourceControl || busy || isConverting}
               onPress={convertToJj}
             />
@@ -340,10 +342,16 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           description={
             canChangeThreadBranch
               ? vcsTerminology.systemName === "Jujutsu"
-                ? `Switch ${vcsTerminology.refNoun}, create ${vcsTerminology.refNoun}, or move to a ${vcsTerminology.workspaceNoun}`
+                ? gt("Switch {refNoun}, create {refNoun}, or move to a {workspaceNoun}", {
+                    refNoun: vcsTerminology.refNoun,
+                    workspaceNoun: vcsTerminology.workspaceNoun,
+                  })
                 : gt("Switch branch, create branch, or move to a worktree")
               : vcsTerminology.systemName === "Jujutsu"
-                ? `View ${vcsTerminology.refNounPlural} and ${vcsTerminology.workspaceNounPlural}`
+                ? gt("View {refNounPlural} and {workspaceNounPlural}", {
+                    refNounPlural: vcsTerminology.refNounPlural,
+                    workspaceNounPlural: vcsTerminology.workspaceNounPlural,
+                  })
                 : gt("View branches and worktrees")
           }
           disabled={busy || !isRepo}

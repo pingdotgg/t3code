@@ -741,10 +741,19 @@ export function useThreadActions() {
           title: removalFailed
             ? terminology.systemName === "Git"
               ? m(msg("Failed to delete worktree"))
-              : `Failed to delete ${terminology.workspaceNoun}`
+              : m(
+                  msg("Failed to delete {workspaceNoun}", {
+                    workspaceNoun: terminology.workspaceNoun,
+                  }),
+                )
             : terminology.systemName === "Git"
               ? m(msg("Worktree deleted, but Git status refresh failed"))
-              : `${terminology.workspaceNounTitle} deleted, but ${terminology.systemName} status refresh failed`,
+              : m(
+                  msg("{workspaceNounTitle} deleted, but {systemName} status refresh failed", {
+                    workspaceNounTitle: terminology.workspaceNounTitle,
+                    systemName: terminology.systemName,
+                  }),
+                ),
           description: removalFailed
             ? m(
                 msg("Could not remove {path}. {message}", {

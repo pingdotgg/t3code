@@ -440,7 +440,7 @@ export function BranchToolbarBranchSelector({
         id: "copy-branch-name",
         label:
           vcsTerminology.systemName === "Jujutsu"
-            ? `Copy ${vcsTerminology.refNoun} name`
+            ? gt("Copy {refNoun} name", { refNoun: vcsTerminology.refNoun })
             : gt("Copy branch name"),
         icon: "copy",
       },
@@ -586,7 +586,7 @@ export function BranchToolbarBranchSelector({
             type: "error",
             title:
               vcsTerminology.systemName === "Jujutsu"
-                ? `Failed to switch ${vcsTerminology.refNoun}.`
+                ? gt("Failed to switch {refNoun}.", { refNoun: vcsTerminology.refNoun })
                 : gt("Failed to switch ref."),
             description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
@@ -635,7 +635,7 @@ export function BranchToolbarBranchSelector({
             type: "error",
             title:
               vcsTerminology.systemName === "Jujutsu"
-                ? `Failed to create and switch ${vcsTerminology.refNoun}.`
+                ? gt("Failed to create and switch {refNoun}.", { refNoun: vcsTerminology.refNoun })
                 : gt("Failed to create and switch ref."),
             description: toBranchActionErrorMessage(squashAtomCommandFailure(createBranchResult)),
           }),
@@ -832,7 +832,7 @@ export function BranchToolbarBranchSelector({
         >
           {vcsTerminology.systemName === "Jujutsu" ? (
             <span className="truncate">
-              Create new {vcsTerminology.refNoun} &quot;{newRefName}&quot;
+              {gt('Create new bookmark "{name}"', { name: newRefName })}
             </span>
           ) : (
             <span className="truncate">

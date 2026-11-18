@@ -105,7 +105,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
         <FormField
           label={
             vcsTerminology.systemName === "Jujutsu"
-              ? `Base ${vcsTerminology.refNoun}`
+              ? gt("Base {refNoun}", { refNoun: vcsTerminology.refNoun })
               : gt("Base branch")
           }
           value={worktreeBaseBranch}
@@ -116,7 +116,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
         <FormField
           label={
             vcsTerminology.systemName === "Jujutsu"
-              ? `New ${vcsTerminology.refNoun}`
+              ? gt("New {refNoun}", { refNoun: vcsTerminology.refNoun })
               : gt("New branch")
           }
           value={worktreeBranchName}
@@ -128,7 +128,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           icon="square.split.2x1"
           label={
             vcsTerminology.systemName === "Jujutsu"
-              ? `Create ${vcsTerminology.workspaceNoun}`
+              ? gt("Create {workspaceNoun}", { workspaceNoun: vcsTerminology.workspaceNoun })
               : gt("Create worktree")
           }
           tone="primary"
@@ -160,8 +160,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             icon="trash"
             label={
               gitActions.pendingWorkspaceMetadataCleanup
-                ? "Retry clearing thread workspace"
-                : `Remove ${vcsTerminology.workspaceNoun}`
+                ? gt("Retry clearing thread workspace")
+                : gt("Remove {workspaceNoun}", { workspaceNoun: vcsTerminology.workspaceNoun })
             }
             disabled={busy}
             onPress={() => {

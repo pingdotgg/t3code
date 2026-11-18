@@ -1540,8 +1540,8 @@ export default function GitActionsControl({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `${getVcsTerminology(kind).systemName} initialization failed`,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("{system} initialization failed", { system: getVcsTerminology(kind).systemName }),
+        description: error instanceof Error ? error.message : gt("An error occurred."),
         ...(threadToastData !== undefined ? { data: threadToastData } : {}),
       }),
     );
@@ -1639,23 +1639,19 @@ export default function GitActionsControl({
           onClick={() => setIsConvertToJjDialogOpen(true)}
         >
           <GitBranchPlusIcon />
-          <MenuItemLabel>Enable Jujutsu...</MenuItemLabel>
+          <MenuItemLabel>{gt("Enable Jujutsu...")}</MenuItemLabel>
         </MenuItem>
       ) : null}
       {isDetachedHead && (
         <p className="px-2 py-1.5 text-xs text-warning">
-          {vcsTerminology.systemName === "Jujutsu" ? (
-            <>
-              {" "}
-              Create and check out a {vcsTerminology.refNoun} to enable push and{" "}
-              {changeRequestTerminology.singular} actions.
-            </>
-          ) : (
-            gt(
-              "Detached HEAD: create and check out a branch to enable push and {term, select, mr {merge request} cr {change request} other {pull request}} actions.",
-              { term: changeRequestTermKind(changeRequestTerminology) },
-            )
-          )}
+          {vcsTerminology.systemName === "Jujutsu"
+            ? gt("Create and check out a bookmark to enable push and {term} actions.", {
+                term: changeRequestTerminology.singular,
+              })
+            : gt(
+                "Detached HEAD: create and check out a branch to enable push and {term, select, mr {merge request} cr {change request} other {pull request}} actions.",
+                { term: changeRequestTermKind(changeRequestTerminology) },
+              )}
         </p>
       )}
       {isCleanAndBehind && (
@@ -1674,16 +1670,16 @@ export default function GitActionsControl({
       <Dialog open={isConvertToJjDialogOpen} onOpenChange={setIsConvertToJjDialogOpen}>
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Enable Jujutsu for this Git repository?</DialogTitle>
+            <DialogTitle>{gt("Enable Jujutsu for this Git repository?")}</DialogTitle>
             <DialogDescription>
-              Jujutsu will use this repository's existing Git store. Commits, branches, remotes, and
-              uncommitted files stay in place. The main repository will open in Jujutsu mode;
-              existing Git worktrees continue to use Git.
+              {gt(
+                "Jujutsu will use this repository's existing Git store. Commits, branches, remotes, and uncommitted files stay in place. The main repository will open in Jujutsu mode; existing Git worktrees continue to use Git.",
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter variant="bare">
             <Button variant="outline" onClick={() => setIsConvertToJjDialogOpen(false)}>
-              Cancel
+              {gt("Cancel")}
             </Button>
             <Button
               disabled={initAction.isPending}
@@ -1692,7 +1688,7 @@ export default function GitActionsControl({
                 void runInit("jj");
               }}
             >
-              Enable Jujutsu
+              {gt("Enable Jujutsu")}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -1723,7 +1719,7 @@ export default function GitActionsControl({
             >
               <GitBranchPlusIcon className="size-3.5" aria-hidden />
               <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                Initialize Jujutsu
+                {gt("Initialize Jujutsu")}
               </span>
             </ThreadDetailsControl>
           ) : null}
@@ -1950,7 +1946,9 @@ export default function GitActionsControl({
             <DialogTitle>{messages(COMMIT_DIALOG_TITLE)}</DialogTitle>
             <DialogDescription>{messages(COMMIT_DIALOG_DESCRIPTION)}</DialogDescription>
             {gitStatusForActions?.vcs?.kind === "jj" ? (
-              <p className="text-sm text-muted-foreground">Jujutsu does not run Git hooks.</p>
+              <p className="text-sm text-muted-foreground">
+                {gt("Jujutsu does not run Git hooks.")}
+              </p>
             ) : null}
           </DialogHeader>
           <DialogPanel>
@@ -1967,13 +1965,13 @@ export default function GitActionsControl({
                   <span className="font-medium">
                     {gitStatusForActions?.refName ??
                       (vcsTerminology.systemName === "Jujutsu"
-                        ? `(no ${vcsTerminology.refNoun})`
+                        ? gt("(no {refNoun})", { refNoun: vcsTerminology.refNoun })
                         : gt("(detached HEAD)"))}
                   </span>
                   {isDefaultRef && (
                     <span className="text-right text-warning">
                       {vcsTerminology.systemName === "Jujutsu" ? (
-                        `Warning: default ${vcsTerminology.refNoun}`
+                        gt("Warning: default {refNoun}", { refNoun: vcsTerminology.refNoun })
                       ) : (
                         <T>Default branch</T>
                       )}
@@ -2135,7 +2133,10 @@ export default function GitActionsControl({
               onClick={runDialogActionOnNewBranch}
             >
               {vcsTerminology.systemName === "Jujutsu" ? (
-                `${vcsTerminology.changeNounTitle} on new ${vcsTerminology.refNoun}`
+                gt("{changeNounTitle} on new {refNoun}", {
+                  changeNounTitle: vcsTerminology.changeNounTitle,
+                  refNoun: vcsTerminology.refNoun,
+                })
               ) : (
                 <T>Commit on new branch</T>
               )}
@@ -2174,7 +2175,7 @@ export default function GitActionsControl({
             <DialogTitle>
               {pendingDefaultBranchActionCopy?.title ??
                 (vcsTerminology.systemName === "Jujutsu"
-                  ? `Run action on default ${vcsTerminology.refNoun}?`
+                  ? gt("Run action on default {refNoun}?", { refNoun: vcsTerminology.refNoun })
                   : gt("Run action on default branch?"))}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
@@ -2207,7 +2208,7 @@ export default function GitActionsControl({
               disabled={!canChangeThreadBranch || featureBranchUnavailableReason !== null}
             >
               {vcsTerminology.systemName === "Jujutsu" ? (
-                `Check out feature ${vcsTerminology.refNoun} & continue`
+                gt("Check out feature {refNoun} & continue", { refNoun: vcsTerminology.refNoun })
               ) : (
                 <T>Check out feature branch & continue</T>
               )}

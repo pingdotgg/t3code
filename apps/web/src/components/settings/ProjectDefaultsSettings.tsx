@@ -449,19 +449,21 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : (
         <>
-          <SettingsSection title="Agent context">
+          <SettingsSection title={gt("Agent context")}>
             <SettingsRow
               serverScoped
               settingKeys={["enableVcsAgentHints"]}
               mixed={mixedVcsHints}
               id={searchableSetting("vcs-agent-hints").id}
-              title="VCS agent hints"
-              description="Give agents a short hint about the workspace's version control. Changes apply on the next turn, including resumed threads."
+              title={gt("VCS agent hints")}
+              description={gt(
+                "Give agents a short hint about the workspace's version control. Changes apply on the next turn, including resumed threads.",
+              )}
               control={
                 <Switch
                   checked={settings.enableVcsAgentHints}
                   disabled={unavailable}
-                  aria-label="VCS agent hints"
+                  aria-label={gt("VCS agent hints")}
                   onCheckedChange={(checked) => updateSettings({ enableVcsAgentHints: checked })}
                 />
               }

@@ -155,7 +155,9 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
         kind: "show_hint" as const,
         hint:
           vcsTerminology.systemName === "Jujutsu"
-            ? `This workspace is not a ${vcsTerminology.systemName} repository.`
+            ? gt("This workspace is not a {systemName} repository.", {
+                systemName: vcsTerminology.systemName,
+              })
             : gt("This workspace is not a git repository."),
       };
     }
@@ -209,10 +211,12 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       if (props.hasThread === false) {
         Dialog.alert(
           vcsTerminology.systemName === "Jujutsu"
-            ? `Choose a feature ${vcsTerminology.refNoun}`
+            ? gt("Choose a feature {refNoun}", { refNoun: vcsTerminology.refNoun })
             : gt("Choose a feature branch"),
           vcsTerminology.systemName === "Jujutsu"
-            ? `Switch ${vcsTerminology.refNounPlural} before publishing changes from this draft.`
+            ? gt("Switch {refNounPlural} before publishing changes from this draft.", {
+                refNounPlural: vcsTerminology.refNounPlural,
+              })
             : gt("Switch branches before publishing changes from this draft."),
         );
         return;
@@ -371,7 +375,9 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
           props.hasThread === false
             ? gt("Available after the first message")
             : model.vcsTerminology.systemName === "Jujutsu"
-              ? `Turn diffs and ${model.vcsTerminology.workspaceNoun} changes`
+              ? gt("Turn diffs and {workspaceNoun} changes", {
+                  workspaceNoun: model.vcsTerminology.workspaceNoun,
+                })
               : gt("Turn diffs and worktree changes"),
         onPress: model.openReview,
       },
@@ -395,7 +401,9 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
           props.hasThread === false
             ? gt("Available after the first message")
             : model.vcsTerminology.systemName === "Jujutsu"
-              ? `Commit, files, ${model.vcsTerminology.refNounPlural}`
+              ? gt("Commit, files, {refNounPlural}", {
+                  refNounPlural: model.vcsTerminology.refNounPlural,
+                })
               : gt("Commit, files, branches"),
         onPress: model.openGitInspector,
       },

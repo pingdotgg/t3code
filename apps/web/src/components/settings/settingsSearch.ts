@@ -246,7 +246,7 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "saved-prompts",
-    title: "Reusable prompts",
+    title: msg("Reusable prompts"),
     to: "/settings/prompts",
     scope: "environment-defaults",
     searchTerms: ["shortcuts autocomplete snippets clipboard environment variables"],
@@ -780,7 +780,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-collapse-test-and-snapshot-files",
-    title: "Auto-collapse test and snapshot files",
+    title: msg("Auto-collapse test and snapshot files"),
     to: "/settings/general",
     scope: "project-defaults",
     searchTerms: ["diff test spec snapshot json fold collapse project"],
@@ -813,13 +813,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "composer-vim",
-    title: "Vim keybindings",
+    title: msg("Vim keybindings"),
     to: "/settings/chat",
     searchTerms: ["nvim neovim modal editing chatbox keyboard"],
   },
   {
     id: "composer-vim-clipboard",
-    title: "Vim system clipboard",
+    title: msg("Vim system clipboard"),
     to: "/settings/chat",
     searchTerms: ["nvim neovim vim yank paste register copy"],
   },
@@ -889,14 +889,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-project-folders",
-    title: "Group worktrees by project",
+    title: msg("Group worktrees by project"),
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["hierarchy nested folders project configuration opencode"],
   },
   {
     id: "worktree-branch-prefix",
-    title: "Worktree branch prefix",
+    title: msg("Worktree branch prefix"),
     to: "/settings/threads",
     scope: "environment-defaults",
     searchTerms: ["git branch name namespace temporary worktree"],
@@ -1285,7 +1285,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "vcs-agent-hints",
-    title: "VCS agent hints",
+    title: msg("VCS agent hints"),
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: [

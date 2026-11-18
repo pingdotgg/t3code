@@ -140,7 +140,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           icon="arrow.branch"
           label={
             vcsTerminology.systemName !== "Git"
-              ? `Feature ${vcsTerminology.refNoun} & continue`
+              ? gt("Feature {refNoun} & continue", { refNoun: vcsTerminology.refNoun })
               : gt("Feature branch & continue")
           }
           disabled={!canChangeThreadBranch}

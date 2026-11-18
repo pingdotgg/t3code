@@ -449,7 +449,7 @@ export function SavedBackendListRow({
         <MenuPopup align="end">
           <MenuItem onClick={() => setRenameOpen(true)}>
             <PencilIcon />
-            Rename…
+            {gt("Rename…")}
           </MenuItem>
           <EnvironmentIconMenu
             environmentId={environmentId}

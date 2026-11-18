@@ -37,7 +37,9 @@ export function useSettingsWriter() {
         if (result._tag === "Success") {
           return worktreeSettingsPatchApplied(entry.patch, result.value)
             ? null
-            : `${label}: Update T3 Code on this environment to save worktree settings.`;
+            : gt("{label}: Update T3 Code on this environment to save worktree settings.", {
+                label,
+              });
         }
         if (isAtomCommandInterrupted(result)) return null;
         const error = squashAtomCommandFailure(result);

@@ -87,12 +87,16 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           {vcsTerminology.systemName === "Git" ? (
             <T>You’re on the default branch. You can create a new branch when committing.</T>
           ) : (
-            `You’re on the default ${vcsTerminology.refNoun}. You can create a new ${vcsTerminology.refNoun} when committing.`
+            gt("You’re on the default {refNoun}. You can create a new {refNoun} when committing.", {
+              refNoun: vcsTerminology.refNoun,
+            })
           )}
         </Text>
       ) : null}
       {gitStatus.data?.vcs?.kind === "jj" ? (
-        <Text className="text-xs text-foreground-muted">Jujutsu does not run Git hooks.</Text>
+        <Text className="text-xs text-foreground-muted">
+          {gt("Jujutsu does not run Git hooks.")}
+        </Text>
       ) : null}
       <View className="gap-2">
         <Text className="text-sm font-t3-medium text-foreground">
@@ -224,7 +228,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         <Button
           label={
             vcsTerminology.systemName !== "Git"
-              ? `Commit on a new ${vcsTerminology.refNoun}`
+              ? gt("Commit on a new {refNoun}", { refNoun: vcsTerminology.refNoun })
               : gt("Commit on a new branch")
           }
           icon="arrow.branch"

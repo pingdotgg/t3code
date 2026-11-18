@@ -366,11 +366,16 @@ export function useSelectedThreadGitActions() {
     if (pendingWorkspaceMetadataCleanup !== worktreePath) {
       const confirmed = await new Promise<boolean>((resolve) => {
         Dialog.alert(
-          `Remove this ${vcsTerminology.workspaceNoun}?`,
-          `${worktreePath}\n\nThe thread stays; only the ${vcsTerminology.workspaceNoun} is deleted.`,
+          m(msg("Remove this {workspaceNoun}?", { workspaceNoun: vcsTerminology.workspaceNoun })),
+          m(
+            msg("{worktreePath}\n\nThe thread stays; only the {workspaceNoun} is deleted.", {
+              worktreePath,
+              workspaceNoun: vcsTerminology.workspaceNoun,
+            }),
+          ),
           [
-            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-            { text: "Remove", style: "destructive", onPress: () => resolve(true) },
+            { text: m(msg("Cancel")), style: "cancel", onPress: () => resolve(false) },
+            { text: m(msg("Remove")), style: "destructive", onPress: () => resolve(true) },
           ],
         );
       });
@@ -385,11 +390,23 @@ export function useSelectedThreadGitActions() {
         if (message.includes("uncommitted or unbookmarked changes")) {
           const discard = await new Promise<boolean>((resolve) => {
             Dialog.alert(
-              `Discard changes and remove ${vcsTerminology.workspaceNoun}?`,
-              `Uncommitted or unbookmarked changes in ${worktreePath} will be lost.`,
+              m(
+                msg("Discard changes and remove {workspaceNoun}?", {
+                  workspaceNoun: vcsTerminology.workspaceNoun,
+                }),
+              ),
+              m(
+                msg("Uncommitted or unbookmarked changes in {worktreePath} will be lost.", {
+                  worktreePath,
+                }),
+              ),
               [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: "Discard and remove", style: "destructive", onPress: () => resolve(true) },
+                { text: m(msg("Cancel")), style: "cancel", onPress: () => resolve(false) },
+                {
+                  text: m(msg("Discard and remove")),
+                  style: "destructive",
+                  onPress: () => resolve(true),
+                },
               ],
             );
           });
@@ -404,8 +421,12 @@ export function useSelectedThreadGitActions() {
         const error = Cause.squash(result.cause);
         showGitActionResult({
           type: "error",
-          title: `Failed to remove ${vcsTerminology.workspaceNoun}`,
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(
+            msg("Failed to remove {workspaceNoun}", {
+              workspaceNoun: vcsTerminology.workspaceNoun,
+            }),
+          ),
+          description: error instanceof Error ? error.message : m(msg("An error occurred.")),
         });
         return false;
       }
@@ -420,9 +441,15 @@ export function useSelectedThreadGitActions() {
       const error = Cause.squash(syncResult.cause);
       showGitActionResult({
         type: "error",
-        title: `${vcsTerminology.workspaceNounTitle} removed, but thread update failed`,
+        title: m(
+          msg("{workspaceNounTitle} removed, but thread update failed", {
+            workspaceNounTitle: vcsTerminology.workspaceNounTitle,
+          }),
+        ),
         description:
-          error instanceof Error ? error.message : "Try clearing the thread workspace again.",
+          error instanceof Error
+            ? error.message
+            : m(msg("Try clearing the thread workspace again.")),
       });
       return false;
     }

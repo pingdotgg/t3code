@@ -351,13 +351,13 @@ export function branchMismatchBannerItem(
         ) : input.refNoun === "branch" ? (
           <T>Restore branch</T>
         ) : (
-          `Restore ${input.refNoun}`
+          resolve(msg("Restore {refNoun}", { refNoun: input.refNoun }))
         )}
       </Button>
     ),
     dismissLabel:
       input.refNoun !== "branch"
-        ? `Dismiss ${input.refNoun} change notice`
+        ? resolve(msg("Dismiss {refNoun} change notice", { refNoun: input.refNoun }))
         : resolve(msg("Dismiss branch change notice")),
     onDismiss: input.onDismiss,
   };

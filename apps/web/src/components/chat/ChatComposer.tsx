@@ -1984,8 +1984,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (environment !== null && environment._tag !== "Success") {
             toastManager.add({
               type: "error",
-              title: "Could not insert prompt",
-              description: "Could not read the host environment.",
+              title: gt("Could not insert prompt"),
+              description: gt("Could not read the host environment."),
             });
             return;
           }
@@ -2010,8 +2010,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         } catch (error) {
           toastManager.add({
             type: "error",
-            title: "Could not insert prompt",
-            description: error instanceof Error ? error.message : "Try again.",
+            title: gt("Could not insert prompt"),
+            description: error instanceof Error ? error.message : gt("Try again."),
           });
         }
       })();

@@ -1164,7 +1164,10 @@ export function PullRequestDetailPanel({
               description:
                 mode === "local"
                   ? vcsTerminology.systemName === "Jujutsu"
-                    ? `This repository is on the ${terminology.singular}'s ${vcsTerminology.refNoun}, with a thread open on it.`
+                    ? gt(
+                        "This repository is on the {singular}'s {refNoun}, with a thread open on it.",
+                        { singular: terminology.singular, refNoun: vcsTerminology.refNoun },
+                      )
                     : m(
                         msg(
                           "This repository is on the {term, select, mr {merge request} cr {change request} other {pull request}}'s branch, with a thread open on it.",
@@ -1174,7 +1177,13 @@ export function PullRequestDetailPanel({
                         ),
                       )
                   : vcsTerminology.systemName === "Jujutsu"
-                    ? `The ${terminology.singular} is in its own ${vcsTerminology.workspaceNoun}, with a thread open on it.`
+                    ? gt(
+                        "The {singular} is in its own {workspaceNoun}, with a thread open on it.",
+                        {
+                          singular: terminology.singular,
+                          workspaceNoun: vcsTerminology.workspaceNoun,
+                        },
+                      )
                     : m(
                         msg(
                           "The {term, select, mr {merge request} cr {change request} other {pull request}} is in its own worktree, with a thread open on it.",

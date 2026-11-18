@@ -46,13 +46,13 @@ export function statusSummary(
   if (!gitStatus) {
     return terminology.systemName === "Git"
       ? resolve(msg("Loading branch status\u2026"))
-      : `Loading ${terminology.refNoun} status\u2026`;
+      : resolve(msg("Loading {refNoun} status…", { refNoun: terminology.refNoun }));
   }
 
   if (!gitStatus.isRepo) {
     return terminology.systemName === "Git"
       ? resolve(msg("Not a git repository"))
-      : `Not a ${terminology.systemName} repository`;
+      : resolve(msg("Not a {systemName} repository", { systemName: terminology.systemName }));
   }
 
   const parts: string[] = [];

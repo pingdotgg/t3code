@@ -568,7 +568,7 @@ export function useComposerCommandMenu({
             ? await resolvePromptEnvironment({ environmentId, input: { name: item.name } })
             : null;
         if (environment !== null && environment._tag !== "Success") {
-          Dialog.alert("Could not insert prompt", "Could not read the host environment.");
+          Dialog.alert(gt("Could not insert prompt"), gt("Could not read the host environment."));
           return;
         }
         const replacement = expandSavedPrompt(item.body, environment?.value ?? {}, clipboard);
@@ -590,8 +590,8 @@ export function useComposerCommandMenu({
         onChangeDraftMessage(result.text);
       })().catch((error: unknown) => {
         Dialog.alert(
-          "Could not insert prompt",
-          error instanceof Error ? error.message : "Try again.",
+          gt("Could not insert prompt"),
+          error instanceof Error ? error.message : gt("Try again."),
         );
       });
       return;

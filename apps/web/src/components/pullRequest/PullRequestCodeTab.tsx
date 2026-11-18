@@ -1560,7 +1560,7 @@ function PullRequestCodeTab({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="Open in Crit"
+                  aria-label={gt("Open in Crit")}
                   disabled={openingCrit}
                   onClick={() =>
                     void openInCrit({
@@ -1579,7 +1579,7 @@ function PullRequestCodeTab({
             >
               <ExternalLinkIcon className="size-3.5" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Open in Crit</TooltipPopup>
+            <TooltipPopup side="top">{gt("Open in Crit")}</TooltipPopup>
           </Tooltip>
         ) : null}
         <DropdownMenu>

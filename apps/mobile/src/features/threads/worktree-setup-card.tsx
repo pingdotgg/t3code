@@ -121,7 +121,9 @@ function WorktreeSetupHeaderCard(props: WorktreeSetupCardProps & SetupDetailsCon
           accessibilityRole="button"
           accessibilityLabel={
             vcsTerminology.systemName === "Jujutsu"
-              ? `${vcsTerminology.workspaceNounTitle} setup details`
+              ? gt("{workspaceNounTitle} setup details", {
+                  workspaceNounTitle: vcsTerminology.workspaceNounTitle,
+                })
               : gt("Worktree setup details")
           }
           accessibilityState={{ expanded: detailsOpen }}
@@ -287,7 +289,7 @@ export function WorktreePreparingHeader({
         <HeaderLabel
           label={
             vcsTerminology.systemName === "Jujutsu"
-              ? `Setting up ${vcsTerminology.workspaceNoun}…`
+              ? gt("Setting up {workspaceNoun}…", { workspaceNoun: vcsTerminology.workspaceNoun })
               : gt("Setting up worktree…")
           }
           active
@@ -398,7 +400,9 @@ function SetupDetailsSheet({
               tone="danger"
               accessibilityLabel={
                 vcsTerminology.systemName === "Jujutsu"
-                  ? `Cancel ${vcsTerminology.workspaceNoun} setup`
+                  ? gt("Cancel {workspaceNoun} setup", {
+                      workspaceNoun: vcsTerminology.workspaceNoun,
+                    })
                   : gt("Cancel worktree setup")
               }
               onPress={() => {

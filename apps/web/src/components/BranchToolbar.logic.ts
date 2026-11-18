@@ -111,8 +111,10 @@ export function resolveEnvModeLabel(
   if (terminology.systemName === "Git")
     return mode === "worktree" ? resolve(msg("New worktree")) : resolve(msg("Current checkout"));
   return mode === "worktree"
-    ? `New ${terminology.workspaceNoun}`
-    : `Current ${terminology.currentRefFallback}`;
+    ? resolve(msg("New {workspaceNoun}", { workspaceNoun: terminology.workspaceNoun }))
+    : resolve(
+        msg("Current {currentRefFallback}", { currentRefFallback: terminology.currentRefFallback }),
+      );
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
@@ -128,8 +130,8 @@ export function resolveCurrentWorkspaceLabel(
 ): string {
   if (terminology.systemName !== "Git") {
     return activeWorktreePath
-      ? `Current ${terminology.workspaceNoun}`
-      : resolveEnvModeLabel("local", terminology);
+      ? resolve(msg("Current {workspaceNoun}", { workspaceNoun: terminology.workspaceNoun }))
+      : resolveEnvModeLabel("local", terminology, resolve);
   }
   return activeWorktreePath
     ? resolve(msg("Current worktree"))
@@ -151,7 +153,9 @@ export function resolveLockedWorkspaceLabel(
     ? resolveEnvModeLabel("worktree", terminology, resolve)
     : terminology.systemName === "Git"
       ? resolve(msg("Local checkout"))
-      : `Local ${terminology.currentRefFallback}`;
+      : resolve(
+          msg("Local {currentRefFallback}", { currentRefFallback: terminology.currentRefFallback }),
+        );
 }
 
 export interface PreviousWorktreeSeed {
@@ -199,8 +203,13 @@ export function resolvePreviousWorktreeLabel(
 ): string {
   if (terminology.systemName !== "Git") {
     return seed.branch
-      ? `Previous ${terminology.workspaceNoun} (${seed.branch})`
-      : `Previous ${terminology.workspaceNoun}`;
+      ? resolve(
+          msg("Previous {workspaceNoun} ({branch})", {
+            workspaceNoun: terminology.workspaceNoun,
+            branch: seed.branch,
+          }),
+        )
+      : resolve(msg("Previous {workspaceNoun}", { workspaceNoun: terminology.workspaceNoun }));
   }
   return seed.branch
     ? resolve(msg("Previous worktree ({branch})", { branch: seed.branch }))
@@ -311,13 +320,11 @@ export function resolveBranchTriggerLabel(
     terminology = DEFAULT_VCS_TERMINOLOGY,
   } = input;
   if (!resolvedActiveBranch) {
-    return terminology.systemName !== "Git"
-      ? `Select ${terminology.refNoun}`
-      : resolve(msg("Select ref"));
+    return resolve(msg("Select {refNoun}", { refNoun: terminology.refNoun }));
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     if (resolvedActiveBranch === JJ_WORKING_COPY_REVISION) {
-      return `From ${JJ_WORKING_COPY_LABEL.toLowerCase()}`;
+      return resolve(msg("From {revision}", { revision: JJ_WORKING_COPY_LABEL.toLowerCase() }));
     }
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false

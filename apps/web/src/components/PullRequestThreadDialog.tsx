@@ -357,7 +357,9 @@ export function PullRequestThreadDialog({
           >
             {vcsTerminology.systemName === "Jujutsu"
               ? preparingMode === "worktree"
-                ? `Preparing ${vcsTerminology.workspaceNoun}...`
+                ? gt("Preparing {workspaceNoun}...", {
+                    workspaceNoun: vcsTerminology.workspaceNoun,
+                  })
                 : vcsTerminology.workspaceNounTitle
               : preparingMode === "worktree"
                 ? gt("Preparing worktree...")

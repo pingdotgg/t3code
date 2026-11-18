@@ -488,7 +488,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                   <SettingsSwitchRow
                     icon="text.bubble"
-                    label="VCS agent hints"
+                    label={gt("VCS agent hints")}
                     subtitle={managedSubtitle(
                       "enableVcsAgentHints",
                       "Give agents a version-control hint on each turn, including resumed threads.",
@@ -498,29 +498,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableVcsAgentHints: value })}
                   />
                   <WorktreeSettingField
-                    label="Worktree location"
-                    hint="Root for new worktrees; leave empty for the T3 home directory."
+                    label={gt("Worktree location")}
+                    hint={gt("Root for new worktrees; leave empty for the T3 home directory.")}
                     value={uniform("worktreesDirectory")}
-                    placeholder={isMixed("worktreesDirectory") ? "Mixed" : "Default"}
+                    placeholder={isMixed("worktreesDirectory") ? gt("Mixed") : gt("Default")}
                     disabled={disabledFor("worktreesDirectory")}
                     setting="directory"
                     onValueChange={(value) => write({ worktreesDirectory: value })}
                   />
                   <SettingsSwitchRow
                     icon="folder"
-                    label="Group by project"
-                    subtitle="Keep each project's worktrees under its own folder."
+                    label={gt("Group by project")}
+                    subtitle={gt("Keep each project's worktrees under its own folder.")}
                     value={uniform("worktreeProjectFolders")}
                     disabled={disabledFor("worktreeProjectFolders")}
                     onValueChange={(value) => write({ worktreeProjectFolders: value })}
                   />
                   <WorktreeSettingField
-                    label="Worktree branch prefix"
-                    hint="Namespace for new temporary and generated branches."
+                    label={gt("Worktree branch prefix")}
+                    hint={gt("Namespace for new temporary and generated branches.")}
                     value={uniform("worktreeBranchPrefix")}
                     placeholder={
                       isMixed("worktreeBranchPrefix")
-                        ? "Mixed"
+                        ? gt("Mixed")
                         : DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix
                     }
                     disabled={disabledFor("worktreeBranchPrefix")}
@@ -661,6 +661,7 @@ function WorktreeSettingField(props: {
   readonly setting: "directory" | "prefix";
   readonly onValueChange: (value: string) => void;
 }) {
+  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
     if (draft === null || props.disabled) return;
@@ -669,10 +670,10 @@ function WorktreeSettingField(props: {
     const schema = props.setting === "directory" ? Schema.Trim : WorktreeBranchPrefix;
     if (Option.isNone(Schema.decodeOption(schema)(value))) {
       Dialog.alert(
-        `Invalid ${props.label.toLowerCase()}`,
+        gt("Invalid {label}", { label: props.label.toLowerCase() }),
         props.setting === "directory"
-          ? 'Use an absolute path or a path beginning with "~/".'
-          : "Use Git-safe branch segments without a trailing slash.",
+          ? gt('Use an absolute path or a path beginning with "~/".')
+          : gt("Use Git-safe branch segments without a trailing slash."),
       );
       return;
     }

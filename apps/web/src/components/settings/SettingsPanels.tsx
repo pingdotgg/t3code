@@ -1238,14 +1238,16 @@ export function ChatSettingsPanel() {
     {
       key: "composerVimEnabled",
       searchId: "composer-vim",
-      description:
+      description: gt(
         "Edit the chatbox's literal Markdown with Vim motions, operators, visual mode, search, and registers.",
+      ),
     },
     {
       key: "composerVimSystemClipboard",
       searchId: "composer-vim-clipboard",
-      description:
+      description: gt(
         "Use the system clipboard for Vim yanks, deletes, and pastes. When off, use a private Vim register.",
+      ),
     },
   ] as const;
 
@@ -1262,7 +1264,7 @@ export function ChatSettingsPanel() {
               resetAction={
                 settings[key] !== DEFAULT_UNIFIED_SETTINGS[key] ? (
                   <SettingResetButton
-                    ariaLabel={`Reset ${row.title} to default`}
+                    ariaLabel={gt("Reset {title} to default", { title: row.title })}
                     onClick={() => updateSettings({ [key]: DEFAULT_UNIFIED_SETTINGS[key] })}
                   />
                 ) : null
@@ -1790,12 +1792,14 @@ export function DiffsSettingsPanel() {
           {...setting("auto-collapse-test-and-snapshot-files")}
           serverScoped
           settingKeys={["autoCollapseTestAndSnapshotFiles"]}
-          description="Start test and *_snapshot.json diffs collapsed when other files start expanded. Can be overridden per project."
+          description={gt(
+            "Start test and *_snapshot.json diffs collapsed when other files start expanded. Can be overridden per project.",
+          )}
           resetAction={
             settings.autoCollapseTestAndSnapshotFiles !==
             DEFAULT_UNIFIED_SETTINGS.autoCollapseTestAndSnapshotFiles ? (
               <SettingResetButton
-                ariaLabel="Reset auto-collapse test and snapshot files to default"
+                ariaLabel={gt("Reset auto-collapse test and snapshot files to default")}
                 onClick={() =>
                   updateSettings({
                     autoCollapseTestAndSnapshotFiles:
@@ -1812,7 +1816,7 @@ export function DiffsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ autoCollapseTestAndSnapshotFiles: Boolean(checked) })
               }
-              aria-label="Auto-collapse test and snapshot files"
+              aria-label={gt("Auto-collapse test and snapshot files")}
             />
           }
         />
@@ -2006,7 +2010,9 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["worktreeProjectFolders"]}
           {...setting("worktree-project-folders")}
-          description="Place new worktrees under a folder named for their project, so project-specific configuration can live beside them."
+          description={gt(
+            "Place new worktrees under a folder named for their project, so project-specific configuration can live beside them.",
+          )}
           control={
             <ScopedSwitch
               settingKeys={["worktreeProjectFolders"]}
@@ -2014,7 +2020,7 @@ export function ThreadsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ worktreeProjectFolders: Boolean(checked) })
               }
-              aria-label="Group worktrees by project"
+              aria-label={gt("Group worktrees by project")}
             />
           }
         />
@@ -2022,11 +2028,13 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["worktreeBranchPrefix"]}
           {...setting("worktree-branch-prefix")}
-          description="Prefix for new worktree branches, including their temporary names before the first turn. Use slash-separated Git branch segments without a trailing slash."
+          description={gt(
+            "Prefix for new worktree branches, including their temporary names before the first turn. Use slash-separated Git branch segments without a trailing slash.",
+          )}
           resetAction={
             settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix ? (
               <SettingResetButton
-                ariaLabel="Reset worktree branch prefix to default"
+                ariaLabel={gt("Reset worktree branch prefix to default")}
                 onClick={() =>
                   updateSettings({
                     worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
@@ -2042,10 +2050,12 @@ export function ThreadsSettingsPanel() {
               value={mixedWorktreeBranchPrefix ? "" : settings.worktreeBranchPrefix}
               onCommit={(prefix) => updateSettings({ worktreeBranchPrefix: prefix })}
               placeholder={
-                mixedWorktreeBranchPrefix ? "Mixed" : DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix
+                mixedWorktreeBranchPrefix
+                  ? gt("Mixed")
+                  : DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix
               }
               spellCheck={false}
-              aria-label="Worktree branch prefix"
+              aria-label={gt("Worktree branch prefix")}
             />
           }
         />

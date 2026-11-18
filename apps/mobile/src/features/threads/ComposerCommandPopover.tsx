@@ -158,7 +158,7 @@ function groupLabel(
     case "pull-request":
       return resolve(msg("Pull requests"));
     case "saved-prompt":
-      return "Prompts";
+      return resolve(msg("Prompts"));
     case "slash-command":
       return resolve(msg("Commands"));
     case "skill":
@@ -184,7 +184,7 @@ function emptyText(
     case "pull-request":
       return resolve(msg("No matching pull requests."));
     case "saved-prompt":
-      return "No matching prompts. Add one in Settings → Prompts.";
+      return resolve(msg("No matching prompts. Add one in Settings → Prompts."));
     case "path":
       return resolve(msg("No matching mentions."));
     case "skill":

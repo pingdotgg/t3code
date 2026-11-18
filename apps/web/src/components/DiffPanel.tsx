@@ -1190,7 +1190,9 @@ export default function DiffPanel({
                 <ComboboxSearchInput
                   placeholder={
                     vcsTerminology.systemName === "Jujutsu"
-                      ? `Search ${vcsTerminology.refNounPlural}...`
+                      ? gt("Search {refNounPlural}...", {
+                          refNounPlural: vcsTerminology.refNounPlural,
+                        })
                       : gt("Search refs...")
                   }
                   value={baseRefQuery}
@@ -1213,7 +1215,9 @@ export default function DiffPanel({
                 </div>
                 <ComboboxEmpty>
                   {vcsTerminology.systemName === "Jujutsu" ? (
-                    `No matching ${vcsTerminology.refNounPlural}.`
+                    gt("No matching {refNounPlural}.", {
+                      refNounPlural: vcsTerminology.refNounPlural,
+                    })
                   ) : (
                     <T>No matching refs.</T>
                   )}
@@ -1301,7 +1305,7 @@ export default function DiffPanel({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="Open in Crit"
+                  aria-label={gt("Open in Crit")}
                   disabled={openingCrit}
                   onClick={() => void handleOpenInCrit()}
                 />
@@ -1309,7 +1313,7 @@ export default function DiffPanel({
             >
               <ExternalLinkIcon className="size-3.5" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Open in Crit</TooltipPopup>
+            <TooltipPopup side="top">{gt("Open in Crit")}</TooltipPopup>
           </Tooltip>
         )}
         {codeViewFiles.length > 0 || (isGitSelection && selectedGitSource?.files?.length) ? (
@@ -1489,7 +1493,10 @@ export default function DiffPanel({
       ) : !isGitRepo && !toolCallSelection ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           {vcsTerminology.systemName === "Jujutsu" ? (
-            `Turn diffs are unavailable because this project is not a ${vcsTerminology.systemName} repository.`
+            gt(
+              "Turn diffs are unavailable because this project is not a {systemName} repository.",
+              { systemName: vcsTerminology.systemName },
+            )
           ) : (
             <T>Turn diffs are unavailable because this project is not a git repository.</T>
           )}

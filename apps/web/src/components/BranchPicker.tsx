@@ -179,15 +179,22 @@ export function BranchPicker({
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label={`Start ${terminology.workspaceNoun} from origin`}
+                      aria-label={gt("Start {workspaceNoun} from origin", {
+                        workspaceNoun: terminology.workspaceNoun,
+                      })}
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the {terminology.workspaceNoun} from the latest matching{" "}
-                {terminology.refNoun} on origin instead of your local {terminology.refNoun}.
+                {terminology.systemName === "Git"
+                  ? gt(
+                      "Creates the worktree from the latest matching branch on origin instead of your local branch.",
+                    )
+                  : gt(
+                      "Creates the workspace from the latest matching bookmark on origin instead of your local bookmark.",
+                    )}
               </TooltipPopup>
             </Tooltip>
           ) : null}

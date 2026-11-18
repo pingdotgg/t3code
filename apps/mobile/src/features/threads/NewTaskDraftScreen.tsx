@@ -910,7 +910,9 @@ export function NewTaskDraftScreen(props: {
       <ComposerInlineControl
         accessibilityHint={
           flow.vcsTerminology.systemName === "Jujutsu"
-            ? `Switches to ${flow.workspaceMode === "local" ? `a new ${flow.vcsTerminology.workspaceNoun}` : `the current ${flow.vcsTerminology.currentRefFallback}`}`
+            ? flow.workspaceMode === "local"
+              ? gt("Switches to a new workspace")
+              : gt("Switches to the current working copy")
             : flow.workspaceMode === "local"
               ? gt("Switches to a new worktree")
               : gt("Switches to the current checkout")
@@ -945,7 +947,9 @@ export function NewTaskDraftScreen(props: {
           label={
             flow.vcsTerminology.systemName === "Jujutsu"
               ? showBranchLoading
-                ? `Loading ${flow.vcsTerminology.refNounPlural}…`
+                ? gt("Loading {refNounPlural}…", {
+                    refNounPlural: flow.vcsTerminology.refNounPlural,
+                  })
                 : selectedBranchLabel
               : showBranchLoading
                 ? gt("Loading branches…")

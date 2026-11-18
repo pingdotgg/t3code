@@ -373,7 +373,7 @@ export const OpenInPicker = memo(function OpenInPicker({
                 onClick={() => void openInDefaultApp()}
               >
                 <AppWindowIcon aria-hidden="true" className={getOpenInIconClass("generic")} />
-                <MenuItemLabel>Default app</MenuItemLabel>
+                <MenuItemLabel>{gt("Default app")}</MenuItemLabel>
               </MenuItem>
             </>
           )}
