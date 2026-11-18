@@ -3027,10 +3027,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3042,10 +3039,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· wer es ausführt, erhält diesen Zugriff"
-      ]
+      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -11709,7 +11703,7 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} kann nach dem Neustart fortgesetzt werden.} other {{count} können nach dem Neustart fortgesetzt werden.}}",
   "0576c87870fb6389": "Aktualisieren",
   "948185631ef288e6": "{count, plural, one {{count} läuft} other {{count} laufen}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "Wähle aus, welche Maschinen aktualisiert werden sollen. Nur ausgewählte Maschinen werden aktualisiert oder neu gestartet.",
   "3d9a2f6b9c114039": "Anbieter",
   "f4baf8deafbb227d": "Übersprungen",
   "f938bb483eb3d189": "startet zuletzt neu",

@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "no computador que abriu esta página"
-      ]
+      "c": [" ", "no computador que abriu esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quem executar recebe este acesso"
-      ]
+      "c": [" ", "· quem executar recebe este acesso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
@@ -11706,7 +11700,7 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} pode retomar após a reinicialização.} other {{count} podem retomar após a reinicialização.}}",
   "0576c87870fb6389": "Atualizar",
   "948185631ef288e6": "{count, plural, one {{count} em execução} other {{count} em execução}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "Escolha quais máquinas atualizar. Somente as máquinas selecionadas serão atualizadas ou reiniciadas.",
   "3d9a2f6b9c114039": "Provedores",
   "f4baf8deafbb227d": "Ignorado",
   "f938bb483eb3d189": "reinicia por último",

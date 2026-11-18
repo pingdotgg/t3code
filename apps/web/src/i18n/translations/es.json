@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quien lo ejecute obtiene este acceso"
-      ]
+      "c": [" ", "· quien lo ejecute obtiene este acceso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -11702,7 +11696,7 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} puede reanudarse después del reinicio.} other {{count} pueden reanudarse después del reinicio.}}",
   "0576c87870fb6389": "Actualizar",
   "948185631ef288e6": "{count, plural, one {{count} en ejecución} other {{count} en ejecución}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "Elige qué máquinas actualizar. Solo se actualizarán o reiniciarán las máquinas seleccionadas.",
   "3d9a2f6b9c114039": "Proveedores",
   "f4baf8deafbb227d": "Omitido",
   "f938bb483eb3d189": "se reinicia el último",

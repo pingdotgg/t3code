@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -11707,7 +11701,7 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} peut reprendre après le redémarrage.} other {{count} peuvent reprendre après le redémarrage.}}",
   "0576c87870fb6389": "Mettre à jour",
   "948185631ef288e6": "{count, plural, one {{count} en cours} other {{count} en cours}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "Choisissez les machines à mettre à jour. Seules les machines sélectionnées seront mises à jour ou redémarrées.",
   "3d9a2f6b9c114039": "Fournisseurs",
   "f4baf8deafbb227d": "Ignorés",
   "f938bb483eb3d189": "redémarre en dernier",

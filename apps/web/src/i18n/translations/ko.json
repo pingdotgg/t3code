@@ -3025,10 +3025,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(이 페이지를 연 컴퓨터)"
-      ]
+      "c": [" ", "(이 페이지를 연 컴퓨터)"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3040,10 +3037,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· 실행하는 사람이 이 액세스 권한을 얻습니다"
-      ]
+      "c": [" ", "· 실행하는 사람이 이 액세스 권한을 얻습니다"]
     }
   ],
   "c54cc9c75db9dc58": "방금 시작한 로그인만 승인하세요.",
@@ -11654,7 +11648,7 @@
   "ecdf5f108ecc71d0": "{count, plural, other {{count}개는 다시 시작한 후 재개할 수 있습니다.}}",
   "0576c87870fb6389": "업데이트",
   "948185631ef288e6": "{count, plural, other {{count}개 실행 중}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "업데이트할 머신을 선택하세요. 선택한 머신만 업데이트되거나 다시 시작됩니다.",
   "3d9a2f6b9c114039": "제공자",
   "f4baf8deafbb227d": "건너뜀",
   "f938bb483eb3d189": "마지막에 다시 시작",

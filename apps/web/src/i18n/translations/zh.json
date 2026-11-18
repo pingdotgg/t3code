@@ -3030,10 +3030,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "位于打开此页面的计算机上"
-      ]
+      "c": [" ", "位于打开此页面的计算机上"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3045,10 +3042,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· 运行它的任何人都会获得此访问权限"
-      ]
+      "c": [" ", "· 运行它的任何人都会获得此访问权限"]
     }
   ],
   "c54cc9c75db9dc58": "请只批准你刚刚发起的登录。",
@@ -11732,7 +11726,7 @@
   "ecdf5f108ecc71d0": "{count, plural, other {{count} 个可在重启后恢复。}}",
   "0576c87870fb6389": "更新",
   "948185631ef288e6": "{count, plural, other {{count} 个运行中}}",
-  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "fc79eb5b32f47c10": "选择要更新的机器。只有选中的机器才会更新或重启。",
   "3d9a2f6b9c114039": "智能体提供方",
   "f4baf8deafbb227d": "已跳过",
   "f938bb483eb3d189": "最后重启",

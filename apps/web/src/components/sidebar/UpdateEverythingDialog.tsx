@@ -130,7 +130,7 @@ function UpdateEverythingDialogContent({
   const selectedProviderCount = selectable
     ? selected.reduce((count, row) => count + row.providers.length, 0)
     : providerCount;
-  const selectedVersion = selected.some((row) => row.app !== null) ? version : null;
+  const selectedVersion = !selectable || selected.some((row) => row.app !== null) ? version : null;
   const stopped = useAtomValue(
     runningThreadCountAtom(
       restarts
