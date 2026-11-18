@@ -1,13 +1,15 @@
 import { expect, it } from "vite-plus/test";
 import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import type { Root, RootContent } from "mdast";
+import type { Link, Root, RootContent } from "mdast";
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -15,7 +17,7 @@ import {
 it.each([
   ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
   ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-] as const)("preserves trailing underscores and tildes in bare URLs (%s)", (_, plugins) => {
+] as const)("preserves bare URL boundaries (%s)", (_, plugins) => {
   const processor = unified().use(remarkParse).use(plugins);
   const shape = (node: Root | RootContent): string => {
     if (node.type === "text") return node.value;
@@ -91,6 +93,63 @@ it.each([
     ["https://x.com/a\\_", link("https://x.com/a\\_")],
     ["https://x.com/a&#95;", `${link("https://x.com/a&#95")};`],
     [
+      "可以看了：**http://localhost:18780**（已重启）。",
+      `可以看了：**${link("http://localhost:18780")}**（已重启）。`,
+    ],
+    ["打开 http://localhost:18780，然后刷新", `打开 ${link("http://localhost:18780")}，然后刷新`],
+    ["URL：https://example.com/a。下一句", `URL：${link("https://example.com/a")}。下一句`],
+    ["（预览：http://localhost:18780）", `（预览：${link("http://localhost:18780")}）`],
+    [
+      "能打开 http://localhost:3000？见 http://localhost:3001；「www.example.com」",
+      `能打开 ${link("http://localhost:3000")}？见 ${link("http://localhost:3001")}；「${link("www.example.com")}」`,
+    ],
+    [
+      "__http://localhost:18780__，*http://localhost:3000*，~~http://localhost:3001~~。",
+      `**${link("http://localhost:18780")}**，*${link("http://localhost:3000")}*，~~${link("http://localhost:3001")}~~。`,
+    ],
+    [
+      "foo**http://localhost:18780**（bar）***http://localhost:3000***。",
+      `foo**${link("http://localhost:18780")}**（bar）***${link("http://localhost:3000")}***。`,
+    ],
+    [
+      "http://a.com。http://b.com，www.c.com、person@example.com。",
+      `${link("http://a.com")}。${link("http://b.com")}，${link("www.c.com")}、[person@example.com](mailto:person@example.com)。`,
+    ],
+    [
+      "**http://localhost:18780**（重启）。 https://example.com/a。结束",
+      `**${link("http://localhost:18780")}**（重启）。 ${link("https://example.com/a")}。结束`,
+    ],
+    ["# **http://localhost:3000**，刷新", `**${link("http://localhost:3000")}**，刷新`],
+    [
+      "| a |\n| - |\n| **http://localhost:3000**，刷新 |",
+      `a**${link("http://localhost:3000")}**，刷新`,
+    ],
+    ["www.example.com/preview。下一句", `${link("www.example.com/preview")}。下一句`],
+    ["https://example.com/a_。下一句", `${link("https://example.com/a_")}。下一句`],
+    ["https://example.com/a.，下一句", `${link("https://example.com/a")}.，下一句`],
+    [
+      "https://example.com/search?q=hello，world",
+      `${link("https://example.com/search?q=hello")}，world`,
+    ],
+    ["https://example.com/日本語，続き", link("https://example.com/日本語，続き")],
+    [
+      "https://zh.wikipedia.org/wiki/北京（城市）",
+      link("https://zh.wikipedia.org/wiki/北京（城市）"),
+    ],
+    ["https://example.com/a%EF%BC%8Cb", link("https://example.com/a%EF%BC%8Cb")],
+    ["<https://example.com/日本語，続き>", link("https://example.com/日本語，続き")],
+    ["[記事](https://example.com/a，b)", "[記事](https://example.com/a，b)"],
+    ["[http://example.com/a，b](http://example.com/a，b)", link("http://example.com/a，b")],
+    ["`https://example.com/a。次`", "`https://example.com/a。次`"],
+    [
+      "منشور على https://example.com/report، ونسخته",
+      `منشور على ${link("https://example.com/report")}، ونسخته`,
+    ],
+    [
+      "هل يعمل **http://localhost:3000**؟ نعم؛ www.example.com۔",
+      `هل يعمل **${link("http://localhost:3000")}**؟ نعم؛ ${link("www.example.com")}۔`,
+    ],
+    [
       "https://x.com/a_ https://x.com/b_",
       `${link("https://x.com/a_")} ${link("https://x.com/b_")}`,
     ],
@@ -118,6 +177,126 @@ it.each([
       ],
     });
   }
+});
+
+it("ends bare URLs at CJK and Arabic punctuation with source positions", () => {
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const parse = (markdown: string) => processor.runSync(processor.parse(markdown), markdown);
+  const at = (line: number, column: number, offset: number) => ({ line, column, offset });
+  const url = "http://localhost:18780";
+  expect(parse(`第一行\n可以看了：**${url}**（已重启）。`)).toMatchObject({
+    children: [
+      {
+        children: [
+          { type: "text", value: "第一行\n可以看了：", position: { end: at(2, 6, 9) } },
+          {
+            type: "strong",
+            position: { start: at(2, 6, 9), end: at(2, 32, 35) },
+            children: [
+              {
+                type: "link",
+                url,
+                position: { start: at(2, 8, 11), end: at(2, 30, 33) },
+                children: [{ type: "text", value: url, position: { end: at(2, 30, 33) } }],
+              },
+            ],
+          },
+          {
+            type: "text",
+            value: "（已重启）。",
+            position: { start: at(2, 32, 35), end: at(2, 38, 41) },
+          },
+        ],
+      },
+    ],
+  });
+  // Markup the URL swallowed comes back once the URL ends.
+  expect(parse(`打开 ${url}，然后运行\`pnpm dev\``)).toMatchObject({
+    children: [
+      {
+        children: [
+          { type: "text", value: "打开 " },
+          { type: "link", url },
+          { type: "text", value: "，然后运行" },
+          { type: "inlineCode", value: "pnpm dev" },
+        ],
+      },
+    ],
+  });
+  // Every URL in one paragraph ends at its mark, with positions on its own line.
+  const lines = Array.from({ length: 300 }, (_, index) => `接口：http://localhost:${index}，`);
+  const [paragraph] = (parse(lines.join("\n")) as Root).children;
+  const links =
+    paragraph?.type === "paragraph"
+      ? paragraph.children.filter((node): node is Link => node.type === "link")
+      : [];
+  expect(links.map((node) => node.url)).toEqual(
+    lines.map((_, index) => `http://localhost:${index}`),
+  );
+  const lastLine = lines.slice(0, -1).join("\n").length + 1;
+  expect(links.at(-1)).toMatchObject({
+    position: { start: at(300, 4, lastLine + 3), end: at(300, 24, lastLine + 23) },
+  });
+  // Only a table unescapes `\|` in code, so that cell keeps its parse and the URL is cut.
+  const descendants = (node: Root | RootContent): RootContent[] =>
+    "children" in node
+      ? (node.children as RootContent[]).flatMap((child) => [child, ...descendants(child)])
+      : [];
+  const cell = descendants(parse("| a |\n| - |\n| http://example.com， `a\\|b` |") as Root);
+  expect(cell.flatMap((node) => (node.type === "link" ? [node.url] : []))).toEqual([
+    "http://example.com",
+  ]);
+  expect(cell.flatMap((node) => (node.type === "inlineCode" ? [node.value] : []))).toEqual(["a|b"]);
+  // A task item's checkbox is not part of its paragraph's text.
+  const task = descendants(parse("- [x] http://example.com，刷新") as Root);
+  expect(task.flatMap((node) => (node.type === "text" ? [node.value] : []))).toEqual([
+    "http://example.com",
+    "，刷新",
+  ]);
+  // A list item's indentation stays out of a code span that crosses lines.
+  const code = descendants(parse("- `echo\n  hello` http://example.com，结束") as Root);
+  expect(code.flatMap((node) => (node.type === "link" ? [node.url] : []))).toEqual([
+    "http://example.com",
+  ]);
+  expect(code.flatMap((node) => (node.type === "inlineCode" ? [node.value] : []))).toEqual([
+    "echo\nhello",
+  ]);
+  // A list item's continuation line parses the same on its own.
+  expect(parse(`- 第一行\n  **${url}**（已重启）`)).toMatchObject({
+    children: [
+      {
+        children: [
+          {
+            children: [
+              {
+                children: [
+                  { type: "text", value: "第一行\n" },
+                  { type: "strong", children: [{ type: "link", url }] },
+                  { type: "text", value: "（已重启）" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  // A quote's continuation line does not, so the URL ends and the asterisks stay as text.
+  expect(parse(`> 第一行\n> **${url}**（已重启）`)).toMatchObject({
+    children: [
+      {
+        children: [
+          {
+            children: [
+              { type: "text", value: "第一行\n**" },
+              { type: "link", url, position: { end: at(2, 27, 32) } },
+              { type: "text", value: "**（已重启）", position: { start: at(2, 27, 32) } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
 });
 
 const insightRule = "─".repeat(20);
@@ -465,6 +644,244 @@ it("keeps written ordered list numbers unless they are shorthand or a sequence, 
       "3. first\n5. second\n\n-       first block\n\n        3. first\n        5. second",
     ),
   ).toEqual([undefined, "5", undefined, undefined, "5"]);
+});
+
+type ShownNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: ShownNode[];
+};
+const SHOWN_BLOCKS = new Set([
+  "p",
+  "li",
+  "blockquote",
+  "ul",
+  "ol",
+  "pre",
+  "h1",
+  "h2",
+  "table",
+  "tr",
+]);
+
+/** The text a browser shows, by line: whitespace collapses except in `pre` and kept whitespace. */
+function shownText(tree: ShownNode): string {
+  let out = "";
+  const visit = (node: ShownNode, keep: boolean) => {
+    if (node.type === "text") {
+      const value = node.value ?? "";
+      // Only spaces, tabs and line endings collapse; a no-break space shows.
+      out += keep
+        ? value.replace(/ /g, "\u0001").replace(/\t/g, "\u0002")
+        : value.replace(/[ \t\r\n]/g, " ");
+    }
+    // An image shows as something, which its alt text stands in for.
+    if (node.properties?.alt !== undefined) out += String(node.properties.alt);
+    if (node.tagName === "br" || SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+    const inner =
+      keep || node.tagName === "pre" || node.properties?.dataLeadingWhitespace !== undefined;
+    node.children?.forEach((child) => visit(child, inner));
+    if (SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+  };
+  visit(tree, false);
+  return out
+    .split("\n")
+    .map((line) => line.replace(/ +/g, " ").replace(/^ | $/g, ""))
+    .filter(Boolean)
+    .join("\n")
+    .replace(/\u0001/g, " ")
+    .replace(/\u0002/g, "\t");
+}
+
+const hastRenderer = (plugins: PluggableList) => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(plugins)
+    .use(remarkRehype, { allowDangerousHtml: true });
+  return (markdown: string) => processor.runSync(processor.parse(markdown), markdown) as ShownNode;
+};
+const userMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+]);
+// The user pipeline as it was before leading whitespace was kept.
+const commonMarkUserMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  [remarkGfm, { singleTilde: false }],
+]);
+/** The tree with the restored indentation taken out, with the empty texts and positions it leaves. */
+const withoutRestoredWhitespace = ({
+  position: _position,
+  ...node
+}: ShownNode & { position?: unknown }): ShownNode => ({
+  ...node,
+  ...(node.children && {
+    children: node.children
+      .filter(
+        (child) =>
+          child.properties?.dataLeadingWhitespace === undefined &&
+          !(child.type === "text" && child.value === ""),
+      )
+      .map(withoutRestoredWhitespace),
+  }),
+});
+/** Each link's text and where it goes. */
+const linkTargets = (node: ShownNode): [string, unknown][] =>
+  node.properties?.href === undefined
+    ? (node.children ?? []).flatMap(linkTargets)
+    : [[shownText(node), node.properties.href]];
+
+it("shows the spaces and tabs typed at the start of each line of a user message", () => {
+  const shown = (markdown: string) => shownText(userMessage(markdown));
+  const outline = "Plan\n   Step one\n   Step two\n        Detail a\n        Detail b";
+  expect(shown(outline)).toBe(outline);
+  expect(shown(outline.replaceAll("\n", "\r\n"))).toBe(outline);
+  expect(shown("   First line\nnext\n\n  New paragraph")).toBe(
+    "   First line\nnext\n  New paragraph",
+  );
+  expect(shown("Plan\n\tTabbed\n \t Mixed")).toBe("Plan\n\tTabbed\n \t Mixed");
+  expect(shown("Plan  \n   After a hard break\\\n   and an escaped one")).toBe(
+    "Plan\n   After a hard break\n   and an escaped one",
+  );
+  // In a container, only whitespace past its own structure counts.
+  expect(shown("- item\n  continued")).toBe("item\ncontinued");
+  expect(shown("- item\n    more")).toBe("item\n  more");
+  expect(shown("- item\ncontinued")).toBe("item\ncontinued");
+  expect(shown("- item\n continued")).toBe("item\ncontinued");
+  expect(shown("1. one\n      two")).toBe("one\n   two");
+  expect(shown("- item\n\tsplit tab")).toBe("item\n  split tab");
+  expect(shown("- item\n\n     second paragraph")).toBe("item\n   second paragraph");
+  // An item's content starts after its marker and the marker's spacing. A task's checkbox is
+  // content, so it does not move where continuation lines start, however the task begins.
+  expect(shown("- [ ] task\n      under the task")).toBe("task\n    under the task");
+  for (const task of ["task", "**task**", "[task](https://example.com)", "`task`"]) {
+    expect(shown(`- [ ] ${task}\n    detail`), task).toBe("task\n  detail");
+  }
+  expect(shown("-   x\n     y")).toBe("x\n y");
+  expect(shown("-    x\n         y")).toBe("x\n    y");
+  expect(shown("-\tx\n\t  y")).toBe("x\n  y");
+  expect(shown("10.  x\n       y")).toBe("x\n  y");
+  expect(shown("> a\n>    b")).toBe("a\n   b");
+  expect(shown(">    first")).toBe("   first");
+  expect(shown("> a\n   lazy")).toBe("a\nlazy");
+  expect(shown("> - item\n>     more")).toBe("item\n  more");
+  expect(shown("- > a\n  >    b")).toBe("a\n   b");
+  expect(shown("- a\n  - b\n      c")).toBe("a\nb\n  c");
+  // List recovery reparses over-indented content; its first line sets the indentation.
+  expect(shown("-       first block\n        continued\n          deeper")).toBe(
+    "first block\ncontinued\n  deeper",
+  );
+
+  // A space or tab written as a character reference after the indentation is dropped, as it is
+  // without the indentation; only the typed indentation is added.
+  for (const reference of ["&#32;", "&#x20;", "&#9;", "&Tab;"]) {
+    expect(shown(`a\n ${reference}b`), reference).toBe("a\n b");
+    expect(shown(`a  \n\t${reference}b`), reference).toBe("a\n\tb");
+    expect(shown(`a\\\r\n  ${reference}${reference}b`), reference).toBe("a\n  b");
+  }
+  // Converting to HTML also drops the spaces that start code or a link's text after a line break.
+  expect(shown("a\n   ` npm i`")).toBe("a\n   npm i");
+  expect(shown("a\n  [ docs](https://example.com)")).toBe("a\n  docs");
+  // A line whose text starts with whitespace the browser hides keeps no indentation, as without it.
+  expect(shown("  &#32;b")).toBe("b");
+  expect(shown("a\n   ***&#32;b***")).toBe("a\nb");
+
+  // Only the indentation is added: formatting, code, links and alerts render as without it.
+  const inline = "Plan\n   **bold** [link](https://example.com) `code` ~/a and ~~gone~~ /tmp/a.ts";
+  const alert = ">  [!NOTE]\n>    indented body";
+  expect(shown(inline)).toBe("Plan\n   bold link code ~/a and gone /tmp/a.ts");
+  expect(shown(alert)).toBe("   indented body");
+  for (const markdown of [inline, alert]) {
+    expect(withoutRestoredWhitespace(userMessage(markdown)), markdown).toEqual(
+      withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+    );
+  }
+  expect(linkTargets(userMessage(inline))).toEqual(linkTargets(commonMarkUserMessage(inline)));
+  expect(linkTargets(userMessage(inline)).map(([label]) => label)).toEqual(["link", "/tmp/a.ts"]);
+
+  // A line ending written as a character reference is not a source line: it never takes a typed
+  // line's indentation, and no typed line's indentation moves onto it.
+  const decoded = shown("a &#10; b\n  c").split("\n");
+  expect(decoded.slice(0, 2)).toEqual(["a", "b"]);
+  expect(["c", "  c"]).toContain(decoded[2]);
+
+  // Code, and agent replies, keep CommonMark's reading.
+  for (const markdown of [
+    "```\n   code\n  more\n```",
+    "Plan\n\n    code\n      deeper",
+    "- item\n\n      code",
+  ]) {
+    expect(userMessage(markdown), markdown).toEqual(commonMarkUserMessage(markdown));
+  }
+  for (const plugins of [CHAT_MARKDOWN_REMARK_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS]) {
+    expect(shownText(hastRenderer(plugins)(outline)).replaceAll("\n", " ")).toBe(
+      "Plan Step one Step two Detail a Detail b",
+    );
+  }
+});
+
+it("adds only the typed indentation, and renders what follows it as without it", () => {
+  const starts = [
+    "b",
+    "*b*",
+    "`b`",
+    "~~b~~",
+    "[b](https://example.com)",
+    "![b](https://example.com/b.png)",
+    "https://example.com/b",
+    "/tmp/b.ts",
+    "~/b",
+    "@b",
+    "$b",
+    "&amp;b",
+    "&nbsp;b",
+    // Spaces and tabs written as character references, which a line start drops.
+    "&#32;b",
+    "&#x20;b",
+    "&#9;b",
+    "&Tab;b",
+    "&#32;&#9;b",
+    "&#32;* b",
+    "&#32;`b`",
+    "&#32;**b**",
+    // Content whose first character is a space.
+    "` b`",
+    "[ b](https://example.com)",
+    "**&#32;b**",
+    "***&#32;b***",
+    "[ b]",
+  ];
+  const lines = [
+    (indent: string, start: string, join: string) => `a${join}${indent}${start}`,
+    (indent: string, start: string, join: string) => `> a${join}> ${indent}${start}`,
+    (indent: string, start: string, join: string) => `- a${join}  ${indent}${start}`,
+  ];
+  for (const indent of ["", " ", "   ", "\t", " \t"]) {
+    for (const start of starts) {
+      // Without the indentation, an image alone on a CRLF line breaks twice: the image-line break
+      // leaves the CR behind, which breaks again.
+      const joins = start.startsWith("!") ? ["\n", "  \n", "\\\n"] : ["\n", "\r\n", "  \n", "\\\n"];
+      const markdowns = [
+        ...joins.flatMap((join) => lines.map((line) => line(indent, start, join))),
+        // A paragraph's first line takes at most three spaces before it reads as code.
+        ...(indent.includes("\t") ? [] : [`${indent}${start}`, `> ${indent}${start}`]),
+      ];
+      for (const markdown of markdowns) {
+        const label = JSON.stringify(markdown);
+        expect(withoutRestoredWhitespace(userMessage(markdown)), label).toEqual(
+          withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+        );
+        const shown = shownText(userMessage(markdown)).split("\n");
+        const before = shownText(commonMarkUserMessage(markdown)).split("\n");
+        expect(shown.length, label).toBe(before.length);
+        shown.forEach((line, index) =>
+          expect([before[index], `${indent}${before[index]}`], label).toContain(line),
+        );
+      }
+    }
+  }
 });
 
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {

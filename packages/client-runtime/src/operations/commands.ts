@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -39,7 +41,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { getInitialServerConfig, isRpcClientError, request } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  getInitialServerConfig,
+  isRpcClientError,
+  request,
+} from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -100,6 +107,7 @@ export type SettleThreadInput = ThreadCommandInput;
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
+  readonly restoreUnsettledAt?: string | null;
 }
 
 export interface PinThreadInput extends ThreadCommandInput {
@@ -293,15 +301,35 @@ const dispatch = (command: OrchestrationV2Command) =>
 // stops a frame that kills the socket from looping.
 const MAX_LOST_TRANSPORT_RESENDS = 2;
 
+// A live socket can still carry a command the host never answers; the heartbeat
+// alone would leave the send pending forever.
+const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
+
 const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
   resendAfterSocketLoss: boolean,
 ) {
-  if (!resendAfterSocketLoss) return yield* dispatch(command);
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
+          }),
+        ),
+    }),
+  );
+  if (!resendAfterSocketLoss) return yield* attempt;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
-    const exit = yield* Effect.exit(dispatch(command));
+    const exit = yield* Effect.exit(attempt);
     if (Exit.isSuccess(exit)) return exit.value;
     // Closing the session interrupts the request, which can beat the protocol error.
     const lostTransport =
@@ -608,6 +636,9 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+    ...(input.restoreUnsettledAt === undefined
+      ? {}
+      : { restoreUnsettledAt: input.restoreUnsettledAt }),
   });
 });
 
@@ -1179,6 +1210,34 @@ export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPu
     });
   },
 );
+export type LinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadIssue = Effect.fn("EnvironmentCommands.linkThreadIssue")(function* (
+  input: LinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.link",
+    commandId: yield* allocateCommandId(input),
+  });
+});
+export const unlinkThreadIssue = Effect.fn("EnvironmentCommands.unlinkThreadIssue")(function* (
+  input: UnlinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.unlink",
+    commandId: yield* allocateCommandId(input),
+  });
+});
 export type WatchThreadPullRequestInput = Omit<
   Extract<OrchestrationV2Command, { type: "thread.pull-request.watch" }>,
   "type" | "commandId"
