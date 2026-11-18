@@ -519,6 +519,7 @@ it("keeps an agent's alert on screen when its thread then completes", async () =
 
 it("toasts an agent's alert in the focused app unless its thread is the open one", async () => {
   await using app = setup();
+  state.mode = "notifications-and-sound";
   state.inApp = true;
   focused = true;
   state.shells.set("one", shell({}, { id: "other", title: "Other thread" }));
@@ -526,6 +527,7 @@ it("toasts an agent's alert in the focused app unless its thread is the open one
   app.openThread("one", "thread");
   app.alert("one", { id: "tool-1", threadId: "thread", body: "fleet.lock stuck" });
   expect(state.toast).not.toHaveBeenCalled();
+  expect(state.sound).not.toHaveBeenCalled();
 
   app.alert("one", { id: "tool-2", threadId: "other", body: "needs a push guard" });
   expect(state.toast).toHaveBeenCalledExactlyOnceWith(

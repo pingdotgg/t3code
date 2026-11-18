@@ -260,7 +260,15 @@ export function startThreadNotifications(
   };
 
   // An agent's own message, sent while its thread is still running, so no status change announces it.
-  const presentAgentAlert = (environmentId: EnvironmentId, alert: AgentAlert, title: string) =>
+  const presentAgentAlert = (environmentId: EnvironmentId, alert: AgentAlert, title: string) => {
+    const active = activeThread();
+    if (
+      document.visibilityState === "visible" &&
+      document.hasFocus() &&
+      active.environmentId === environmentId &&
+      active.threadId === alert.threadId
+    )
+      return;
     show(environmentId, alert.threadId, {
       title,
       body: alert.body,
@@ -271,6 +279,7 @@ export function startThreadNotifications(
       tag: `${threadNotificationTag(environmentId, alert.threadId)}:alert`,
       requireInteraction: false,
     });
+  };
 
   const observeThreads = (
     environmentId: EnvironmentId,
