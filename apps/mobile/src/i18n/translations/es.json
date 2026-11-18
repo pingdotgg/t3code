@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Cerrar la vista previa flotante",
   "2f38f2e60ed18790": "{count, plural, =1 {Ver navegador} one {Ver {count} pestaña del navegador} other {Ver {count} pestañas del navegador}}",
   "50abaf3c0482c1fb": "Mira y controla las pestañas del navegador abiertas en este hilo",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Una pestaña abierta",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " pestañas abiertas"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {Una pestaña abierta} other {{count} pestañas abiertas}}",
   "4d1f68ef069c7a0b": "Nueva pestaña",
   "9c149c8c50e58e4c": "Actualizar entornos",
   "d81626aad3a95cb2": "Inicia sesión en tu cuenta de T3 para configurar {product}.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Conectando con el dispositivo...",
   "763b01de7b957db6": "{count, plural, =1 {Ver dispositivo} one {Ver {count} dispositivo} other {Ver {count} dispositivos}}",
   "1fce83f5af71f632": "Mira y controla los dispositivos abiertos en este hilo",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Un dispositivo abierto",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " dispositivos abiertos"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {Un dispositivo abierto} other {{count} dispositivos abiertos}}",
   "9ecbf9cadd5bbf7f": "Fallos al iniciar",
   "0bab38399ee6746c": "Registro de fallos no disponible",
   "be735b872d5ac200": "Los registros de fallos al iniciar solo se guardan en las compilaciones de la tienda y de TestFlight.",

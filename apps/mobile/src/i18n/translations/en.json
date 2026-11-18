@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Close floating preview",
   "2f38f2e60ed18790": "{count, plural, =1 {View browser} other {View {count} browser tabs}}",
   "50abaf3c0482c1fb": "Watch and control browser tabs open in this thread",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "One tab open",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " tabs open"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {One tab open} other {{count} tabs open}}",
   "4d1f68ef069c7a0b": "New tab",
   "9c149c8c50e58e4c": "Refresh environments",
   "d81626aad3a95cb2": "Sign in to your T3 account to set up {product}.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Connecting to device...",
   "763b01de7b957db6": "{count, plural, =1 {View device} other {View {count} devices}}",
   "1fce83f5af71f632": "Watch and control devices open in this thread",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "One device open",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " devices open"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {One device open} other {{count} devices open}}",
   "9ecbf9cadd5bbf7f": "Startup crashes",
   "0bab38399ee6746c": "Crash log unavailable",
   "be735b872d5ac200": "Startup crash records are only kept in store and TestFlight builds.",

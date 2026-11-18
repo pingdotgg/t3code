@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Fechar a pré-visualização flutuante",
   "2f38f2e60ed18790": "{count, plural, =1 {Ver navegador} one {Ver {count} aba do navegador} other {Ver {count} abas do navegador}}",
   "50abaf3c0482c1fb": "Acompanhe e controle as abas do navegador abertas nesta thread",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Uma aba aberta",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " abas abertas"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {Uma aba aberta} other {{count} abas abertas}}",
   "4d1f68ef069c7a0b": "Nova aba",
   "9c149c8c50e58e4c": "Atualizar ambientes",
   "d81626aad3a95cb2": "Entre na sua conta T3 para configurar o {product}.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Conectando ao dispositivo...",
   "763b01de7b957db6": "{count, plural, =1 {Ver dispositivo} one {Ver {count} dispositivo} other {Ver {count} dispositivos}}",
   "1fce83f5af71f632": "Acompanhe e controle os dispositivos abertos nesta thread",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Um dispositivo aberto",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " dispositivos abertos"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {Um dispositivo aberto} other {{count} dispositivos abertos}}",
   "9ecbf9cadd5bbf7f": "Falhas na inicialização",
   "0bab38399ee6746c": "Log de falhas indisponível",
   "be735b872d5ac200": "Os registros de falhas na inicialização só são mantidos nas builds da loja e do TestFlight.",

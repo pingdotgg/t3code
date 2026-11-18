@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { nativeLanguageName } from "@t3tools/client-runtime/locales";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -740,6 +741,8 @@ export const SETTINGS_SEARCH_ITEMS = [
       msg(
         "locale translation english deutsch german español spanish français french português portuguese brasil brazilian chinese 中文 japanese 日本語 korean 한국어 russian русский swedish svenska sprache idioma langue 语言 言語 언어 язык",
       ),
+      "Ukrainian",
+      nativeLanguageName("uk"),
     ],
   },
   {

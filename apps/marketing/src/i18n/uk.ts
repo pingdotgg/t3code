@@ -1,0 +1,108 @@
+import type { Messages } from "./en";
+
+export const uk: Messages = {
+  layout: {
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code. Відкритий центр керування агентами для програмування.",
+    socialImageAlt:
+      "T3 Code: відкритий центр керування агентами для програмування з Claude Code, Codex, Cursor, OpenCode, Grok і Antigravity.",
+    homeLabel: "Головна сторінка T3 Code",
+    download: "Завантажити",
+    starsLabel: "Поставити зірку T3 Code на GitHub (зірок: {stars})",
+    githubStars: "Зірок на GitHub: {stars}",
+    language: "Мова",
+    mitLicensed: "Ліцензія MIT",
+    iosApp: "Застосунок для iOS",
+    androidApp: "Застосунок для Android",
+    terms: "Умови",
+    privacy: "Конфіденційність",
+    security: "Безпека",
+  },
+  home: {
+    title: "T3 Code | Відкритий центр керування агентами для програмування",
+    description: "T3 Code. Відкритий центр керування агентами для програмування.",
+    heroTitle: ["Відкритий центр", "керування агентами", "для програмування."],
+    heroSub:
+      "Керуйте Claude Code, Codex, Antigravity, OpenCode, Cursor і Grok з одного інтерфейсу. Користуйтеся своєю підпискою. Форкніть увесь проєкт.",
+    downloadForMac: "Завантажити для macOS",
+    downloadForWindows: "Завантажити для Windows",
+    downloadForLinux: "Завантажити для Linux",
+    downloadForIos: "Завантажити для iOS",
+    downloadForAndroid: "Завантажити для Android",
+    sourceLink: "Вкрадіть наш код (законно)",
+    alsoOnPhone: "Також на телефоні:",
+    screenshotAlt: "T3 Code запускає підагентів Claude, Codex, Muse і Gemini в одній розмові",
+    endorsementsTitle: "Нас терплять понад {users} розробників",
+    endorsementsSub: "Дехто навіть написав про це в X.",
+    endorsementsLabel: "Відгуки розробників",
+    readPost: "Прочитати допис {handle} у X",
+    harnessTitle: "Зі своєю підпискою",
+    harnessBody:
+      "T3 Code не перепродає токени. Підключайте Claude Code, Codex, Antigravity, OpenCode, Cursor або Grok з обліковими даними, які у вас уже є. Ми керуємо агентами, а тариф лишається вашим.",
+    googleSignIn: "Вхід через Google",
+    harnessPoints: [
+      "Ми не перепродаємо ключі й не встановлюємо власних лімітів.",
+      "Перемикайте моделі під час розмови.",
+      "Нові агенти щотижня.",
+    ],
+    gitVisualLabel:
+      "Робота з Git у T3 Code: перегляд змін, створення коміту, надсилання змін і відкриття запиту на злиття.",
+    prReady: "Готово",
+    prCommits: "3 коміти",
+    viewDiff: "Переглянути зміни",
+    openPullRequest: "Створити запит на злиття",
+    commitPush: "Коміт і пуш",
+    gitTitle: "Одна кнопка для коміту, пушу і запиту на злиття.",
+    gitBody:
+      "Кожна розмова з агентом працює у своїй гілці. Коли зміни готові, одна кнопка відкриває запит на злиття на GitHub з автоматично створеними заголовком, описом і списком змін. І все це без термінала.",
+    gitPoints: [
+      "Автоматично створені заголовки й описи запитів на злиття",
+      "Перегляд змін у застосунку перед надсиланням",
+      "Чернетки, стеки та внесення поправок до запитів на злиття",
+      "Працює з вашими наявними обліковими даними GitHub",
+    ],
+    openTitle: "Щось не подобається? Форкніть.",
+    openPoints: [
+      {
+        lead: "Змініть інтерфейс.",
+        rest: "Переробіть кожен екран на свій смак.",
+      },
+      {
+        lead: "Додайте агента.",
+        rest: "Під’єднайте власні інструменти, моделі та сценарії.",
+      },
+      {
+        lead: "Випустіть власну збірку.",
+        rest: "Розгорніть її на своєму сервері або поширюйте як власну.",
+      },
+    ],
+    stars: "Зірок: {stars}",
+    forkOnGithub: "Форкнути на GitHub",
+    browseSource: "Переглянути код",
+    ctaTitle: "Ваші агенти заслуговують на більше, ніж термінал.",
+    ctaSub:
+      "T3 Code безкоштовний, швидкий і має відкритий код. Установіть його, підключіть інструмент, за який уже платите, і беріться до роботи з агентами.",
+    otherPlatforms: "Інші платформи",
+  },
+  download: {
+    title: "Завантажити T3 Code для macOS, Windows і Linux | T3 Code",
+    description:
+      "Завантажте офіційний настільний застосунок T3 Code для macOS, Windows або Linux чи застосунки для iOS та Android. Єдиний офіційний сайт для завантаження: t3.codes.",
+    breadcrumb: "Завантаження",
+    heading: "Завантажити T3 Code",
+    channelLabel: "Канал випусків",
+    stable: "Стабільний",
+    nightly: "Нічні збірки",
+    intelNote: "Mac з Intel? {link}.",
+    intelLink: "Завантажте збірку x64",
+    armNote: "На ARM? Завантажте {deb} або {appimage} для arm64.",
+    mobile: "Мобільні пристрої",
+    iphoneIpad: "iPhone і iPad",
+    terminal: "Термінал",
+    tryOnce: "Або спробуйте одноразовий запуск без установлення:",
+    allBuilds: "Усі збірки є на {link}",
+    releasesPage: "сторінці випусків GitHub",
+    builtAgo: "Зібрано {age}",
+    releasesFallback: "Випуски",
+  },
+};

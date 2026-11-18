@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Stäng svävande förhandsvisning",
   "2f38f2e60ed18790": "{count, plural, =1 {Visa webbläsaren} one {Visa {count} webbläsarflik} other {Visa {count} webbläsarflikar}}",
   "50abaf3c0482c1fb": "Följ och styr webbläsarflikar som är öppna i den här tråden",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "En flik öppen",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " flikar öppna"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {En flik öppen} other {{count} flikar öppna}}",
   "4d1f68ef069c7a0b": "Ny flik",
   "9c149c8c50e58e4c": "Uppdatera miljöer",
   "d81626aad3a95cb2": "Logga in på ditt T3-konto för att konfigurera {product}.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Ansluter till enheten...",
   "763b01de7b957db6": "{count, plural, =1 {Visa enheten} one {Visa {count} enhet} other {Visa {count} enheter}}",
   "1fce83f5af71f632": "Följ och styr enheter som är öppna i den här tråden",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "En enhet öppen",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " enheter öppna"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {En enhet öppen} other {{count} enheter öppna}}",
   "9ecbf9cadd5bbf7f": "Krascher vid start",
   "0bab38399ee6746c": "Kraschloggen är inte tillgänglig",
   "be735b872d5ac200": "Poster om krascher vid start sparas bara i App Store- och TestFlight-versioner.",

@@ -1221,7 +1221,7 @@ function WebhookEndpointField({
           disabled={rotating || !canRotate}
           onClick={() => void rotateUrl()}
         >
-          <T>Rotate</T>
+          {gt("Rotate", { $context: "verb, replace the webhook URL" })}
         </Button>
       </div>
       {note !== null ? <p className="text-xs text-muted-foreground">{note}</p> : null}

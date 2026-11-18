@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Schwebende Vorschau schließen",
   "2f38f2e60ed18790": "{count, plural, =1 {Browser ansehen} other {{count} Browser-Tabs ansehen}}",
   "50abaf3c0482c1fb": "In diesem Thread geöffnete Browser-Tabs ansehen und steuern",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Ein Tab geöffnet",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " Tabs geöffnet"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {Ein Tab geöffnet} other {{count} Tabs geöffnet}}",
   "4d1f68ef069c7a0b": "Neuer Tab",
   "9c149c8c50e58e4c": "Umgebungen aktualisieren",
   "d81626aad3a95cb2": "Melde dich bei deinem T3-Konto an, um {product} einzurichten.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Verbindung zum Gerät wird hergestellt...",
   "763b01de7b957db6": "{count, plural, =1 {Gerät ansehen} other {{count} Geräte ansehen}}",
   "1fce83f5af71f632": "In diesem Thread geöffnete Geräte ansehen und steuern",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Ein Gerät geöffnet",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " Geräte geöffnet"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {Ein Gerät geöffnet} other {{count} Geräte geöffnet}}",
   "9ecbf9cadd5bbf7f": "Abstürze beim Start",
   "0bab38399ee6746c": "Absturzprotokoll nicht verfügbar",
   "be735b872d5ac200": "Aufzeichnungen über Abstürze beim Start werden nur in Store- und TestFlight-Builds gespeichert.",

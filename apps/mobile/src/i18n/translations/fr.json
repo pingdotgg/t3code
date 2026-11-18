@@ -1765,28 +1765,7 @@
   "c2f0e285ba21bf0f": "Fermer l’aperçu flottant",
   "2f38f2e60ed18790": "{count, plural, =1 {Voir le navigateur} one {Voir {count} onglet du navigateur} other {Voir {count} onglets du navigateur}}",
   "50abaf3c0482c1fb": "Suivez et contrôlez les onglets du navigateur ouverts dans ce fil",
-  "a210f8081a5d0e42": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Un onglet ouvert",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " onglets ouverts"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "97bd56f5784e255d": "{count, plural, =1 {Un onglet ouvert} other {{count} onglets ouverts}}",
   "4d1f68ef069c7a0b": "Nouvel onglet",
   "9c149c8c50e58e4c": "Actualiser les environnements",
   "d81626aad3a95cb2": "Connectez-vous à votre compte T3 pour configurer {product}.",
@@ -1973,28 +1952,7 @@
   "2301668017451371": "Connexion à l’appareil...",
   "763b01de7b957db6": "{count, plural, =1 {Voir l’appareil} one {Voir {count} appareil} other {Voir {count} appareils}}",
   "1fce83f5af71f632": "Suivez et contrôlez les appareils ouverts dans ce fil",
-  "459a156e0efc23f2": {
-    "t": "Plural",
-    "i": 1,
-    "d": {
-      "b": {
-        "singular": "Un appareil ouvert",
-        "other": {
-          "t": "C2",
-          "i": 2,
-          "c": [
-            {
-              "i": 3,
-              "k": "_gt_value_3",
-              "v": "v"
-            },
-            " appareils ouverts"
-          ]
-        }
-      },
-      "t": "p"
-    }
-  },
+  "a92fe56ee3cdd944": "{count, plural, =1 {Un appareil ouvert} other {{count} appareils ouverts}}",
   "9ecbf9cadd5bbf7f": "Plantages au démarrage",
   "0bab38399ee6746c": "Journal des plantages indisponible",
   "be735b872d5ac200": "Les plantages au démarrage ne sont enregistrés que dans les builds de l’App Store et de TestFlight.",

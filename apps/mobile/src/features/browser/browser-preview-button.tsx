@@ -1,4 +1,4 @@
-import { Plural, T, useGT, Var } from "gt-react-native";
+import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -31,17 +31,9 @@ export function BrowserPreviewButton(props: {
       <SymbolView name="globe" size={20} tintColorClassName="accent-icon" type="monochrome" />
       {!compact ? (
         <AppText className="font-t3-medium text-xs text-foreground">
-          <T>
-            <Plural
-              n={props.count}
-              singular="One tab open"
-              other={
-                <>
-                  <Var>{props.count}</Var> tabs open
-                </>
-              }
-            />
-          </T>
+          {gt("{count, plural, =1 {One tab open} other {{count} tabs open}}", {
+            count: props.count,
+          })}
         </AppText>
       ) : props.count > 1 ? (
         <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-primary px-1">
