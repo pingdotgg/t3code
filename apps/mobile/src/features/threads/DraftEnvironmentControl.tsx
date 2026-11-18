@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react-native";
 import { Pressable } from "react-native";
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -14,11 +15,16 @@ export function DraftEnvironmentControl(props: {
   readonly disabled: boolean;
   readonly onChooseEnvironment: () => void;
 }) {
+  const gt = useGT();
   const disconnected = props.connectionState !== "connected";
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Choose environment, ${props.label}, ${disconnected ? "Offline" : "Connected"}`}
+      accessibilityLabel={
+        disconnected
+          ? gt("Choose environment, {label}, Offline", { label: props.label })
+          : gt("Choose environment, {label}, Connected", { label: props.label })
+      }
       disabled={props.disabled}
       onPress={props.onChooseEnvironment}
       className="flex-row items-center gap-1.5 rounded-xl px-3 py-2 active:opacity-65"
@@ -29,7 +35,9 @@ export function DraftEnvironmentControl(props: {
         tintColorClassName="accent-icon-muted"
       />
       <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
-        on {props.label}
+        <T>
+          on <Var>{props.label}</Var>
+        </T>
       </Text>
       <SymbolView name="chevron.right" size={11} tintColorClassName="accent-icon-muted" />
       {disconnected ? <ConnectionStatusDot state="error" pulse={false} size={6} /> : null}
