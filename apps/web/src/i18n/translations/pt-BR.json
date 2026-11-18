@@ -12093,5 +12093,15 @@
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
   "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
-  "fb638c0603fa50c6": "{label} aplicado."
+  "fb638c0603fa50c6": "{label} aplicado.",
+  "2bf11407b8fa9af6": "Tente novamente em um minuto",
+  "1c0024f6fa9aaabf": "Não pode ser usado enquanto você estiver no limite de 5 horas",
+  "2de09bcfd5ae8d51": "Não pode ser usado enquanto você estiver no limite semanal",
+  "6da3a2f994bd5ab9": "Não pode ser usado enquanto você estiver no limite semanal do Opus",
+  "deeb1cbaefcfd9ef": "Não pode ser usado enquanto você estiver no limite semanal do Sonnet",
+  "e1ed5d3257be05b3": "Não pode ser usado enquanto você estiver em um limite que ele não restaura",
+  "fca7999fdb155f5f": "Não restaura o limite que você atingiu",
+  "068a3432eaa18fdd": "Pode ser usado quando você atingir um limite que ele restaura",
+  "b1b7a876e0d101db": "Não pode ser usado agora",
+  "6b27e45149b69d70": "Nenhum uso do Fable nesta semana para devolver"
 }

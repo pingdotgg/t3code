@@ -122,6 +122,29 @@ export function formatDuration(ms: number, resolve: MFunctionType = mFallback): 
   return resolve(msg("{minutes}m", { minutes }));
 }
 
+const RESET_UNAVAILABLE_COPY: Readonly<Record<string, string>> = {
+  "Try again in a minute": msg("Try again in a minute"),
+  "Can't be used while you're at your 5-hour limit": msg(
+    "Can't be used while you're at your 5-hour limit",
+  ),
+  "Can't be used while you're at your weekly limit": msg(
+    "Can't be used while you're at your weekly limit",
+  ),
+  "Can't be used while you're at your weekly Opus limit": msg(
+    "Can't be used while you're at your weekly Opus limit",
+  ),
+  "Can't be used while you're at your weekly Sonnet limit": msg(
+    "Can't be used while you're at your weekly Sonnet limit",
+  ),
+  "Can't be used while you're at a limit it doesn't refill": msg(
+    "Can't be used while you're at a limit it doesn't refill",
+  ),
+  "Doesn't refill the limit you've reached": msg("Doesn't refill the limit you've reached"),
+  "Usable once you reach a limit it refills": msg("Usable once you reach a limit it refills"),
+  "Can't be used right now": msg("Can't be used right now"),
+  "No Fable usage this week to give back": msg("No Fable usage this week to give back"),
+};
+
 /** @public */
 export function resetCreditChoices(
   credits: ServerProviderResetCredits,
@@ -136,6 +159,7 @@ export function resetCreditChoices(
     return credits.options.map((option) => {
       const expires = expiresIn(option.expiresAt);
       const values = { label: option.label, count: option.availableCount };
+      const reason = option.unavailableReason;
       return {
         key: option.creditId,
         summary: expires
@@ -149,7 +173,13 @@ export function resetCreditChoices(
           }),
         ),
         appliedText: resolve(msg("{label} applied.", { label: option.label })),
-        unavailableReason: option.unavailableReason ?? null,
+        unavailableReason: reason
+          ? resolve(
+              Object.hasOwn(RESET_UNAVAILABLE_COPY, reason)
+                ? RESET_UNAVAILABLE_COPY[reason]!
+                : msg("Can't be used right now"),
+            )
+          : null,
         availableCount: option.availableCount,
         input: { ...input, creditId: option.creditId },
       };

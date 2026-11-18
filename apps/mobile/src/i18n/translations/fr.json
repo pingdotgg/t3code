@@ -5201,5 +5201,15 @@
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
-  "fb638c0603fa50c6": "{label} appliqué."
+  "fb638c0603fa50c6": "{label} appliqué.",
+  "2bf11407b8fa9af6": "Réessaie dans une minute",
+  "1c0024f6fa9aaabf": "Impossible à utiliser lorsque ta limite de 5 heures est atteinte",
+  "2de09bcfd5ae8d51": "Impossible à utiliser lorsque ta limite hebdomadaire est atteinte",
+  "6da3a2f994bd5ab9": "Impossible à utiliser lorsque ta limite hebdomadaire Opus est atteinte",
+  "deeb1cbaefcfd9ef": "Impossible à utiliser lorsque ta limite hebdomadaire Sonnet est atteinte",
+  "e1ed5d3257be05b3": "Impossible à utiliser lorsqu’une limite qu’il ne recharge pas est atteinte",
+  "fca7999fdb155f5f": "Ne recharge pas la limite que tu as atteinte",
+  "068a3432eaa18fdd": "Utilisable dès que tu atteins une limite qu’il recharge",
+  "b1b7a876e0d101db": "Impossible à utiliser pour le moment",
+  "6b27e45149b69d70": "Aucune utilisation de Fable à restituer cette semaine"
 }

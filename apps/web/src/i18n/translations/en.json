@@ -12103,5 +12103,15 @@
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
   "9e91e9a77b664e4e": "Could not start a review guide",
-  "fb638c0603fa50c6": "{label} applied."
+  "fb638c0603fa50c6": "{label} applied.",
+  "2bf11407b8fa9af6": "Try again in a minute",
+  "1c0024f6fa9aaabf": "Can't be used while you're at your 5-hour limit",
+  "2de09bcfd5ae8d51": "Can't be used while you're at your weekly limit",
+  "6da3a2f994bd5ab9": "Can't be used while you're at your weekly Opus limit",
+  "deeb1cbaefcfd9ef": "Can't be used while you're at your weekly Sonnet limit",
+  "e1ed5d3257be05b3": "Can't be used while you're at a limit it doesn't refill",
+  "fca7999fdb155f5f": "Doesn't refill the limit you've reached",
+  "068a3432eaa18fdd": "Usable once you reach a limit it refills",
+  "b1b7a876e0d101db": "Can't be used right now",
+  "6b27e45149b69d70": "No Fable usage this week to give back"
 }
