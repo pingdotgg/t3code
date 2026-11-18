@@ -1281,6 +1281,36 @@ describe("an act the agent chose", () => {
     expect(page.picked).toEqual(["Select password", "Password for dana@acme.test"]);
   });
 
+  it("reopens a popup that closed before its line was clicked, from the focused field, and picks the line", async () => {
+    const popupSeen = { text: "" };
+    const { page, server, computer } = actWith({ popupSeen });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "key", key: "down" } }),
+    ).toMatchObject({ steps: ["pressed down", "popup open now: Password for dana@acme.test"] });
+    page.menu = [];
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Password for dana@acme.test" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: [
+        "pressed down to reopen the popup",
+        "picked “Password for dana@acme.test” from the menu",
+      ],
+    });
+    expect(page.picked).toEqual(["Password for dana@acme.test"]);
+    expect(server.requests.at(-1)?.action).toEqual({
+      kind: "click",
+      ref: "menu",
+      role: "menuitem",
+      label: "Password for dana@acme.test",
+    });
+  });
+
   it("switches to a tab already on the site, or the sign-in page it led to, instead of opening another", async () => {
     const opened: string[] = [];
     const pressed: string[] = [];

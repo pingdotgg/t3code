@@ -122,6 +122,8 @@ export type Deps = Session & {
   landed?: Map<string, string>;
   /** The short refs the last look gave ("e7"), and the controls they named. */
   refs?: Map<string, ScreenControl>;
+  /** The popup the agent last saw, from a look or a step, so a line it picks after the popup closed reopens it. */
+  popupSeen?: { text: string };
   log: Logger;
   minConfidence?: number;
   /** Time for the screen to settle after an action. */
@@ -437,12 +439,14 @@ export class ComputerUse {
         );
       const seen = await backend.observe({ signal: run.signal });
       surface = `${seen.app}: ${clip(seen.title, 60)}`;
-      const chosen = actOn(seen, this.resolveRef(seen, act), task.text);
+      const screen = await this.reopenPopup(run, backend, seen, act);
+      const chosen = actOn(screen, this.resolveRef(screen, act), task.text);
       if ("stop" in chosen) return end("stuck", chosen.stop);
       await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
       // A browser closes its saved-account pickers within seconds, so the popup comes back with the step itself.
       if (chosen.action.kind !== "type" && chosen.action.kind !== "scroll") {
         const after = await settled(backend, { signal: run.signal }, this.clock);
+        if (this.deps.popupSeen) this.deps.popupSeen.text = after.popup ?? "";
         if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
       }
       return end("done", "");
@@ -558,6 +562,33 @@ export class ComputerUse {
       (screen.controls.find((c) => c.ref === was.ref) ??
         screen.controls.find((c) => c.role === was.role && c.label === was.label));
     return { ...act, ref: now ? now.ref : act.ref };
+  }
+
+  /**
+   * A click on a line of the popup the agent last saw, after that popup closed (browsers close saved sign-ins within
+   * seconds): down in the focused field opens it again, and the screen once the line is back.
+   */
+  private async reopenPopup(
+    run: Run,
+    backend: ScreenBackend,
+    screen: Observation,
+    act: ComputerAct,
+  ): Promise<Observation> {
+    const label = act.label;
+    if (act.action !== "click" || label === undefined || act.ref !== undefined) return screen;
+    if (popupLines(screen).includes(label) || matchControl(screen.controls, label)) return screen;
+    if (!popupLinesOf(this.deps.popupSeen?.text ?? "").includes(label)) return screen;
+    if (!screen.controls.some((control) => control.focused)) return screen;
+    await this.act(
+      run,
+      backend,
+      screen,
+      { kind: "press", key: "down" },
+      "pressed down to reopen the popup",
+    );
+    return settled(backend, { signal: run.signal }, this.clock, (seen) =>
+      popupLines(seen).includes(label),
+    );
   }
 
   /** A tab of the default browser already on one of `hosts`, switched to in the background. */
@@ -1065,7 +1096,11 @@ function controlAt(controls: ScreenControl[], x: number, y: number): ScreenContr
 /** An agent's step as an action on this screen, or why it cannot be one. */
 /** The lines of a popup or menu open over the window, without the ▸ that marks the highlighted one. */
 function popupLines(screen: Observation): string[] {
-  return (screen.popup ?? "").split(" | ").map((line) => line.replace(/^\u25b8 /, "").trim());
+  return popupLinesOf(screen.popup ?? "");
+}
+
+function popupLinesOf(popup: string): string[] {
+  return popup.split(" | ").map((line) => line.replace(/^\u25b8 /, "").trim());
 }
 
 function actOn(

@@ -112,6 +112,9 @@ export class FakeNotes implements ScreenBackend {
         return done(point);
       }
       case "press":
+        // Like a browser's saved sign-ins, down in the focused box opens its suggestions.
+        if (action.key === "down" && this.focus === "search")
+          this.menu = ["Password for dana@acme.test"];
         if (action.key === "enter" && this.focus === "search" && this.query) this.searched = true;
         if (action.key === "escape") {
           this.query = "";

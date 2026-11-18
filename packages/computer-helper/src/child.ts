@@ -215,6 +215,7 @@ export function createChild(options: ChildOptions): Child {
 
   const landed = new Map<string, string>();
   const refs = new Map<string, ScreenControl>();
+  const popupSeen = { text: "" };
   const runs = new ComputerUseRuns({
     create: (session: Session) => {
       const { desktop, tabs, dock, apps, urls } = machine();
@@ -227,6 +228,7 @@ export function createChild(options: ChildOptions): Child {
         urls: urls ?? null,
         landed,
         refs,
+        popupSeen,
         log,
       });
     },
@@ -350,6 +352,7 @@ export function createChild(options: ChildOptions): Child {
       ...observed
     } = await settledRead(desktop, frame.app ? { app: frame.app } : {}, REAL_CLOCK);
     // Short refs ("e7") instead of long accessibility paths, which a model copies wrong; acts map them back.
+    popupSeen.text = observed.popup ?? "";
     refs.clear();
     const controls = observed.controls.map((control, index) => {
       const ref = `e${index + 1}`;
