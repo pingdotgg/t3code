@@ -9,7 +9,11 @@ import {
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
 import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
-import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
+import {
+  ISSUE_LIST_STALE_TIME_MS,
+  issueEntryKey,
+  issueListTargetsKey,
+} from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
   IssueInvolvement,
@@ -216,7 +220,10 @@ export function IssuesPage() {
     input: listInput,
   }));
   const list = useIssueList(targets);
-  useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
+  useLiveRefresh(list.refresh, {
+    key: issueListTargetsKey(targets),
+    minIntervalMs: ISSUE_LIST_STALE_TIME_MS,
+  });
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);

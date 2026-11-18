@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
+import { canonicalIssueLabels } from "@t3tools/client-runtime/state/issues";
 
 import type { SavedView, SavedViewsKind } from "../SavedViewsMenu";
 import {
@@ -15,7 +16,10 @@ export function issueViewMatches(
 ): boolean {
   const key = (value: IssueListPreferences) => {
     const normalized = issueListPreferences(value);
-    return JSON.stringify({ ...normalized, label: normalized.label?.toSorted() });
+    return JSON.stringify({
+      ...normalized,
+      label: normalized.label === undefined ? undefined : canonicalIssueLabels(normalized.label),
+    });
   };
   return key(issueListPreferences(view.preferences)) === key(preferences);
 }
