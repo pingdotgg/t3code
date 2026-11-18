@@ -61,7 +61,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { scrollTabStripFromRow } from "../motion/gesture";
+import { scrollLeftByWheel, scrollTabStripFromRow } from "../motion/gesture";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { useTheme } from "~/hooks/useTheme";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -956,9 +956,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
-      const previousScrollLeft = viewport.scrollLeft;
-      viewport.scrollLeft += delta;
-      if (viewport.scrollLeft === previousScrollLeft) return;
+      if (!scrollLeftByWheel(viewport, event, delta)) return;
       event.preventDefault();
       update();
     };

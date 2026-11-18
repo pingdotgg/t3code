@@ -93,7 +93,12 @@ import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
-import { scrollTabStripFromRow, setWheelScroller, wheelDeltaPx } from "../motion/gesture";
+import {
+  scrollLeftByWheel,
+  scrollTabStripFromRow,
+  setWheelScroller,
+  wheelDeltaPx,
+} from "../motion/gesture";
 import { useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
@@ -209,7 +214,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         return;
       event.preventDefault();
       event.stopPropagation();
-      strip.scrollLeft += wheelDeltaPx(event.deltaY, event);
+      scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
     },
     { passive: false },
   );

@@ -168,7 +168,7 @@ export function scrollTabStripFromRow(event: WheelEvent, strip: HTMLElement): vo
   if (event.composedPath().includes(strip) && event.deltaX !== 0) return;
   event.preventDefault();
   event.stopPropagation();
-  strip.scrollLeft += wheelDeltaPx(delta, event);
+  scrollLeftByWheel(strip, event, wheelDeltaPx(delta, event));
 }
 
 export function sidewaysWheelScrollsStrip(
