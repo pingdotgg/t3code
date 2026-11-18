@@ -99,14 +99,17 @@ export async function rewriteNoCopyOnWrite(
   const NodeSqlite = await import("node:sqlite");
   const database = new NodeSqlite.DatabaseSync(dbPath);
   try {
-    // DELETE folds the WAL into the file. Closing in WAL mode would delete the new file's WAL.
+    // Leaving WAL folds it into the file, and closing then touches no -wal or -journal at the new
+    // file's path. Switching first, outside exclusive mode, leaves no journal behind.
     database.exec(`
       PRAGMA busy_timeout = 0;
+      PRAGMA journal_mode = DELETE;
       PRAGMA locking_mode = EXCLUSIVE;
       BEGIN EXCLUSIVE;
       COMMIT;
-      PRAGMA journal_mode = DELETE;
     `);
+    const journal = database.prepare("PRAGMA journal_mode").get()?.journal_mode;
+    if (journal !== "delete") throw new Error(`journal_mode is ${String(journal)}, not delete.`);
     await NodeFSP.rm(`${dbPath}-shm`, { force: true });
     await (await NodeFSP.open(copyPath, "wx", mode & 0o777)).close();
     await attributes.mark(copyPath);
