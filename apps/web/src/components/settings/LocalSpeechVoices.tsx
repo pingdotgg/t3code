@@ -25,7 +25,9 @@ export function LocalSpeechVoices({
     ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1]));
   const activeId = destination?.voice ?? catalog.voices.find((voice) => voice.active)?.id;
-  const active = catalog.voices.find((voice) => voice.id === activeId);
+  const active = catalog.voices.find(
+    (voice) => voice.id === activeId && voice.state === "installed",
+  );
   const localChoice = choice?.environmentId === environment.environmentId ? choice : null;
   const language =
     localChoice?.language ??
@@ -162,7 +164,11 @@ export function LocalSpeechVoices({
                       size="sm"
                       variant="destructive-outline"
                       disabled={disabled}
-                      onClick={() => void catalog.run(selected.id, "remove")}
+                      onClick={() =>
+                        void catalog.run(selected.id, "remove").then((updated) => {
+                          if (updated && selected.id === activeId) selectVoice(null);
+                        })
+                      }
                     >
                       <T>Remove voice</T>
                     </Button>
@@ -193,7 +199,11 @@ export function LocalSpeechVoices({
       ) : null}
       {catalog.transfer ? (
         <SettingsRow
-          title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
+          title={
+            catalog.transfer.state === "verifying"
+              ? gt("Verifying {name}", { name: catalog.transfer.name })
+              : gt("Downloading {name}", { name: catalog.transfer.name })
+          }
           status={<span role="status">{gt("{progress}% downloaded", { progress })}</span>}
           control={
             <Button

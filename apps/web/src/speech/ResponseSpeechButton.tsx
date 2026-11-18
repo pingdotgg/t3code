@@ -72,16 +72,16 @@ export function ResponseSpeechButton(props: {
     return null;
   const label =
     phase === "loading"
-      ? "Cancel response audio"
+      ? gt("Cancel response audio")
       : phase === "playing"
-        ? "Pause response audio"
+        ? gt("Pause response audio")
         : phase === "paused"
-          ? "Resume response audio"
+          ? gt("Resume response audio")
           : destination?.engine === "elevenlabs"
-            ? "Read aloud using ElevenLabs"
+            ? gt("Read aloud using ElevenLabs")
             : destination?.engine === "openai"
-              ? "Read aloud using OpenAI"
-              : "Read aloud locally";
+              ? gt("Read aloud using OpenAI")
+              : gt("Read aloud locally");
   const Icon =
     phase === "loading"
       ? SquareIcon
@@ -111,7 +111,7 @@ export function ResponseSpeechButton(props: {
     voiceOutput.setPlaybackRate(playbackRate);
     await voiceOutput.start(props.owner, props.text, async (text, signal) => {
       if (engine === "system") return { text, voice: destination.voice ?? null };
-      if (!prepared) throw new Error("Reconnect this environment before playing a response.");
+      if (!prepared) throw new Error(gt("Reconnect this environment before playing a response."));
       if (
         destination.voice &&
         !environment?.serverConfig?.environment.capabilities.voiceSynthesisOverrides

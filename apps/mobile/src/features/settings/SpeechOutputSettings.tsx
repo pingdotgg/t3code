@@ -81,7 +81,12 @@ export function SpeechOutputSettings({
               : destination
                 ? destination.engine === "system"
                   ? gt("System voices")
-                  : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
+                  : destination.engine === "piper"
+                    ? (chosen?.label ?? gt("Unavailable environment"))
+                    : gt("{provider} via {environment}", {
+                        provider: destination.engine === "elevenlabs" ? "ElevenLabs" : "OpenAI",
+                        environment: chosen?.label ?? gt("Unavailable environment"),
+                      })
                 : gt("Off")
           }
           disabled={!canManage}
@@ -206,10 +211,12 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
         catalog.error ??
         catalog.runtime?.reason ??
         (catalog.runtime?.state === "ready"
-          ? "Runs locally without sending text to a cloud provider."
+          ? gt("Runs locally without sending text to a cloud provider.")
           : catalog.runtime
-            ? `Download Piper for ${catalog.runtime.platform}. No manual installation needed.`
-            : "Reconnect or update this environment to manage Piper.")
+            ? gt("Download Piper for {platform}. No manual installation needed.", {
+                platform: catalog.runtime.platform,
+              })
+            : gt("Reconnect or update this environment to manage Piper."))
       }
     >
       {catalog.runtime ? (
@@ -264,7 +271,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
             ? gt("Checking")
             : !provider
               ? gt("Unavailable")
-              : "Choose the voice used for response playback.")
+              : gt("Choose the voice used for response playback."))
         }
       >
         <ListActionRow
@@ -333,7 +340,10 @@ function CloudPlaybackSettings({
     <>
       <SettingsSection
         title={label}
-        footer={`Response text is sent via ${environment.label} to ${label}. API charges apply.`}
+        footer={gt("Response text is sent via {label} to {labelValue}. API charges apply.", {
+          label: environment.label,
+          labelValue: label,
+        })}
       >
         <ListActionRow
           label={gt("API key")}
@@ -440,7 +450,17 @@ function SpeechApiKeySheet({
       >
         <ListSection
           title={gt("API key")}
-          footer={`Stored on ${environment.label}. Response text is sent to ${label}. API charges apply.${engine === "openai" ? " This key is shared with OpenAI transcription." : " Allow Voices: Read to list your voices."}`}
+          footer={
+            engine === "openai"
+              ? gt(
+                  "Stored on {environment}. Response text is sent to {provider}. API charges apply. This key is shared with OpenAI transcription.",
+                  { environment: environment.label, provider: label },
+                )
+              : gt(
+                  "Stored on {environment}. Response text is sent to {provider}. API charges apply. Allow Voices: Read to list your voices.",
+                  { environment: environment.label, provider: label },
+                )
+          }
         >
           <View className="gap-3 px-4 py-3">
             {sources.length > 0 ? (
@@ -552,13 +572,13 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
     (voice) => voice.id === (destination?.voice ?? config.elevenLabsVoiceId),
   );
   const status = !catalog.connected
-    ? "Connect with playback access to load voices."
+    ? gt("Connect with playback access to load voices.")
     : catalog.failed
-      ? "Could not load voices. Check the API key has Voices: Read permission, then try again."
+      ? gt("Could not load voices. Check the API key has Voices: Read permission, then try again.")
       : catalog.loading
-        ? "Loading voices…"
+        ? gt("Loading voices…")
         : catalog.voices.length === 0
-          ? "No voices are available for this API key."
+          ? gt("No voices are available for this API key.")
           : undefined;
   return (
     <>

@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import {
   VoiceOutputController,
@@ -34,7 +35,7 @@ const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
     try {
       signal.throwIfAborted();
       if (AppState.currentState !== "active")
-        throw new Error("Open the app before playing a response.");
+        throw new Error(m(msg("Open the app before playing a response.")));
       file.write(bytes);
       await new Promise<void>((resolve, reject) => {
         const audio = createAudioPlayer(file.uri, { updateInterval: 500 });
@@ -43,16 +44,18 @@ const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
         currentAudioRate = (rate) => audio.setPlaybackRate(rate, "high");
         let finished = false;
         const playback = createAudioPlaybackSession(audio, false, (requested) => {
-          if (!requested && !finished) finish(new Error("Response playback was interrupted."));
+          if (!requested && !finished)
+            finish(new Error(m(msg("Response playback was interrupted."))));
         });
         current = playback;
         currentAudioPause = () => pauseAudioPlayer(audio);
         const status = audio.addListener("playbackStatusUpdate", (value) => {
-          if (value.error) finish(new Error("Could not play the generated audio."));
+          if (value.error) finish(new Error(m(msg("Could not play the generated audio."))));
           else if (value.didJustFinish) finish();
         });
         const app = AppState.addEventListener("change", (state) => {
-          if (state !== "active") finish(new Error("Response playback stopped in the background."));
+          if (state !== "active")
+            finish(new Error(m(msg("Response playback stopped in the background."))));
         });
         const finish = (error?: unknown) => {
           if (finished) return;
@@ -77,7 +80,8 @@ const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
           return;
         }
         void playback.play().then(() => {
-          if (!playback.requested) finish(new Error("Finish dictation before playing a response."));
+          if (!playback.requested)
+            finish(new Error(m(msg("Finish dictation before playing a response."))));
           else if (!finished) onPlaying();
         }, finish);
       });

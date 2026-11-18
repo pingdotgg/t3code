@@ -22,6 +22,8 @@ import {
   planMobileScopedSettingsPatch,
   planMobileScopedSettingsClear,
 } from "./settings-scoped-server";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
 import { useSettingsWriter } from "./useSettingsWriter";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -66,16 +68,24 @@ export function SettingsSpeechRouteScreen() {
     if (!canWrite) return;
     inFlight.current = true;
     setPending(true);
-    void write(targets, planMobileScopedSettingsPatch(targets, members !== null, patch)).finally(
-      () => {
-        inFlight.current = false;
-        setPending(false);
-        const next = queued.current;
-        queued.current = null;
-        // Whole-entry project writes must retain fields whose successful response has not arrived yet.
-        if (next?.key === targetsKey) update({ ...patch, ...next.patch });
+    const currentTargets = targets.map((target) => ({
+      ...target,
+      environment: {
+        ...target.environment,
+        serverConfig:
+          appAtomRegistry.get(
+            serverEnvironment.configValueAtom(target.environment.environmentId),
+          ) ?? target.environment.serverConfig,
       },
-    );
+    }));
+    const writes = planMobileScopedSettingsPatch(currentTargets, members !== null, patch);
+    void write(targets, writes).finally(() => {
+      inFlight.current = false;
+      setPending(false);
+      const next = queued.current;
+      queued.current = null;
+      if (next?.key === targetsKey) update({ ...patch, ...next.patch });
+    });
   };
   const controls = {
     ...speechPlaybackSelection(

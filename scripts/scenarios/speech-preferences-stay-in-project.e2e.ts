@@ -27,5 +27,8 @@ test(
     await expect(screen.getByRole("combobox", "Read aloud with")).toContainText("System voices");
     await expect(screen.getByRole("combobox", "Playback speed")).toContainText("1.5×");
     await app.screenshot("speech-project-saved");
+    await screen.getByRole("combobox", "Read aloud with").tap();
+    await expect(screen.getByRole("option", "Chosen environment (unavailable)")).toHaveCount(0);
+    await app.screenshot("speech-system-destination");
   },
 );

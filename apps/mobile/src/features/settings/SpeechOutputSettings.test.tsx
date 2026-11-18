@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   update: vi.fn(),
   alert: vi.fn(),
+  readConfig: vi.fn(),
   environments: [] as EnvironmentPresentation[],
 }));
 vi.mock("@effect/atom-react", () => ({
@@ -145,7 +146,12 @@ vi.mock("./settings-environment-filter", () => ({
     ],
   }),
 }));
-vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { updateSettings: {}, configValueAtom: () => ({}) },
+}));
+vi.mock("../../state/atom-registry", () => ({
+  appAtomRegistry: { get: () => mocks.readConfig() },
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
 
 it("defaults off and changes the playback destination on this device without changing server settings", async () => {
@@ -236,6 +242,12 @@ it("defaults off and changes the playback destination on this device without cha
       "Your previous destination is still selected. Please try again.",
     );
     expect(mocks.update).not.toHaveBeenCalled();
+    mocks.save.mockRejectedValueOnce(new Error("rate storage unavailable"));
+    await act(async () => click("Speed picker result"));
+    expect(mocks.alert).toHaveBeenLastCalledWith(
+      "Could not save playback speed",
+      "Your previous playback speed is still selected. Please try again.",
+    );
   } finally {
     act(() => root.unmount());
     reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
@@ -248,7 +260,9 @@ it("keeps a closing speed picker's update when a project destination save is pen
   mocks.update.mockReset();
   const environmentId = EnvironmentId.make("scoped-speech");
   const projectId = ProjectId.make("speech-project");
-  let persisted = DEFAULT_SERVER_SETTINGS;
+  let persisted = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+  });
   mocks.environments = [
     {
       environmentId,
@@ -260,6 +274,10 @@ it("keeps a closing speed picker's update when a project destination save is pen
       },
     } as unknown as EnvironmentPresentation,
   ];
+  mocks.readConfig.mockImplementation(() => ({
+    ...mocks.environments[0]!.serverConfig,
+    settings: persisted,
+  }));
   const started = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
   const completed = Promise.withResolvers<void>();
@@ -272,7 +290,12 @@ it("keeps a closing speed picker's update when a project destination save is pen
         await release.promise;
       }
       persisted = applyServerSettingsPatch(persisted, input.patch);
-      if (++finished === 2) completed.resolve();
+      if (++finished === 1) {
+        persisted = applyServerSettingsPatch(persisted, {
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+        });
+      }
+      if (finished === 2) completed.resolve();
       return AsyncResult.success(persisted);
     },
   );
@@ -302,6 +325,7 @@ it("keeps a closing speed picker's update when a project destination save is pen
     expect(persisted.projectSettingsOverrides[projectId]).toMatchObject({
       speechPlaybackDestination: { environmentId, engine: "piper" },
       speechPlaybackRate: 1.5,
+      defaultAutoPull: true,
     });
     expect(persisted.speechPlaybackDestination).toBeUndefined();
     expect(persisted.speechPlaybackRate).toBeUndefined();

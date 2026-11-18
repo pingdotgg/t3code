@@ -146,7 +146,13 @@ export function SpeechOutputSettings() {
                         : destination
                           ? destination.engine === "system"
                             ? gt("System voices")
-                            : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
+                            : destination.engine === "piper"
+                              ? (chosen?.label ?? gt("Unavailable environment"))
+                              : gt("{provider} via {environment}", {
+                                  provider:
+                                    destination.engine === "elevenlabs" ? "ElevenLabs" : "OpenAI",
+                                  environment: chosen?.label ?? gt("Unavailable environment"),
+                                })
                           : gt("Off")}
                     </span>
                   </span>
@@ -203,6 +209,7 @@ export function SpeechOutputSettings() {
                   </SelectGroup>
                 ))}
                 {destination &&
+                destination.engine !== "system" &&
                 !available.some(
                   (environment) => environment.environmentId === destination.environmentId,
                 ) ? (

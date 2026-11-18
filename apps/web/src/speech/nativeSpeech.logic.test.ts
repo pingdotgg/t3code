@@ -50,14 +50,78 @@ it("uses device voices without uploads, settles cancellation, and rejects unavai
     ).rejects.toThrow("unavailable");
     expect(speech.speak).toHaveBeenCalledOnce();
     speech.getVoices = () => [];
-    speech.speak.mockImplementation(() => {
-      throw new Error("Unexpected speech invocation");
-    });
-    await expect(
-      playNativeSpeech({ text: "Hello", voice: null }, new AbortController().signal, playing, 1),
-    ).rejects.toThrow("unavailable");
+    speech.speak.mockImplementation((utterance: Utterance) => utterance.onend?.());
+    await playNativeSpeech(
+      { text: "Hello", voice: null },
+      new AbortController().signal,
+      playing,
+      1,
+    );
+    expect(speech.speak).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("waits for delayed device voices and releases the voice listener on cancellation or timeout", async () => {
+  vi.useFakeTimers();
+  const events = new EventTarget();
+  const voices: { voiceURI: string }[] = [];
+  const spoken = Promise.withResolvers<void>();
+  const speech = {
+    getVoices: () => voices,
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: vi.fn(events.removeEventListener.bind(events)),
+    speak: vi.fn((utterance: { onend: () => void }) => {
+      utterance.onend();
+      spoken.resolve();
+    }),
+    cancel: vi.fn(),
+  };
+  vi.stubGlobal("window", { speechSynthesis: speech });
+  vi.stubGlobal(
+    "SpeechSynthesisUtterance",
+    class {
+      constructor(readonly text: string) {}
+    },
+  );
+  try {
+    const pending = playNativeSpeech(
+      { text: "Hello", voice: "delayed" },
+      new AbortController().signal,
+      () => {},
+      1,
+    );
+    expect(speech.speak).not.toHaveBeenCalled();
+    voices.push({ voiceURI: "delayed" });
+    events.dispatchEvent(new Event("voiceschanged"));
+    await spoken.promise;
+    await pending;
+    expect(speech.speak).toHaveBeenCalledOnce();
+    voices.length = 0;
+    const controller = new AbortController();
+    const aborted = playNativeSpeech(
+      { text: "Hello", voice: "delayed" },
+      controller.signal,
+      () => {},
+      1,
+    );
+    const rejected = expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    const missing = playNativeSpeech(
+      { text: "Hello", voice: "missing" },
+      new AbortController().signal,
+      () => {},
+      1,
+    );
+    const unavailable = expect(missing).rejects.toThrow("unavailable");
+    await vi.runAllTimersAsync();
+    await unavailable;
+    expect(speech.removeEventListener).toHaveBeenCalledTimes(3);
     expect(speech.speak).toHaveBeenCalledOnce();
   } finally {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   }
 });

@@ -14,39 +14,48 @@ import { useSpeechVoiceCatalog } from "../voice-output/useSpeechVoiceCatalog";
 
 export function LocalSpeechVoices({ environment }: { environment: EnvironmentPresentation }) {
   const gt = useGT();
+  const { destination } = useSpeechOutputDestination();
+  const catalog = useSpeechVoiceCatalog(environment.environmentId);
+  const voiceId =
+    destination?.voice ?? environment.serverConfig?.settings.speechOutput.piperVoiceId;
+  const active = catalog.voices.find(
+    (voice) => voice.id === voiceId && voice.state === "installed",
+  );
   const [open, setOpen] = useState(false);
   return (
     <>
       <ListActionRow
         label={gt("Local voice")}
-        description={
-          environment.serverConfig?.settings.speechOutput.piperVoiceId ||
-          gt("Choose language and voice")
-        }
+        description={active?.name ?? gt("Choose language and voice")}
         onPress={() => setOpen(true)}
       />
-      {open ? <VoicePicker environment={environment} onClose={() => setOpen(false)} /> : null}
+      {open ? (
+        <VoicePicker environment={environment} catalog={catalog} onClose={() => setOpen(false)} />
+      ) : null}
     </>
   );
 }
 
 function VoicePicker({
   environment,
+  catalog,
   onClose,
 }: {
   environment: EnvironmentPresentation;
+  catalog: ReturnType<typeof useSpeechVoiceCatalog>;
   onClose: () => void;
 }) {
   const gt = useGT();
   const { destination, selectVoice, canManage } = useSpeechOutputDestination();
-  const catalog = useSpeechVoiceCatalog(environment.environmentId);
   const [choice, setChoice] = useState<{ language: string; voiceId: string } | null>(null);
   const [choosingLanguage, setChoosingLanguage] = useState(false);
   const languages = [
     ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1]));
   const activeId = destination?.voice ?? catalog.voices.find((voice) => voice.active)?.id;
-  const active = catalog.voices.find((voice) => voice.id === activeId);
+  const active = catalog.voices.find(
+    (voice) => voice.id === activeId && voice.state === "installed",
+  );
   const language =
     choice?.language ??
     active?.language ??
@@ -90,7 +99,11 @@ function VoicePicker({
         ) : null}
         {catalog.transfer ? (
           <ListSection
-            title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
+            title={
+              catalog.transfer.state === "verifying"
+                ? gt("Verifying {name}", { name: catalog.transfer.name })
+                : gt("Downloading {name}", { name: catalog.transfer.name })
+            }
           >
             <View className="p-4">
               <Progress
@@ -140,7 +153,7 @@ function VoicePicker({
                 <ListChoiceRow
                   key={voice.id}
                   label={voice.name}
-                  description={`${voice.quality} · ${formatBytes(voice.size)}${voice.state === "installed" ? " · Installed" : ""}`}
+                  description={`${voice.quality} · ${formatBytes(voice.size)}${voice.state === "installed" ? gt(" · Installed") : ""}`}
                   selected={selected.id === voice.id}
                   separated={index > 0}
                   onPress={() => setChoice({ language: voice.language, voiceId: voice.id })}
@@ -165,7 +178,11 @@ function VoicePicker({
                     label={gt("Remove voice")}
                     tone="danger"
                     disabled={disabled}
-                    onPress={() => void catalog.run(selected.id, "remove")}
+                    onPress={() =>
+                      void catalog.run(selected.id, "remove").then((updated) => {
+                        if (updated && selected.id === activeId) selectVoice(null);
+                      })
+                    }
                   />
                 </>
               ) : (

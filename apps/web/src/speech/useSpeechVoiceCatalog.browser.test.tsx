@@ -31,6 +31,7 @@ import {
   getEnvironmentSpeechVoices,
   getElevenLabsSpeechVoices,
   selectEnvironmentSpeechVoice,
+  removeEnvironmentSpeechVoice,
 } from "@t3tools/client-runtime/voice-input";
 import { useSpeechVoiceCatalog } from "./useSpeechVoiceCatalog";
 
@@ -148,7 +149,7 @@ it("starts off, checks the selected environment, and offers managed Piper instal
   } as ReturnType<typeof useEnvironments>);
   vi.mocked(usePreparedConnection).mockReturnValue(Option.some(prepared));
   let runtime: PiperRuntimeStatus = { state: "not-installed", platform: "linux-x64" };
-  const voices: SpeechSynthesisVoices["voices"] = [
+  let voices: SpeechSynthesisVoices["voices"] = [
     {
       id: "pt_BR-faber-medium",
       name: "Faber",
@@ -197,12 +198,28 @@ it("starts off, checks the selected environment, and offers managed Piper instal
     voice: "pt_BR-faber-medium",
   });
   expect(selectEnvironmentSpeechVoice).not.toHaveBeenCalled();
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  vi.mocked(removeEnvironmentSpeechVoice).mockImplementation(() =>
+    Effect.sync(() => {
+      voices = [{ ...voices[0]!, state: "downloadable", active: false }];
+      return { voices, runtime };
+    }),
+  );
+  await screen.rerender(<SpeechOutputSettings key="remove-selected" />);
+  await screen.getByRole("button", { name: "Remove voice", exact: true }).click();
+  await vi.waitFor(() => expect(getClientSettings().speechOutputDestination?.voice).toBeNull());
   await screen.getByRole("combobox", { name: "Read aloud with" }).click();
   await page.getByRole("option", { name: "Off", exact: true }).click();
   expect(getClientSettings().speechOutputDestination).toBeNull();
   await screen.getByRole("combobox", { name: "Playback speed" }).click();
   await page.getByRole("option", { name: "1.5×", exact: true }).click();
   expect(getClientSettings().speechPlaybackRate).toBe(1.5);
+  await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+  await page.getByRole("option", { name: "System voices", exact: true }).click();
+  await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+  await expect
+    .element(page.getByRole("option", { name: "Chosen environment (unavailable)" }))
+    .not.toBeInTheDocument();
 });
 
 it("configures cloud keys in a dialog before loading and choosing account voices", async () => {

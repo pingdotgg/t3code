@@ -68,19 +68,26 @@ export function useSpeechOutputDestination(
     });
     return true;
   };
+  const saveLocal = (patch: Parameters<typeof save>[0], title: string, message: string) => {
+    void save(patch).catch(() => Dialog.alert(title, message));
+  };
   const setPlaybackRate = (rate: SpeechPlaybackRate) => {
     if (threadRef && voiceOutput.getSnapshot().owner?.startsWith(`${scopedThreadKey(threadRef)}:`))
       voiceOutput.setPlaybackRate(rate);
-    if (!persist({ speechPlaybackRate: rate })) void save({ speechPlaybackRate: rate });
+    if (!persist({ speechPlaybackRate: rate }))
+      saveLocal(
+        { speechPlaybackRate: rate },
+        gt("Could not save playback speed"),
+        gt("Your previous playback speed is still selected. Please try again."),
+      );
   };
   const choose = (destination: SpeechOutputDestination | null) => {
     if (persist({ speechPlaybackDestination: destination })) return;
-    void save({ speechOutputDestination: destination }).catch(() => {
-      Dialog.alert(
-        gt("Could not save speech output choice"),
-        gt("Your previous destination is still selected. Please try again."),
-      );
-    });
+    saveLocal(
+      { speechOutputDestination: destination },
+      gt("Could not save speech output choice"),
+      gt("Your previous destination is still selected. Please try again."),
+    );
   };
   return (
     scoped ?? {

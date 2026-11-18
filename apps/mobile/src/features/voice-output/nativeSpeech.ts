@@ -1,3 +1,5 @@
+import { m } from "../../i18n/messages";
+import { msg } from "gt-react-native";
 import * as Speech from "expo-speech";
 import { AppState } from "react-native";
 import type { NativeSpeechRequest } from "@t3tools/client-runtime/voice-output";
@@ -31,16 +33,16 @@ export async function playNativeSpeech(
   const token = acquireAudioSession("playback", () => interrupt());
   try {
     if (!(await activateAudioSession(token)))
-      throw new Error("Finish dictation before playing a response.");
+      throw new Error(m(msg("Finish dictation before playing a response.")));
     signal.throwIfAborted();
     if (AppState.currentState !== "active")
-      throw new Error("Open the app before playing a response.");
+      throw new Error(m(msg("Open the app before playing a response.")));
     if (request.voice && !(await nativeSpeechVoices()).some((voice) => voice.id === request.voice))
-      throw new Error("This system voice is unavailable on this device.");
+      throw new Error(m(msg("This system voice is unavailable on this device.")));
     signal.throwIfAborted();
     await pendingStop;
     signal.throwIfAborted();
-    if (!isAudioSessionOwner(token)) throw new Error("Response playback was interrupted.");
+    if (!isAudioSessionOwner(token)) throw new Error(m(msg("Response playback was interrupted.")));
     await new Promise<void>((resolve, reject) => {
       let finished = false;
       const finish = (error?: unknown) => {
@@ -53,7 +55,7 @@ export async function playNativeSpeech(
       };
       const abort = () => {
         stopSpeech();
-        finish(signal.reason ?? new Error("Response playback was interrupted."));
+        finish(signal.reason ?? new Error(m(msg("Response playback was interrupted."))));
       };
       interrupt = abort;
       const app = AppState.addEventListener("change", (state) => {
@@ -70,7 +72,7 @@ export async function playNativeSpeech(
         useApplicationAudioSession: true,
         onStart: onPlaying,
         onDone: () => finish(),
-        onStopped: () => finish(new Error("Response playback was interrupted.")),
+        onStopped: () => finish(new Error(m(msg("Response playback was interrupted.")))),
         onError: (error) => finish(error),
       });
     });
