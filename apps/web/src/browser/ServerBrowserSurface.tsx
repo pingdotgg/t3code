@@ -485,6 +485,7 @@ export function ServerBrowserSurface(props: {
     // Registered natively: React's wheel listener is passive and cannot stop the panel scrolling.
     const onWheel = (event: WheelEvent) => {
       const point = pagePoint(event.clientX, event.clientY, false);
+      if (controlRef.current?.controller === "you") cursorRef.current?.show(point !== null);
       if (!point) return;
       event.preventDefault();
       const unit =
