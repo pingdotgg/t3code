@@ -191,7 +191,6 @@ function timelineListStateFor(identity: string): {
     workGroupViewState: rememberedPosition?.disclosures?.workGroupState ?? {
       scrollPositions: new Map(),
       expandedEntries: new Set(),
-      collapsedEntries: new Set(),
     },
   };
 }
@@ -1325,7 +1324,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRevertToTurnCount,
     onRunShellCommand,
     findActive,
-    zen: toolCallVisibility === "zen",
     onImageExpand,
     onFileOpen,
     onUseArtifactTemplate,

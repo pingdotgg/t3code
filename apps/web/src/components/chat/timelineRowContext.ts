@@ -71,8 +71,6 @@ export interface TimelineRowSharedState {
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;
-  /** Zen hides tool calls, so the running turn's thoughts open in full. */
-  zen: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
   onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
@@ -151,8 +149,6 @@ export const TimelineWakeUpsRailInteractionCtx = createContext<{
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
-  /** Entries that open by default and the user closed. */
-  collapsedEntries: Set<string>;
 }
 
 /** One image the group's agent viewed; `item` is null until its URL resolves. */

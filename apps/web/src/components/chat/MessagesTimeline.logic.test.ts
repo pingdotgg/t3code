@@ -3416,13 +3416,11 @@ describe("v2 run and attempt history", () => {
       "working-indicator-row",
       "steer",
       "answer",
-      "step",
       "live-activity-row",
     ]);
     expect(rows([user, step, passed], "zen", running)).toEqual([
       "user",
       "working-indicator-row",
-      "step",
       "live-activity-row",
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
@@ -5660,7 +5658,7 @@ describe("working window", () => {
     expect(workingRow(rows)?.window?.items.map((item) => item.id)).toEqual(["command"]);
   });
 
-  it("shows Zen's live progress and thinking until the turn ends, with or without folding", () => {
+  it("keeps Zen final-answer-only while running and after completion, with or without folding", () => {
     const visibleIds = (input: Parameters<typeof deriveMessagesTimelineRows>[0]) => {
       const derived = deriveMessagesTimelineRows(input);
       // Folding off streams rows in place; the timeline skips the working window.
@@ -5742,7 +5740,9 @@ describe("working window", () => {
               turnWorkFold,
             });
             const label = `${thread} ${state} ${toolCallVisibility} fold=${turnWorkFold}`;
-            if (state !== "running") {
+            if (state === "running" && toolCallVisibility === "zen") {
+              expect(ids, label).toEqual(["prompt"]);
+            } else if (state !== "running") {
               expect(ids, label).toEqual(["prompt", "final"]);
             } else {
               const hidesTools = toolCallVisibility === "hideAll" || toolCallVisibility === "zen";

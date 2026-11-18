@@ -134,7 +134,6 @@ export interface RememberedTimelinePosition {
     readonly workGroupState: {
       scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
       expandedEntries: Set<string>;
-      collapsedEntries: Set<string>;
     };
   };
 }
