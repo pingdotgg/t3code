@@ -8,9 +8,13 @@ import {
 import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
-import type {
-  EnvironmentConnectionPhase,
-  EnvironmentConnectionPresentation,
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import {
+  connectionErrorText,
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
 } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -25,12 +29,18 @@ import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
-export function resolveFilesystemReadAccess(input: {
-  readonly isCatalogReady: boolean;
-  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
-  readonly session: SessionGrantInput | null;
-  readonly sessionError: string | null;
-}) {
+export function resolveFilesystemReadAccess(
+  input: {
+    readonly isCatalogReady: boolean;
+    readonly connection: Pick<
+      EnvironmentConnectionPresentation,
+      "phase" | "error" | "i18nError"
+    > | null;
+    readonly session: SessionGrantInput | null;
+    readonly sessionError: string | null;
+  },
+  resolve: MFunctionType = mFallback,
+) {
   if (input.sessionError !== null) {
     return { canReadFiles: false, isPending: false, error: input.sessionError };
   }
@@ -45,7 +55,10 @@ export function resolveFilesystemReadAccess(input: {
     return {
       canReadFiles: false,
       isPending,
-      error: isPending ? null : (input.connection?.error ?? "This environment is not connected."),
+      error: isPending
+        ? null
+        : ((input.connection === null ? null : connectionErrorText(input.connection, resolve)) ??
+          resolve(msg("This environment is not connected."))),
     };
   }
   return {
@@ -135,7 +148,14 @@ export function getFilesystemBrowseTabCompletion(
   visibleEntries: ReadonlyArray<FilesystemBrowseEntry>,
   filterQuery: string,
 ): { readonly name: string; readonly isComplete: boolean } | null {
-  const [first, ...rest] = visibleEntries;
+  const lowerQuery = filterQuery.toLowerCase();
+  const lowerNormalizedQuery = filterQuery.normalize("NFC").toLowerCase();
+  const prefixEntries = visibleEntries.filter(
+    (entry) =>
+      entry.name.toLowerCase().startsWith(lowerQuery) ||
+      entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery),
+  );
+  const [first, ...rest] = prefixEntries;
   if (first === undefined) return null;
   if (rest.length === 0) return { name: first.name, isComplete: true };
   let prefix = Array.from(first.name);
@@ -151,8 +171,8 @@ export function getFilesystemBrowseTabCompletion(
   }
   const name = prefix.join("");
   const lowerName = name.toLowerCase();
-  return lowerName.length > filterQuery.toLowerCase().length &&
-    visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
+  return lowerName.length > lowerQuery.length &&
+    prefixEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
     ? { name, isComplete: false }
     : null;
 }
