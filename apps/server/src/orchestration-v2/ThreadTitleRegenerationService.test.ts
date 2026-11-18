@@ -162,6 +162,7 @@ function dispatchUserMessage(input: {
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
   readonly titleSeed?: string;
+  readonly messageId?: MessageId;
   readonly createdBy?: "user" | "agent";
   readonly scheduledTaskId?: ScheduledTaskId;
 }) {
@@ -171,7 +172,7 @@ function dispatchUserMessage(input: {
       type: "message.dispatch",
       commandId: CommandId.make(input.command),
       threadId: input.threadId,
-      messageId: MessageId.make(`${input.command}:message`),
+      messageId: input.messageId ?? MessageId.make(`${input.command}:message`),
       text: input.text,
       attachments: input.attachments ?? [],
       ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
@@ -885,7 +886,7 @@ describe("ThreadTitleRegenerationService", () => {
             step: string,
             message: Pick<
               Parameters<typeof dispatchUserMessage>[0],
-              "titleSeed" | "createdBy" | "scheduledTaskId"
+              "titleSeed" | "createdBy" | "scheduledTaskId" | "messageId"
             > = {},
           ) {
             const command = `command:title:auto:${step}`;
@@ -904,6 +905,12 @@ describe("ThreadTitleRegenerationService", () => {
           assert.deepEqual(yield* send("2"), ["regenerate"]);
           assert.equal(yield* title, "Generated 2");
           assert.deepEqual(yield* send("3"), []);
+          assert.deepEqual(
+            yield* send("3-redispatch", {
+              messageId: MessageId.make("command:title:auto:3:message"),
+            }),
+            [],
+          );
           if (compacted) {
             const compactCommand = "command:title:auto:compact";
             yield* dispatchUserMessage({ command: compactCommand, threadId, text: "/compact" });

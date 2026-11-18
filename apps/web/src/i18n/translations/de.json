@@ -12096,7 +12096,6 @@
   "c2fa557278157fe2": "{count, plural, one {Jede Nachricht} other {Alle {count} Nachrichten}}",
   "e4f559412c37d454": "Automatische Titelaktualisierung",
   "7207e3123ba1b64a": "Aktualisiert den Titel im Gesprächsverlauf. Selbst umbenannte Threads behalten ihren Namen.",
-  "3e420371edfdb270": "automatische Titelaktualisierung",
   "75d8614e73de93ac": "Thread-Titel automatisch aktualisieren",
   "e2758e8ccf2eed48": "Zählt deine Nachrichten. Jede Aktualisierung benötigt eine Textgenerierungsanfrage.",
   "313896c76cb79213": "Nachrichten zwischen Titelaktualisierungen",

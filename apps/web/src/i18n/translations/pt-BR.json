@@ -12095,7 +12095,6 @@
   "c2fa557278157fe2": "{count, plural, one {A cada mensagem} other {A cada {count} mensagens}}",
   "e4f559412c37d454": "Regeneração automática de títulos",
   "7207e3123ba1b64a": "Regenera o título conforme a conversa avança. As conversas que você renomear mantêm o nome.",
-  "3e420371edfdb270": "regeneração automática de títulos",
   "75d8614e73de93ac": "Regenerar títulos de conversas automaticamente",
   "e2758e8ccf2eed48": "Conta as mensagens que você envia. Cada regeneração usa uma solicitação de geração de texto.",
   "313896c76cb79213": "Mensagens entre regenerações de títulos",

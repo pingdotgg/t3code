@@ -9804,7 +9804,6 @@
   "6c72064a8b709f24": "Reset text generation model to default",
   "6560b4e16da91b06": "Text generation model not saved",
   "7207e3123ba1b64a": "Regenerates a thread's title as the conversation moves on. Threads you rename keep their name.",
-  "3e420371edfdb270": "automatic title regeneration",
   "75d8614e73de93ac": "Regenerate thread titles automatically",
   "e2758e8ccf2eed48": "Counts the messages you send. Each regeneration is one text generation request.",
   "313896c76cb79213": "Messages between title regenerations",

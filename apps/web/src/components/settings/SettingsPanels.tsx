@@ -2302,7 +2302,7 @@ export function ThreadsSettingsPanel() {
               settings.threadTitleRegenerationInterval !==
               DEFAULT_UNIFIED_SETTINGS.threadTitleRegenerationInterval ? (
                 <SettingResetButton
-                  label={gt("automatic title regeneration")}
+                  ariaLabel={gt("Reset to default")}
                   onClick={() =>
                     updateSettings({
                       threadTitleRegenerationInterval:

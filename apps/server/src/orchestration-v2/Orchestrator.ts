@@ -6834,6 +6834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const all = new Map(
       [...stored.messages, ...userMessages].map((message) => [message.id, message]),
     );
+    if (all.has(command.messageId)) return false;
     return ([...all.values()].filter(fromPerson).length + 1) % interval === 0;
   });
 
