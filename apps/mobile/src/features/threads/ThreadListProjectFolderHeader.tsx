@@ -2,6 +2,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -18,10 +19,10 @@ const STATUS_COLOR = {
 } as const;
 
 const STATUS_LABEL = {
-  attention: "Needs you",
-  failed: "Failed",
-  unread: "Done",
-  working: "Working",
+  attention: msg("Needs you"),
+  failed: msg("Failed"),
+  unread: msg("Done"),
+  working: msg("Working"),
 } as const;
 
 export const ThreadListProjectFolderHeader = memo(function ThreadListProjectFolderHeader(props: {
@@ -31,16 +32,27 @@ export const ThreadListProjectFolderHeader = memo(function ThreadListProjectFold
   readonly onNewThread: (project: EnvironmentProject) => void;
 }) {
   const { item, onToggle, onNewThread } = props;
+  const gt = useGT();
+  const resolve = useMessages();
   const project = item.scope.representative;
   const canCreate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
   const sidebar = props.pane === "sidebar";
-  const statusLabel = item.status === null ? "" : `, ${STATUS_LABEL[item.status]}`;
+  const labelVariables = { project: item.scope.title, count: item.hiddenCount };
+  const accessibilityLabel =
+    item.status === null
+      ? gt("{project}, {count} hidden threads", labelVariables)
+      : gt("{project}, {count} hidden threads, {status}", {
+          ...labelVariables,
+          status: resolve(STATUS_LABEL[item.status]),
+        });
   return (
     <View className={cn("mt-2 flex-row items-center", sidebar ? "px-3" : "px-5")}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${item.scope.title}, ${item.hiddenCount} hidden threads${statusLabel}`}
-        accessibilityHint={item.expanded ? "Collapses the project" : "Expands the project"}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={
+          item.expanded ? gt("Collapses the project") : gt("Expands the project")
+        }
         accessibilityState={{ expanded: item.expanded, disabled: item.disabled }}
         disabled={item.disabled}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
@@ -81,7 +93,7 @@ export const ThreadListProjectFolderHeader = memo(function ThreadListProjectFold
       {!item.scope.archived && canCreate ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`New thread in ${item.scope.title}`}
+          accessibilityLabel={gt("New thread in {project}", { project: item.scope.title })}
           disabled={item.disabled}
           className="min-h-11 min-w-11 items-center justify-center"
           onPress={() => onNewThread(project)}

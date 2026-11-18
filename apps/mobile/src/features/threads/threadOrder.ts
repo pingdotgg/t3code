@@ -6,6 +6,9 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ThreadMoveDestination =
   | "up"
@@ -290,12 +293,19 @@ export function threadDropLifecycle(
 
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
-export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
+export function threadDragAction(
+  source: ThreadDragSection,
+  destination: ThreadDragSection,
+  resolve: MessageResolver = m,
+) {
   if (destination === "snoozed") return null;
-  if (destination === "settled") return source === "settled" ? null : "Settle";
-  if (source === destination) return "Reorder";
-  if (destination === "pinned") return "Pin";
-  if (source === "pinned") return "Unpin";
-  if (source === "settled") return "Unsettle";
-  return "Unsnooze";
+  if (destination === "settled")
+    return source === "settled"
+      ? null
+      : resolve(msg("Settle", { $context: "verb, thread action" }));
+  if (source === destination) return resolve(msg("Reorder", { $context: "verb, thread action" }));
+  if (destination === "pinned") return resolve(msg("Pin", { $context: "verb, thread action" }));
+  if (source === "pinned") return resolve(msg("Unpin", { $context: "verb, thread action" }));
+  if (source === "settled") return resolve(msg("Unsettle", { $context: "verb, thread action" }));
+  return resolve(msg("Unsnooze", { $context: "verb, thread action" }));
 }

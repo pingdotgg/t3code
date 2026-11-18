@@ -4,6 +4,7 @@ import { isListedThreadLineage } from "@t3tools/contracts";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { useMemo, useSyncExternalStore } from "react";
 
+import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -280,6 +281,7 @@ export function useThreadListV2(input: {
         collapsedProjectKeys: input.collapsedProjectKeys,
         keepEmptyProjectFolders: input.projectRefs != null,
         selectedThreadKey: input.selectedThreadKey,
+        resolve: keepMarked,
       }),
     [
       layout,

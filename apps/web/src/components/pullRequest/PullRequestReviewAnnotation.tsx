@@ -16,6 +16,7 @@ import {
   CircleCheckIcon,
   CircleIcon,
 } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { type ReactNode, useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
@@ -92,6 +93,7 @@ export function PendingReviewCommentCard({
   comment: PendingReviewComment;
   onRemove: () => void;
 }) {
+  const gt = useGT();
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -100,12 +102,14 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending. Sent when you submit the review</span>
+        <span>
+          <T>Pending. Sent when you submit the review</T>
+        </span>
         <Button
           size="icon-xs"
           variant="ghost"
           className="ml-auto"
-          aria-label="Discard this comment"
+          aria-label={gt("Discard this comment")}
           onClick={onRemove}
         >
           <Trash2Icon className="size-3.5" />
@@ -124,6 +128,7 @@ export function InlineReviewThreads({
   threads: ReadonlyArray<PullRequestReviewThread>;
   renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
 }) {
+  const gt = useGT();
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
   const open = threads.filter((thread) => !thread.isResolved);
@@ -137,8 +142,10 @@ export function InlineReviewThreads({
     authors.set(comment.author?.login ?? "ghost", comment.author);
   }
   if (authors.size === 0) authors.set("ghost", null);
-  const label =
-    resolved.length === 1 ? "Resolved conversation" : `${resolved.length} resolved conversations`;
+  const label = gt(
+    "{count, plural, =1 {Resolved conversation} other {{count} resolved conversations}}",
+    { count: resolved.length },
+  );
   return (
     <>
       {resolved.length > 0 ? (
@@ -187,7 +194,7 @@ export function ReviewThreadCard({
   completionScope,
   pending,
   fixPending,
-  fixLabel = "Fix in a thread",
+  fixLabel,
   onFix,
   onAddToChat,
   onReply,
@@ -224,6 +231,7 @@ export function ReviewThreadCard({
   /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
   hidden?: boolean;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
@@ -317,8 +325,13 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          {thread.isResolved
+            ? gt("Resolved", { $context: "review thread state" })
+            : gt("Open", { $context: "review thread state" })}{" "}
+          ·{" "}
+          {gt("{count, plural, one {{count} comment} other {{count} comments}}", {
+            count: commentCount,
+          })}
         </button>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
@@ -330,7 +343,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
+            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a thread"))}
           </Button>
         ) : null}
         {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
@@ -341,7 +354,7 @@ export function ReviewThreadCard({
             onClick={() => onAddToChat({ ...thread, comments })}
           >
             <MessageSquarePlusIcon className="size-3" />
-            Add to chat
+            <T>Add to chat</T>
           </Button>
         ) : null}
         {canResolve ? (
@@ -352,7 +365,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved ? gt("Unresolve") : gt("Resolve")}
           </Button>
         ) : null}
       </div>
@@ -384,7 +397,7 @@ export function ReviewThreadCard({
                     cwd={workspaceRoot}
                     environmentId={environmentId}
                     completionScope={completionScope}
-                    label="Edit comment"
+                    label={gt("Edit comment")}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -399,7 +412,7 @@ export function ReviewThreadCard({
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton
-                        aria-label="Edit comment"
+                        aria-label={gt("Edit comment")}
                         onClick={() => setEditingId(comment.id)}
                       />
                     ) : null}
@@ -416,7 +429,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "Loading..." : "Load more comments"}
+                {loadingMore ? gt("Loading...") : gt("Load more comments")}
               </Button>
             </div>
           ) : null}
@@ -441,8 +454,8 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
-                      placeholder="Reply"
-                      aria-label="Reply to this conversation"
+                      placeholder={gt("Reply", { $context: "noun, placeholder" })}
+                      aria-label={gt("Reply to this conversation")}
                       onValueChange={setReply}
                       onKeyDown={submitKeys({
                         value: reply,
@@ -456,7 +469,7 @@ export function ReviewThreadCard({
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                       <TextFieldSpeechControls speech={speech} disabled={pending} />
                       <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        Cancel
+                        <T>Cancel</T>
                       </Button>
                       <Button
                         size="xs"
@@ -467,7 +480,7 @@ export function ReviewThreadCard({
                         }
                         onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
-                        Reply
+                        <T context="verb, button">Reply</T>
                       </Button>
                     </div>
                   </div>
@@ -475,7 +488,7 @@ export function ReviewThreadCard({
               </SpeechTextField>
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
-                Reply
+                <T context="verb, button">Reply</T>
               </Button>
             )
           ) : null}
