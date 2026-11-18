@@ -369,6 +369,11 @@ export function ComposerAttachmentMediaRow({
           maxFileAttachmentBytes !== null &&
           file.sizeBytes <= maxFileAttachmentBytes;
         const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
+        const needsReattach =
+          file.file === null &&
+          upload?.status === "failed" &&
+          upload.environmentId === environmentId &&
+          upload.retryMode === "reattach";
         return (
           <div
             key={file.id}
@@ -401,32 +406,38 @@ export function ComposerAttachmentMediaRow({
                 <ComposerAttachmentUploadProgress id={file.id} upload={upload} />
               </span>
             )}
-            {upload?.status === "failed" && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="overlay"
-                      size="icon-xs"
-                      className="absolute bottom-1 left-1"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={gt("Retry upload for {name}", { name: file.name })}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {attachmentUploadFailureText(upload, messages)}
-                </TooltipPopup>
-              </Tooltip>
+            {needsReattach ? (
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
+                {gt("Remove to send")}
+              </span>
+            ) : (
+              upload?.status === "failed" && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="overlay"
+                        size="icon-xs"
+                        className="absolute bottom-1 left-1"
+                        onClick={() =>
+                          retryAttachmentUpload({
+                            environmentId,
+                            image: file,
+                            draftTarget: attachmentDraftTarget,
+                          })
+                        }
+                        disabled={!canOperateThread}
+                        aria-label={gt("Retry upload for {name}", { name: file.name })}
+                      />
+                    }
+                  >
+                    <RefreshIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    {attachmentUploadFailureText(upload, messages)}
+                  </TooltipPopup>
+                </Tooltip>
+              )
             )}
             <Button
               variant="media-close"
@@ -479,8 +490,15 @@ export function ComposerAttachmentFileList({
           maxFileAttachmentBytes !== null &&
           file.sizeBytes <= maxFileAttachmentBytes;
         const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
-        const needsReattach = composerFileNeedsReattach(file);
-        const canReattachFile = fileStagingLimit !== null && file.sizeBytes <= fileStagingLimit;
+        const isReattachMarker = composerFileNeedsReattach(file);
+        const needsReattach =
+          isReattachMarker ||
+          (file.file === null &&
+            upload?.status === "failed" &&
+            upload.environmentId === environmentId &&
+            upload.retryMode === "reattach");
+        const canReattachFile =
+          isReattachMarker && fileStagingLimit !== null && file.sizeBytes <= fileStagingLimit;
         return (
           <div
             key={file.id}
