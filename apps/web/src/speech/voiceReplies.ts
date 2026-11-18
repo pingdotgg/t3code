@@ -20,7 +20,7 @@ import { readPreparedConnection } from "../state/session";
 import { environmentThreadDetails } from "../state/threads";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { toSpeakableSentences } from "./speakable";
-import { latestReply, VOICE_MODE_NOTICES } from "./voiceReplies.logic";
+import { latestReply } from "./voiceReplies.logic";
 
 export type ActiveVoiceMode = Exclude<VoiceMode, "off">;
 
@@ -78,16 +78,13 @@ export async function setVoiceThread(
   return saved;
 }
 
-/** Sets `thread`'s voice to `mode` and says so. */
-export async function changeVoiceMode(
+/** Sets `thread`'s voice to `mode`; resolves whether it saved. */
+export function changeVoiceMode(
   registry: AtomRegistry.AtomRegistry,
   thread: ScopedThreadRef,
   mode: VoiceMode,
-): Promise<void> {
-  const saved = await (mode === "off"
-    ? setVoiceThread(registry, null)
-    : setVoiceThread(registry, thread, mode));
-  if (saved) toastManager.add({ type: "info", ...VOICE_MODE_NOTICES[mode] });
+): Promise<boolean> {
+  return mode === "off" ? setVoiceThread(registry, null) : setVoiceThread(registry, thread, mode);
 }
 
 /** `thread`'s voice mode. */

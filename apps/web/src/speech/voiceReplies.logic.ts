@@ -17,15 +17,6 @@ export function nextShortcutVoiceMode(mode: VoiceMode): VoiceMode {
   return mode === "oneWay" ? "twoWay" : "oneWay";
 }
 
-export const VOICE_MODE_NOTICES: Record<VoiceMode, { title: string; description?: string }> = {
-  off: { title: "Voice off" },
-  oneWay: { title: "One-way voice on", description: "Replies in this thread are read aloud." },
-  twoWay: {
-    title: "Two-way voice on",
-    description: "Speak, and what you say is sent when you pause. Replies are read aloud.",
-  },
-};
-
 interface Reply {
   readonly runId: RunId;
   readonly text: string;
