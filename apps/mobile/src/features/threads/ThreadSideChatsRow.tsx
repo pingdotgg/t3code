@@ -60,7 +60,7 @@ export function ThreadSideChatsRow(props: {
                       ? gt("Open side chat {title}, needs approval", { title: sideChat.title })
                       : gt("Open side chat {title}, needs input", { title: sideChat.title })
                 }
-                className="min-h-[44px] max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5"
+                className="min-h-[44px] min-w-[44px] max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5"
                 onPress={() =>
                   openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
                 }
