@@ -917,10 +917,18 @@ export const layer = Layer.effect(
         if (removed.length > 0) yield* notifyChanged;
         return;
       }
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
-        "turnItems",
-        "messages",
-      ]);
+      // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+      // thread holds tens of thousands of items.
+      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
+        thread,
+        ["turnItems", "messages"],
+        {
+          messageIds: [messageId],
+          turnItemRunId: run.id,
+          turnItemTypes: ["error"],
+          turnItemStatuses: ["failed"],
+        },
+      );
       // A queued message promoted to a steer cancels its run and joins the active one.
       if (
         run.status === "cancelled" &&

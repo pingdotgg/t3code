@@ -293,6 +293,39 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect("resolves both legacy Azure work item URLs through the bound project", () =>
+    Effect.gen(function* () {
+      const tracker = IssueTrackerKind.make("azure-devops");
+      const host = "acme.visualstudio.com";
+      const service = yield* makeService({
+        projects: [
+          project({ id: "api", repository: "Api/_git/api", provider: tracker, host }),
+          project({
+            id: "web",
+            repository: "DefaultCollection/Web/_git/web",
+            provider: tracker,
+            host,
+          }),
+        ],
+        trackers: [fakeTracker({ kind: tracker })],
+      });
+      for (const path of ["Web", "DefaultCollection/Web"]) {
+        const ref = yield* service.resolveUrl(
+          `https://${host}/${path}/_workitems/edit/9`,
+          "api" as ProjectId,
+        );
+        expect(ref).toEqual({
+          projectId: "web",
+          tracker,
+          host,
+          scope: "DefaultCollection/Web",
+          key: "9",
+          writable: true,
+        });
+      }
+    }),
+  );
+
   it.effect("sends writes as interactive requests and reads as background ones", () =>
     Effect.gen(function* () {
       const interactive: Array<readonly [string, boolean]> = [];

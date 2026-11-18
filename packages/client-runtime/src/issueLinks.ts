@@ -78,7 +78,9 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   const preferFirst = (candidates: typeof bound) =>
     candidates.find((candidate) => candidate.project.id === input.preferredProjectId) ??
     candidates[0];
-  const own = preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope));
+  const own =
+    preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope)) ??
+    preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scopeAlias));
   const lender = own ?? preferFirst(bound);
   if (lender === undefined) return null;
   return {

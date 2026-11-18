@@ -392,7 +392,12 @@ function isManagedEndpointNotFound(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
-  if ("_tag" in cause && (cause._tag === "NotFound" || cause._tag === "TunnelNotFound")) {
+  if (
+    "_tag" in cause &&
+    (cause._tag === "NotFound" ||
+      cause._tag === "TunnelNotFound" ||
+      cause._tag === "RecordNotFound")
+  ) {
     return true;
   }
   if ("status" in cause && cause.status === 404) {
