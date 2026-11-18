@@ -1,8 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import {
-  resolveChangeRequestMediaUrl,
-  pullRequestMediaResource,
-} from "@t3tools/client-runtime/pull-request-markdown";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
+import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
 import type { FilePreviewItem } from "../../components/ui/FilePreviewModal.types";
 
 import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";

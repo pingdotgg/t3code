@@ -679,8 +679,8 @@ function useChatMarkdownState(
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Media unavailable",
-              description: "Reconnect to this environment and open the media again.",
+              title: gt("Media unavailable"),
+              description: gt("Reconnect to this environment and open the media again."),
             }),
           );
       },

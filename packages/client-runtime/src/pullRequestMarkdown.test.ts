@@ -9,12 +9,12 @@ import { SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 
 import {
   makePullRequestMediaKindAtom,
+  pullRequestMediaResource,
   splitPullRequestBody,
   type PullRequestBodySegment,
 } from "./pullRequestMarkdown.ts";
 import {
   changeRequestReferenceAutolinker,
-  pullRequestMediaResource,
   resolveChangeRequestMediaUrl,
 } from "./pullRequestReferences.ts";
 
