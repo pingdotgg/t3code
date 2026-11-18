@@ -210,6 +210,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
   const writeSettings = useSettingsWriter();
+  const requestRules = reference?.settings.requestRewriteRules ?? [];
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
       const queued = queuedPatch.current;
@@ -595,6 +596,34 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ claudeHooks: value })}
                   />
                 </SettingsSection>
+                {requestRules.length > 0 ? (
+                  <SettingsSection title="Request rules">
+                    {requestRules.map((rule) => (
+                      <SettingsSwitchRow
+                        key={rule.id}
+                        icon="doc.text"
+                        label={rule.name.trim() || "Unnamed rule"}
+                        subtitle={managedSubtitle(
+                          "requestRewriteRules",
+                          `${rule.action} · ${rule.target}. Applies to Claude sessions opened while it is on. Edit rules on web or desktop.`,
+                        )}
+                        value={rule.enabled}
+                        disabled={
+                          disabledFor("requestRewriteRules") || isMixed("requestRewriteRules")
+                        }
+                        onValueChange={(value) =>
+                          write({
+                            requestRewriteRules: requestRules.map((candidate) =>
+                              candidate.id === rule.id
+                                ? { ...candidate, enabled: value }
+                                : candidate,
+                            ),
+                          })
+                        }
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 <CompletionAudioSettingsRows />
               </>
