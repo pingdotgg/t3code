@@ -51,6 +51,7 @@ export function pullRequestSavedViewPatch(
     state: preferences.state,
     environmentId: preferences.environmentId,
     projectId: preferences.projectId,
+    projectEnvironmentId: preferences.projectEnvironmentId,
     host: preferences.host,
     q: preferences.q,
     draft: preferences.draft,
