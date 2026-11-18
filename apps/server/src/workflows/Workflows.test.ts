@@ -28,7 +28,7 @@ import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
 import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
 import Migration0106 from "../persistence/Migrations/106_WorkflowWaitWatch.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
-import { Issue, unavailable, WorkflowForge } from "./WorkflowForge.ts";
+import { Issue, unavailable, WorkflowForge, WorkflowForgeError } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
 import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";

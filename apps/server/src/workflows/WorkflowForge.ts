@@ -228,7 +228,7 @@ export const layer = Layer.effect(
     });
 
     const issueRef = Effect.fn("WorkflowForge.issueRef")(function* (issue: IssueAddress) {
-      if (!("url" in issue)) {
+      if (!("project" in issue)) {
         return {
           projectId: issue.projectId,
           tracker: issue.tracker,
@@ -252,7 +252,7 @@ export const layer = Layer.effect(
     const pullRequestRef = Effect.fn("WorkflowForge.pullRequestRef")(function* (
       pullRequest: PullRequestAddress,
     ) {
-      if (!("url" in pullRequest)) {
+      if (!("project" in pullRequest)) {
         return {
           projectId: pullRequest.projectId,
           host: pullRequest.host,
