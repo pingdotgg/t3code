@@ -8305,6 +8305,8 @@ describe("AcpAdapterV2", () => {
             | Parameters<RuntimeService["handleSessionUpdate"]>[0]
             | undefined;
           const promptSettled = yield* Deferred.make<void>();
+          const nextPromptStarted = yield* Deferred.make<void>();
+          let promptCount = 0;
           const adapter = yield* makeAcpAdapterV2({
             testHooks: {
               afterPromptSettledWithBackgroundWork: () =>
@@ -8349,6 +8351,12 @@ describe("AcpAdapterV2", () => {
                 environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
                 wrapRuntime: (runtime) => ({
                   ...runtime,
+                  prompt: (payload, options) =>
+                    ++promptCount === 1
+                      ? runtime.prompt(payload, options)
+                      : Deferred.succeed(nextPromptStarted, undefined).pipe(
+                          Effect.andThen(Effect.never),
+                        ),
                   handleSessionUpdate: (handler) =>
                     Effect.sync(() => {
                       sessionUpdateHandler = handler;
@@ -8506,6 +8514,42 @@ describe("AcpAdapterV2", () => {
             Stream.runCollect,
           );
           observed = [...observed, ...late, ...(yield* Queue.clear(events))];
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+            }),
+          );
+          yield* Deferred.await(nextPromptStarted);
+          secondSubagentResult = "DURING_NEXT_TURN_FULL_RESULT";
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-generic-2",
+              title: "second background subagent",
+              kind: "other",
+              status: "completed",
+              rawOutput: { content: secondSubagentResult },
+            },
+          });
+          observed = [
+            ...observed,
+            ...(yield* Stream.fromQueue(events).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "subagent" &&
+                  event.turnItem.result === "DURING_NEXT_TURN_FULL_RESULT",
+              ),
+              Stream.runCollect,
+            )),
+            ...(yield* Queue.clear(events)),
+          ];
           const results = observed.flatMap((event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "subagent" &&
@@ -8518,6 +8562,7 @@ describe("AcpAdapterV2", () => {
             "SECOND_DONE",
             "SECOND_FULL_RESULT",
             "AFTER_CLEANUP_FULL_RESULT",
+            "DURING_NEXT_TURN_FULL_RESULT",
           ]);
           const childUpdates = observed.flatMap((event) =>
             event.type === "subagent.updated" &&
@@ -8532,6 +8577,9 @@ describe("AcpAdapterV2", () => {
           );
           assert.equal(childUpdates[1]?.completedAt, childUpdates[0]?.completedAt);
           assert.equal(childUpdates[2]?.completedAt, childUpdates[0]?.completedAt);
+          assert.equal(childUpdates[3]?.runId, childUpdates[0]?.runId);
+          assert.equal(childUpdates[3]?.parentNodeId, childUpdates[0]?.parentNodeId);
+          assert.equal(childUpdates[3]?.completedAt, childUpdates[0]?.completedAt);
           const replies = observed.flatMap((event) =>
             event.type === "message.updated" &&
             event.message.threadId === childUpdates[0]?.childThreadId &&
@@ -8545,6 +8593,7 @@ describe("AcpAdapterV2", () => {
           );
           assert.equal(replies[1]?.id, replies[0]?.id);
           assert.equal(replies[2]?.id, replies[0]?.id);
+          assert.equal(replies[3]?.id, replies[0]?.id);
           assert.isFalse(
             yield* hasPendingBackgroundWork,
             "finalize-window terminal must clear the carryover pin",

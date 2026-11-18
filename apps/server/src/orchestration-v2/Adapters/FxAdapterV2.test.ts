@@ -368,7 +368,7 @@ describe("FxAdapterV2", () => {
         outbound("session/new", {
           cwd: "<workspace>",
           mcpServers: "<any>",
-          _meta: { fx: { profileMcpServers: true } },
+          _meta: FX_SESSION_META,
         }),
         answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),

@@ -5397,6 +5397,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return;
           }
+          const completed = yield* Ref.get(completedSubagentTurn);
+          if (
+            !(yield* Ref.get(stoppedRunQuarantine)) &&
+            completed !== null &&
+            completed !== context &&
+            completed.nativeThreadId === (yield* Ref.get(activeSessionId)) &&
+            (yield* applyFinalizedActiveTurnSubagentTerminal(completed, notification, true))
+          )
+            return;
           if (yield* followNativeChild(notification, context)) return;
           if (
             followsAgentWorkState &&
@@ -5473,13 +5482,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (yield* Ref.get(stoppedRunQuarantine)) {
               return;
             }
-            const completed = yield* Ref.get(completedSubagentTurn);
-            if (
-              completed !== null &&
-              completed.nativeThreadId === (yield* Ref.get(activeSessionId)) &&
-              (yield* applyFinalizedActiveTurnSubagentTerminal(completed, notification, true))
-            )
-              return;
             const bufferOutcome = yield* bufferPostSettleWake(notification);
             // Completed roots retain subscribers and can project terminals now; interrupted roots may lack runId ownership.
             const carryover = yield* Ref.get(carryoverSubagents);
@@ -6542,6 +6544,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           enrichOnly = false,
         ) {
           if (flavor.extractSubagentUpdate === undefined) return false;
+          const active = yield* Ref.get(activeTurn);
 
           const applyTerminal = Effect.fnUntraced(function* (
             subagent: ActiveAcpSubagent,
@@ -6581,6 +6584,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ) {
                 continue;
               }
+              if (
+                enrichOnly &&
+                active !== null &&
+                active !== context &&
+                (active.subagents.has(subagentUpdate.nativeTaskId) ||
+                  !context.subagents.has(subagentUpdate.nativeTaskId))
+              )
+                continue;
               const subagent =
                 context.subagents.get(subagentUpdate.nativeTaskId) ??
                 (subagentUpdate.childSessionId === null
@@ -6601,6 +6612,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (yield* applyTerminal(subagent, subagentUpdate)) return true;
             }
           }
+
+          if (enrichOnly && active !== null && active !== context) return false;
 
           if (
             sessionUpdate.sessionUpdate === "user_message_chunk" &&
