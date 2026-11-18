@@ -597,7 +597,7 @@ export function ServerBrowserSurface(props: {
       type !== "pointerdown" &&
         (cancelled || type === "pointerup" || previous !== 0 || event.buttons !== 0),
     );
-    cursorRef.current?.show(point !== null);
+    cursorRef.current?.show(pagePoint(clientX, clientY, false) !== null);
     if (!point) return;
     const at = { x: point.x, y: point.y, modifiers: previewStreamModifiers(event) };
     const mouse = (action: "down" | "up", button: PreviewStreamMouseButton, buttons: number) => {
