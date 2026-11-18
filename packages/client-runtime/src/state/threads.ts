@@ -922,6 +922,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     },
   );
 
+  // A stream defect parks the subscription until something resubscribes it.
+  const resubscribes = yield* Queue.unbounded<void>();
+  // A 404 can arrive before the thread exists, so a miss asks HTTP again while mounted.
+  let httpMisses = 0;
+
   if (Option.isSome(historyController)) {
     const scope = yield* Scope.Scope;
     const registration = yield* historyController.value.register(environmentId, threadId, {
@@ -936,6 +941,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           Effect.forkIn(scope),
           Effect.flatMap(Fiber.join),
         ),
+      // A send created the thread: end the miss backoff now instead of at its next probe.
+      threadCreated: () =>
+        Effect.suspend(() =>
+          httpMisses > 0 ? Queue.offer(resubscribes, undefined) : Effect.void,
+        ).pipe(Effect.asVoid),
     });
     yield* Effect.addFinalizer(() => historyController.value.unregister(registration));
   }
@@ -974,8 +984,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       (yield* Ref.get(socketOnlyOpen)) && Option.isNone((yield* SubscriptionRef.get(state)).data)
     );
   });
-  // A stream defect parks the subscription until something resubscribes it.
-  const resubscribes = yield* Queue.unbounded<void>();
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -986,8 +994,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   yield* markSynchronizing;
-  // A 404 can arrive before the thread exists, so a miss asks HTTP again while mounted.
-  let httpMisses = 0;
   let defectRetries = 0;
   const backOffAfterDefect = Effect.suspend(() => {
     const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);

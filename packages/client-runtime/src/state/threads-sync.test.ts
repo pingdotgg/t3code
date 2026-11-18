@@ -294,6 +294,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loadEarlier: (throughEntryId?: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
     reconcilePendingWork: historyController.reconcilePendingWork(TARGET.environmentId, THREAD_ID),
+    threadCreated: historyController.threadCreated(TARGET.environmentId, THREAD_ID),
     inputs,
     observed,
     latest,
@@ -820,6 +821,35 @@ describe("EnvironmentThreads", () => {
       const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(3);
+    }),
+  );
+
+  it.effect("subscribes at once when the thread is created while a long miss backoff sleeps", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshots: [
+          ...Array.from({ length: 5 }, () => ({ _tag: "missing" }) as const),
+          {
+            _tag: "present",
+            snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection: BASE_PROJECTION },
+          },
+        ],
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      for (const delay of ["250 millis", "500 millis", "1 second", "2 seconds"] as const) {
+        yield* TestClock.adjust(delay);
+      }
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(5);
+
+      yield* harness.threadCreated;
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(6);
+
+      // The replaced backoff must not probe or resubscribe again.
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(6);
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
     }),
   );
 

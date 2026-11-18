@@ -23,6 +23,7 @@ import {
 import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
   type InterruptThreadTurnInput,
+  type StartThreadTurnInput,
   type UpdateThreadMetadataInput,
   archiveThread,
   closeGuestShare,
@@ -124,6 +125,19 @@ export function createThreadEnvironmentAtoms<R, E>(
         }),
       ),
     );
+  });
+
+  // A draft's thread appears only when its first send commits; tell its mounted state so a
+  // long "not found" backoff ends now.
+  const startTurn = Effect.fn("ThreadCommands.startTurn")(function* (input: StartThreadTurnInput) {
+    const result = yield* startThreadTurn(input);
+    if (input.bootstrap?.createThread === undefined) return result;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const controller = yield* Effect.serviceOption(ThreadHistoryController.ThreadHistoryController);
+    if (Option.isSome(controller)) {
+      yield* controller.value.threadCreated(supervisor.target.environmentId, input.threadId);
+    }
+    return result;
   });
 
   const armTitleRegeneration = Effect.fn("ThreadCommands.armTitleRegeneration")(function* (input: {
@@ -321,7 +335,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     startTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:start-turn",
-      execute: startThreadTurn,
+      execute: startTurn,
       scheduler,
       concurrency,
     }),

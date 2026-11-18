@@ -18,6 +18,7 @@ export type ThreadHistoryHandler = {
     workAnchorId?: string,
   ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
   readonly reconcilePendingWork: () => Effect.Effect<void>;
+  readonly threadCreated: () => Effect.Effect<void>;
 };
 
 export type ThreadHistoryRegistration = {
@@ -42,6 +43,10 @@ export class ThreadHistoryController extends Context.Service<
       workAnchorId?: string,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
     readonly reconcilePendingWork: (
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void>;
+    readonly threadCreated: (
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<void>;
@@ -104,6 +109,16 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
               (current) =>
                 current.get(threadKey({ environmentId, threadId }))?.reconcilePendingWork() ??
                 Effect.void,
+            ),
+          );
+        },
+      ),
+      threadCreated: Effect.fn("ThreadHistoryController.threadCreated")(
+        function (environmentId, threadId) {
+          return Ref.get(handlers).pipe(
+            Effect.flatMap(
+              (current) =>
+                current.get(threadKey({ environmentId, threadId }))?.threadCreated() ?? Effect.void,
             ),
           );
         },
