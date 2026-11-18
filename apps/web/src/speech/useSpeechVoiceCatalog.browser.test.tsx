@@ -251,7 +251,7 @@ it("starts off, checks the selected environment, and offers managed Piper instal
     .not.toBeInTheDocument();
 });
 
-it("configures cloud keys in a dialog before loading and choosing account voices", async () => {
+function setupCloud({ elevenLabsConfigured = false } = {}) {
   setup();
   vi.mocked(useEnvironmentScope).mockReturnValue(true);
 
@@ -275,6 +275,10 @@ it("configures cloud keys in a dialog before loading and choosing account voices
   );
   let settings = {
     ...DEFAULT_SERVER_SETTINGS,
+    speechOutput: {
+      ...DEFAULT_SERVER_SETTINGS.speechOutput,
+      elevenLabsApiKey: elevenLabsConfigured ? "••••••" : "",
+    },
     secretProviders: {
       work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
     },
@@ -334,149 +338,179 @@ it("configures cloud keys in a dialog before loading and choosing account voices
     ),
   );
   vi.mocked(getElevenLabsSpeechVoices).mockClear();
-  await vi.mocked(useEnvironmentSettings).withImplementation(read, async () => {
-    await vi.mocked(useUpdateEnvironmentSettings).withImplementation(
-      () => write,
-      async () => {
-        await using screen = await render(<SpeechOutputSettings />);
+  return {
+    prepared,
+    environment,
+    withSettings: (run: () => Promise<void>) =>
+      vi
+        .mocked(useEnvironmentSettings)
+        .withImplementation(read, () =>
+          vi.mocked(useUpdateEnvironmentSettings).withImplementation(() => write, run),
+        ),
+  };
+}
+
+it.each(["OpenAI", "ElevenLabs"])(
+  "keeps the previous destination when %s key setup is dismissed or reloaded",
+  async (provider) => {
+    const { prepared, withSettings } = setupCloud();
+    await withSettings(async () => {
+      await using screen = await render(<SpeechOutputSettings />);
+      await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+      await page.getByRole("option", { name: provider, exact: true }).click();
+      await expect
+        .element(page.getByRole("dialog", { name: `Add ${provider} API key` }))
+        .toBeVisible();
+      expect(getClientSettings().speechOutputDestination).toBeNull();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+      await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+      await page.getByRole("option", { name: "Cloud server", exact: true }).click();
+      const previous = { environmentId: prepared.environmentId, engine: "piper" };
+      expect(getClientSettings().speechOutputDestination).toEqual(previous);
+      for (const dismissal of ["Cancel", "Close", "Escape"]) {
         await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "OpenAI", exact: true }).click();
+        await page.getByRole("option", { name: provider, exact: true }).click();
         await expect
-          .element(page.getByRole("dialog", { name: "Add OpenAI API key" }))
+          .element(page.getByRole("dialog", { name: `Add ${provider} API key` }))
           .toBeVisible();
-        expect(getClientSettings().speechOutputDestination).toBeNull();
-        await page.getByRole("button", { name: "Cancel", exact: true }).click();
-        await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "Cloud server", exact: true }).click();
-        const previous = { environmentId: prepared.environmentId, engine: "piper" };
+        await page.getByLabelText(`${provider} API key`, { exact: true }).fill("unsaved-fixture");
         expect(getClientSettings().speechOutputDestination).toEqual(previous);
-        for (const provider of ["OpenAI", "ElevenLabs"]) {
-          for (const dismissal of ["Cancel", "Close", "Escape"]) {
-            await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-            await page.getByRole("option", { name: provider, exact: true }).click();
-            await expect
-              .element(page.getByRole("dialog", { name: `Add ${provider} API key` }))
-              .toBeVisible();
-            await page
-              .getByLabelText(`${provider} API key`, { exact: true })
-              .fill("unsaved-fixture");
-            expect(getClientSettings().speechOutputDestination).toEqual(previous);
-            if (dismissal === "Escape") await userEvent.keyboard("{Escape}");
-            else await page.getByRole("button", { name: dismissal, exact: true }).click();
-            await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-            expect(getClientSettings().speechOutputDestination).toEqual(previous);
-            await expect
-              .element(screen.getByRole("combobox", { name: "Read aloud with" }))
-              .toHaveTextContent("Cloud server");
-          }
-        }
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();
-        await expect.element(page.getByRole("dialog")).toBeVisible();
-        await page.getByLabelText("ElevenLabs API key", { exact: true }).fill("lost-on-reload");
-        await screen.rerender(<SpeechOutputSettings key="reloaded" />);
+        if (dismissal === "Escape") await userEvent.keyboard("{Escape}");
+        else await page.getByRole("button", { name: dismissal, exact: true }).click();
         await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
         expect(getClientSettings().speechOutputDestination).toEqual(previous);
-        expect(cloudSettings.save).not.toHaveBeenCalled();
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();
         await expect
-          .element(page.getByRole("dialog", { name: "Add ElevenLabs API key" }))
-          .toBeVisible();
-        await expect
-          .element(screen.getByRole("combobox", { name: "ElevenLabs voice" }))
-          .not.toBeInTheDocument();
-        expect(getElevenLabsSpeechVoices).not.toHaveBeenCalled();
-        await page.getByLabelText("ElevenLabs API key", { exact: true }).fill("eleven-fixture");
-        cloudSettings.save.mockResolvedValueOnce({ _tag: "Failure" });
-        await page.getByRole("button", { name: "Save key", exact: true }).click();
-        await vi.waitFor(() => expect(cloudSettings.save).toHaveBeenCalledOnce());
-        await expect.element(page.getByRole("dialog")).toBeVisible();
-        expect(getClientSettings().speechOutputDestination).toEqual(previous);
-        await page.getByRole("button", { name: "Save key", exact: true }).click();
-        await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-        expect(getClientSettings().speechOutputDestination).toEqual({
-          environmentId: prepared.environmentId,
-          engine: "elevenlabs",
-        });
-        expect(cloudSettings.save).toHaveBeenLastCalledWith({
-          environmentId: prepared.environmentId,
-          input: { patch: { speechOutput: { elevenLabsApiKey: "eleven-fixture" } } },
-        });
-        await screen.getByRole("button", { name: "Load more voices" }).click();
-        await vi.waitFor(() =>
-          expect(getElevenLabsSpeechVoices).toHaveBeenLastCalledWith(prepared, {
-            pageToken: "next",
-          }),
-        );
-        await screen.getByRole("combobox", { name: "ElevenLabs voice" }).click();
-        await page.getByRole("option", { name: "Lia", exact: true }).click();
-        expect(getClientSettings().speechOutputDestination).toEqual({
-          environmentId: environment.environmentId,
-          engine: "elevenlabs",
-          voice: "lia",
-        });
-        expect(cloudSettings.voice).not.toHaveBeenCalled();
-        await screen.getByRole("button", { name: "Manage key…", exact: true }).click();
-        await page.getByRole("combobox", { name: "ElevenLabs API key source" }).click();
-        await page.getByRole("option", { name: "Work vault", exact: true }).click();
-        await page
-          .getByLabelText("ElevenLabs API key reference", { exact: true })
-          .fill("op://Private/Voice/key");
-        await page.getByRole("button", { name: "Save key", exact: true }).click();
-        await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-        expect(cloudSettings.save).toHaveBeenLastCalledWith({
-          environmentId: prepared.environmentId,
-          input: {
-            patch: {
-              speechOutput: {
-                elevenLabsApiKey: { provider: "work", reference: "op://Private/Voice/key" },
-              },
-            },
-          },
-        });
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "OpenAI", exact: true }).click();
-        await expect
-          .element(page.getByRole("dialog", { name: "Add OpenAI API key" }))
-          .toBeVisible();
-        await expect
-          .element(screen.getByRole("combobox", { name: "Speech output voice" }))
-          .not.toBeInTheDocument();
-        expect(getClientSettings().speechOutputDestination).toEqual({
-          environmentId: prepared.environmentId,
-          engine: "elevenlabs",
-          voice: "lia",
-        });
-        await page.getByLabelText("OpenAI API key", { exact: true }).fill("openai-fixture");
-        await page.getByRole("button", { name: "Save key", exact: true }).click();
-        await expect
-          .element(screen.getByRole("combobox", { name: "Speech output voice" }))
-          .toBeVisible();
-        expect(cloudSettings.save).toHaveBeenLastCalledWith({
-          environmentId: prepared.environmentId,
-          input: { patch: { cloudSpeechCredentials: { openai: "openai-fixture" } } },
-        });
-        await screen.getByRole("combobox", { name: "Speech output voice" }).click();
-        await page.getByRole("option", { name: "Warm", exact: true }).click();
-        expect(getClientSettings().speechOutputDestination).toMatchObject({
-          engine: "openai",
-          voice: "nova",
-        });
-        expect(getClientSettings().speechOutputDestination).toEqual({
-          environmentId: prepared.environmentId,
-          engine: "openai",
-          voice: "nova",
-        });
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();
-        await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-        expect(getClientSettings().speechOutputDestination).toEqual({
-          environmentId: prepared.environmentId,
-          engine: "elevenlabs",
-        });
-      },
+          .element(screen.getByRole("combobox", { name: "Read aloud with" }))
+          .toHaveTextContent("Cloud server");
+      }
+      await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+      await page.getByRole("option", { name: provider, exact: true }).click();
+      await expect.element(page.getByRole("dialog")).toBeVisible();
+      await page.getByLabelText(`${provider} API key`, { exact: true }).fill("lost-on-reload");
+      await screen.rerender(<SpeechOutputSettings key="reloaded" />);
+      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+      expect(getClientSettings().speechOutputDestination).toEqual(previous);
+      expect(cloudSettings.save).not.toHaveBeenCalled();
+    });
+  },
+);
+
+it("saves ElevenLabs keys before switching destination and loads account voices and vault references", async () => {
+  const { prepared, environment, withSettings } = setupCloud();
+  const previous = { environmentId: prepared.environmentId, engine: "piper" as const };
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, speechOutputDestination: previous });
+  await withSettings(async () => {
+    await using screen = await render(<SpeechOutputSettings />);
+    await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+    await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Add ElevenLabs API key" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("combobox", { name: "ElevenLabs voice" }))
+      .not.toBeInTheDocument();
+    expect(getElevenLabsSpeechVoices).not.toHaveBeenCalled();
+    await page.getByLabelText("ElevenLabs API key", { exact: true }).fill("eleven-fixture");
+    cloudSettings.save.mockResolvedValueOnce({ _tag: "Failure" });
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
+    await vi.waitFor(() => expect(cloudSettings.save).toHaveBeenCalledOnce());
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(getClientSettings().speechOutputDestination).toEqual(previous);
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(getClientSettings().speechOutputDestination).toEqual({
+      environmentId: prepared.environmentId,
+      engine: "elevenlabs",
+    });
+    expect(cloudSettings.save).toHaveBeenLastCalledWith({
+      environmentId: prepared.environmentId,
+      input: { patch: { speechOutput: { elevenLabsApiKey: "eleven-fixture" } } },
+    });
+    await screen.getByRole("button", { name: "Load more voices" }).click();
+    await vi.waitFor(() =>
+      expect(getElevenLabsSpeechVoices).toHaveBeenLastCalledWith(prepared, {
+        pageToken: "next",
+      }),
     );
+    await screen.getByRole("combobox", { name: "ElevenLabs voice" }).click();
+    await page.getByRole("option", { name: "Lia", exact: true }).click();
+    expect(getClientSettings().speechOutputDestination).toEqual({
+      environmentId: environment.environmentId,
+      engine: "elevenlabs",
+      voice: "lia",
+    });
+    expect(cloudSettings.voice).not.toHaveBeenCalled();
+    await screen.getByRole("button", { name: "Manage key…", exact: true }).click();
+    await page.getByRole("combobox", { name: "ElevenLabs API key source" }).click();
+    await page.getByRole("option", { name: "Work vault", exact: true }).click();
+    await page
+      .getByLabelText("ElevenLabs API key reference", { exact: true })
+      .fill("op://Private/Voice/key");
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(cloudSettings.save).toHaveBeenLastCalledWith({
+      environmentId: prepared.environmentId,
+      input: {
+        patch: {
+          speechOutput: {
+            elevenLabsApiKey: { provider: "work", reference: "op://Private/Voice/key" },
+          },
+        },
+      },
+    });
+  });
+});
+
+it("configures OpenAI from another destination and uses the server voice catalog", async () => {
+  const { prepared, withSettings } = setupCloud({ elevenLabsConfigured: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    speechOutputDestination: {
+      environmentId: prepared.environmentId,
+      engine: "elevenlabs",
+      voice: "lia",
+    },
+  });
+  await withSettings(async () => {
+    await using screen = await render(<SpeechOutputSettings />);
+    await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+    await page.getByRole("option", { name: "OpenAI", exact: true }).click();
+    await expect.element(page.getByRole("dialog", { name: "Add OpenAI API key" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Speech output voice" }))
+      .not.toBeInTheDocument();
+    expect(getClientSettings().speechOutputDestination).toEqual({
+      environmentId: prepared.environmentId,
+      engine: "elevenlabs",
+      voice: "lia",
+    });
+    await page.getByLabelText("OpenAI API key", { exact: true }).fill("openai-fixture");
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Speech output voice" }))
+      .toBeVisible();
+    expect(cloudSettings.save).toHaveBeenLastCalledWith({
+      environmentId: prepared.environmentId,
+      input: { patch: { cloudSpeechCredentials: { openai: "openai-fixture" } } },
+    });
+    await screen.getByRole("combobox", { name: "Speech output voice" }).click();
+    await page.getByRole("option", { name: "Warm", exact: true }).click();
+    expect(getClientSettings().speechOutputDestination).toMatchObject({
+      engine: "openai",
+      voice: "nova",
+    });
+    expect(getClientSettings().speechOutputDestination).toEqual({
+      environmentId: prepared.environmentId,
+      engine: "openai",
+      voice: "nova",
+    });
+    await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+    await page.getByRole("option", { name: "ElevenLabs", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(getClientSettings().speechOutputDestination).toEqual({
+      environmentId: prepared.environmentId,
+      engine: "elevenlabs",
+    });
   });
 });
