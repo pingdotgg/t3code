@@ -24,6 +24,7 @@ const status = (overrides: Partial<ServerSourceUpdateStatus> = {}): ServerSource
   lastResult: null,
   updateUnavailableReason: null,
   pullUpstreamUnavailableReason: null,
+  checkout: null,
   ...overrides,
 });
 

@@ -447,6 +447,8 @@ export const ServerSourceUpdateStatus = Schema.Struct({
   updateUnavailableReason: Schema.NullOr(Schema.String),
   /** Why no agent can resolve upstream conflicts on this server; null when one can. */
   pullUpstreamUnavailableReason: Schema.NullOr(Schema.String),
+  /** The resolved checkout path; null from servers that predate it. */
+  checkout: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type ServerSourceUpdateStatus = typeof ServerSourceUpdateStatus.Type;
 

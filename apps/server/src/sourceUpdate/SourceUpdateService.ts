@@ -304,6 +304,7 @@ const make = Effect.gen(function* () {
       lastResult: run.lastResult,
       updateUnavailableReason: updateUnavailable,
       pullUpstreamUnavailableReason: claudeUnavailableReason(claude),
+      checkout,
     };
   }).pipe(Effect.withSpan("SourceUpdateService.status"));
 

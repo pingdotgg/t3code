@@ -32,6 +32,7 @@ vi.mock("~/state/query", () => ({
   }),
 }));
 
+vi.mock("./sourceUpdate/useUpdateAfterPull", () => ({ useUpdateAfterPull: () => () => {} }));
 vi.mock("~/state/sourceControlActions", () => ({
   useGitStackedAction: vi.fn(),
   useSourceControlActionRunning: vi.fn(),

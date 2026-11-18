@@ -133,6 +133,7 @@ import {
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { useUpdateAfterPull } from "./sourceUpdate/useUpdateAfterPull";
 import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 import { useOpenLink } from "~/browser/useOpenLink";
 
@@ -1157,6 +1158,7 @@ export default function GitActionsControl({
   const initAction = useVcsInitAction(sourceControlScope);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
+  const updateAfterPull = useUpdateAfterPull(activeEnvironmentId, gitCwd);
   const isGitActionRunning = useSourceControlActionRunning(
     sourceControlScope,
     RUNNING_SOURCE_CONTROL_ACTIONS,
@@ -1425,6 +1427,7 @@ export default function GitActionsControl({
         }
 
         const pullResult = result.value;
+        if (pullResult.status === "pulled") updateAfterPull();
         const title = pullResult.status === "pulled" ? gt("Pulled") : gt("Already up to date");
         const description =
           pullResult.status === "pulled"
