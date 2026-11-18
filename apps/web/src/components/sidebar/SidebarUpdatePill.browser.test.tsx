@@ -39,21 +39,39 @@ vi.mock("../../env", async (importOriginal) => ({
 }));
 vi.mock("./useUpdateEverything", async () => {
   const { useSyncExternalStore } = await import("react");
+  const { selectProviderUpdates } = await import("./updateEverything.logic");
   return {
     useUpdateEverything: (
       _version: string | null,
       options?: { includeProviderUpdates: boolean },
     ) => {
       const hasAppUpdates = useSyncExternalStore(mocks.subscribe, () => mocks.hasAppUpdates);
+      const appUpdates = _version !== null || hasAppUpdates;
+      const selected = selectProviderUpdates(
+        { machines: mocks.hasProviderUpdates ? ["Claude"] : [], updateAll: async () => [] },
+        { hasAppUpdates: appUpdates, ...options },
+      );
       return {
         hasUpdates: mocks.hasUpdates,
-        hasAppUpdates: _version !== null || hasAppUpdates,
-        canChooseProviderUpdates: mocks.hasProviderUpdates && (_version !== null || hasAppUpdates),
+        hasAppUpdates: appUpdates,
+        canChooseProviderUpdates: selected.canChooseProviderUpdates,
         summary: "Update everything",
         version: null,
-        providerCount:
-          mocks.hasProviderUpdates && options?.includeProviderUpdates !== false ? 1 : 0,
-        rows: mocks.rows,
+        providerCount: selected.machines.length,
+        rows:
+          mocks.rows.length > 0
+            ? mocks.rows
+            : mocks.hasProviderUpdates
+              ? [
+                  {
+                    environmentId: null,
+                    label: "Test computer",
+                    app: appUpdates ? "this-app" : null,
+                    skipped: null,
+                    providers: selected.machines,
+                  },
+                ]
+              : [],
         restarts: [],
       };
     },
@@ -149,23 +167,47 @@ describe("SidebarUpdatePill release notes", () => {
 });
 
 describe("SidebarUpdatePill update everything", () => {
-  it("requires a new confirmation if the last app-update target disappears", async () => {
-    setup(null, { hasUpdates: true, hasProviderUpdates: true, hasAppUpdates: true });
-    await using screen = await render(<SidebarUpdatePill />);
-    const button = screen.getByRole("button", { name: "Update everything" });
-    await userEvent.click(button);
-    const checkbox = page.getByRole("checkbox", { name: "Include provider updates" });
-    await expect.element(checkbox).toBeVisible();
+  it.each([true, false])(
+    "requires a new confirmation if shown app-update targets disappear (present on open: %s)",
+    async (presentOnOpen) => {
+      setup(null, { hasUpdates: true, hasProviderUpdates: true, hasAppUpdates: presentOnOpen });
+      const key = "t3code:include-providers-in-app-updates";
+      const previous = localStorage.getItem(key);
+      using _storage = {
+        [Symbol.dispose]() {
+          if (previous === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, previous);
+        },
+      };
+      localStorage.setItem(key, "false");
+      await using screen = await render(<SidebarUpdatePill />);
+      const button = screen.getByRole("button", { name: "Update everything" });
+      await userEvent.click(button);
+      const checkbox = page.getByRole("checkbox", { name: "Include provider updates" });
+      const provider = page.getByRole("cell", { name: "Claude", exact: true });
+      if (!presentOnOpen) {
+        await expect.element(checkbox).not.toBeInTheDocument();
+        await expect.element(provider).toBeVisible();
+        await expect.element(page.getByRole("alertdialog")).toBeVisible();
+        await act(() => {
+          mocks.hasAppUpdates = true;
+          mocks.notify();
+        });
+      }
+      await expect.element(checkbox).not.toBeChecked();
+      await expect.element(provider).not.toBeInTheDocument();
 
-    await act(() => {
-      mocks.hasAppUpdates = false;
-      mocks.notify();
-    });
-    await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
-    await userEvent.click(button);
-    await expect.element(page.getByRole("alertdialog")).toBeVisible();
-    await expect.element(checkbox).not.toBeInTheDocument();
-  });
+      await act(() => {
+        mocks.hasAppUpdates = false;
+        mocks.notify();
+      });
+      await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+      await userEvent.click(button);
+      await expect.element(page.getByRole("alertdialog")).toBeVisible();
+      await expect.element(checkbox).not.toBeInTheDocument();
+      await expect.element(provider).toBeVisible();
+    },
+  );
 
   it.each([false, true])(
     "remembers the provider choice in another client (already mounted: %s)",
@@ -204,6 +246,11 @@ describe("SidebarUpdatePill update everything", () => {
         window.dispatchEvent(new StorageEvent("storage", { key, newValue: "true" }));
       });
       await expect.element(checkbox).not.toBeChecked();
+      await userEvent.click(page.getByRole("button", { name: "Cancel" }));
+      await userEvent.click(restored.getByRole("button", { name: "Update everything" }));
+      await expect.element(checkbox).toBeChecked();
+      await userEvent.click(checkbox);
+      expect(localStorage.getItem(key)).toBe("false");
       await userEvent.click(checkbox);
       await expect.element(checkbox).toBeChecked();
       expect(localStorage.getItem(key)).toBe("true");

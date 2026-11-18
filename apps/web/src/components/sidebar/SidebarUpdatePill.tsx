@@ -214,7 +214,7 @@ function SidebarUpdateControl() {
   const [providerCheck, setProviderCheck] = useState<"button" | "dialog" | null>(null);
   const isCheckingProviders = providerCheck === "button";
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
-  const [isConfirmingAppUpdates, setIsConfirmingAppUpdates] = useState(false);
+  const [hasShownAppUpdates, setHasShownAppUpdates] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -254,9 +254,10 @@ function SidebarUpdateControl() {
       ? includeProviderUpdates
       : savedIncludeProviderUpdates,
   });
-  // A provider-only plan needs a new confirmation after app targets disappear.
-  if (isConfirmingEverything && isConfirmingAppUpdates && !everything.hasAppUpdates) {
-    setIsConfirmingEverything(false);
+  // App targets that disappear require a new confirmation before providers can re-enter the plan.
+  if (isConfirmingEverything) {
+    if (everything.hasAppUpdates && !hasShownAppUpdates) setHasShownAppUpdates(true);
+    else if (!everything.hasAppUpdates && hasShownAppUpdates) setIsConfirmingEverything(false);
   }
   const checkProviderUpdates = useCheckProviderUpdates();
   const runsEverything = everything.hasUpdates && !isDownloading;
@@ -314,7 +315,7 @@ function SidebarUpdateControl() {
 
     if (runsEverything) {
       setIncludeProviderUpdates(savedIncludeProviderUpdates);
-      setIsConfirmingAppUpdates(everything.hasAppUpdates);
+      setHasShownAppUpdates(everything.hasAppUpdates);
       setIsConfirmingEverything(true);
       // Machines that still cache an older latest version add their rows while the dialog is open.
       setProviderCheck("dialog");

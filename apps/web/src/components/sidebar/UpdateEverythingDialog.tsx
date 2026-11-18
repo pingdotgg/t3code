@@ -251,48 +251,53 @@ function UpdateEverythingDialogContent({
           ) : null}
         </div>
       </ScrollArea>
-      <AlertDialogFooter className="flex-col sm:flex-col">
-        {disabledReason !== null ? (
-          <p className="text-sm">{disabledReason}</p>
-        ) : running > 0 ? (
-          <p className="text-muted-foreground text-sm">
-            {stopped === 0
-              ? gt(
-                  "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
-                  { count: running },
-                )
-              : continuing === 0
+      <AlertDialogFooter>
+        <div className="flex w-full min-w-0 flex-col gap-2">
+          {disabledReason !== null ? (
+            <p className="text-sm">{disabledReason}</p>
+          ) : running > 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {stopped === 0
                 ? gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                    "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
                     { count: running },
                   )
-                : `${gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
-                    { count: running },
-                  )} ${gt(
-                    "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
-                    { count: continuing },
-                  )}`}
-          </p>
-        ) : null}
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          {providerUpdates ? (
-            <label className="mr-auto flex min-w-0 items-center gap-2 text-sm">
-              <Checkbox
-                checked={providerUpdates.included}
-                onCheckedChange={providerUpdates.onIncludedChange}
-                disabled={busy}
-              />
-              <T>Include provider updates</T>
-            </label>
+                : continuing === 0
+                  ? gt(
+                      "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                      { count: running },
+                    )
+                  : `${gt(
+                      "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                      { count: running },
+                    )} ${gt(
+                      "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
+                      { count: continuing },
+                    )}`}
+            </p>
           ) : null}
-          <div className="flex gap-2">
-            <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
-              <T>Cancel</T>
-            </AlertDialogClose>
-            <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
-              {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
-            </Button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {providerUpdates ? (
+              <label className="mr-auto flex min-w-0 items-center gap-2 text-sm">
+                <Checkbox
+                  checked={providerUpdates.included}
+                  onCheckedChange={providerUpdates.onIncludedChange}
+                  disabled={busy}
+                />
+                <T>Include provider updates</T>
+              </label>
+            ) : null}
+            <div className="flex gap-2">
+              <AlertDialogClose
+                ref={cancelRef}
+                render={<Button variant="outline" disabled={busy} />}
+              >
+                <T>Cancel</T>
+              </AlertDialogClose>
+              <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+                {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
+              </Button>
+            </div>
           </div>
         </div>
       </AlertDialogFooter>
