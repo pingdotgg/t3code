@@ -50,6 +50,7 @@ export interface AgentActivityRowProps {
  * one string per count. Live Activities updated by push have none and fall back to English.
  */
 export interface AgentActivityText {
+  readonly workingFormat?: string;
   readonly working?: Readonly<Record<string, string>>;
   readonly openToRefresh?: string;
   readonly moreThreads?: Readonly<Record<string, string>>;
@@ -244,13 +245,19 @@ export function AgentActivity(
         ? (text?.workCompleted ?? "Agent work completed")
         : (text?.noActiveAgents ?? "No active agents");
 
+  const workingLabel =
+    workingCount === null
+      ? ""
+      : (text?.workingFormat?.replace("{count}", String(workingCount)) ??
+        text?.working?.[String(workingCount)] ??
+        `${workingCount} working`);
   const countLabel = allDone
     ? outcomeLabel
     : props.isExpired || isSystemStale
       ? (text?.statusOutOfDate ?? "Agent status out of date")
       : workingCount === null
         ? "Working count unavailable"
-        : (text?.working?.[String(workingCount)] ?? `${workingCount} working`);
+        : workingLabel;
   const agentsLabel =
     props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
@@ -261,10 +268,10 @@ export function AgentActivity(
   const currentLabel = allDone
     ? doneLabel
     : props.isExpired || isSystemStale
-      ? "Out of date"
+      ? (text?.outOfDate ?? "Out of date")
       : workingCount === null
         ? "Count unavailable"
-        : `${workingCount} working`;
+        : workingLabel;
   const activeLabel =
     props.isStale && !props.isExpired ? `Last observed: ${currentLabel}` : currentLabel;
   // A retained observation keeps its "Last observed" label instead of a glyph

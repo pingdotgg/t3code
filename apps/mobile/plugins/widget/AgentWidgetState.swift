@@ -10,7 +10,9 @@ enum AgentWidgetState {
       "updatedAt": ISO8601DateFormatter().string(from: now), "activities": [[String: Any]]()
     ]
     base = base.filter { !($0.value is NSNull) }
-    base["text"] = localObservation?["text"] as? [String: Any]
+    let text = localObservation?["text"] as? [String: Any]
+    base["text"] = text
+    let outOfDate = text?["outOfDate"] as? String ?? "Out of date"
     base["isExpired"] = false
     base["isStale"] = false
     base["expiresAt"] = freshnessDeadline.timeIntervalSince1970 * 1000
@@ -60,11 +62,11 @@ enum AgentWidgetState {
       var props = base
       props["isStale"] = !retainedScope.isEmpty && localObservation?["isStale"] as? Bool == true
       let directRows = localRows.map { row in
-        localDeadline.map { $0 > date } == true ? row : stale(row)
+        localDeadline.map { $0 > date } == true ? row : stale(row, status: outOfDate)
       }
       props["activities"] = remoteRows + directRows
       let directSourceRows = localSourceRows.map { row in
-        localDeadline.map { $0 > date } == true ? row : stale(row)
+        localDeadline.map { $0 > date } == true ? row : stale(row, status: outOfDate)
       }
       let unavailable = directSourceRows.contains { $0["phase"] as? String == "stale" }
       let directCount = directSourceRows.filter { isUnfinished($0) }.count
@@ -90,12 +92,12 @@ enum AgentWidgetState {
       entries.append(entry(at: localDeadline, props: merged(at: localDeadline)))
     }
     var expired = merged(at: freshnessDeadline)
-    expired["activities"] = (expired["activities"] as? [[String: Any]] ?? []).map(stale)
+    expired["activities"] = (expired["activities"] as? [[String: Any]] ?? []).map { stale($0, status: outOfDate) }
     expired["activeCount"] = -1
     expired.removeValue(forKey: "workingCount")
     expired.removeValue(forKey: "attentionCount")
     expired["isExpired"] = true
-    expired["subtitle"] = "Open T3 to refresh"
+    expired["subtitle"] = text?["openToRefresh"] as? String ?? "Open T3 to refresh"
     entries.append(entry(at: freshnessDeadline, props: expired))
     return entries
   }
@@ -105,12 +107,12 @@ enum AgentWidgetState {
     return phase != "completed" && phase != "failed" && phase != "stale"
   }
 
-  private static func stale(_ row: [String: Any]) -> [String: Any] {
+  private static func stale(_ row: [String: Any], status: String) -> [String: Any] {
     let phase = row["phase"] as? String
     guard phase != "completed" && phase != "failed" else { return row }
     var result = row
     result["phase"] = "stale"
-    result["status"] = "Out of date"
+    result["status"] = status
     return result
   }
 

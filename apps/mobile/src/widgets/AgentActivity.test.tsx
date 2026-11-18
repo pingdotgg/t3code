@@ -1,6 +1,7 @@
 import { isValidElement } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
+import { agentActivityText } from "./agentActivityWidgetTimeline";
 import { AgentActivity, type AgentActivityProps } from "./AgentActivity";
 
 vi.mock("expo-widgets", () => ({
@@ -38,10 +39,24 @@ vi.mock("@expo/ui/swift-ui/modifiers", () =>
   ),
 );
 
-it.each([-1, 0, 1])(
-  "does not infer completion from five capped terminal rows: active=%s",
-  (activeCount) => {
+it.each(
+  [-1, 0, 1].flatMap((activeCount) =>
+    [false, true].map((translated) => ({ activeCount, translated })),
+  ),
+)(
+  "does not infer completion from five capped terminal rows: active=$activeCount translated=$translated",
+  ({ activeCount, translated }) => {
     const activity: AgentActivityProps = {
+      ...(translated
+        ? {
+            text: {
+              ...agentActivityText(0),
+              done: "Terminé",
+              outOfDate: "Périmé",
+              workingFormat: "{count} en cours",
+            },
+          }
+        : {}),
       title: "T3 Code",
       subtitle: "",
       activeCount,
@@ -62,6 +77,17 @@ it.each([-1, 0, 1])(
     const compact = AgentActivity(activity, { colorScheme: "dark" }).compactTrailing;
     expect(isValidElement(compact)).toBe(true);
     if (!isValidElement<{ children: string }>(compact)) return;
-    expect(compact.props.children).toBe(activeCount === 0 ? "Done" : "Out of date");
+    expect(compact.props.children).toBe(
+      activeCount === 0 ? (translated ? "Terminé" : "Done") : translated ? "Périmé" : "Out of date",
+    );
+    if (translated && activeCount === 1) {
+      const fresh = AgentActivity(
+        { ...activity, activeCount: 2, workingCount: 2, isExpired: false, isStale: true },
+        { colorScheme: "dark" },
+      ).compactTrailing;
+      expect(isValidElement(fresh)).toBe(true);
+      if (isValidElement<{ children: string }>(fresh))
+        expect(fresh.props.children).toBe("Last observed: 2 en cours");
+    }
   },
 );

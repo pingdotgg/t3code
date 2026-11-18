@@ -1,3 +1,4 @@
+import { agentActivityText } from "./agentActivityWidgetTimeline";
 import { describe, expect, it } from "vite-plus/test";
 import type {
   AgentActivityPhase,
@@ -32,6 +33,11 @@ describe("agentActivityTimeline", () => {
     const timeline = agentActivityTimeline(props, now);
     expect(timeline.map((entry) => entry.date.getTime())).toEqual([now, props.expiresAt]);
     expect(timeline[0]?.props).toEqual(props);
+    const localized = agentActivityTimeline(
+      { ...props, text: { ...agentActivityText(0), outOfDate: "Périmé" } },
+      now,
+    );
+    expect(localized[1]?.props.activities[0]?.status).toBe("Périmé");
     expect(timeline[1]?.props).toEqual({
       ...props,
       activeCount: -1,

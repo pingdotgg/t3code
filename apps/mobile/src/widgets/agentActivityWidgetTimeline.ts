@@ -16,6 +16,7 @@ export function agentActivityText(
   resolve: MessageResolver = m,
 ): AgentActivityText {
   return {
+    workingFormat: resolve(msg("{count} working", { count: "{count}" })),
     working: {
       "0": resolve(msg("{count} working", { count: 0 })),
       ...countTable(maxCount, (count) => resolve(msg("{count} working", { count }))),

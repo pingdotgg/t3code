@@ -18,7 +18,7 @@ export function agentActivityTimeline(props: AgentActivityProps, now: number) {
     activities: props.activities.map((row) =>
       row.phase === "completed" || row.phase === "failed"
         ? row
-        : { ...row, phase: "stale", status: "Out of date" },
+        : { ...row, phase: "stale", status: props.text?.outOfDate ?? m(msg("Out of date")) },
     ),
   };
   if (expiresAt === undefined) return [{ date: new Date(now), props: current }];
