@@ -12099,5 +12099,13 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "c2fa557278157fe2": "{count, plural, one {Varje meddelande} other {Vart {count}:e meddelande}}",
+  "e4f559412c37d454": "Automatisk titelgenerering",
+  "7207e3123ba1b64a": "Genererar om titeln när samtalet utvecklas. Trådar du byter namn på behåller namnet.",
+  "75d8614e73de93ac": "Generera om trådtitlar automatiskt",
+  "e2758e8ccf2eed48": "Räknar dina skickade meddelanden. Varje generering använder en begäran om textgenerering.",
+  "313896c76cb79213": "Meddelanden mellan titelgenereringar",
+  "777760079a053b85": "genererade trådtitlar byt namn uppdatera automatiskt",
+  "21dd4f62edd737af": "genererade trådtitlar intervall frekvens"
 }

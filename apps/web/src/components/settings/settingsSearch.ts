@@ -924,6 +924,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("generated thread titles prompt custom style naming rename regenerate")],
   },
   {
+    id: "automatic-title-regeneration",
+    title: msg("Regenerate thread titles automatically"),
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: [msg("generated thread titles rename refresh update stale drift auto")],
+  },
+  {
+    id: "messages-between-title-regenerations",
+    title: msg("Messages between title regenerations"),
+    to: "/settings/threads",
+    targetId: "automatic-title-regeneration",
+    scope: "project-defaults",
+    searchTerms: [msg("generated thread titles interval every frequency how often")],
+  },
+  {
     id: "app-version",
     title: msg("Version"),
     to: "/settings/about",

@@ -52,7 +52,7 @@ export class ThreadTitleRegenerationService extends Context.Service<
 
 type Outcome =
   | { readonly status: "renamed"; readonly title: string }
-  | { readonly status: "unchanged" }
+  | { readonly status: "unchanged"; readonly title?: string }
   | { readonly status: "failed"; readonly message: string };
 
 const MAX_FAILURE_MESSAGE_LENGTH = 300;
@@ -93,7 +93,9 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`${input.requestId}:title-complete`),
         threadId: input.threadId,
         requestId: input.requestId,
-        ...(input.outcome.status === "renamed" ? { title: input.outcome.title } : {}),
+        ...(input.outcome.status !== "failed" && input.outcome.title !== undefined
+          ? { title: input.outcome.title }
+          : {}),
         ...(input.kind.type === "regenerate"
           ? {
               outcome: {
@@ -232,7 +234,10 @@ const make = Effect.gen(function* () {
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||
         (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
-        ? { status: "unchanged" as const }
+        ? {
+            status: "unchanged" as const,
+            ...(generatedTitle === "New thread" ? {} : { title: result.title }),
+          }
         : { status: "renamed" as const, title: result.title };
     }).pipe(
       Effect.retry({
