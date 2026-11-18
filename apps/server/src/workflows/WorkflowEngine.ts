@@ -558,9 +558,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const ended = Effect.fn("WorkflowEngine.ended")(function* (runId: string) {
     const row = yield* store.run(runId);
     if (row === undefined || row.parent_run_id === null || row.parent_wait === null) return;
-    if (row.status !== "completed" && row.status !== "stopped" && row.status !== "cancelled") {
-      return;
-    }
+    if (row.ended_at === null) return;
     yield* signal(
       { runId: row.parent_run_id, wait: row.parent_wait },
       {

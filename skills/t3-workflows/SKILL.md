@@ -119,6 +119,7 @@ pause the run. Name the question `approve-fix` and the agent `fix`.
 | `sleep(name, duration)`                                                                        | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
 | `title(name, text)`                                                                            | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
 | `stop(reason)`                                                                                 | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
+| `skip(reason)`                                                                                 | Ends the run as not this workflow's to do: a delivery it ignores, a pull request it opened itself. It ends as `skipped`, which lists leave out unless asked.                                              | Never returns                                                                                          |
 
 `step` retries three times with a growing delay, then pauses the run. Pass
 `retry: { times: 0 }` for something that must not be repeated blindly. A step whose failure the
@@ -365,8 +366,8 @@ A workflow with `triggers` starts by itself, and its `payload` is what the trigg
   about once a minute.
 - `pullRequests.opened({ project, query? })`: payload `PullRequest`. The same for pull requests.
 
-A webhook workflow filters in its body. Parse `request.body`, and `stop("not a push to main")`
-for what it does not care about. To check a signature, do it in a `step`.
+A triggered workflow filters in its body. Parse `request.body`, and `skip("not a push to main")`
+for what it does not care about, so those runs stay out of the lists. To check a signature, do it in a `step`.
 
 A workflow without triggers is started by hand or by another program:
 `t3 workflow start <name> --input '<json>' --key <key>`. The same key is the same run.

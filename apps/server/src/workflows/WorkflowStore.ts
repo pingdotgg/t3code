@@ -108,7 +108,7 @@ export class WorkflowStore extends Context.Service<
     readonly runPaused: (runId: string, detail: string) => Effect.Effect<void>;
     readonly runEnded: (
       runId: string,
-      status: "completed" | "stopped" | "cancelled",
+      status: "completed" | "stopped" | "skipped" | "cancelled",
       detail: string | null,
       result: Schema.Json,
     ) => Effect.Effect<void>;

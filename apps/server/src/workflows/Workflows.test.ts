@@ -17,7 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
-import { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import { invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0099 from "../persistence/Migrations/099_Workflows.ts";
 import Migration0100 from "../persistence/Migrations/100_WorkflowTriggers.ts";
@@ -406,7 +406,7 @@ const triggered = [
       payload: WebhookRequest,
       triggers: [webhook("push", { key: (request) => request.headers["x-delivery"] })],
     },
-    (request) => (request.body === "ping" ? stop("only a ping") : Effect.succeed(request.body)),
+    (request) => (request.body === "ping" ? skip("only a ping") : Effect.succeed(request.body)),
   ),
 ];
 
@@ -1342,8 +1342,8 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
         assert.equal(done.result, "hello");
 
         const ping = Option.getOrThrow(yield* deliver("ping", "d2"));
-        const stopped = yield* workflows.waitFor(ping.runId, status("stopped"));
-        assert.equal(stopped.detail, "only a ping");
+        const skipped = yield* workflows.waitFor(ping.runId, status("skipped"));
+        assert.equal(skipped.detail, "only a ping");
         return token;
       }),
     );

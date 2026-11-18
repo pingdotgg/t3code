@@ -32,6 +32,8 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
 /** The workflow's own decision to end without a result. */
 export class WorkflowStop extends Schema.TaggedError<WorkflowStop>()("WorkflowStop", {
   reason: Schema.String,
+  /** The run was never for this workflow to do, which lists leave out. */
+  skipped: Schema.optional(Schema.Boolean),
 }) {
   override get message(): string {
     return this.reason;
@@ -135,7 +137,7 @@ export const journaled = <A, I, E>(
 
 /** How an invoked run ended, as its parent's wait receives it. */
 export const ChildEnd = Schema.Struct({
-  outcome: Schema.Literals(["completed", "stopped", "cancelled"]),
+  outcome: Schema.Literals(["completed", "stopped", "skipped", "cancelled"]),
   value: Schema.Json,
   reason: Schema.optional(Schema.String),
 });
@@ -323,6 +325,14 @@ export const wait = <A, I>(
 export const stop = (reason: string): Effect.Effect<never, WorkflowStop> =>
   Effect.fail(new WorkflowStop({ reason }));
 
+/**
+ * End the run because it was not this workflow's to do: a webhook delivery it ignores, a pull
+ * request it opened itself. It ends as `skipped`, which lists leave out unless asked. Use `stop`
+ * for a run that did something and then decided to end.
+ */
+export const skip = (reason: string): Effect.Effect<never, WorkflowStop> =>
+  Effect.fail(new WorkflowStop({ reason, skipped: true }));
+
 /** Name the run in lists. Defaults to the workflow's name and the run's key. */
 export const title = (name: string, value: string): Effect.Effect<void, StepFailed, InRun> =>
   Effect.flatMap(claim(name), (run) =>
@@ -357,7 +367,7 @@ export interface WorkflowDefinition<P = never, A = unknown> {
 /** How a run ended, as its `onEnd` is told. A paused run has not ended. */
 export interface RunEnd {
   readonly id: string;
-  readonly outcome: "completed" | "stopped" | "cancelled";
+  readonly outcome: "completed" | "stopped" | "skipped" | "cancelled";
   readonly reason: string | undefined;
 }
 
@@ -373,7 +383,7 @@ export const invoke = Effect.fn("workflow.invoke")(function* <P, A>(
   options?: { readonly key?: string },
 ): Effect.fn.Return<
   | { readonly outcome: "completed"; readonly value: A }
-  | { readonly outcome: "stopped" | "cancelled"; readonly reason: string },
+  | { readonly outcome: "stopped" | "skipped" | "cancelled"; readonly reason: string },
   StepFailed,
   InRun
 > {
@@ -460,7 +470,7 @@ export const engineTag = (definition: Pick<WorkflowDefinition, "name" | "version
   `${definition.name}@${definition.version}`;
 
 const Outcome = Schema.Struct({
-  outcome: Schema.Literals(["completed", "stopped"]),
+  outcome: Schema.Literals(["completed", "stopped", "skipped"]),
   value: Schema.Json,
   reason: Schema.optional(Schema.String),
 });
@@ -507,7 +517,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
         Effect.catchTags({
           WorkflowStop: (stopped) =>
             Effect.succeed<typeof Outcome.Type>({
-              outcome: "stopped",
+              outcome: stopped.skipped === true ? "skipped" : "stopped",
               value: null,
               reason: stopped.reason,
             }),
