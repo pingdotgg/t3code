@@ -21,6 +21,10 @@ provider. Until you run it, pstack matches its defaults to models advertised by 
 available providers, including models offered through another harness. Models without a reasoning
 setting keep their own defaults.
 
+Run setup in the project whose work should inform your choices. When blind model evaluations are
+enabled, setup can use that project's scored subagent work to explain a recommendation. The saved
+seats apply across the environment. [Model evaluations](model-evaluations.md)
+
 List several models on a role to give pstack a pool that picks one per spawn. Arena runners,
 architect runners, and interrogate reviewers are panels that run every model listed.
 

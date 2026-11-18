@@ -15,7 +15,7 @@ Call `orchestrator_capabilities` with `allModels: true`. It lists every usable i
 
 Read `<models>`. Preserve its `# budget:` line and current choices. Drop roles absent from step 5, and report them. If the file is missing, start from the defaults below. A native harness's existing model sheet may seed a proposal only when the user identifies it; validate every choice against this environment's catalog.
 
-Ask for a budget. Use the harness question tool if available; otherwise ask in plain text and end the turn. Name the recorded budget, or say that `large` matches the defaults. Offer these exact labels:
+Ask for a budget. Use the harness question tool if available; otherwise ask in plain text and end the turn. Name the recorded budget, or say that `large` targets `xhigh`. Offer these exact labels:
 
 - `unlimited — max reasoning`
 - `large — xhigh reasoning`
@@ -34,9 +34,9 @@ A budget-only request keeps every current seat, applies the effort rule in step 
 - cost: `free` when the label or instance says so, otherwise `unknown`. Never infer billing.
 - context size, strengths, and weaknesses the maker states, each with its source URL, and the research date.
 
-Group the unprofiled models by family and research them with `delegate_task`, `role: "research"`, at most 25 models per child and at most 6 children at a time, spread across the `how explorer` seats in `<t3_pstack>` (omit `target` when the role is missing). Each brief lists its model IDs and labels, asks for the fields above from maker documentation only, says "Record unknown rather than guess", and says "Do not edit files, commit, or push." Each completion wakes you. Write the returned profiles, list any model with no profile as `unknown`, and continue once every child has returned.
+Group the unprofiled models by family and research them with `delegate_task`, `role: "research"`, at most 25 models per child and at most 6 children at a time, spread across the `how explorer` seats in `<t3_pstack>` (omit `target` when the role is missing). Start each brief with `Read <pstack>/skills/poteto-mode/worker.md before anything else.`, using the absolute pack path, then give the absolute pack and models paths. Each brief lists its model IDs and labels, asks for the fields above from maker documentation only, says "Record unknown rather than guess", and says "Do not edit files, commit, or push." Each completion wakes you. Write the returned profiles, list any model with no profile as `unknown`, and continue once every child has returned.
 
-**(b) Assign seats across providers.** Fill every role from the profiles:
+**(b) Assign seats across providers.** Shortlist candidates from the profiles:
 
 - Judgment roles (`judgment and prose`, `hardest tasks`, `how explainer`, `why synthesizer`, `reflect judgment, divergent, synthesizer`) take `frontier` models.
 - Code roles (`feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`) take `frontier` or `strong` models with `reliable` tool use.
@@ -46,6 +46,12 @@ Group the unprofiled models by family and research them with `delegate_task`, `r
 - Every pool gets seats from at least two families when two qualify, best seat first.
 - Every instance with a qualifying model holds at least one seat somewhere. Name any instance left out and why.
 - `unreliable` and `unknown`-tier models never hold a seat.
+
+For a choice between eligible models, check each shortlisted candidate's `modelGuidance` from the inventory. A matching brief has the candidate as the worker (`modelSelection`), the relevant options, `scope: "subagent"`, and the seat's task category. Coding scores cannot support a review seat. Being the judge (`evaluatorSelection`) supplies no evidence about doing the work.
+
+For each shortlisted candidate missing that match, call `orchestrator_capabilities` with `search` set to its exact model ID before choosing. Reuse the result across roles. Weigh confidence and scored sample counts; compare scores only within the same judge and rubric. Honor explicit choices.
+
+Explain each consequential choice in one sentence with the project observation and sample count. If evidence is missing or provisional, say what maker profile or user preference supports the choice. Keep project observations out of the shared profiles and models file.
 
 On a repeat run, keep every working seat. Propose only additions, for a qualifying family or instance with no seat, and replacements for unavailable seats. Show each change beside the old value.
 
@@ -64,10 +70,10 @@ Validate every concrete instance, model, option ID, and value against this run's
 The following default role block is also the server's machine-readable catalog. Keep these labels and the first fenced block under this heading intact. These are selection defaults, not literal models-file entries; resolve them to advertised instances and option IDs before writing.
 
 ```
-feature, refactoring: grok-4.7-xhigh
-bug-fix: grok-4.7-xhigh
-perf-issue: grok-4.7-xhigh
-hillclimb: grok-4.7-xhigh
+feature, refactoring: claude-opus-5-5-xhigh
+bug-fix: claude-opus-5-5-xhigh
+perf-issue: claude-opus-5-5-xhigh
+hillclimb: claude-opus-5-5-xhigh
 judgment and prose: claude-opus-5-5-xhigh
 hardest tasks: claude-opus-5-5-xhigh
 how explorer: grok-4.7-xhigh
@@ -76,11 +82,11 @@ why investigators: grok-4.7-xhigh
 why synthesizer: claude-opus-5-5-xhigh
 reflect tooling: grok-4.7-xhigh
 reflect judgment, divergent, synthesizer: claude-opus-5-5-xhigh
-arena runners: claude-opus-5-5-xhigh, grok-4.7-xhigh
-arena cross-judge pool: claude-opus-5-5-xhigh, grok-4.7-xhigh
-swarm workers: grok-4.7-xhigh
+arena runners: claude-fable-5-2-high, claude-opus-5-5-high, gemini-4-carbon-high
+arena cross-judge pool: claude-opus-5-5-high, gemini-4-carbon-high
+swarm workers: claude-opus-5-5-high
 architect runners: claude-opus-5-5-xhigh, grok-4.7-xhigh
-interrogate reviewers: claude-opus-5-5-xhigh, grok-4.7-xhigh
+interrogate reviewers: claude-fable-5-2-high, claude-opus-5-5-high, gemini-4-carbon-high
 ```
 
 Overwrite `<models>` with no frontmatter: comment lines, `# budget: <label> (<effort>)`, and one `role: value` line per role. Each value is a comma-separated list of entries: `inherit-parent`, `auto`, or `<instanceId>/<model> <optionId>=<value> ...`. Split instance from model at the first `/`; model IDs may contain more slashes. Booleans are `true` and `false`. `#` starts a comment. Only write options the user chose; T3 completes omissions from the provider's current defaults. Never write role lines into `AGENTS.md`, `CLAUDE.md`, or a harness rule folder.

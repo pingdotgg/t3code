@@ -31,7 +31,7 @@ Merge the entire source pack into the destination:
 
 If this file is already being read from the target destination, treat the copy as complete and run the same verification before continuing.
 
-Use the absolute `<pstack>` pack path supplied by T3 for shared skills (`how`, `why`, `tdd`, `unslop`, and the required principles). Read those files directly. Verify this environment exposes the T3 orchestration tools and the current invocation supplies resolved roles. Do not write a harness plugin setting or install another pstack copy.
+Use the absolute `<pstack>` pack path supplied by T3 for shared skills (`why`, `tdd`, `unslop`, and the required principles). Read those files directly. Verify this environment exposes the T3 orchestration tools and the current invocation supplies resolved roles. Do not write a harness plugin setting or install another pstack copy.
 
 The Benny files are read directly from `.agents/automations/benny/`, not discovered as top-level skills. Commit the copied pack and referenced secret-free configuration within existing authorization before scheduling work that depends on them. Preserve local edits and destination-only files on refresh.
 

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Triage issue reports
 
-For a permitted child use `delegate_task`, the `why investigators` role's exact resolved target from `<t3_pstack>`, and the absolute pack/models paths. T3 has no enforced no-write switch and a worktree does not remove MCP tools or credentials. Where the isolation requirements below cannot be enforced, do the work in the coordinator. Never send Slack secrets to a child.
+For a permitted child use `delegate_task`, the `why investigators` role's exact resolved target from `<t3_pstack>`, and the absolute pack/models paths. T3 has no enforced no-write switch and a worktree does not remove MCP tools or credentials. Where the isolation requirements below cannot be enforced, do the work in the coordinator. Never send Slack secrets to a child. Start its brief with `Read <pstack>/skills/poteto-mode/worker.md before anything else.`, using the absolute pack path.
 
 Classify one Slack report and post one useful verdict in its source thread. Create a tracker issue only for a clear, new bug. Do not reproduce or fix it here.
 
@@ -70,7 +70,7 @@ Use evidence already in the thread before asking the reporter for more.
 
 ## 3. Trace cause before routing
 
-Do a bounded source and history pass before choosing an owner or destination. Use pstack's `how` skill to trace the path from the reported action to the observed result. Use `why` when the report looks like a regression or touches defensive code.
+Do a bounded source and history pass before choosing an owner or destination. Trace the path from the reported action to the observed result. Use pstack's `why` skill when the report looks like a regression or touches defensive code.
 
 1. Identify the likely code path from the reported action to the observed result.
 2. Check whether the visible symptom belongs to that code path or a dependency below it.

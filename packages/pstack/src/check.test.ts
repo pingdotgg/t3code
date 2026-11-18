@@ -274,7 +274,7 @@ describe("pack interface", () => {
     expect(roles).toHaveLength(17);
     expect(roles[0]).toEqual({
       label: "feature, refactoring",
-      defaultValue: "grok-4.7-xhigh",
+      defaultValue: "claude-opus-5-5-xhigh",
     });
     expect(roles.find(({ label }) => label === "architect runners")).toEqual({
       label: "architect runners",

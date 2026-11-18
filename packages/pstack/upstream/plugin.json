@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "pstack",
-  "version": "0.15.36-t3code.1",
+  "version": "0.15.43-t3code.1",
   "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence. T3 Code-native port with automate-maintainer and automate-team.",
   "author": {
     "name": "Lauren Tan"

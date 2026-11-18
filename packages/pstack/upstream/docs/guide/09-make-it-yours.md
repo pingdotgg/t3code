@@ -28,7 +28,7 @@ Right after a task that taught you something, run:
 $pstack:reflect that took way too long. capture what we learned so the next run doesn't repeat it.
 ```
 
-[`$pstack:reflect`](../../skills/reflect/SKILL.md) sends the transcript to three parallel reviewers, then a synthesizer sorts the proposals into `Accepted`, `Rejected`, and `Backlog` and waits for your approval before any skill changes. Approve a proposal only if it would change a future decision. One weird session is an anecdote, not a rule.
+[`$pstack:reflect`](../../skills/reflect/SKILL.md) reads the transcript for durable lessons and uses parallel reviewers for a broad transcript. It sorts proposals into `Accepted`, `Rejected`, and `Backlog` and waits for your approval before any skill changes. Approve a proposal only if it would change a future decision. One weird session is an anecdote, not a rule.
 
 ## Fix the environment with `$pstack:correct`
 

@@ -131,7 +131,7 @@ $pstack:statechart what the user sees when they edit a note offline
 $pstack:poteto-mode open the pr. small ordered commits, evidence in the description.
 ```
 
-The [Opening a PR playbook](../../skills/poteto-mode/playbooks/opening-a-pr.md) works from a worktree, rebases the work into small ordered commits, cleans the diff, unslops the prose, and returns the PR link. Five narrow PRs beat one fat one, and stacked follow-ups beat a growing branch.
+The [Opening a PR playbook](../../skills/poteto-mode/playbooks/opening-a-pr.md) works from a worktree, rebases the work into small landable commits, cleans the diff, writes a one-minute briefing as the body, and opens the PR ready. Stacked follow-ups beat a growing branch.
 
 ## Drive the PR to merge-ready with Babysit
 
@@ -141,7 +141,7 @@ An open PR starts collecting blockers immediately. Checks fail, reviewers commen
 $pstack:poteto-mode babysit this pr. get it green.
 ```
 
-Babysit watches the PR, through `watch_pull_request`, reading one forge snapshot at each wake, and takes blockers in order: conflicts, then review threads, then CI. Every known fix batches into one push, so the checks restart once instead of after every fix. The comment triage is skeptical, because humans and bots file real catches and noise in the same list. A real finding gets a fix, and noise gets dismissed with the disproof posted on the thread. When all you want is status, ask smaller and Babysit answers without starting the loop:
+Babysit watches the PR, through `watch_pull_request`, reading one forge snapshot at each wake, and handles conflicts, review threads, and CI in that order. It reports a conflict or stale base with the branch that needs a rebase. Every known fix batches into one push, so the checks restart once instead of after every fix. The comment triage is skeptical, because humans and bots file real catches and noise in the same list. A real finding gets a fix, and noise gets dismissed with the disproof posted on the thread. When all you want is status, ask smaller and Babysit answers without starting the loop:
 
 ```text
 $pstack:poteto-mode check on pr 123. anything outstanding?

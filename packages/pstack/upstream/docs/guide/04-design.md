@@ -12,15 +12,9 @@ The two most common design mistakes are taking the agent's first design and poli
 $pstack:architect design the import pipeline before writing any code. i care most about how callers use it.
 ```
 
-[`$pstack:architect`](../../skills/architect/SKILL.md) grounds itself first, running `$pstack:how` over the code the design touches and `$pstack:why` when it moves ownership or layers. Then it runs `$pstack:arena` to produce competing design sketches, with the caller's usage written first in each, followed by types, signatures, and a module map.
+[`$pstack:architect`](../../skills/architect/SKILL.md) traces every system the change touches first. Then it sketches two different shapes, each with types, signatures, and module boundaries, and picks the one where each piece of state has one owner, each task has one way to do it, and callers need to know least. For a large or contested design, it runs `$pstack:arena` with the configured architect panel. If you want to see the design before any code, say so in the prompt.
 
-By default it proceeds straight from the synthesized design into implementation. If you want to see the design first, say so:
-
-```text
-$pstack:architect with checkpoint. stop and show me before implementing.
-```
-
-The design isn't sacred once code starts. If implementation shows the same workaround in unrelated places, or types that only compile with `any` or forced casts, `$pstack:architect` treats that as proof the design is wrong. It scraps the sketch and starts over instead of patching around it.
+The design isn't sacred once code starts. If the same workaround keeps coming back, `$pstack:architect` redesigns instead of patching around it.
 
 ## Fan out attempts with `$pstack:arena`
 
@@ -28,7 +22,7 @@ The design isn't sacred once code starts. If implementation shows the same worka
 $pstack:arena take my prompt to the arena verbatim. i want to compare their proposals with yours.
 ```
 
-[`$pstack:arena`](../../skills/arena/SKILL.md) is the general tool underneath. N subagents attempt the same design or code brief in parallel, each writing to its own worktree or directory. A read-only judge from a different model family scores every candidate against a rubric. When no model from another family can run, the coordinator skips the judge and picks the base itself. The coordinator reads each candidate end to end, picks a base, grafts in the best ideas from the losers, and verifies the result.
+[`$pstack:arena`](../../skills/arena/SKILL.md) is the general tool underneath. N subagents attempt the same design or code brief in parallel, each writing to its own worktree or directory. A read-only judge from a different model vendor scores every candidate against a rubric. When no model from another vendor can run, the coordinator skips the judge and picks the base itself. The coordinator reads each candidate end to end, picks a base, grafts in the best ideas from the losers, and verifies the result.
 
 ```mermaid
 flowchart LR
@@ -106,7 +100,7 @@ pstack has no planning skill, on purpose. When you do want a written plan, ask f
 $pstack:poteto-mode turn this design into a plan. small verifiable PRs, each with its own verification steps.
 ```
 
-The [Multi-phase plan playbook](../../skills/poteto-mode/playbooks/multi-phase-plan.md) settles any remaining open questions by prototype, then writes one section per PR, each ending in proof that the change works. A passing test suite alone doesn't count as that proof. The plan is the deliverable. The playbook doesn't implement it, and it names which execution playbook should run it next.
+The [Multi-phase plan playbook](../../skills/poteto-mode/playbooks/multi-phase-plan.md) settles any remaining open questions by prototype, then writes one section per PR, each ending in proof that the change works. A passing test suite alone doesn't count as that proof. The plan is the deliverable. The playbook doesn't implement it, and execution starts only when you say go.
 
 For a migration, state the bar in the prompt:
 
@@ -121,7 +115,7 @@ $pstack:poteto-mode plan the migration of our ui library to the new styling syst
 You might be wondering whether every change needs this. No. Most changes need none of it. A rough ladder:
 
 - A small, finished change you're unsure about needs `$pstack:interrogate` alone.
-- A change that crosses function boundaries or moves ownership earns `$pstack:architect`, which brings `$pstack:arena` with it.
+- A change that crosses function boundaries or moves ownership earns `$pstack:architect`, which brings `$pstack:arena` with it when the design is large or contested.
 - A standalone decision where independent attempts would help, like naming, formats, or an algorithm, is `$pstack:arena` directly.
 - A coverage matrix, set of parallel checks, or race with declared arms is `$pstack:swarm`.
 - An open question you could answer by running something, like a layout, a timing, or an approach, gets a prototype, not a debate.

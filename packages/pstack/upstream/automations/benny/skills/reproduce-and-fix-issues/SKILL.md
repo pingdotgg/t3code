@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Reproduce and fix issues
 
-For a permitted child use `delegate_task`, the `swarm workers` role's exact resolved target from `<t3_pstack>`, and the absolute pack/models paths. T3 has no enforced no-write switch and a worktree does not remove MCP tools or credentials. Where the isolation requirements below cannot be enforced, do the work in the coordinator. Never send Slack secrets to a child.
+For a permitted child use `delegate_task`, the `swarm workers` role's exact resolved target from `<t3_pstack>`, and the absolute pack/models paths. T3 has no enforced no-write switch and a worktree does not remove MCP tools or credentials. Where the isolation requirements below cannot be enforced, do the work in the coordinator. Never send Slack secrets to a child. Start its brief with `Read <pstack>/skills/poteto-mode/worker.md before anything else.`, using the absolute pack path.
 
 Wait for a trusted triage marker in the source thread. Reproduce the exact symptom through the target app's real UI. Verify an existing fix when one exists. Attempt a bounded fix only after a confirmed repro.
 
@@ -160,7 +160,7 @@ Collect:
 
 Inspect screenshots and video. Use read-only parallel workers for code history, test ideas, blast-radius mapping, and media review when useful. Each worker gets a narrow question and the Slack-write prohibition.
 
-Use pstack's `how` skill to trace the action through the repository. Use `why` for regression history and defensive code. Form competing cause hypotheses and identify evidence that would separate them.
+Trace the action through the repository. Use pstack's `why` skill for regression history and defensive code. Form competing cause hypotheses and identify evidence that would separate them.
 
 ## 7. Reproduce
 

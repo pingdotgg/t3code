@@ -8,7 +8,7 @@ T3 Code owns the pstack runtime pack and exposes `$pstack:` composer chips when 
 
 ## Choose your models
 
-Run `$pstack:setup-pstack`. It reads the available providers and asks for a reasoning budget: unlimited, large, medium, or small. Confirm the 17 role choices, including each panel's seats. The models file belongs to this environment and applies on the next invocation. Another environment needs its own choices.
+Run `$pstack:setup-pstack`. It reads the available providers and asks for a reasoning budget: unlimited, large, medium, or small. Confirm the 17 role choices, including each panel's seats. A new configuration starts with the pack’s default role seeds, and setup checks the advertised options and project evidence when assigning seats. On a repeat run, setup keeps working seats and shows its proposed additions and replacements. The models file belongs to this environment and applies on the next invocation. Another environment needs its own choices.
 
 During a run, T3 supplies the absolute pack and models paths and exact resolved role targets in `<t3_pstack>`. Skills use those targets. An inherited seat runs on the parent model. Missing required roles stop the affected spawn.
 

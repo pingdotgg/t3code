@@ -162,8 +162,8 @@ To watch the catch-up instead, run [`$pstack:ketchup-video`](../../skills/ketchu
 
 ## The pitfalls
 
-- **Enumerating skills in the prompt.** "use $pstack:how then $pstack:architect then $pstack:arena" reorders steps the playbook already sequences. State the goal and constraints. Name a skill only to override a default.
-- **A vague finish condition.** "make it better" gives `schedule_task` nothing to check. Give a command or artifact that can pass or fail.
+- **Enumerating skills in the prompt.** "use $pstack:architect then $pstack:arena then $pstack:interrogate" reorders steps the playbook already sequences. State the goal and constraints. Name a skill only to override a default.
+- **A vague finish condition.** "make it better" gives a scheduled run nothing to check. Give a command or artifact that can pass or fail.
 - **Leading with your theory of the cause.** The agent searches wherever you pointed. Ask it to restate the problem first, then share your hunch.
 - **Taking the first design.** One attempt locks in the first shape the model thought of. Ask for prototypes or `$pstack:architect` and pick from evidence.
 - **Polishing an abstract plan.** Adversarial review of a plan with no code behind it invents risks that will never happen. Settle the open questions with prototypes, then review what got built.

@@ -71,7 +71,7 @@ For a quick status instead of an audit, run [`$pstack:ketchup`](../../skills/ket
 
 ## When the night holds a queue, not a task
 
-The contract above drives one task to one finish condition. Some nights hold more, a queue of independent changes or a whole program. Three playbooks scale the same trust up.
+The contract above drives one task to one finish condition. Some nights hold more, a queue of independent changes or a whole program. Three playbooks scale this approach to a queue or a program.
 
 [Autopilot-full](../../skills/poteto-mode/playbooks/autopilot-full.md) runs a queue of independent PRs to merged. Each PR gets one owner agent that carries it from build through merge, and no owner merges on its own verdict. A swarm of fresh verifiers checks the owner's code-ready head. A later rebase or minor fix gets one fresh verifier, and only new behavior or a large new diff calls the full swarm again. Only a clean verdict on the patch that merges authorizes the merge:
 
@@ -85,7 +85,7 @@ $pstack:poteto-mode full autopilot on this queue. each item is independent. i wa
 $pstack:poteto-mode autopilot these five changes, but don't merge. i'll land them in the morning.
 ```
 
-[Orchestrate](../../skills/poteto-mode/playbooks/orchestrate.md) is for a program that outlives any single agent: multi-day, many stacked PRs, fleets of subagents under one standing coordinator chat. The coordinator decides which agent does each piece of work, checks what each one produces, and never writes code itself. If one agent could finish the work in a session, the playbook itself routes you back to the overnight contract above:
+[Orchestrate](../../skills/poteto-mode/playbooks/orchestrate.md) handles a standing program such as a multi-day migration. A coordinator delegates each unit and checks the results. For one large run, use [figure-it-out](../../skills/figure-it-out/SKILL.md).
 
 ```text
 $pstack:poteto-mode orchestrate the store migration. own it until every package is converted and merged. i'll check in twice a day.
@@ -93,7 +93,7 @@ $pstack:poteto-mode orchestrate the store migration. own it until every package 
 
 ## Run many projects in parallel
 
-A T3 thread gives a coordinator durable history on its environment. It directs isolated workers through `delegate_task`. Work continues while that environment remains running; a worktree does not provide another machine. Start each task with `$pstack:poteto-mode`.
+A T3 thread gives a coordinator durable history on its environment. It directs isolated workers through `delegate_task`. Work continues while that environment remains running; a worktree does not provide another machine. Start each task with `$pstack:poteto-mode`. The coordinator gives each worker the [worker brief](../../skills/poteto-mode/worker.md), the resolved role, and the acceptance criteria.
 
 A few habits help:
 
