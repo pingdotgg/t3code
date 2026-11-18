@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
@@ -70,14 +71,20 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
 });
 
 describe("UsageLimitsPooled reset credits", () => {
-  it("offers each kind of credit once per account, not under every window", async () => {
+  it.each([false, true])("offers each kind of credit once per account (hub: %s)", async (hub) => {
     const claude: ServerProvider = {
       ...managedChatGpt("claude_work", "Claude Work"),
       driver: ProviderDriverKind.make("claudeAgent"),
       usageLimits: {
         checkedAt,
         windows: [
-          { id: "session", kind: "session", label: "Session", usedPercent: 40 },
+          {
+            id: "session",
+            kind: "session",
+            label: "Session",
+            usedPercent: 100,
+            resetsAt: checkedAt,
+          },
           { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 70 },
           { id: "fable", kind: "weekly", label: "Fable", usedPercent: 90 },
         ],
@@ -103,7 +110,25 @@ describe("UsageLimitsPooled reset credits", () => {
     const presentations = new Map([
       [
         EnvironmentId.make("desk"),
-        { entry: { target: { label: "Desk" } }, serverConfig: { providers: [claude] } },
+        {
+          entry: { target: { label: "Desk" } },
+          serverConfig: hub
+            ? {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    id: UsageLimitSourceId.make("hub"),
+                    kind: "cliproxy",
+                    label: "Hub",
+                    checkedAt,
+                    accounts: [
+                      { id: "claude", driver: claude.driver, usageLimits: claude.usageLimits! },
+                    ],
+                  },
+                ],
+              }
+            : { providers: [claude] },
+        },
       ],
     ]);
     await using screen = await render(
@@ -121,5 +146,13 @@ describe("UsageLimitsPooled reset credits", () => {
     await expect.element(fable).toBeVisible();
     expect(weekly.elements()).toHaveLength(1);
     expect(fable.elements()).toHaveLength(1);
+    await expect.element(screen.getByText("resets now", { exact: true })).toBeVisible();
+    if (hub) {
+      await expect.element(weekly).toBeDisabled();
+      await expect.element(fable).toBeDisabled();
+      await expect
+        .element(screen.getByRole("button", { name: /^Use Reset credit · 3 left/ }))
+        .toBeVisible();
+    }
   });
 });

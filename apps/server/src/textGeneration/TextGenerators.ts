@@ -134,7 +134,11 @@ export const make = Effect.gen(function* () {
         input.config === undefined
           ? saved
           : input.config.apiKey === SECRET_REDACTED
-            ? { ...input.config, apiKey: saved?.apiKey ?? "" }
+            ? // The saved key goes only to the endpoint it was saved for.
+              {
+                ...input.config,
+                apiKey: saved?.baseUrl === input.config.baseUrl ? saved.apiKey : "",
+              }
             : input.config;
       if (config === undefined) {
         return yield* new TextGeneratorRequestError({

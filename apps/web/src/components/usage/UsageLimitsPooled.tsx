@@ -1,20 +1,25 @@
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+import { T, useGT, useMessages, msg } from "gt-react";
+import {
+  collectExternalUsageLinks,
+  collectLimitNotices,
+  cursorUsageWindowDetails,
+  formatDuration,
+  formatResetsIn,
+  resetCreditChoices,
+} from "@t3tools/shared/usageLimitsCopy";
 import {
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
-  collectExternalUsageLinks,
-  collectLimitNotices,
   collectLimitPools,
-  cursorUsageWindowDetails,
   displayLimitWindows,
-  formatDuration,
-  formatResetsIn,
   type LimitAccount,
   type LimitPool,
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
-  resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { AlertTriangleIcon, ExternalLinkIcon, RotateCcwIcon } from "lucide-react";
@@ -92,10 +97,14 @@ function accountHue(seed: string): number {
   return Math.abs(hash) % 360;
 }
 
-function untilText(iso: string | undefined, now: number): string | null {
+function untilText(
+  iso: string | undefined,
+  now: number,
+  m: MFunctionType = mFallback,
+): string | null {
   if (!iso) return null;
   const at = Date.parse(iso);
-  return Number.isFinite(at) ? formatDuration(at - now) : null;
+  return Number.isFinite(at) ? formatDuration(at - now, m) : null;
 }
 
 interface AccountCredit {
@@ -109,29 +118,32 @@ interface AccountCredit {
 }
 
 /** One entry per kind of credit, so a credit is offered in exactly one place. */
-function accountCredits(account: LimitAccount, now: number): readonly AccountCredit[] {
+function accountCredits(
+  account: LimitAccount,
+  now: number,
+  m: MFunctionType,
+): readonly AccountCredit[] {
   const credits = account.limits.resetCredits;
   if (!credits || credits.availableCount === 0) return [];
-  const choices = account.redeem ? resetCreditChoices(credits, account.redeem.input, now) : null;
+  const choices = account.redeem
+    ? resetCreditChoices(credits, account.redeem.input, now, false, m)
+    : null;
   const options = credits.options?.filter((option) => option.availableCount > 0) ?? [];
-  if (
-    options.length > 0 &&
-    (choices === null || options.some((option) => choices.some((c) => c.key === option.creditId)))
-  ) {
-    return options.map((option) => ({
-      key: option.creditId,
-      title: option.label,
-      refills: option.description,
-      count: option.availableCount,
-      expiresAt: option.expiresAt,
-      choice: choices?.find((choice) => choice.key === option.creditId) ?? null,
-    }));
-  }
+  const typed = options.map((option) => ({
+    key: option.creditId,
+    title: option.label,
+    refills: option.description,
+    count: option.availableCount,
+    expiresAt: option.expiresAt,
+    choice: choices?.find((choice) => choice.key === option.creditId) ?? null,
+  }));
+  if (typed.length > 0 && !choices?.some((choice) => choice.key === "next")) return typed;
   return [
+    ...typed,
     {
       key: "next",
-      title: "Reset credit",
-      refills: "Clears the current limit windows.",
+      title: m(msg("Reset credit")),
+      refills: m(msg("Clears the current limit windows.")),
       count: credits.availableCount,
       expiresAt: credits.nextExpiresAt,
       choice: choices?.[0] ?? null,
@@ -157,6 +169,7 @@ function accountRow(
   account: LimitAccount,
   windows: readonly LimitPoolWindow[],
   now: number,
+  m: MFunctionType,
 ): AccountRowModel {
   const cells = windows.map(
     (window) => window.columns.find((column) => column.account.key === account.key)?.window ?? null,
@@ -173,7 +186,7 @@ function accountRow(
   return {
     account,
     cells,
-    credits: accountCredits(account, now),
+    credits: accountCredits(account, now, m),
     outUntil: out ? (backAt ?? null) : undefined,
   };
 }
@@ -225,10 +238,11 @@ function ResetChip({
   readonly disabled: boolean;
   readonly onUse: () => void;
 }) {
+  const gt = useGT();
   const kind = credit.key === "next" ? "" : `${credit.title.replace(/ reset$/i, "")} `;
   const expires = untilText(credit.expiresAt, now);
   const description = `${credit.title} · ${credit.count} left · ${credit.refills}${
-    expires ? ` · expires in ${expires}` : ""
+    expires ? gt(" · expires in {duration}", { duration: expires }) : ""
   }`;
   return (
     <Tooltip>
@@ -236,7 +250,7 @@ function ResetChip({
         render={
           <button
             type="button"
-            aria-label={`Use ${description}`}
+            aria-label={gt("Use {description}", { description })}
             disabled={disabled}
             onClick={onUse}
             className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 px-1.5 text-2xs font-medium text-foreground tabular-nums outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-default disabled:opacity-50"
@@ -268,6 +282,7 @@ function PaceTooltipText({
   readonly display: LimitDisplay;
   readonly now: number;
 }) {
+  const gt = useGT();
   const resetsIn = untilText(window.resetsAt, now);
   const gap = remaining - timeLeft;
   let detail: string;
@@ -283,7 +298,10 @@ function PaceTooltipText({
   return (
     <div className="flex max-w-64 flex-col gap-0.5">
       <span className="font-medium text-foreground">
-        Even pace · {shown(timeLeft, display)}% {display} by now
+        {gt("Even pace · {percent}% {display} by now", {
+          percent: shown(timeLeft, display),
+          display: gt(display === "left" ? "left" : "used"),
+        })}
       </span>
       <span className="text-muted-foreground">{detail}</span>
     </div>
@@ -299,9 +317,11 @@ function Meter({
   readonly now: number;
   readonly display: LimitDisplay;
 }) {
+  const gt = useGT();
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
-  const resetsIn = formatResetsIn(window, now)?.replace(/^resets in /, "") ?? null;
+  const m = useMessages();
+  const resetsIn = formatResetsIn(window, now, m);
   const out = remaining === 0;
   const fill = shown(remaining, display);
   const tick = timeLeft === null ? null : shown(timeLeft, display);
@@ -320,12 +340,12 @@ function Meter({
             out ? "text-destructive-foreground" : "text-muted-foreground",
           )}
         >
-          {resetsIn ? (out ? `back in ${resetsIn}` : resetsIn) : ""}
+          {resetsIn ?? ""}
         </span>
       </div>
       <div
         role="img"
-        aria-label={`${window.label}: ${shown(remaining, display)}% ${display}${resetsIn ? `, resets in ${resetsIn}` : ""}`}
+        aria-label={`${window.label}: ${shown(remaining, display)}% ${display}${resetsIn ? `, ${resetsIn}` : ""}`}
         className="relative h-2"
       >
         <div
@@ -347,7 +367,10 @@ function Meter({
               render={
                 <span
                   tabIndex={0}
-                  aria-label={`Even pace: ${tick}% ${display} by now`}
+                  aria-label={gt("Even pace: {percent}% {display} by now", {
+                    percent: tick,
+                    display: gt(display === "left" ? "left" : "used"),
+                  })}
                   className="group absolute inset-y-0 flex w-2 -translate-x-1/2 cursor-default justify-center outline-none"
                   style={{ left: `clamp(1px, ${tick}%, calc(100% - 1px))` }}
                 />
@@ -397,6 +420,7 @@ function AccountCard({
   readonly redeemDisabled: boolean;
   readonly onUseCredit: (credit: AccountCredit) => void;
 }) {
+  const gt = useGT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const { account } = row;
   const subtitle = accountSubtitle(account, hideEmails);
@@ -433,27 +457,32 @@ function AccountCard({
               aria-hidden
               className={cn("size-1.5 rounded-full", TONE_BG[toneOf(remainingPercent(focus))])}
             />
-            {limitedIndex >= 0 ? `${focusLabel} limited` : focusLabel}
+            {limitedIndex >= 0 ? gt("{window} limited", { window: focusLabel }) : focusLabel}
           </span>
-          <DetailRow label={display === "left" ? "Left" : "Used"}>
+          <DetailRow label={display === "left" ? gt("Left") : gt("Used")}>
             {shown(remainingPercent(focus), display)}%
           </DetailRow>
           {focus.resetsAt ? (
-            <DetailRow label={limitedIndex >= 0 ? "Back" : "Resets"}>
+            <DetailRow label={limitedIndex >= 0 ? gt("Back") : gt("Resets")}>
               {formatUpcomingTimestamp(focus.resetsAt, timestampFormat, now)}
-              {resetsIn ? ` · in ${resetsIn}` : ""}
+              {resetsIn ? gt(" · in {duration}", { duration: resetsIn }) : ""}
             </DetailRow>
           ) : null}
           {timeLeft !== null ? (
-            <DetailRow label="Even pace">
-              {shown(timeLeft, display)}% {display} by now
+            <DetailRow label={gt("Even pace")}>
+              {gt("{percent}% {display} by now", {
+                percent: shown(timeLeft, display),
+                display: gt(display === "left" ? "left" : "used"),
+              })}
             </DetailRow>
           ) : null}
         </div>
       ) : null}
       {row.credits.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
-          <span className="font-medium text-foreground">Resets</span>
+          <span className="font-medium text-foreground">
+            <T>Resets</T>
+          </span>
           {row.credits.map((credit) => {
             const expires = untilText(credit.expiresAt, now);
             const soon = expiresSoon(credit, now);
@@ -466,7 +495,9 @@ function AccountCard({
                       className={cn("size-3", soon ? "text-warning" : "text-muted-foreground")}
                     />
                     {credit.title}
-                    <span className="text-muted-foreground">· {credit.count} left</span>
+                    <span className="text-muted-foreground">
+                      {gt("· {count} left", { count: credit.count })}
+                    </span>
                   </span>
                   <span
                     className={cn(
@@ -485,7 +516,7 @@ function AccountCard({
                     disabled={redeemDisabled || credit.choice === null}
                     onClick={() => onUseCredit(credit)}
                   >
-                    Use
+                    <T>Use</T>
                   </Button>
                 </div>
               </div>
@@ -520,6 +551,7 @@ function RedeemableAccountRow({
 }: Parameters<typeof AccountRow>[0] & {
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
+  const gt = useGT();
   const redeem = useResetCredit(redeemAt.environmentId);
   return (
     <>
@@ -562,6 +594,7 @@ function AccountRowView({
   readonly redeem: RedeemController | null;
   readonly onUseCredit: (credit: AccountCredit) => void;
 }) {
+  const gt = useGT();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const [cardOpen, setCardOpen] = useState(false);
   const { account } = row;
@@ -633,10 +666,14 @@ function AccountRowView({
         <div className="flex min-w-0 items-center gap-2 opacity-70">{identity}</div>
         <span className="ms-auto flex min-w-0 items-center gap-1.5 text-xs">
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
-          <span>Out of usage</span>
+          <span>
+            <T>Out of usage</T>
+          </span>
           {row.outUntil ? (
             <span className="truncate tabular-nums">
-              · back {formatUpcomingTimestamp(row.outUntil, timestampFormat, now)}
+              {gt("· back {time}", {
+                time: formatUpcomingTimestamp(row.outUntil, timestampFormat, now),
+              })}
               {back ? ` (${back})` : ""}
             </span>
           ) : null}
@@ -684,7 +721,7 @@ function AccountRowView({
               key={windows[index]!.id}
               className="flex min-w-0 items-center text-xs text-muted-foreground"
             >
-              $0 cap
+              <T>$0 cap</T>
             </span>
           ) : (
             <span key={windows[index]!.id} aria-hidden />
@@ -706,9 +743,10 @@ function ProviderCard({
   readonly display: LimitDisplay;
   readonly hideEmails: boolean;
 }) {
+  const m = useMessages();
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
-  const rows = pool.accounts.map((account) => accountRow(account, windows, now));
+  const rows = pool.accounts.map((account) => accountRow(account, windows, now, m));
   const onlyRow = rows.length === 1 ? rows[0]! : null;
   const allOut = rows.every((row) => row.outUntil !== undefined);
 
@@ -754,7 +792,7 @@ function ProviderCard({
         >
           {windows.map((window) => {
             const details =
-              pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+              pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool, m) : undefined;
             return (
               <span
                 key={`${window.kind}:${window.id}`}
@@ -820,14 +858,16 @@ export function UsageLimitsPooled({
   readonly display: LimitDisplay;
   readonly hideEmails: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
-  const notices = collectLimitNotices(presentations);
-  const externalLinks = collectExternalUsageLinks(presentations);
+  const notices = collectLimitNotices(presentations, m);
+  const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
     <div className="@container/limits flex flex-col gap-4">
       {pools.length === 0 && notices.length === 0 && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No provider on the selected environments reports subscription limits.
+          <T>No provider on the selected environments reports subscription limits.</T>
         </p>
       ) : null}
       {pools.map((pool) => (
@@ -855,7 +895,7 @@ export function UsageLimitsPooled({
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
                 <p className="text-xs text-muted-foreground">
-                  View usage in ChatGPT with your connected account.
+                  <T>View usage in ChatGPT with your connected account.</T>
                 </p>
               ) : link.message ? (
                 <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
@@ -867,7 +907,7 @@ export function UsageLimitsPooled({
             size="xs"
             onClick={() => void ensureLocalApi().shell.openExternal(link.url)}
           >
-            Manage usage
+            {gt("Manage usage")}
             <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
           </Button>
         </section>
