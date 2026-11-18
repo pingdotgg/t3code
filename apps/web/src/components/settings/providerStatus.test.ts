@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getProviderReinstallPresentation,
   getProviderSummary,
   getProviderVersionAdvisoryPresentation,
   getProviderStatusKey,
@@ -232,4 +233,34 @@ it("shows compatibility in the version popover even when the installed version i
     emphasis: "normal",
     targetVersion: null,
   });
+});
+
+it("offers a reinstall only for an install that lost its platform package", () => {
+  const broken: ServerProvider = {
+    ...provider,
+    version: null,
+    status: "error",
+    message:
+      "Codex app-server provider probe failed: Error: Missing optional dependency @openai/codex-linux-x64.",
+    versionAdvisory: {
+      status: "unknown",
+      currentVersion: null,
+      latestVersion: null,
+      updateCommand: "npm install -g @openai/codex@latest",
+      canUpdate: true,
+      checkedAt: provider.checkedAt,
+      message: null,
+    },
+  };
+  expect(getProviderReinstallPresentation(broken)?.updateCommand).toBe(
+    "npm install -g @openai/codex@latest",
+  );
+  expect(getProviderReinstallPresentation({ ...broken, message: "spawn codex EACCES" })).toBeNull();
+  expect(getProviderReinstallPresentation({ ...broken, version: "0.167.2" })).toBeNull();
+  expect(
+    getProviderReinstallPresentation({
+      ...broken,
+      versionAdvisory: { ...broken.versionAdvisory!, canUpdate: false },
+    }),
+  ).toBeNull();
 });
