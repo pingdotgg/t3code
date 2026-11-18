@@ -144,11 +144,8 @@ function providerInstanceName(instance: ProviderInstanceConfig): string {
   );
 }
 
-async function confirmProviderInstanceRemoval(
-  question: string,
-  consequence = "",
-): Promise<boolean> {
-  const message = `${question}\n${resolveNow(msg("Its saved settings, including any custom binary path, will be removed."))}${consequence}`;
+async function confirmProviderInstanceRemoval(question: string): Promise<boolean> {
+  const message = `${question}\n${resolveNow(msg("Its saved settings, including any custom binary path, will be removed."))}`;
   const confirmed = await settlePromise(() =>
     ensureLocalApi().dialogs.confirm(message, { variant: "destructive" }),
   );
@@ -783,7 +780,10 @@ export function EnvironmentProviderSettings({
         instanceId: defaultInstanceId,
         explicitInstance,
         driver,
-        isDefault: true,
+        // A configured slot that would vanish once removed is an added instance, so it gets Delete.
+        isDefault:
+          !isDirty ||
+          (providerSettings.hasDefaultInstance && resolveProviderInstanceEnabled({ driver })),
         isDirty,
       });
     }
@@ -924,14 +924,10 @@ export function EnvironmentProviderSettings({
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
     const instanceId = defaultInstanceIdForDriver(driverKind);
     const instance = settings.providerInstances?.[instanceId] ?? { driver: driverKind };
-    const turnsOff =
-      resolveProviderInstanceEnabled(instance) &&
-      !resolveProviderInstanceEnabled({ driver: driverKind });
     const confirmed = await confirmProviderInstanceRemoval(
       gt("Reset the {provider} provider to its defaults?", {
         provider: providerInstanceName(instance),
       }),
-      turnsOff ? ` ${gt("It will also be turned off.")}` : "",
     );
     if (!confirmed) return;
     const result = await persistProviderInstance({ operation: "remove", instanceId });

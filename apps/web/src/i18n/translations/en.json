@@ -9089,7 +9089,6 @@
   "c973a5fed2f69d5b": "Provider deleted, but managed files remain",
   "fb74557390ec3874": "Managed binary cleanup failed.",
   "645c01974c7f9b1c": "Reset the {provider} provider to its defaults?",
-  "1d93f73e64764962": "It will also be turned off.",
   "44eac2e9f0540171": "Could not reset provider instance",
   "e58b52d05807b929": "Refreshing providers",
   "1d7cade347f52bbd": "Limited permissions",
