@@ -17,26 +17,10 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
+import { htmlRenderHeightMemory, rememberedHtmlRenderHeight } from "./htmlRenderHeightMemory";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
-const MAX_MEASURED_CONTENT_HEIGHTS = 200;
-
-// The height each render's page last reported and the frame width it reported it at, so a frame
-// remounted at that width opens at it before its page loads.
-const measuredContentHeights = new Map<
-  string,
-  { readonly width: number; readonly height: number }
->();
-
-function rememberContentHeight(attachmentId: string, width: number, height: number) {
-  measuredContentHeights.delete(attachmentId);
-  measuredContentHeights.set(attachmentId, { width, height });
-  if (measuredContentHeights.size > MAX_MEASURED_CONTENT_HEIGHTS) {
-    const oldest = measuredContentHeights.keys().next().value;
-    if (oldest !== undefined) measuredContentHeights.delete(oldest);
-  }
-}
 
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -55,14 +39,11 @@ export function HtmlRenderFrame(props: {
   };
   // Client fonts can exceed the server-measured height and cause nested scrolling.
   const [contentHeight, setContentHeight] = useState<number>();
-  const [remembered] = useState(() => measuredContentHeights.get(attachmentId));
+  const [remembered] = useState(() => htmlRenderHeightMemory.get(attachmentId));
   const height = htmlRenderFitHeight(
     props.htmlRender,
     width,
-    contentHeight ??
-      (remembered !== undefined && Math.abs(remembered.width - width) < 1
-        ? remembered.height
-        : undefined),
+    contentHeight ?? rememberedHtmlRenderHeight(remembered, width),
   );
   const fileName = htmlRenderFileName(title);
   const resource = {
@@ -103,7 +84,7 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             className="block size-full"
             onContentHeight={(height) => {
-              rememberContentHeight(attachmentId, width, height);
+              htmlRenderHeightMemory.remember(attachmentId, width, height);
               setContentHeight(height);
             }}
             onFullscreenChange={onFullscreenChange}
