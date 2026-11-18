@@ -74,6 +74,55 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("ties a project skill to the command Claude names it by its frontmatter", () =>
+  Effect.gen(function* () {
+    // Claude Code 2.1.325 reports the frontmatter name and keeps the folder as an alias.
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            commands: [
+              {
+                name: "acme:brainstorming",
+                description: "Use before any creative work (project)",
+                argumentHint: "",
+                aliases: ["brainstorming"],
+              },
+            ],
+            models: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+            new Promise((_, reject) => reject(new Error("usage unavailable"))),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const home = yield* fileSystem.makeTempDirectoryScoped();
+    const workspace = yield* fileSystem.makeTempDirectoryScoped();
+    yield* fileSystem.makeDirectory(`${workspace}/.claude/skills/brainstorming`, {
+      recursive: true,
+    });
+    yield* fileSystem.writeFileString(
+      `${workspace}/.claude/skills/brainstorming/SKILL.md`,
+      "---\nname: acme:brainstorming\ndescription: Use before any creative work\n---\nBody\n",
+    );
+    const snapshot = yield* probeClaudeWorkspaceSnapshot(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { skills: [], slashCommands: [] } as unknown as ServerProvider,
+      workspace,
+      { PATH: (yield* HostProcess.Environment).PATH, HOME: home, CLAUDE_CONFIG_DIR: home },
+    );
+    assert.deepEqual(
+      snapshot.skills.map((skill) => skill.name),
+      ["brainstorming"],
+    );
+    assert.deepEqual(
+      snapshot.slashCommands.find((command) => command.name === "acme:brainstorming")?.aliases,
+      ["brainstorming"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
     let abortSignal: AbortSignal | undefined;

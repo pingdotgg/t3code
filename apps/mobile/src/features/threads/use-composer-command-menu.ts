@@ -385,7 +385,15 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "slash-command") {
       const q = trigger.query.toLowerCase();
-      const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
+      const providerSlashCommands = selectedProviderStatus
+        ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd)
+        : [];
+      // Provider commands are offered only at the start of the message.
+      const visibleSkills = getProviderSkillsForSlashMenu(
+        skills,
+        true,
+        trigger.rangeStart === 0 ? providerSlashCommands : [],
+      );
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
@@ -398,7 +406,7 @@ export function useComposerCommandMenu({
           ? {
               ...selectedProviderStatus,
               slashCommands: getProviderSlashCommandsForSlashMenu(
-                resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd),
+                providerSlashCommands,
                 visibleSkills,
               ),
             }

@@ -280,6 +280,8 @@ export function useComposerMenuItems({
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
         showSkillsInSlashMenu,
+        // Provider commands are offered only at the start of the prompt.
+        composerTrigger.rangeStart === 0 ? selectedProviderSlashCommands : [],
       );
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
         selectedProviderSlashCommands,

@@ -402,12 +402,14 @@ function parseClaudeInitializationCommands(
 
       const description = nonEmptyProbeString(command.description);
       const argumentHint = nonEmptyProbeString(command.argumentHint);
+      const aliases = (command.aliases ?? []).flatMap((alias) => nonEmptyProbeString(alias) ?? []);
 
       return [
         {
           name,
           ...(description ? { description } : {}),
           ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+          ...(aliases.length > 0 ? { aliases } : {}),
         } satisfies ServerProviderSlashCommand,
       ];
     }),

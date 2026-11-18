@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
@@ -60,7 +61,7 @@ describe("getProviderSkillsForSlashMenu", () => {
       },
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+    expect(getProviderSkillsForSlashMenu(skills, true, []).map((skill) => skill.name)).toEqual([
       "babysit-pr",
       "browser",
     ]);
@@ -81,7 +82,22 @@ describe("getProviderSkillsForSlashMenu", () => {
       enabledSkill,
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+    expect(getProviderSkillsForSlashMenu(skills, true, [])).toEqual([enabledSkill]);
+  });
+});
+
+describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("lists a skill Claude names by its frontmatter once, under Claude's name", () => {
+    const skills = [
+      { name: "brainstorming", path: "/p/.claude/skills/brainstorming/SKILL.md", enabled: true },
+    ];
+    const commands = [{ name: "acme:brainstorming", aliases: ["brainstorming"] }];
+
+    for (const showSkills of [true, false]) {
+      const visibleSkills = getProviderSkillsForSlashMenu(skills, showSkills, commands);
+      expect(visibleSkills).toEqual([]);
+      expect(getProviderSlashCommandsForSlashMenu(commands, visibleSkills)).toEqual(commands);
+    }
   });
 });
 

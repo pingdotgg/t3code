@@ -109,6 +109,7 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 
