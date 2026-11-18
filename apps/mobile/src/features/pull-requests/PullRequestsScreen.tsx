@@ -275,6 +275,7 @@ export function PullRequestsScreen(
         kind,
         environmentId,
         environmentIds: targets.map((target) => String(target.environmentId)),
+        projectRefs,
         suggestions: knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
         labelColors,
       }),
