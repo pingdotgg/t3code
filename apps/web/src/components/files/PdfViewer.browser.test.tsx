@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
 import { TextLayer } from "pdfjs-dist";
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 import "~/index.css";
 
 // Vite serves the worker module through its transform with an inline source map (6.8 MB for
@@ -256,20 +256,20 @@ it("renews the URL and keeps the latest reading position through a page error an
       await expect.element(screen.getByText(`${page} / 6 pages`)).toBeVisible();
     }
     const region = () => screen.getByRole("region", { name: "Retry PDF" }).element();
-    await act(async () => {
-      const scrolled = new Promise((resolve) =>
-        region().addEventListener("scroll", resolve, { once: true }),
-      );
-      region().scrollTo({ top: region().scrollTop + 1000, left: 60 });
-      await scrolled;
+    await vi.waitFor(() => {
+      const page = region().querySelector('canvas[aria-label="Page 6"]')!;
+      expect(page.getBoundingClientRect().height).toBeGreaterThan(1000);
     });
+    const readingTop = region().scrollTop + 1000;
+    region().scrollTo({ top: readingTop, left: 60 });
+    await vi.waitFor(() => expect(region().scrollTop).toBe(readingTop));
 
     let failRender!: () => void;
     const released = new Promise<void>((resolve) => {
       failRender = resolve;
     });
     const renderText = TextLayer.prototype.render;
-    using failingPage = vi.spyOn(TextLayer.prototype, "render").mockImplementationOnce(function (
+    using failingPage = vi.spyOn(TextLayer.prototype, "render").mockImplementation(function (
       this: TextLayer,
     ) {
       return renderText.call(this).then(async () => {
@@ -282,12 +282,10 @@ it("renews the URL and keeps the latest reading position through a page error an
     const top = region().scrollTop;
     const left = region().scrollLeft;
     const zoom = screen.container.textContent!.match(/\d+%/)![0];
-    const collapsed = new Promise((resolve) =>
-      region().addEventListener("scroll", resolve, { once: true }),
-    );
     failRender();
-    await collapsed;
     await expect.element(screen.getByRole("alert")).toBeVisible();
+    await vi.waitFor(() => expect(region().scrollTop).toBe(0));
+    failingPage.mockRestore();
 
     // Only a retry that renews the URL can load the document now.
     URL.revokeObjectURL(url);
