@@ -49,7 +49,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     readonly storedWidth: number | null;
     readonly width: number;
   } | null>(null);
-  if (unsaved && (unsaved.storageKey !== storageKey || unsaved.storedWidth !== storedWidth)) {
+  if (unsaved?.storageKey === storageKey && unsaved.storedWidth !== storedWidth) {
     setUnsaved(null);
   }
   const clampedWidth = clamp(
@@ -62,10 +62,11 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   });
   const currentStorageKey = useStableCallback(() => storageKey);
 
-  const commitWidth = (nextStorageKey: string, nextWidth: number) => {
+  const commitWidth = useStableCallback((nextStorageKey: string, nextWidth: number) => {
     const saved = writeLocalStorageValue(nextStorageKey, nextWidth, null, StoredWidthSchema);
+    if (nextStorageKey !== storageKey) return;
     setUnsaved(saved ? null : { storageKey: nextStorageKey, storedWidth, width: nextWidth });
-  };
+  });
 
   const drag = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;

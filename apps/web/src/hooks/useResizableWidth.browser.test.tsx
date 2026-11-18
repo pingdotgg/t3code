@@ -161,6 +161,11 @@ describe("useResizableWidth", () => {
     await screen.rerender(<Panel defaultWidth={200} />);
     await expect.element(screen.getByText("550")).toBeInTheDocument();
 
+    await screen.rerender(<Panel defaultWidth={180} storageKey={`${STORAGE_KEY}:inactive`} />);
+    await expect.element(screen.getByText("180")).toBeInTheDocument();
+    await screen.rerender(<Panel defaultWidth={200} />);
+    await expect.element(screen.getByText("550")).toBeInTheDocument();
+
     _write.mockRestore();
     await act(() => {
       localStorage.setItem(STORAGE_KEY, "500");
@@ -172,5 +177,20 @@ describe("useResizableWidth", () => {
       window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
     });
     await expect.element(screen.getByText("200")).toBeInTheDocument();
+
+    const pointer = { bubbles: true, pointerId: 1, button: 0 };
+    await act(() => {
+      handle.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: 500 }));
+      localStorage.setItem(STORAGE_KEY, "500");
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
+    });
+    await expect.element(screen.getByText("500")).toBeInTheDocument();
+    using _lateWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage is full.", "QuotaExceededError");
+    });
+    await act(() => {
+      handle.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: 450 }));
+    });
+    await expect.element(screen.getByText("250")).toBeInTheDocument();
   });
 });
