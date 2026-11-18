@@ -18,7 +18,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { findRevertCheckpoint } from "../../session-logic";
+import { findRevertCheckpoint, revertFileCheck } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -27,6 +27,7 @@ import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
 import { openRevertConfirm } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -83,6 +84,9 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     refresh: true,
   });
 
+  const loadTurnDiff = useAtomQueryRunner(orchestrationEnvironment.turnDiff, {
+    reportFailure: false,
+  });
   const revertThreadCheckpoint = useOrchestrationCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -125,7 +129,25 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, { turnCount, messageId });
+      const check = revertFileCheck(
+        serverProjection?.runs ?? [],
+        serverProjection?.checkpoints ?? [],
+        turnCount,
+      );
+      let hasFileChanges = true;
+      if (check.kind === "diff") {
+        const result = await loadTurnDiff({
+          environmentId,
+          input: {
+            threadId: activeThread.id,
+            fromTurnCount: turnCount,
+            toTurnCount: check.toTurnCount,
+            ignoreWhitespace: false,
+          },
+        });
+        hasFileChanges = result._tag !== "Success" || result.value.diff.trim() !== "";
+      }
+      openRevertConfirm(routeThreadKey, { turnCount, messageId, hasFileChanges });
       return;
     }
 
