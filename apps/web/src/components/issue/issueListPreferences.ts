@@ -11,7 +11,7 @@ import { IssueInvolvement, IssueListState } from "@t3tools/contracts";
 export interface IssueListPreferences {
   readonly who: IssueInvolvement;
   readonly status: IssueListState;
-  readonly host?: string;
+  readonly host?: string | undefined;
   readonly q?: string | undefined;
   /** `label`, `assignee` and `order` for the same reason: the pull-request page has `labels` and `sort`. */
   readonly label?: ReadonlyArray<string> | undefined;
