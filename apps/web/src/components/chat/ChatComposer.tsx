@@ -1153,7 +1153,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  // `&` also ends shell commands and starts `&amp;`, so it opens only when a machine matches.
+  const composerMenuOpen =
+    composerTrigger !== null &&
+    (composerTrigger.kind !== "environment" || composerMenuItems.length > 0);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1162,6 +1165,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     highlightedItemId: composerHighlightedItemId,
     currentSearchKey: composerMenuSearchKey,
     highlightedSearchKey: composerHighlightedSearchKey,
+    // A bare `&` also ends shell commands (`npm run dev &`), so Enter must still send.
+    explicitOnly: composerTrigger?.kind === "environment" && composerTrigger.query === "",
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
@@ -2102,7 +2107,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "environment") {
-      if (trigger.kind !== "path") return;
+      if (trigger.kind !== "path" && trigger.kind !== "environment") return;
       const record = environmentContextRecord(item.environmentId, item.label);
       const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(

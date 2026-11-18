@@ -25,7 +25,12 @@ import {
   type ShortcutMatchContext,
 } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "pull-request"
+  | "slash-command"
+  | "skill"
+  | "environment";
 export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -283,6 +288,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
+  }
+  if (token.startsWith("&")) {
+    const query = token.slice(1);
+    let wordEnd = cursor;
+    while (wordEnd < text.length && !isWhitespace(text[wordEnd] ?? "")) wordEnd += 1;
+    // `&&` is a shell operator, not a machine, even with the caret between its two `&`.
+    if (text.slice(tokenStart + 1, wordEnd).includes("&")) return null;
+    return { kind: "environment", query, rangeStart: tokenStart, rangeEnd: cursor };
   }
   if (!token.startsWith("@")) {
     return null;

@@ -87,17 +87,19 @@ export interface ComposerEnvironmentItem {
 }
 
 /**
- * The user's machines the `@` picker offers, so the agent can link or work there. The
- * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
- * file picker.
+ * The user's machines the `@` and `&` pickers offer, so the agent can link or work there. The
+ * composer's own environment is left out. Under `@` they need a query, so bare `@` stays a
+ * file picker; bare `&` lists them all.
  */
 export function matchComposerEnvironmentItems(input: {
   environments: ReadonlyArray<ComposerEnvironmentCandidate>;
   environmentId: EnvironmentId;
   query: string;
+  /** The dedicated `&` trigger lists every machine before anything is typed. */
+  listAllWhenEmpty?: boolean;
 }): ComposerEnvironmentItem[] {
   const query = input.query.trim().toLowerCase();
-  if (query.length === 0) return [];
+  if (query.length === 0 && !input.listAllWhenEmpty) return [];
   return input.environments
     .filter(
       (environment) =>
