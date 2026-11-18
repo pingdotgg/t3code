@@ -103,7 +103,7 @@ export function TimelineMinimap({
   const minimap = (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute bottom-0 left-[calc(50%-50cqw)] h-[100cqh] w-18",
+        "group/minimap pointer-events-none timeline-minimap-frame absolute bottom-0 h-[100cqh] w-18",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
