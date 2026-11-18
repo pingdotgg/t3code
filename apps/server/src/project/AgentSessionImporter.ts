@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -205,9 +206,20 @@ const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
-  const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
+  const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* <
+    Error = never,
+    Requirements = never,
+  >(
     input: AgentSessionImportInput,
-  ) {
+    beforeWrite: Effect.Effect<unknown, Error, Requirements> = Effect.void,
+  ): Effect.fn.Return<
+    AgentSessionImportResult,
+    | AgentSessionScanError
+    | AgentSessionImportProjectNotFoundError
+    | AgentSessionImportProjectChangedError
+    | Error,
+    NoInfer<Requirements>
+  > {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
       Effect.flatMap(
@@ -283,6 +295,7 @@ const make = Effect.gen(function* () {
         }
         if (outcome._tag === "Duplicate") {
           if (importedThreadIds.has(threadId)) {
+            yield* beforeWrite;
             yield* runtimes.recordImportedTranscript({ threadId, source }).pipe(Effect.ignore);
           }
           return;
@@ -347,7 +360,11 @@ const make = Effect.gen(function* () {
             ) {
               return false;
             }
+            const allowed = yield* Effect.result(beforeWrite);
+            if (Result.isFailure(allowed)) return allowed;
             yield* persistRuntime;
+            const recordAllowed = yield* Effect.result(beforeWrite);
+            if (Result.isFailure(recordAllowed)) return recordAllowed;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);
             return null;
@@ -420,6 +437,8 @@ const make = Effect.gen(function* () {
             updatedAt,
           };
 
+          const allowed = yield* Effect.result(beforeWrite);
+          if (Result.isFailure(allowed)) return allowed;
           const committed = yield* eventSink.write({
             unlessNativeThreadOwned: providerThread,
             events: [
@@ -474,7 +493,11 @@ const make = Effect.gen(function* () {
             ],
           });
           if (committed.length === 0) return null;
+          const runtimeAllowed = yield* Effect.result(beforeWrite);
+          if (Result.isFailure(runtimeAllowed)) return runtimeAllowed;
           yield* persistRuntime;
+          const recordAllowed = yield* Effect.result(beforeWrite);
+          if (Result.isFailure(recordAllowed)) return recordAllowed;
           yield* runtimes.recordImportedTranscript({ threadId, source });
           return true;
         }).pipe(
@@ -486,6 +509,9 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as(false)),
           ),
         );
+        if (Result.isResult(imported)) {
+          return yield* Effect.fromResult(imported);
+        }
         if (imported === true) {
           importedThreadIds.add(threadId);
           importedCount += 1;
