@@ -366,28 +366,29 @@ function run(argv) {
   var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
   var left = wp[0], top = wp[1], right = wp[0] + ws[0], bottom = wp[1] + ws[1];
   var page = pageOf(win), url = page ? urlOf(page.el) : '';
-  var queue = [page || { el: win, path: [], depth: 0 }], visited = 0, controls = [], text = '';
+  // Depth first, in document order, so text reads as the page does: a heading, then its section.
+  var root = page || { el: win, path: [], depth: 0 };
+  var stack = [{ el: root.el, path: root.path, depth: root.depth, root: true }], visited = 0, controls = [], text = '';
   // Chrome reports what is scrolled out of view as 1 point tall on the page's top or bottom edge.
   var pp = page && pair(page.el, 'AXPosition'), psz = page && pair(page.el, 'AXSize');
   var pageTop = pp ? pp[1] : -1e9, pageBottom = pp && psz ? pp[1] + psz[1] : 1e9;
-  while (queue.length) {
+  while (stack.length) {
     if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS || Date.now() - started > WALK_MS) { truncated = true; break; }
-    var node = queue.shift(), kids = children(node.el);
-    for (var i = 0; i < kids.length; i++) {
-      if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS) { truncated = true; break; }
+    var node = stack.pop(), el = node.el, role = plain(el, 'AXRole');
+    if (!node.root) {
       visited++;
-      var el = kids[i], role = plain(el, 'AXRole'), p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
+      var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
       var sized = p && s && s[0] > 0 && s[1] > 0;
       if (sized && (p[0] >= right || p[1] >= bottom || p[0] + s[0] <= left || p[1] + s[1] <= top)) continue;
       var pinned = p && s && s[1] <= 1 && (Math.abs(p[1] - pageTop) <= 1 || Math.abs(p[1] + s[1] - pageBottom) <= 1);
-      var path = node.path.concat([i]);
       if (role === 'AXWebArea' && !url) url = urlOf(el);
       if (!loading && sized && showsLoading(el, role)) loading = true;
       if (pinned) {
         // Scrolled out of view: neither listed nor read, but its children may be on screen.
       } else if (role === 'AXStaticText') {
         var words = plain(el, 'AXValue');
-        if (text.length < MAX_TEXT && words) text += (text ? ' ' : '') + clip(words, 1500);
+        // A heading starts its own line, so the links and rows after it read as its section.
+        if (text.length < MAX_TEXT && words) text += node.heading ? (text ? '\\n' : '') + '## ' + clip(words, 200) + '\\n' : (text && !/\\n$/.test(text) ? ' ' : '') + clip(words, 1500);
       } else if (ROLES[role] && sized) {
         // A password field (subrole AXSecureTextField) is listed so it can be typed into, never with its value.
         var kind = ROLES[role], value = plain(el, 'AXSubrole') === 'AXSecureTextField' ? '' : plain(el, 'AXValue');
@@ -396,7 +397,7 @@ function run(argv) {
           (plain(el, 'AXSubrole') ? plain(el, 'AXRoleDescription') : '') || plain(el, 'AXHelp') || '';
         label = clip(label, 100);
         if (kind !== 'row' || label) {
-          var control = { ref: path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
+          var control = { ref: node.path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
           if (kind === 'textbox') {
             control.value = clip(value, 200);
             if (plain(el, 'AXFocused') === true) control.focused = true;
@@ -404,8 +405,10 @@ function run(argv) {
           controls.push(control);
         }
       }
-      if (!LEAVES[role] && node.depth + 1 < MAX_DEPTH) queue.push({ el: el, path: path, depth: node.depth + 1 });
+      if (LEAVES[role] || node.depth + 1 >= MAX_DEPTH) continue;
     }
+    var kids = children(el), heading = role === 'AXHeading';
+    for (var i = kids.length - 1; i >= 0; i--) stack.push({ el: kids[i], path: node.path.concat([i]), depth: node.depth + 1, heading: heading });
   }
   if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
   // A web card is often a link wrapping a link to the same place: one control, the outer one.
