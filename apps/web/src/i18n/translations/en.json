@@ -3625,6 +3625,8 @@
   "d956ea9d4e3f0ade": "Context compacted after {age} idle",
   "9996f59c86ed715e": "Superseded attempt",
   "c88ed561ea1c8880": "Context compaction",
+  "817047065121ef0c": "Artifacts",
+  "619a70851133a621": "attachment {id}",
   "2bb811357ffd9b4f": "Context from",
   "60f6d357c1931589": "Subagent of",
   "0e22e485a6f4865c": "Open parent thread",
