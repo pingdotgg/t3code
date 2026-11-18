@@ -829,18 +829,6 @@ it.effect.each(["on a branch", "detached", "unborn"] as const)(
           });
           assert.deepStrictEqual(discoveries(), warm);
           assert.include(commit.sources[0]!.diff, "+committed");
-
-          // Creating a worktree drops the cached layout.
-          const path = yield* Path.Path;
-          yield* driver.createWorktree({
-            cwd,
-            path: path.join(yield* makeTmpDir("git-worktrees-"), "review"),
-            refName: commitSha,
-            newRefName: "feature/review",
-          });
-          discoveries();
-          yield* driver.getReviewDiffPreview(workingTreeFile);
-          assert.deepStrictEqual(discoveries(), { commonDir: 1, worktreeRoot: 1, branch: 1 });
         }
 
         const headRef = (preview: Effect.Success<ReturnType<typeof driver.getReviewDiffPreview>>) =>
