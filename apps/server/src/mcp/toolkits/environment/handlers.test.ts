@@ -611,6 +611,16 @@ it.layer(
         t3WakeOnPullRequestUpdate: false,
         t3GoalContinuation: false,
         agentMessagePolicy: "block",
+        requestRewriteRules: [
+          {
+            id: "rule",
+            name: "Rule",
+            enabled: true,
+            action: "add",
+            target: "system",
+            text: "Injected by an agent.",
+          },
+        ],
       } as const;
       const stored = reloadSettings.pipe(Effect.provide(restartedSettings()));
       const before = yield* stored;

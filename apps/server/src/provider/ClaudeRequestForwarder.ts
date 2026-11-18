@@ -3,7 +3,13 @@ import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 import * as NodeZlib from "node:zlib";
 
-import type { RequestRewriteRule, RequestRewriteRuleReport, ThreadId } from "@t3tools/contracts";
+import type {
+  RequestRewriteRule,
+  RequestRewriteRuleReport,
+  RequestRulesDryRunInput,
+  RequestRulesDryRunResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -53,7 +59,7 @@ interface Route {
   readonly onRewrite: (rules: ReadonlyArray<RequestRewriteRuleReport>) => Effect.Effect<void>;
   readonly onFailure: (failure: ClaudeRewriteFailure) => Effect.Effect<void>;
   // The newest original messages request, held only in memory for the dry run.
-  latest: { readonly path: string; readonly body: string } | undefined;
+  latest: { readonly path: string; readonly body: string; readonly sequence: number } | undefined;
 }
 
 const ProviderErrorBody = Schema.Struct({
@@ -116,6 +122,8 @@ export class ClaudeRequestForwarder extends Context.Service<
       readonly onRewrite: (rules: ReadonlyArray<RequestRewriteRuleReport>) => Effect.Effect<void>;
       readonly onFailure: (failure: ClaudeRewriteFailure) => Effect.Effect<void>;
     }) => Effect.Effect<ClaudeForwarderRoute, ClaudeForwarderStartError, Scope.Scope>;
+    /** Applies `rules` to the newest request of a live routed session, without sending it. */
+    readonly dryRun: (input: RequestRulesDryRunInput) => Effect.Effect<RequestRulesDryRunResult>;
   }
 >()("t3/provider/ClaudeRequestForwarder") {}
 
@@ -126,6 +134,7 @@ const make = Effect.gen(function* () {
   const routes = new Map<string, Route>();
   const startLock = yield* Semaphore.make(1);
   let port: number | undefined;
+  let sequence = 0;
 
   // Per request; the request owns its span through the session's turn.
   const forward = Effect.fnUntraced(function* (
@@ -140,7 +149,10 @@ const make = Effect.gen(function* () {
     const text =
       request.headers["content-encoding"] === undefined ? original.toString("utf8") : undefined;
     const messages = text !== undefined && isClaudeMessagesRequest(method, path);
-    if (messages && original.length <= MAX_KEPT_BODY_BYTES) route.latest = { path, body: text };
+    if (messages && original.length <= MAX_KEPT_BODY_BYTES) {
+      sequence += 1;
+      route.latest = { path, body: text, sequence };
+    }
     const enabled = messages ? (yield* route.rules).filter((rule) => rule.enabled) : [];
     const rewrite =
       messages && enabled.length > 0
@@ -327,7 +339,34 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return ClaudeRequestForwarder.of({ openRoute });
+  const dryRun: ClaudeRequestForwarder["Service"]["dryRun"] = (input) =>
+    Effect.sync(() => {
+      const recent = [...routes.values()]
+        .flatMap((route) =>
+          route.latest === undefined ? [] : [{ threadId: route.threadId, latest: route.latest }],
+        )
+        .toSorted((left, right) => right.latest.sequence - left.latest.sequence);
+      const threadIds = [...new Set(recent.map((entry) => entry.threadId))];
+      const chosen =
+        input.threadId === undefined
+          ? recent[0]
+          : recent.find((entry) => entry.threadId === input.threadId);
+      if (chosen === undefined) return { threadIds, rules: [] };
+      const rewrite = rewriteClaudeRequest({
+        method: "POST",
+        path: chosen.latest.path,
+        body: chosen.latest.body,
+        rules: input.rules,
+      });
+      return {
+        threadIds,
+        threadId: chosen.threadId,
+        ...(rewrite.skipped === undefined ? {} : { skipped: rewrite.skipped }),
+        rules: rewrite.rules,
+      };
+    });
+
+  return ClaudeRequestForwarder.of({ openRoute, dryRun });
 });
 
 export const layer = Layer.effect(ClaudeRequestForwarder, make);

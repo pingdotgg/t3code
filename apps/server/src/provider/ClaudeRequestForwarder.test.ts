@@ -153,6 +153,28 @@ describe("ClaudeRequestForwarder", () => {
           [[["drop-reminders", 1]]],
         );
 
+        // A dry run reads the session's newest original request, not what was sent.
+        const dryRun = yield* forwarder.dryRun({
+          rules: [
+            {
+              id: "keep",
+              name: "Keep",
+              enabled: false,
+              action: "remove",
+              target: "reminders",
+              pattern: "drop ",
+            },
+          ],
+        });
+        assert.deepEqual(
+          [dryRun.threadIds, dryRun.threadId, dryRun.rules.map((rule) => rule.removedChars)],
+          [["thread-forwarder"], "thread-forwarder", [5]],
+        );
+        assert.deepEqual(
+          (yield* forwarder.dryRun({ rules: [], threadId: ThreadId.make("other") })).threadId,
+          undefined,
+        );
+
         const failed = yield* Effect.promise(() => post("/v1/messages?fail=1"));
         assert.strictEqual(failed.status, 429);
         yield* Effect.promise(() => failed.arrayBuffer());

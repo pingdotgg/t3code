@@ -5443,6 +5443,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 upstreams.push(input.upstream);
                 return { baseUrl: "http://127.0.0.1:1/s/token", setUpstream: () => Effect.void };
               }),
+            dryRun: () => Effect.die("unused"),
           });
           const openedSettings = (enabled: boolean | undefined) =>
             Effect.scoped(
@@ -8821,6 +8822,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               route = input;
               return { baseUrl: "http://127.0.0.1:1/s/token", setUpstream: () => Effect.void };
             }),
+          dryRun: () => Effect.die("unused"),
         }),
         requestRewriteRules: Effect.succeed([
           {

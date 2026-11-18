@@ -866,6 +866,23 @@ export const RequestRewriteRuleReport = Schema.Struct({
 });
 export type RequestRewriteRuleReport = typeof RequestRewriteRuleReport.Type;
 
+export const RequestRulesDryRunInput = Schema.Struct({
+  rules: Schema.Array(RequestRewriteRule),
+  /** A live Claude session with request rules; the one with the newest request when omitted. */
+  threadId: Schema.optionalKey(ThreadId),
+});
+export type RequestRulesDryRunInput = typeof RequestRulesDryRunInput.Type;
+
+export const RequestRulesDryRunResult = Schema.Struct({
+  /** Live sessions with a request to try rules on, newest request first. */
+  threadIds: Schema.Array(ThreadId),
+  /** The session whose newest request the report used; absent when there is none. */
+  threadId: Schema.optionalKey(ThreadId),
+  skipped: Schema.optionalKey(Schema.Literals(["other-request", "not-json", "unexpected-body"])),
+  rules: Schema.Array(RequestRewriteRuleReport),
+});
+export type RequestRulesDryRunResult = typeof RequestRulesDryRunResult.Type;
+
 export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
 export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 
