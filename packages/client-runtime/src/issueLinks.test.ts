@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  IssueTrackerKind,
+  ProjectId,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveIssueLinkTarget } from "./issueLinks.ts";
@@ -65,9 +70,37 @@ describe("resolveIssueLinkTarget", () => {
     expect(custom?.ref).toMatchObject({ projectId: "custom", host: "code.acme.test", key: "7" });
   });
 
+  it("reads a Linear issue through the project bound to its team, else lends a bound project", () => {
+    const trackerBindings = {
+      p1: { tracker: IssueTrackerKind.make("linear"), scope: "OPS" },
+      p2: { tracker: IssueTrackerKind.make("linear"), scope: "ENG" },
+    } as never;
+    const own = resolveIssueLinkTarget({
+      url: "https://linear.app/acme/issue/ENG-12/fix-the-thing",
+      projects,
+      trackerBindings,
+    });
+    expect(own?.ref).toEqual({
+      projectId: "p2",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "ENG",
+      key: "ENG-12",
+    });
+
+    const lent = resolveIssueLinkTarget({
+      url: "https://linear.app/acme/issue/WEB-3",
+      projects,
+      trackerBindings,
+      preferredProjectId: ProjectId.make("p2"),
+    });
+    expect(lent?.ref).toMatchObject({ projectId: "p2", scope: "WEB", key: "WEB-3" });
+  });
+
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",
     "https://github.com/acme/web/pull/7",
+    "https://linear.app/acme/issue/ENG-12",
   ])("leaves %s an ordinary link", (url) => {
     expect(resolveIssueLinkTarget({ url, projects })).toBeNull();
   });
