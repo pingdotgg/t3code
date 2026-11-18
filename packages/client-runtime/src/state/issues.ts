@@ -100,7 +100,7 @@ export function createIssueCommentPager<E>(
 
   return {
     view,
-    async refresh(registry: AtomRegistry.AtomRegistry, read: () => void | Promise<unknown>) {
+    async refresh(registry: AtomRegistry.AtomRegistry, read: () => void | Promise<void>) {
       const current = registry.get(state);
       if (current.refreshing) return;
       // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
