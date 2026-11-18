@@ -35,5 +35,13 @@ export function annotationMetadata(
 }
 
 export function hostCapture(): CaptureHook | undefined {
-  return captureHook;
+  if (captureHook) return captureHook;
+  const conn = typeof window === "undefined" ? undefined : window.__CONN_ANNOTATIONS__;
+  const capture = conn?.capture;
+  if (!capture) return undefined;
+  return async (rect) => {
+    const image = await capture(rect);
+    if (!image) throw new Error("Conn returned no capture.");
+    return image;
+  };
 }

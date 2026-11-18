@@ -111,6 +111,7 @@ import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
 import { makeResponseHeaderRelay } from "./ResponseHeaderRelay.ts";
+import { attachAnnotationRegionCapture } from "./AnnotationRegionCapture.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -2162,6 +2163,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const webContentsId = wc.id;
     responseHeaders.attachGuest(wc);
     dictation.attachGuest(wc);
+    attachAnnotationRegionCapture(wc);
     wc.on("did-navigate-in-page", (_event, url, isMainFrame) => {
       if (isMainFrame) responseHeaders.navigatedInPage(webContentsId, url);
     });

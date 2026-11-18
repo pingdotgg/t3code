@@ -27,6 +27,8 @@ export const LARAVEL_TOOLBAR_RESPONSE_CHANNEL = "preview:laravel-toolbar-respons
  * with a session id, `{ session }` to its `/dictate/start|stop|cancel`.
  */
 export const ANNOTATOR_DICTATION_CHANNEL = "preview:annotator-dictation";
+/** Guest → main (invoke): JPEG data URL of a viewport rect (CSS px), or null. */
+export const ANNOTATION_REGION_CAPTURE_CHANNEL = "preview:annotation-region-capture";
 export const ANNOTATION_VOICE_EVENT_CHANNEL = "preview:annotation-voice-event";
 export const ANNOTATION_VOICE_STATE_CHANNEL = "preview:annotation-voice-state";
 export const PRIMARY_PASTE_DISABLED_ARGUMENT = "--t3code-preview-primary-paste-disabled";

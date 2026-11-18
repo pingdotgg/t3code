@@ -4,6 +4,7 @@
 // answers from the Conn server (apps/web/src/annotations/overlayBridge.ts).
 import type { AnnotationCapture } from "@t3tools/contracts";
 import { ipcRenderer } from "electron";
+import { ANNOTATION_REGION_CAPTURE_CHANNEL } from "./GuestProtocol.ts";
 import {
   ANNOTATION_BRIDGE_CHANNEL,
   CONN_ANNOTATIONS_GLOBAL,
@@ -71,6 +72,8 @@ Object.defineProperty(window, CONN_ANNOTATIONS_GLOBAL, {
     remove: async (ids: ReadonlyArray<string>) => {
       await call({ op: "remove", payload: { ids: [...ids] } });
     },
+    capture: (rect: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke(ANNOTATION_REGION_CAPTURE_CHANNEL, plain(rect)) as Promise<string | null>,
     subscribe: (onChange: () => void) => {
       listeners.add(onChange);
       return () => {

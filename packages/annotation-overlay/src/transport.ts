@@ -8,6 +8,8 @@ export type ConnAnnotations = {
   remove(ids: ReadonlyArray<string>): Promise<void>;
   /** Calls `onChange` when the stored annotations change; returns the unsubscribe. */
   subscribe(onChange: () => void): () => void;
+  /** Native pixels of a viewport rect (CSS px) as a data URL; desktop tabs only. */
+  capture?(rect: { x: number; y: number; width: number; height: number }): Promise<string | null>;
 };
 
 declare global {

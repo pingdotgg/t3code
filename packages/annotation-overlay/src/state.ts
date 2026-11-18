@@ -34,6 +34,8 @@ export const draft = createRef<AnnotationDraft | null>(null);
 export type FinishingDraft = { session: string; draft: AnnotationDraft; typed: string };
 export const finishing = createRef<FinishingDraft[]>([]);
 export const hover = createRef<HoverTarget | null>(null);
+/** Hides the hover label while the button is down, so the click's screenshot leaves it out. */
+export const hoverLabelHidden = createRef(false);
 export const shakeToken = createRef(0);
 export const viewportTick = createRef(0);
 export const dictationSettings = createRef<DictationSettings>({});

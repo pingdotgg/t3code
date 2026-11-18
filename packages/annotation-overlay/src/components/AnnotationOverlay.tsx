@@ -15,6 +15,7 @@ import {
   draft,
   finishing,
   hover,
+  hoverLabelHidden,
   shakeToken,
   useRefValue,
   viewportTick,
@@ -29,6 +30,7 @@ export default function AnnotationOverlay() {
   const currentDraft = useRefValue(draft);
   const finishingDrafts = useRefValue(finishing);
   const currentHover = useRefValue(hover);
+  const labelHidden = useRefValue(hoverLabelHidden);
   const currentShake = useRefValue(shakeToken);
   useRefValue(viewportTick);
   const { data } = useToolbar();
@@ -66,14 +68,14 @@ export default function AnnotationOverlay() {
     };
   })();
 
-  const hoverLabelStyle = currentHover
-    ? hoverLabelPosition(
-        currentHover.cursorX,
-        currentHover.cursorY,
-        currentHover.reactComponents ? 48 : 32,
-      )
-    : null;
-
+  const hoverLabelStyle =
+    currentHover && !labelHidden
+      ? hoverLabelPosition(
+          currentHover.cursorX,
+          currentHover.cursorY,
+          currentHover.reactComponents ? 48 : 32,
+        )
+      : null;
   const pendingMarkerStyle =
     currentDraft && !currentDraft.annotationId
       ? {

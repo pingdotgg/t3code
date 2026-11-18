@@ -30,7 +30,9 @@ export async function captureAnnotationScreenshot(
     y: crop.y + scroll.y - window.scrollY,
   };
 
-  const image = (await captureWithHost(live)) ?? (await renderDom(crop, live, scroll));
+  // A DOM render now would block the page the host was asked to spare, so a failed host
+  // capture leaves the annotation without a screenshot.
+  const image = hostCapture() ? await captureWithHost(live) : await renderDom(crop, live, scroll);
 
   if (!image) {
     return undefined;
@@ -141,9 +143,11 @@ export async function paintHighlight(
   color = HIGHLIGHT,
 ): Promise<string> {
   const picture = await loadImage(image);
+  // Host captures arrive in device pixels; keep them sharp and scale the box instead.
+  const scale = picture.naturalWidth > 0 ? picture.naturalWidth / crop.width : 1;
   const canvas = document.createElement("canvas");
-  canvas.width = crop.width;
-  canvas.height = crop.height;
+  canvas.width = Math.round(crop.width * scale);
+  canvas.height = Math.round(crop.height * scale);
 
   const context = canvas.getContext("2d");
 
@@ -151,7 +155,8 @@ export async function paintHighlight(
     return image;
   }
 
-  context.drawImage(picture, 0, 0, crop.width, crop.height);
+  context.drawImage(picture, 0, 0, canvas.width, canvas.height);
+  context.scale(scale, scale);
   context.fillStyle = `${color}14`;
   context.strokeStyle = `${color}80`;
   context.lineWidth = 2;
