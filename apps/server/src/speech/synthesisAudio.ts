@@ -11,6 +11,14 @@ export const MAX_SYNTHESIS_BYTES = 32 * 1024 * 1024;
 export function mp3Kbps(sampleRate: number) {
   return sampleRate > 32000 ? 64 : 48;
 }
+/**
+ * Splits off a short opening sentence (read-aloud text has one per line), so its audio arrives
+ * before the model reaches the rest. Self-contained so the synthesis worker can inline it.
+ */
+export function leadingSentence(text: string) {
+  const end = text.indexOf("\n");
+  return end < 0 || end > 160 ? [text] : [text.slice(0, end), text.slice(end + 1)];
+}
 const MP3_SAMPLE_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
 // About half a second at 44.1 kHz, which encodes in about 15 ms.
 export const ENCODE_SLICE_SAMPLES = 1152 * 20;

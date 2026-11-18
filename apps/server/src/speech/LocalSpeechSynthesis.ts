@@ -228,6 +228,8 @@ export class LocalSpeechSynthesis extends Context.Service<
       modelId: string,
     ) => Effect.Effect<SpeechSynthesisCatalog, LocalSynthesisInstallError>;
     readonly cancel: (modelId: string) => Effect.Effect<SpeechSynthesisCatalog>;
+    /** Loads an installed model ahead of playback, so the first reply starts sooner. */
+    readonly prepare: (modelId: string) => Effect.Effect<void>;
     /** Uses model files already on this machine, from a file or a folder to search. */
     readonly link: (
       source: string,
@@ -616,24 +618,81 @@ const make = Effect.gen(function* () {
       ...(cause === undefined ? {} : { cause }),
     });
 
+  const findDefinition = (modelId: string) =>
+    LOCAL_SYNTHESIS_MODELS.find((model) => model.id === (modelId || LOCAL_SYNTHESIS_MODELS[0]!.id));
+
+  // The verified model and eSpeak files, or undefined while any is missing.
+  const loadablePaths = Effect.fnUntraced(function* (definition: LocalModel) {
+    if (!(yield* runtimeReady)) return undefined;
+    const modelPath = yield* store.installedPath(definition.file);
+    const espeakPath = definition.espeakData && (yield* store.installedPath(definition.espeakData));
+    if (!modelPath || (definition.espeakData && !espeakPath)) return undefined;
+    return { modelPath, espeakPath };
+  });
+
+  // Callers hold the permit, so one model loads at a time and synthesis waits for it.
+  const ensureWorker = Effect.fnUntraced(function* (
+    definition: LocalModel,
+    paths: { readonly modelPath: string; readonly espeakPath: string | undefined },
+  ) {
+    if (!runtime || !libraryPath) return yield* failure("unavailable");
+    if (worker?.model.alive && worker.modelId === definition.id) return worker.model;
+    yield* unloadWorker;
+    // Uninterruptible, so a stream stopped mid-load still records the process it started.
+    const loaded = yield* Effect.tryPromise({
+      try: () =>
+        loadLocalSynthesisModel({
+          libraryPath,
+          backend: runtime.backend,
+          modelPath: paths.modelPath,
+          ...(paths.espeakPath && {
+            env: { AUDIOCPP_ESPEAK_DATA: paths.espeakPath, AUDIOCPP_ESPEAK_CACHE: espeakCache },
+          }),
+          threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
+          signal: lifetime.signal,
+        }),
+      catch: (cause) => failure("unavailable", cause),
+    }).pipe(
+      Effect.tap((model) =>
+        Effect.sync(() => {
+          worker = { modelId: definition.id, model };
+        }),
+      ),
+      Effect.uninterruptible,
+    );
+    yield* Effect.logInfo("Loaded the local speech model.", { backend: loaded.backend });
+    return loaded;
+  });
+
+  const prepare = Effect.fn("LocalSpeechSynthesis.prepare")(function* (modelId: string) {
+    const definition = findDefinition(modelId);
+    if (!definition || (worker?.model.alive && worker.modelId === definition.id)) return;
+    const paths = yield* loadablePaths(definition);
+    if (!paths) return;
+    yield* permit
+      .withPermits(1)(ensureWorker(definition, paths))
+      .pipe(
+        Effect.andThen(Effect.sync(() => Queue.offerUnsafe(idleDeadlines, undefined))),
+        Effect.catchTags({
+          SpeechSynthesisError: (error) =>
+            Effect.logWarning("Local speech model failed to load.", error),
+        }),
+      );
+  });
+
   // Untraced: it runs inside the stream's own span.
   const speak = Effect.fnUntraced(function* (
     request: SpeechSynthesisRequest,
     queue: Queue.Queue<Uint8Array, SpeechSynthesisError | Cause.Done>,
   ) {
     if (!runtime || !libraryPath) return yield* failure("unavailable");
-    const definition = LOCAL_SYNTHESIS_MODELS.find(
-      (model) => model.id === (request.model || LOCAL_SYNTHESIS_MODELS[0]!.id),
-    );
+    const definition = findDefinition(request.model);
     if (!definition) return yield* failure("model-unavailable");
-    if (!(yield* runtimeReady)) return yield* failure("missing-model");
-    const modelPath = yield* store.installedPath(definition.file);
+    const paths = yield* loadablePaths(definition);
     const voice =
       definition.voices.find((entry) => entry.id === request.voice) ?? definition.voices[0]!;
     const voicePath = voice.file && (yield* store.installedPath(voice.file));
-    const espeakPath = definition.espeakData && (yield* store.installedPath(definition.espeakData));
-    if (!modelPath || (voice.file && !voicePath) || (definition.espeakData && !espeakPath))
-      return yield* failure("missing-model");
+    if (!paths || (voice.file && !voicePath)) return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
     // Interruptible, so a request abandoned while waiting stops waiting.
     yield* Effect.acquireRelease(
@@ -644,34 +703,7 @@ const make = Effect.gen(function* () {
         ),
       { interruptible: true },
     );
-    if (!worker?.model.alive || worker.modelId !== definition.id) {
-      yield* unloadWorker;
-      // Uninterruptible, so a stream stopped mid-load still records the process it started.
-      const loaded = yield* Effect.tryPromise({
-        try: () =>
-          loadLocalSynthesisModel({
-            libraryPath,
-            backend: runtime.backend,
-            modelPath,
-            ...(espeakPath && {
-              env: { AUDIOCPP_ESPEAK_DATA: espeakPath, AUDIOCPP_ESPEAK_CACHE: espeakCache },
-            }),
-            threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
-            signal: lifetime.signal,
-          }),
-        catch: (cause) => failure("unavailable", cause),
-      }).pipe(
-        Effect.tap((model) =>
-          Effect.sync(() => {
-            worker = { modelId: definition.id, model };
-          }),
-        ),
-        Effect.uninterruptible,
-      );
-      yield* Effect.logInfo("Loaded the local speech model.", { backend: loaded.backend });
-    }
-    if (!worker) return yield* failure("unavailable");
-    const { model } = worker;
+    const model = yield* ensureWorker(definition, paths);
     const language = localSynthesisLanguage(request.language, model.languages);
     const spoken = model
       .stream(
@@ -707,7 +739,7 @@ const make = Effect.gen(function* () {
       Stream.withSpan("LocalSpeechSynthesis.stream"),
     );
 
-  return LocalSpeechSynthesis.of({ catalog, download, cancel, link, remove, stream });
+  return LocalSpeechSynthesis.of({ catalog, download, cancel, link, remove, prepare, stream });
 });
 
 export const layer = Layer.effect(LocalSpeechSynthesis, make);

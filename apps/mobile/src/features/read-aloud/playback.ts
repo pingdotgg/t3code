@@ -1,6 +1,11 @@
-import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
+import {
+  createReadAloudController,
+  createReadAloudWarmup,
+  type SpeechPlayback,
+} from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
+  prepareSpeechSynthesis,
   startSpeechSynthesis,
 } from "@t3tools/client-runtime/voice-input";
 import { createAudioPlayer } from "expo-audio";
@@ -102,6 +107,14 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
 }
 
 const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
+
+export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) => {
+  const prepared = Option.getOrNull(
+    appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
+  );
+  if (!prepared) throw new Error("The read-aloud environment is not connected.");
+  await runSpeech(prepareSpeechSynthesis(prepared, model));
+});
 
 export const readAloudController = createReadAloudController(async (text, settings, signal) => {
   if (settings.provider === "system") {

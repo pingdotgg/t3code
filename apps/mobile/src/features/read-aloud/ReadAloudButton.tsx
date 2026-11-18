@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { DEFAULT_READ_ALOUD_SETTINGS } from "@t3tools/contracts";
@@ -6,7 +6,7 @@ import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { readAloudController } from "./playback";
+import { readAloudController, warmReadAloud } from "./playback";
 
 export function ReadAloudButton({
   id,
@@ -27,6 +27,8 @@ export function ReadAloudButton({
     readAloudController.subscribe,
     readAloudController.getSnapshot,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loading the environment's local model while replies are on screen hides its startup from the first click.
+  useEffect(() => warmReadAloud(settings), [settings]);
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");

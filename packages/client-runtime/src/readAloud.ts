@@ -1,5 +1,30 @@
-import { SPEECH_SYNTHESIS_MAX_TEXT, type ReadAloudSettings } from "@t3tools/contracts";
+import {
+  SPEECH_SYNTHESIS_MAX_TEXT,
+  type EnvironmentId,
+  type ReadAloudSettings,
+} from "@t3tools/contracts";
 import { readAloudText, splitReadAloudText } from "@t3tools/shared/read-aloud";
+
+const WARM_INTERVAL_MS = 4 * 60_000;
+
+/**
+ * Asks an environment to load its local model before playback, at most once per interval for each
+ * environment and model. A failed request is retried the next time.
+ */
+export function createReadAloudWarmup(
+  warm: (environmentId: EnvironmentId, model: string) => Promise<unknown>,
+  now: () => number = Date.now,
+) {
+  const requested = new Map<string, number>();
+  return (settings: ReadAloudSettings) => {
+    if (settings.provider !== "local" || !settings.environmentId) return;
+    const key = JSON.stringify([settings.environmentId, settings.model]);
+    const last = requested.get(key);
+    if (last !== undefined && now() - last < WARM_INTERVAL_MS) return;
+    requested.set(key, now());
+    void warm(settings.environmentId, settings.model).catch(() => requested.delete(key));
+  };
+}
 
 export type SpeechPlayback = {
   play: () => Promise<void>;

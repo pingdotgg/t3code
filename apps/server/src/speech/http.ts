@@ -152,6 +152,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "prepareSynthesisModel",
+        Effect.fn("environment.voice.prepareSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name);
+          yield* local.prepare(args.payload.model);
+        }),
+      )
+      .handle(
         "downloadSynthesisModel",
         Effect.fn("environment.voice.downloadSynthesisModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);

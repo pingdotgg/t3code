@@ -12,12 +12,21 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynthesis.ts";
-import { encodeMp3, pcm16Mono } from "./synthesisAudio.ts";
+import { encodeMp3, leadingSentence, pcm16Mono } from "./synthesisAudio.ts";
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
   const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
   expect([...pcm]).toEqual([0, 32767, -32768, 32767, -32768, 0, 16383]);
   expect([...pcm16Mono(Float32Array.of(1, -1, 0.5, 0.5), 2)]).toEqual([0, 16383]);
+});
+
+const longLine = `${"word ".repeat(40)}end.`;
+it.each([
+  ["Fixed it.\nThe cause was a race.\nDone.", ["Fixed it.", "The cause was a race.\nDone."]],
+  ["Only one sentence.", ["Only one sentence."]],
+  [`${longLine}\nNext.`, [`${longLine}\nNext.`]],
+])("synthesizes a short opening sentence on its own: %j", (text, parts) => {
+  expect(leadingSentence(text)).toEqual(parts);
 });
 
 // An MPEG audio frame header's version bits and sample-rate index give the encoded rate.

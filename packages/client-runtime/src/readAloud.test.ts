@@ -1,6 +1,10 @@
 import { expect, it, vi } from "vite-plus/test";
-import { DEFAULT_READ_ALOUD_SETTINGS } from "@t3tools/contracts";
-import { createReadAloudController, type SpeechPlayback } from "./readAloud.ts";
+import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import {
+  createReadAloudController,
+  createReadAloudWarmup,
+  type SpeechPlayback,
+} from "./readAloud.ts";
 
 function deferred<A>() {
   let resolve: (value: A) => void = () => {};
@@ -199,4 +203,35 @@ it("keeps a new pause while resume activates playback", async () => {
     await run;
     unsubscribe();
   }
+});
+
+it("warms each local model once per interval, and again after a failed request", async () => {
+  let now = 0;
+  const failed = deferred<void>();
+  const warm = vi.fn(async (_environment: EnvironmentId, model: string) => {
+    if (model === "broken") {
+      failed.resolve();
+      throw new Error("offline");
+    }
+  });
+  const warmup = createReadAloudWarmup(warm, () => now);
+  const environmentId = EnvironmentId.make("env");
+  const local = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "local" as const, environmentId };
+  warmup(local);
+  warmup(local);
+  warmup({ ...local, provider: "openai" });
+  warmup({ ...local, environmentId: null });
+  expect(warm.mock.calls).toEqual([[environmentId, local.model]]);
+  now = 4 * 60_000;
+  warmup(local);
+  warmup({ ...local, model: "broken" });
+  await failed.promise;
+  await Promise.resolve();
+  warmup({ ...local, model: "broken" });
+  expect(warm.mock.calls.map(([, model]) => model)).toEqual([
+    local.model,
+    local.model,
+    "broken",
+    "broken",
+  ]);
 });

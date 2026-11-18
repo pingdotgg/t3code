@@ -1,7 +1,7 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { PlayIcon, SquareIcon, Volume2Icon } from "lucide-react";
 import { useClientSettings } from "../../hooks/useSettings";
-import { readAloudController } from "../../speech/readAloud";
+import { readAloudController, warmReadAloud } from "../../speech/readAloud";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -12,6 +12,8 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
     readAloudController.subscribe,
     readAloudController.getSnapshot,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loading the environment's local model while replies are on screen hides its startup from the first click.
+  useEffect(() => warmReadAloud(settings), [settings]);
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");

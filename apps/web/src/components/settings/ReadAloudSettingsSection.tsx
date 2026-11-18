@@ -298,6 +298,13 @@ export function ReadAloudSettingsSection() {
     settings.provider === "local" ? catalog.models.filter((entry) => entry.install) : [];
   const refreshCatalog = () => setCatalogVersion((value) => value + 1);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The preview belongs to this page, so closing settings stops it.
+  useEffect(
+    () => () => {
+      if (readAloudController.getSnapshot().id === "read-aloud-preview") readAloudController.stop();
+    },
+    [],
+  );
   const state = useSyncExternalStore(
     readAloudController.subscribe,
     readAloudController.getSnapshot,

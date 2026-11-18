@@ -44,6 +44,13 @@ export function ReadAloudSection() {
   const { environments } = useEnvironments();
 
   const [sheet, setSheet] = useState<"source" | "model" | "voice" | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The preview belongs to this screen, so leaving it stops the sample.
+  useEffect(
+    () => () => {
+      if (readAloudController.getSnapshot().id === "preview") readAloudController.stop();
+    },
+    [],
+  );
   const [catalogVersion, setCatalogVersion] = useState(0);
   const catalogKey = JSON.stringify([settings.environmentId, settings.provider]);
   const [catalogState, setCatalogState] = useState<{

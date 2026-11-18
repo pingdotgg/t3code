@@ -362,6 +362,17 @@ export const startSpeechSynthesis = (
   );
 };
 
+/** Loads the environment's local model ahead of playback; an empty model is its default. */
+export const prepareSpeechSynthesis = (prepared: PreparedConnection, model: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.prepareSynthesisModel(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.prepareSynthesisModel({ headers, payload: { model } }),
+  });
+
 export const downloadSpeechSynthesisModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",

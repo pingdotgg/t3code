@@ -4,6 +4,7 @@ import {
   SpeechSynthesisCatalog,
   SpeechSynthesisError,
   SpeechSynthesisModelRequest,
+  SpeechSynthesisPrepareRequest,
   SpeechSynthesisStream,
 } from "./readAloud.ts";
 import * as Context from "effect/Context";
@@ -868,6 +869,13 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
         EnvironmentRequestInvalidError,
         SpeechSynthesisError,
       ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepareSynthesisModel", "/api/voice/synthesis/local/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisPrepareRequest,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

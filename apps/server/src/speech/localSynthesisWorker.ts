@@ -2,7 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
 import { bindAudioCpp, type AudioCppSynthesisRequest } from "@t3tools/audio-cpp";
-import { ENCODE_SLICE_SAMPLES, mp3Kbps, pcm16Mono } from "./synthesisAudio.ts";
+import { ENCODE_SLICE_SAMPLES, leadingSentence, mp3Kbps, pcm16Mono } from "./synthesisAudio.ts";
 
 // Inlined like the dictation worker, so packaged builds need no separate worker artifact.
 const entry = `
@@ -13,6 +13,7 @@ const entry = `
   const bindAudioCpp = ${bindAudioCpp.toString()};
   const pcm16Mono = ${pcm16Mono.toString()};
   const mp3Kbps = ${mp3Kbps.toString()};
+  const leadingSentence = ${leadingSentence.toString()};
   const packageJson = (name) => {
     const path = findPackageJSON(name, baseUrl);
     if (!path) throw new Error("The " + name + " package is unavailable.");
@@ -48,25 +49,29 @@ const entry = `
         reply({ ok: true, backend: model.backend, languages: model.languages });
       } else if (message.kind === "synthesize") {
         cancelled = false;
-        const stream = model.stream(message.request);
-        try {
-          let encoder;
-          while (!cancelled) {
-            const audio = stream.next();
-            if (!audio) break;
-            encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, mp3Kbps(audio.sampleRate));
-            const pcm = pcm16Mono(audio.samples, audio.channels);
-            // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
-            for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
-              chunk(encoder.encodeBuffer(pcm.subarray(start, start + ${ENCODE_SLICE_SAMPLES})));
-              // Lets IPC deliver the slice, and a cancel arrive, before the next one.
-              await new Promise((resolve) => setImmediate(resolve));
+        // One encoder across both parts keeps the MP3 a single seamless stream.
+        let encoder;
+        for (const text of leadingSentence(message.request.text)) {
+          if (cancelled) break;
+          const stream = model.stream({ ...message.request, text });
+          try {
+            while (!cancelled) {
+              const audio = stream.next();
+              if (!audio) break;
+              encoder ??= new lame.Mp3Encoder(1, audio.sampleRate, mp3Kbps(audio.sampleRate));
+              const pcm = pcm16Mono(audio.samples, audio.channels);
+              // Encoding a text chunk takes longer than synthesizing it, so send it slice by slice.
+              for (let start = 0; start < pcm.length && !cancelled; start += ${ENCODE_SLICE_SAMPLES}) {
+                chunk(encoder.encodeBuffer(pcm.subarray(start, start + ${ENCODE_SLICE_SAMPLES})));
+                // Lets IPC deliver the slice, and a cancel arrive, before the next one.
+                await new Promise((resolve) => setImmediate(resolve));
+              }
             }
+          } finally {
+            stream.close();
           }
-          if (encoder && !cancelled) chunk(encoder.flush());
-        } finally {
-          stream.close();
         }
+        if (encoder && !cancelled) chunk(encoder.flush());
         reply({ ok: true });
       }
     } catch (error) {

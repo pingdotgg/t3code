@@ -81,6 +81,10 @@ export const SpeechSynthesisModelInstall = Schema.Struct({
   linkedFrom: Schema.optionalKey(Schema.String),
 });
 export type SpeechSynthesisModelInstall = typeof SpeechSynthesisModelInstall.Type;
+/** An empty model loads the environment's default local model. */
+export const SpeechSynthesisPrepareRequest = Schema.Struct({
+  model: Schema.String.check(Schema.isMaxLength(160)),
+});
 export const SpeechSynthesisModelRequest = Schema.Struct({
   modelId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
 });
