@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import {
   getEnvironmentSpeechVoices,
   installEnvironmentSpeechRuntime,
@@ -20,6 +21,7 @@ import { useEnvironmentScope, usePreparedConnection } from "../../state/session"
 import { runSpeech } from "../voice-input/voiceDestination";
 
 export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
+  const gt = useGT();
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const canManage = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const [result, setResult] = useState<{
@@ -54,11 +56,11 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
           setResult((previous) => ({
             prepared,
             data: previous.prepared === prepared ? previous.data : null,
-            error: "Could not load voices. Check the connection and try again.",
+            error: gt("Could not load voices. Check the connection and try again."),
           }));
       },
     );
-  }, [prepared]);
+  }, [prepared, gt]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the catalog when the selected environment connects and rejects old connection results
   useEffect(() => {
     epoch.current++;
@@ -129,8 +131,8 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
           setResult((previous) => ({
             ...previous,
             error: operation.endsWith("Runtime")
-              ? "Could not update Piper. Check the connection and try again."
-              : "Could not update this voice. Check the connection and try again.",
+              ? gt("Could not update Piper. Check the connection and try again.")
+              : gt("Could not update this voice. Check the connection and try again."),
           }));
       },
     );

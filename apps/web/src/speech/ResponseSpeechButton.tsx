@@ -101,7 +101,10 @@ export function ResponseSpeechButton(props: {
     }
     if (!destination || (!native && (!prepared || !canOperate || !settings?.speechOutput))) return;
     if (isVoiceRecordingActive()) {
-      toastManager.add({ type: "warning", title: "Finish dictation before playing a response" });
+      toastManager.add({
+        type: "warning",
+        title: gt("Finish dictation before playing a response"),
+      });
       return;
     }
     const engine = destination.engine;
@@ -127,7 +130,7 @@ export function ResponseSpeechButton(props: {
     if (result.owner === props.owner && result.error)
       toastManager.add({
         type: "error",
-        title: "Could not read this response",
+        title: gt("Could not read this response"),
         description: result.error,
       });
   };
@@ -160,7 +163,7 @@ export function ResponseSpeechButton(props: {
           type="button"
           size="xs"
           variant="ghost-muted"
-          aria-label="Stop response audio"
+          aria-label={gt("Stop response audio")}
           onClick={voiceOutput.stop}
         >
           <SquareIcon className="size-3" />

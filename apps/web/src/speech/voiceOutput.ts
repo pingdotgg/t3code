@@ -1,3 +1,4 @@
+import { m } from "../i18n/messages";
 import { playNativeSpeech } from "./nativeSpeech";
 import {
   VoiceOutputController,
@@ -65,7 +66,7 @@ const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
   },
 };
 
-export const voiceOutput = new VoiceOutputController(player);
+export const voiceOutput = new VoiceOutputController(player, m);
 export const isVoiceRecordingActive = () => recording;
 export function setVoiceRecordingActive(active: boolean) {
   recording = active;

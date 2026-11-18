@@ -347,7 +347,12 @@ export const make: Effect.Effect<
     read({
       cwd: input.cwd,
       operation: input.operation,
-      args: invokeArgs({ ...input, resource: "workitemtypes" }),
+      // Form layouts can exceed the CLI output cap; only workflow metadata is needed.
+      args: [
+        ...invokeArgs({ ...input, resource: "workitemtypes" }),
+        "--query",
+        "{value: value[].{name: name, isDisabled: isDisabled || `false`, states: (states || `[]`)[].{name: name, category: category}}}",
+      ],
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 

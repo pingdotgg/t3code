@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import {
   VoiceOutputController,
   type SpeechAudioPlayer,
@@ -99,4 +100,4 @@ const player: SpeechAudioPlayer<Uint8Array | NativeSpeechRequest> = {
 let currentAudioRate: ((rate: number) => void) | null = null;
 let currentAudioPause: (() => void) | null = null;
 
-export const voiceOutput = new VoiceOutputController(player);
+export const voiceOutput = new VoiceOutputController(player, m);

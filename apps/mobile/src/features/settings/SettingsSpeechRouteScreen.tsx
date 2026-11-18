@@ -106,7 +106,7 @@ export function SettingsSpeechRouteScreen() {
   };
   const { environments } = useEnvironments();
   return (
-    <SettingsScreen title="Speech" menus={[menu]}>
+    <SettingsScreen title={gt("Speech")} menus={[menu]}>
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

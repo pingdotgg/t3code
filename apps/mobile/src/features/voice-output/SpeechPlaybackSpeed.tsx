@@ -34,7 +34,7 @@ export function SpeechPlaybackSpeed({
         <Pressable
           disabled={!canManage}
           accessibilityRole="button"
-          accessibilityLabel={`Playback speed ${playbackRate}×`}
+          accessibilityLabel={gt("Playback speed {playbackRate}×", { playbackRate: playbackRate })}
           hitSlop={8}
           className="min-h-8 min-w-10 items-center justify-center"
         >
@@ -43,7 +43,7 @@ export function SpeechPlaybackSpeed({
       ) : (
         <ListActionRow
           disabled={!canManage}
-          label="Playback speed"
+          label={gt("Playback speed")}
           detail={mixedRate ? gt("Mixed") : `${playbackRate}×`}
           onPress={() => {}}
         />

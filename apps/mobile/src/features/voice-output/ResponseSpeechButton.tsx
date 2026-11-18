@@ -130,7 +130,7 @@ export function ResponseSpeechButton(props: {
     });
     const state = voiceOutput.getSnapshot();
     if (state.owner === props.owner && state.error)
-      Dialog.alert("Could not read this response", state.error);
+      Dialog.alert(gt("Could not read this response"), state.error);
   };
   return (
     <View className="flex-row">
@@ -164,7 +164,7 @@ export function ResponseSpeechButton(props: {
       {(phase === "playing" || phase === "paused") && voiceOutput.canPause() ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Stop response audio"
+          accessibilityLabel={gt("Stop response audio")}
           hitSlop={8}
           onPress={voiceOutput.stop}
           style={{

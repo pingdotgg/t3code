@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   getEnvironmentSpeechVoices,
   installEnvironmentSpeechRuntime,
@@ -21,6 +22,7 @@ import { usePreparedConnection, useEnvironmentScope } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
 export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
+  const gt = useGT();
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const canManage = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const [result, setResult] = useState<{
@@ -53,7 +55,7 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
         setResult((previous) => ({
           prepared: connection,
           data: previous.prepared === connection ? previous.data : null,
-          error: "Could not load voices. Check the connection and try again.",
+          error: gt("Could not load voices. Check the connection and try again."),
         }));
     }
   });
@@ -126,8 +128,8 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
         setResult((previous) => ({
           ...previous,
           error: operation.endsWith("Runtime")
-            ? "Could not update Piper. Check the connection and try again."
-            : "Could not update this voice. Check the connection and try again.",
+            ? gt("Could not update Piper. Check the connection and try again.")
+            : gt("Could not update this voice. Check the connection and try again."),
         }));
     }
     if (current === epoch.current && operation !== "cancel" && operation !== "cancelRuntime")

@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { speechTextChunks } from "./text.ts";
 
 type Phase = "idle" | "loading" | "playing" | "paused" | "error";
@@ -28,7 +30,10 @@ export class VoiceOutputController<Audio = Uint8Array> {
 
   private readonly player: SpeechAudioPlayer<Audio>;
 
-  constructor(player: SpeechAudioPlayer<Audio>) {
+  constructor(
+    player: SpeechAudioPlayer<Audio>,
+    private readonly resolve: MFunctionType = mFallback,
+  ) {
     this.player = player;
   }
 
@@ -70,7 +75,7 @@ export class VoiceOutputController<Audio = Uint8Array> {
     try {
       const chunks = speechTextChunks(markdown);
       const first = chunks[0];
-      if (!first) throw new Error("This response has no readable text.");
+      if (!first) throw new Error(this.resolve(msg("This response has no readable text.")));
       // Settle prefetch failures even when playback stops before consuming them.
       const prepare = async (text: string) => {
         try {
@@ -107,7 +112,10 @@ export class VoiceOutputController<Audio = Uint8Array> {
       this.publish({
         owner,
         phase: "error",
-        error: error instanceof Error ? error.message : "Could not play this response.",
+        error:
+          error instanceof Error
+            ? error.message
+            : this.resolve(msg("Could not play this response.")),
       });
     }
   }
@@ -130,7 +138,11 @@ export class VoiceOutputController<Audio = Uint8Array> {
     } catch {
       if (this.request !== request) return;
       this.stop();
-      this.publish({ ...snapshot, phase: "error", error: "Could not resume this response." });
+      this.publish({
+        ...snapshot,
+        phase: "error",
+        error: this.resolve(msg("Could not resume this response.")),
+      });
     }
   }
 }

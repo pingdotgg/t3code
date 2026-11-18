@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import { useSpeechOutputDestination } from "../../speech/useSpeechOutputDestination";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
@@ -13,6 +14,7 @@ export function LocalSpeechVoices({
   environment: { environmentId: EnvironmentId; label: string };
   catalog: ReturnType<typeof useSpeechVoiceCatalog>;
 }) {
+  const gt = useGT();
   const { destination, selectVoice, canManage } = useSpeechOutputDestination();
   const [choice, setChoice] = useState<{
     environmentId: EnvironmentId;
@@ -44,30 +46,30 @@ export function LocalSpeechVoices({
     <>
       {catalog.error ? (
         <SettingsRow
-          title="Local voices unavailable"
+          title={gt("Local voices unavailable")}
           description={<span role="alert">{catalog.error}</span>}
           control={
             <Button variant="outline" size="sm" onClick={() => void catalog.refresh()}>
-              Try again
+              <T>Try again</T>
             </Button>
           }
         />
       ) : null}
       {!catalog.connected || catalog.loading ? (
         <SettingsRow
-          title="Local voices"
+          title={gt("Local voices")}
           description={
             catalog.loading
-              ? "Loading voices…"
-              : "Connect to an environment to manage local voices."
+              ? gt("Loading voices…")
+              : gt("Connect to an environment to manage local voices.")
           }
         />
       ) : null}
       {selected ? (
         <>
           <SettingsRow
-            title="Voice language"
-            description="Filter the voices available for local playback."
+            title={gt("Voice language")}
+            description={gt("Filter the voices available for local playback.")}
             control={
               <Select
                 value={language}
@@ -76,7 +78,7 @@ export function LocalSpeechVoices({
                     setChoice({ environmentId: environment.environmentId, language, voiceId: "" });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Speech output language">
+                <SelectTrigger size="sm" aria-label={gt("Speech output language")}>
                   <SelectValue>{languages.find(([code]) => code === language)?.[1]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -90,11 +92,17 @@ export function LocalSpeechVoices({
             }
           />
           <SettingsRow
-            title="Local voice"
+            title={gt("Local voice")}
             description={
               active
-                ? `Using ${active.name} · ${active.languageName} on ${environment.label}.`
-                : `Download a voice to start listening on ${environment.label}.`
+                ? gt("Using {name} · {languageName} on {label}.", {
+                    name: active.name,
+                    languageName: active.languageName,
+                    label: environment.label,
+                  })
+                : gt("Download a voice to start listening on {label}.", {
+                    label: environment.label,
+                  })
             }
             control={
               <Select
@@ -104,7 +112,7 @@ export function LocalSpeechVoices({
                     setChoice({ environmentId: environment.environmentId, language, voiceId });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Local speech voice">
+                <SelectTrigger size="sm" aria-label={gt("Local speech voice")}>
                   <SelectValue>
                     {selected.name} · {selected.quality}
                   </SelectValue>
@@ -113,7 +121,7 @@ export function LocalSpeechVoices({
                   {options.map((voice) => (
                     <SelectItem key={voice.id} value={voice.id}>
                       {voice.name} · {voice.quality}
-                      {voice.state === "installed" ? " · Installed" : ""}
+                      {voice.state === "installed" ? gt(" · Installed") : ""}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -122,15 +130,15 @@ export function LocalSpeechVoices({
           >
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pb-2">
               <p className="text-xs text-muted-foreground">
-                {Math.ceil(selected.size / 1024 / 1024)} MB ·{" "}
-                {selected.state === "installed" ? "Installed" : "Download required"} ·{" "}
+                {gt("{size} MB", { size: Math.ceil(selected.size / 1024 / 1024) })} ·{" "}
+                {selected.state === "installed" ? gt("Installed") : gt("Download required")} ·{" "}
                 <a
                   className="underline"
                   href={selected.modelCardUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Voice license
+                  <T>Voice license</T>
                 </a>
               </p>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -148,7 +156,7 @@ export function LocalSpeechVoices({
                       }
                       onClick={() => selectVoice(selected.id)}
                     >
-                      {selected.id === activeId ? "Selected" : "Use voice"}
+                      {selected.id === activeId ? gt("Selected") : gt("Use voice")}
                     </Button>
                     <Button
                       size="sm"
@@ -156,7 +164,7 @@ export function LocalSpeechVoices({
                       disabled={disabled}
                       onClick={() => void catalog.run(selected.id, "remove")}
                     >
-                      Remove voice
+                      <T>Remove voice</T>
                     </Button>
                   </>
                 ) : (
@@ -175,7 +183,7 @@ export function LocalSpeechVoices({
                       })
                     }
                   >
-                    Download & use voice
+                    <T>Download & use voice</T>
                   </Button>
                 )}
               </div>
@@ -186,7 +194,7 @@ export function LocalSpeechVoices({
       {catalog.transfer ? (
         <SettingsRow
           title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
-          status={<span role="status">{progress}% downloaded</span>}
+          status={<span role="status">{gt("{progress}% downloaded", { progress })}</span>}
           control={
             <Button
               variant="outline"
@@ -198,14 +206,14 @@ export function LocalSpeechVoices({
               }
               onClick={() => void catalog.run(catalog.transfer!.id, "cancel")}
             >
-              Cancel download
+              <T>Cancel download</T>
             </Button>
           }
         >
           <div className="mt-3 pb-2">
             <div
               role="progressbar"
-              aria-label="Voice download progress"
+              aria-label={gt("Voice download progress")}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={progress}

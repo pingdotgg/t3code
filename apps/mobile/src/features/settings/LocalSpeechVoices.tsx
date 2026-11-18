@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react-native";
 import { useSpeechOutputDestination } from "../voice-output/useSpeechOutputDestination";
 import { useState } from "react";
 import { Linking, ScrollView, View } from "react-native";
@@ -12,14 +13,15 @@ import { formatBytes } from "../../lib/formatBytes";
 import { useSpeechVoiceCatalog } from "../voice-output/useSpeechVoiceCatalog";
 
 export function LocalSpeechVoices({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <>
       <ListActionRow
-        label="Local voice"
+        label={gt("Local voice")}
         description={
           environment.serverConfig?.settings.speechOutput.piperVoiceId ||
-          "Choose language and voice"
+          gt("Choose language and voice")
         }
         onPress={() => setOpen(true)}
       />
@@ -35,6 +37,7 @@ function VoicePicker({
   environment: EnvironmentPresentation;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const { destination, selectVoice, canManage } = useSpeechOutputDestination();
   const catalog = useSpeechVoiceCatalog(environment.environmentId);
   const [choice, setChoice] = useState<{ language: string; voiceId: string } | null>(null);
@@ -56,35 +59,42 @@ function VoicePicker({
     options[0];
   const disabled = !canManage || !catalog.canManage || catalog.busy || catalog.downloading;
   return (
-    <Sheet title={`Local voices · ${environment.label}`} onClose={onClose}>
+    <Sheet title={gt("Local voices · {label}", { label: environment.label })} onClose={onClose}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-3 p-4 pb-10"
       >
         <Text className="px-2 text-sm text-foreground-muted">
           {active
-            ? `Selected: ${active.name} · ${active.languageName}.`
-            : "Download a voice to start listening."}{" "}
-          Voices are stored on this environment.
+            ? gt("Selected: {name} · {languageName}.", {
+                name: active.name,
+                languageName: active.languageName,
+              })
+            : gt("Download a voice to start listening.")}{" "}
+          <T>Voices are stored on this environment.</T>
         </Text>
         {catalog.error ? (
           <ListSection footer={catalog.error}>
-            <ListActionRow label="Try again" onPress={() => void catalog.refresh()} />
+            <ListActionRow label={gt("Try again")} onPress={() => void catalog.refresh()} />
           </ListSection>
         ) : null}
         {!catalog.connected ? (
           <Text className="text-foreground-muted">
-            Connect to this environment to manage local voices.
+            <T>Connect to this environment to manage local voices.</T>
           </Text>
         ) : null}
-        {catalog.loading ? <Text className="text-foreground-muted">Loading voices…</Text> : null}
+        {catalog.loading ? (
+          <Text className="text-foreground-muted">
+            <T>Loading voices…</T>
+          </Text>
+        ) : null}
         {catalog.transfer ? (
           <ListSection
             title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
           >
             <View className="p-4">
               <Progress
-                label="Voice download progress"
+                label={gt("Voice download progress")}
                 value={(catalog.transfer.downloaded ?? 0) / catalog.transfer.size}
               />
               <Text className="mt-2 text-sm text-foreground-muted">
@@ -93,7 +103,7 @@ function VoicePicker({
               </Text>
             </View>
             <ListActionRow
-              label="Cancel download"
+              label={gt("Cancel download")}
               disabled={
                 !catalog.canManage ||
                 catalog.busy ||
@@ -105,9 +115,9 @@ function VoicePicker({
         ) : null}
         {selected ? (
           <>
-            <ListSection title="Language">
+            <ListSection title={gt("Language")}>
               <ListActionRow
-                label={languages.find(([code]) => code === language)?.[1] ?? "Choose language"}
+                label={languages.find(([code]) => code === language)?.[1] ?? gt("Choose language")}
                 onPress={() => setChoosingLanguage(!choosingLanguage)}
               />
               {choosingLanguage
@@ -125,7 +135,7 @@ function VoicePicker({
                   ))
                 : null}
             </ListSection>
-            <ListSection title="Voice">
+            <ListSection title={gt("Voice")}>
               {options.map((voice, index) => (
                 <ListChoiceRow
                   key={voice.id}
@@ -141,7 +151,7 @@ function VoicePicker({
               {selected.state === "installed" ? (
                 <>
                   <ListActionRow
-                    label={selected.id === activeId ? "Selected" : "Use voice"}
+                    label={selected.id === activeId ? gt("Selected") : gt("Use voice")}
                     disabled={
                       !canManage ||
                       !catalog.connected ||
@@ -152,7 +162,7 @@ function VoicePicker({
                     onPress={() => selectVoice(selected.id)}
                   />
                   <ListActionRow
-                    label="Remove voice"
+                    label={gt("Remove voice")}
                     tone="danger"
                     disabled={disabled}
                     onPress={() => void catalog.run(selected.id, "remove")}
@@ -160,7 +170,7 @@ function VoicePicker({
                 </>
               ) : (
                 <ListActionRow
-                  label="Download & use voice"
+                  label={gt("Download & use voice")}
                   disabled={disabled}
                   loading={Boolean(catalog.transfer?.id === selected.id)}
                   onPress={() =>
@@ -176,7 +186,7 @@ function VoicePicker({
                 />
               )}
               <ListActionRow
-                label="Voice license"
+                label={gt("Voice license")}
                 onPress={() => void Linking.openURL(selected.modelCardUrl)}
               />
             </ListSection>

@@ -22,7 +22,7 @@ export function SpeechPlaybackSpeed({ compact = false }: { compact?: boolean }) 
       }}
     >
       <SelectTrigger
-        aria-label="Playback speed"
+        aria-label={gt("Playback speed")}
         size={compact ? "xs" : "sm"}
         variant={compact ? "ghost" : "default"}
       >
@@ -36,7 +36,7 @@ export function SpeechPlaybackSpeed({ compact = false }: { compact?: boolean }) 
         ) : null}
         {SpeechPlaybackRate.literals.map((rate) => (
           <SelectItem key={rate} value={String(rate)}>
-            {rate}×{rate === 1 ? " (Normal)" : ""}
+            {rate}×{rate === 1 ? gt(" (Normal)") : ""}
           </SelectItem>
         ))}
       </SelectPopup>

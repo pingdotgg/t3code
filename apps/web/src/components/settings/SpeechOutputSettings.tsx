@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import {
   AuthSettingsWriteScope,
   CloudSpeechApiKey,
@@ -77,9 +78,9 @@ export function SpeechOutputSettings() {
         ? `${destination.engine}:${destination.environmentId}`
         : "off";
   return (
-    <SettingsSection id="speech-output" title="Response playback">
+    <SettingsSection id="speech-output" title={gt("Response playback")}>
       <SettingsRow
-        title="Read aloud with"
+        title={gt("Read aloud with")}
         description={gt(
           "Playback preferences follow the selected environment or project. Off by default.",
         )}
@@ -124,7 +125,7 @@ export function SpeechOutputSettings() {
                 choose({ environmentId: picked.environmentId, engine });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Read aloud with">
+              <SelectTrigger size="sm" aria-label={gt("Read aloud with")}>
                 <SelectValue>
                   <span className="flex min-w-0 items-center gap-2">
                     {destination ? (
@@ -146,7 +147,7 @@ export function SpeechOutputSettings() {
                           ? destination.engine === "system"
                             ? gt("System voices")
                             : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Chosen environment (unavailable)"}`
-                          : "Off"}
+                          : gt("Off")}
                     </span>
                   </span>
                 </SelectValue>
@@ -160,14 +161,16 @@ export function SpeechOutputSettings() {
                 <SelectItem value="off">
                   <span className="flex items-center gap-2">
                     <VolumeXIcon aria-hidden className="size-4" />
-                    Off
+                    <T>Off</T>
                   </span>
                 </SelectItem>
                 {nativeSpeechAvailable() ? (
                   <SelectItem value="system">{gt("System voices")}</SelectItem>
                 ) : null}
                 <SelectGroup>
-                  <SelectGroupLabel>On an environment</SelectGroupLabel>
+                  <SelectGroupLabel>
+                    <T>On an environment</T>
+                  </SelectGroupLabel>
                   {available.map((environment) => (
                     <SelectItem
                       key={environment.environmentId}
@@ -182,7 +185,9 @@ export function SpeechOutputSettings() {
                 </SelectGroup>
                 {available.map((environment) => (
                   <SelectGroup key={environment.environmentId}>
-                    <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
+                    <SelectGroupLabel>
+                      {gt("Cloud via {environment}", { environment: environment.label })}
+                    </SelectGroupLabel>
                     <SelectItem value={`openai:${environment.environmentId}`}>
                       <span className="flex items-center gap-2">
                         <OpenAI aria-hidden className="size-4 text-foreground" />
@@ -201,7 +206,9 @@ export function SpeechOutputSettings() {
                 !available.some(
                   (environment) => environment.environmentId === destination.environmentId,
                 ) ? (
-                  <SelectItem value={value}>Chosen environment (unavailable)</SelectItem>
+                  <SelectItem value={value}>
+                    <T>Chosen environment (unavailable)</T>
+                  </SelectItem>
                 ) : null}
               </SelectPopup>
             </Select>
@@ -209,7 +216,7 @@ export function SpeechOutputSettings() {
         }
       />
       <SettingsRow
-        title="Playback speed"
+        title={gt("Playback speed")}
         description={
           destination?.engine === "system"
             ? gt("Speed changes apply to the next segment with system voices.")
@@ -249,23 +256,30 @@ export function SpeechOutputSettings() {
 }
 
 function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const catalog = useSpeechVoiceCatalog(environment.environmentId);
   return (
     <>
       <SettingsRow
-        title="Piper"
+        title={gt("Piper")}
         description={
           catalog.loading
-            ? "Checking this environment…"
+            ? gt("Checking this environment…")
             : (catalog.error ??
               catalog.runtime?.reason ??
               (catalog.runtime?.state === "ready"
-                ? `Installed on ${environment.label}. Runs locally without sending text to a cloud provider.`
+                ? gt(
+                    "Installed on {label}. Runs locally without sending text to a cloud provider.",
+                    { label: environment.label },
+                  )
                 : catalog.runtime?.state === "installing"
-                  ? `Installing Piper on ${environment.label}…`
+                  ? gt("Installing Piper on {label}…", { label: environment.label })
                   : catalog.runtime
-                    ? `Download Piper for ${catalog.runtime.platform} on ${environment.label}. No manual installation needed.`
-                    : "Reconnect or update this environment to manage Piper."))
+                    ? gt(
+                        "Download Piper for {platform} on {label}. No manual installation needed.",
+                        { platform: catalog.runtime.platform, label: environment.label },
+                      )
+                    : gt("Reconnect or update this environment to manage Piper.")))
         }
         control={
           catalog.runtime ? (
@@ -287,14 +301,14 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
               }
             >
               {catalog.runtime.state === "ready"
-                ? "Remove Piper"
+                ? gt("Remove Piper")
                 : catalog.runtime.state === "installing"
-                  ? "Cancel installation"
-                  : "Download Piper"}
+                  ? gt("Cancel installation")
+                  : gt("Download Piper")}
             </Button>
           ) : catalog.error ? (
             <Button variant="outline" size="sm" onClick={() => void catalog.refresh()}>
-              Try again
+              <T>Try again</T>
             </Button>
           ) : null
         }
@@ -318,14 +332,14 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
   const voice = destination?.voice ?? provider?.defaultVoice ?? config.voice;
   return (
     <SettingsRow
-      title="OpenAI voice"
+      title={gt("OpenAI voice")}
       description={
         catalog.error ??
         (catalog.loading
           ? gt("Checking")
           : !provider
             ? gt("Unavailable")
-            : "Choose the voice used for response playback.")
+            : gt("Choose the voice used for response playback."))
       }
       control={
         <div className="flex items-center gap-2">
@@ -336,7 +350,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
               if (provider?.voices.some((voice) => voice.id === value)) selectVoice(value);
             }}
           >
-            <SelectTrigger size="sm" aria-label="Speech output voice">
+            <SelectTrigger size="sm" aria-label={gt("Speech output voice")}>
               <SelectValue>
                 {provider?.voices.find((candidate) => candidate.id === voice)?.name ?? voice}
               </SelectValue>
@@ -372,6 +386,7 @@ function CloudPlaybackSettings({
   environment: EnvironmentPresentation;
   engine: "openai" | "elevenlabs";
 }) {
+  const gt = useGT();
   const settings = useEnvironmentSettings(environment.environmentId);
   const configured = Boolean(
     engine === "openai"
@@ -385,11 +400,14 @@ function CloudPlaybackSettings({
   return (
     <>
       <SettingsRow
-        title={`${label} API key`}
+        title={gt("{label} API key", { label: label })}
         description={
           configured
-            ? `Uses the key saved on ${environment.label}. Response text is sent to ${label}. API charges apply.`
-            : `Add an API key on ${environment.label} to choose a voice.`
+            ? gt(
+                "Uses the key saved on {label}. Response text is sent to {labelValue}. API charges apply.",
+                { label: environment.label, labelValue: label },
+              )
+            : gt("Add an API key on {label} to choose a voice.", { label: environment.label })
         }
         control={
           <Button
@@ -398,7 +416,7 @@ function CloudPlaybackSettings({
             disabled={!canManage}
             onClick={() => setConfiguring(true)}
           >
-            {configured ? "Manage key…" : "Add API key…"}
+            {configured ? gt("Manage key…") : gt("Add API key…")}
           </Button>
         }
       />
@@ -438,6 +456,7 @@ function SpeechApiKeyDialog({
   close: () => void;
   saved: () => void;
 }) {
+  const gt = useGT();
   const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
   const formId = useId();
   const update = useAtomCommand(serverEnvironment.updateSettings);
@@ -491,13 +510,26 @@ function SpeechApiKeyDialog({
         <DialogHeader>
           <DialogTitle>
             {removing
-              ? `Remove the ${label} key?`
-              : `${configured ? "Manage" : "Add"} ${label} API key`}
+              ? gt("Remove the {label} key?", { label: label })
+              : configured
+                ? gt("Manage {label} API key", { label })
+                : gt("Add {label} API key", { label })}
           </DialogTitle>
           <DialogDescription>
             {removing
-              ? `Everyone using ${label} on ${environment.label} will lose access to this key.`
-              : `Stored on ${environment.label}. Response text is sent to ${label}. API charges apply.${engine === "openai" ? " This key is shared with OpenAI transcription." : " Allow Voices: Read to list your voices."}`}
+              ? gt("Everyone using {label} on {labelValue} will lose access to this key.", {
+                  label: label,
+                  labelValue: environment.label,
+                })
+              : engine === "openai"
+                ? gt(
+                    "Stored on {environment}. Response text is sent to {provider}. API charges apply. This key is shared with OpenAI transcription.",
+                    { environment: environment.label, provider: label },
+                  )
+                : gt(
+                    "Stored on {environment}. Response text is sent to {provider}. API charges apply. Allow Voices: Read to list your voices.",
+                    { environment: environment.label, provider: label },
+                  )}
           </DialogDescription>
         </DialogHeader>
         {!removing ? (
@@ -510,11 +542,13 @@ function SpeechApiKeyDialog({
                 if (!busy && credential) void commit(credential);
               }}
             >
-              <Label htmlFor={`${formId}-value`}>API key</Label>
+              <Label htmlFor={`${formId}-value`}>
+                <T>API key</T>
+              </Label>
               <div className="flex min-w-0 items-start gap-2">
                 {sources.length > 0 ? (
                   <SecretSourceSelect
-                    label={`${label} API key`}
+                    label={gt("{label} API key", { label: label })}
                     value={sourceId}
                     sources={sources}
                     disabled={!canManage || busy}
@@ -528,7 +562,7 @@ function SpeechApiKeyDialog({
                   {sourceId !== null ? (
                     <Input
                       id={`${formId}-value`}
-                      aria-label={`${label} API key reference`}
+                      aria-label={gt("{label} API key reference", { label: label })}
                       autoFocus
                       value={draft}
                       placeholder={source?.referencePlaceholder}
@@ -541,7 +575,7 @@ function SpeechApiKeyDialog({
                   ) : (
                     <SecretInput
                       id={`${formId}-value`}
-                      aria-label={`${label} API key`}
+                      aria-label={gt("{label} API key", { label: label })}
                       configured={configured}
                       value={draft}
                       autoFocus
@@ -554,7 +588,7 @@ function SpeechApiKeyDialog({
               </div>
               {draft.trim() && !credential ? (
                 <p className="text-sm text-destructive">
-                  {source?.invalidReferenceMessage ?? "Enter a valid API key, not a URL."}
+                  {source?.invalidReferenceMessage ?? gt("Enter a valid API key, not a URL.")}
                 </p>
               ) : null}
             </form>
@@ -564,16 +598,16 @@ function SpeechApiKeyDialog({
           {configured && !removing ? (
             <div className="sm:mr-auto">
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(true)}>
-                Remove key…
+                <T>Remove key…</T>
               </Button>
             </div>
           ) : null}
           <Button size="sm" variant="outline" disabled={busy} onClick={close}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           {removing ? (
             <Button size="sm" variant="destructive" disabled={busy} onClick={() => void commit("")}>
-              Remove key
+              <T>Remove key</T>
             </Button>
           ) : (
             <Button
@@ -582,7 +616,7 @@ function SpeechApiKeyDialog({
               form={formId}
               disabled={!canManage || busy || !credential}
             >
-              Save key
+              <T>Save key</T>
             </Button>
           )}
         </DialogFooter>
@@ -592,6 +626,7 @@ function SpeechApiKeyDialog({
 }
 
 function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const config = useEnvironmentSettings(
     environment.environmentId,
     (settings) => settings.speechOutput,
@@ -604,17 +639,19 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
   return (
     <>
       <SettingsRow
-        title="ElevenLabs voice"
+        title={gt("ElevenLabs voice")}
         description={
           !catalog.connected
-            ? "Connect to this environment with playback access to load voices."
+            ? gt("Connect to this environment with playback access to load voices.")
             : catalog.failed
-              ? "Could not load voices. Check the API key has Voices: Read permission, then try again."
+              ? gt(
+                  "Could not load voices. Check the API key has Voices: Read permission, then try again.",
+                )
               : catalog.loading
-                ? "Loading voices…"
+                ? gt("Loading voices…")
                 : catalog.voices.length === 0
-                  ? "No voices are available for this API key."
-                  : "Choose a voice from your ElevenLabs account."
+                  ? gt("No voices are available for this API key.")
+                  : gt("Choose a voice from your ElevenLabs account.")
         }
         control={
           <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:max-w-80">
@@ -628,13 +665,13 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
                   if (catalog.voices.some((voice) => voice.id === id)) selectVoice(id!);
                 }}
               >
-                <SelectTrigger size="sm" aria-label="ElevenLabs voice">
-                  <SelectValue>{selected?.name ?? "Current voice"}</SelectValue>
+                <SelectTrigger size="sm" aria-label={gt("ElevenLabs voice")}>
+                  <SelectValue>{selected?.name ?? gt("Current voice")}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {!selected ? (
                     <SelectItem value={destination?.voice ?? config.elevenLabsVoiceId} disabled>
-                      Current voice
+                      <T>Current voice</T>
                     </SelectItem>
                   ) : null}
                   {catalog.voices.map((voice) => (
@@ -651,14 +688,14 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
               disabled={!catalog.connected || catalog.loading}
               onClick={catalog.refresh}
             >
-              {catalog.failed ? "Try again" : "Refresh"}
+              {catalog.failed ? gt("Try again") : gt("Refresh")}
             </Button>
           </div>
         }
       />
       {catalog.hasMore ? (
         <SettingsRow
-          title="More voices"
+          title={gt("More voices")}
           control={
             <Button
               variant="outline"
@@ -666,7 +703,7 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
               disabled={catalog.loading}
               onClick={catalog.loadMore}
             >
-              Load more voices
+              <T>Load more voices</T>
             </Button>
           }
         />

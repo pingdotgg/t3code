@@ -68,13 +68,13 @@ export function SpeechOutputSettings({
   return (
     <>
       <SettingsSection
-        title="Response playback"
+        title={gt("Response playback")}
         footer={gt(
           "Playback preferences follow the selected environment or project. Off by default.",
         )}
       >
         <ListActionRow
-          label="Read aloud with"
+          label={gt("Read aloud with")}
           detail={
             mixedDestination
               ? gt("Mixed")
@@ -82,7 +82,7 @@ export function SpeechOutputSettings({
                 ? destination.engine === "system"
                   ? gt("System voices")
                   : `${destination.engine === "elevenlabs" ? "ElevenLabs via " : destination.engine === "openai" ? "OpenAI via " : ""}${chosen?.label ?? "Unavailable environment"}`
-                : "Off"
+                : gt("Off")
           }
           disabled={!canManage}
           onPress={() => setChoosing(true)}
@@ -91,14 +91,14 @@ export function SpeechOutputSettings({
       </SettingsSection>
       {!mixedTarget && destination?.engine === "system" ? <SystemSpeechSettings /> : null}
       {choosing ? (
-        <Sheet title="Read aloud with" onClose={() => setChoosing(false)}>
+        <Sheet title={gt("Read aloud with")} onClose={() => setChoosing(false)}>
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="gap-3 p-4 pb-10"
           >
             <ListSection>
               <ListChoiceRow
-                label="Off"
+                label={gt("Off")}
                 selected={!destination}
                 onPress={() => {
                   choose(null);
@@ -116,7 +116,7 @@ export function SpeechOutputSettings({
                 }}
               />
             </ListSection>
-            <ListSection title="On an environment">
+            <ListSection title={gt("On an environment")}>
               {available.map((environment, index) => (
                 <ListChoiceRow
                   key={environment.environmentId}
@@ -134,11 +134,14 @@ export function SpeechOutputSettings({
               ))}
             </ListSection>
             {available.map((environment) => (
-              <ListSection key={environment.environmentId} title={`Cloud via ${environment.label}`}>
+              <ListSection
+                key={environment.environmentId}
+                title={gt("Cloud via {label}", { label: environment.label })}
+              >
                 <ListChoiceRow
                   label="OpenAI"
                   leading={<ProviderIcon provider="openai" size={20} />}
-                  description="Sends response text to OpenAI. API charges apply."
+                  description={gt("Sends response text to OpenAI. API charges apply.")}
                   selected={
                     destination?.engine === "openai" &&
                     destination.environmentId === environment.environmentId
@@ -150,7 +153,7 @@ export function SpeechOutputSettings({
                 <ListChoiceRow
                   label="ElevenLabs"
                   leading={<ProviderIcon provider="elevenlabs" size={20} />}
-                  description="Sends response text to ElevenLabs. API charges apply."
+                  description={gt("Sends response text to ElevenLabs. API charges apply.")}
                   separated
                   selected={
                     destination?.engine === "elevenlabs" &&
@@ -194,10 +197,11 @@ export function SpeechOutputSettings({
 }
 
 function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const catalog = useSpeechVoiceCatalog(environment.environmentId);
   return (
     <SettingsSection
-      title={`Piper · ${environment.label}`}
+      title={gt("Piper · {label}", { label: environment.label })}
       footer={
         catalog.error ??
         catalog.runtime?.reason ??
@@ -212,12 +216,12 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
         <ListActionRow
           label={
             catalog.runtime.state === "ready"
-              ? "Remove Piper"
+              ? gt("Remove Piper")
               : catalog.runtime.state === "installing"
-                ? "Cancel installation"
-                : "Download Piper"
+                ? gt("Cancel installation")
+                : gt("Download Piper")
           }
-          description={catalog.runtime.state === "installing" ? "Installing Piper…" : undefined}
+          description={catalog.runtime.state === "installing" ? gt("Installing Piper…") : undefined}
           tone={catalog.runtime.state === "ready" ? "danger" : "default"}
           disabled={!catalog.canManage || catalog.busy || catalog.runtime.state === "unsupported"}
           onPress={() =>
@@ -232,9 +236,9 @@ function LocalPlaybackSettings({ environment }: { environment: EnvironmentPresen
           }
         />
       ) : catalog.error ? (
-        <ListActionRow label="Try again" onPress={() => void catalog.refresh()} />
+        <ListActionRow label={gt("Try again")} onPress={() => void catalog.refresh()} />
       ) : (
-        <ListActionRow label="Checking this environment…" disabled onPress={() => {}} />
+        <ListActionRow label={gt("Checking this environment…")} disabled onPress={() => {}} />
       )}
       {catalog.runtime?.state === "ready" ? <LocalSpeechVoices environment={environment} /> : null}
     </SettingsSection>
@@ -253,7 +257,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
   return (
     <>
       <SettingsSection
-        title="OpenAI voice"
+        title={gt("OpenAI voice")}
         footer={
           catalog.error ??
           (catalog.loading
@@ -264,7 +268,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
         }
       >
         <ListActionRow
-          label="Voice"
+          label={gt("Voice")}
           detail={provider?.voices.find((voice) => voice.id === voiceId)?.name ?? voiceId}
           disabled={!canManage || !provider}
           onPress={() => setChoosing(true)}
@@ -278,7 +282,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
         ) : null}
       </SettingsSection>
       {choosing ? (
-        <Sheet title="OpenAI voice" onClose={() => setChoosing(false)}>
+        <Sheet title={gt("OpenAI voice")} onClose={() => setChoosing(false)}>
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="gap-3 p-4 pb-10"
@@ -314,6 +318,7 @@ function CloudPlaybackSettings({
   environment: EnvironmentPresentation;
   engine: "openai" | "elevenlabs";
 }) {
+  const gt = useGT();
   const settings = environment.serverConfig?.settings;
   const configured = Boolean(
     engine === "openai"
@@ -331,10 +336,12 @@ function CloudPlaybackSettings({
         footer={`Response text is sent via ${environment.label} to ${label}. API charges apply.`}
       >
         <ListActionRow
-          label="API key"
+          label={gt("API key")}
           leading={<ProviderIcon provider={engine} size={20} />}
-          detail={configured ? "Saved" : "Not set"}
-          description={configured ? "Tap to manage key" : "Add an API key to choose a voice"}
+          detail={configured ? gt("Saved") : gt("Not set")}
+          description={
+            configured ? gt("Tap to manage key") : gt("Add an API key to choose a voice")
+          }
           disabled={!canManage}
           onPress={() => setConfiguring(true)}
         />
@@ -375,6 +382,7 @@ function SpeechApiKeySheet({
   close: () => void;
   saved: () => void;
 }) {
+  const gt = useGT();
   const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings);
   const original =
@@ -419,7 +427,9 @@ function SpeechApiKeySheet({
   };
   return (
     <Sheet
-      title={`${configured ? "Manage" : "Add"} ${label} API key`}
+      title={
+        configured ? gt("Manage {label} API key", { label }) : gt("Add {label} API key", { label })
+      }
       dismissDisabled={busy}
       onClose={close}
     >
@@ -429,14 +439,14 @@ function SpeechApiKeySheet({
         contentContainerClassName="gap-4 px-5 pt-2 pb-8"
       >
         <ListSection
-          title="API key"
+          title={gt("API key")}
           footer={`Stored on ${environment.label}. Response text is sent to ${label}. API charges apply.${engine === "openai" ? " This key is shared with OpenAI transcription." : " Allow Voices: Read to list your voices."}`}
         >
           <View className="gap-3 px-4 py-3">
             {sources.length > 0 ? (
               <View className="flex-row flex-wrap gap-2">
                 <Chip
-                  label="Value"
+                  label={gt("Value")}
                   size="small"
                   selected={sourceId === null}
                   disabled={!canManage || busy}
@@ -462,7 +472,7 @@ function SpeechApiKeySheet({
             ) : null}
             {sourceId !== null ? (
               <AppTextInput
-                accessibilityLabel={`${label} API key reference`}
+                accessibilityLabel={gt("{label} API key reference", { label: label })}
                 value={draft}
                 placeholder={source?.referencePlaceholder}
                 editable={canManage && !busy}
@@ -478,9 +488,9 @@ function SpeechApiKeySheet({
               />
             ) : (
               <SecretTextInput
-                accessibilityLabel={`${label} API key`}
+                accessibilityLabel={gt("{label} API key", { label: label })}
                 placeholder={
-                  configured ? "Saved key · enter a new one to replace" : "Enter API key"
+                  configured ? gt("Saved key · enter a new one to replace") : gt("Enter API key")
                 }
                 value={draft}
                 onChangeText={setDraft}
@@ -493,7 +503,7 @@ function SpeechApiKeySheet({
             )}
           </View>
           <ListActionRow
-            label="Save key"
+            label={gt("Save key")}
             loading={busy}
             disabled={!canManage || !credential}
             onPress={() => {
@@ -502,14 +512,20 @@ function SpeechApiKeySheet({
           />
           {configured ? (
             <ListActionRow
-              label="Remove key from environment"
+              label={gt("Remove key from environment")}
               tone="danger"
               disabled={busy}
               onPress={() =>
                 Dialog.confirm({
-                  title: `Remove the ${label} key from ${environment.label}?`,
-                  message: `Everyone using ${label} on this environment will lose access to this key.`,
-                  confirmText: "Remove key",
+                  title: gt("Remove the {label} key from {labelValue}?", {
+                    label: label,
+                    labelValue: environment.label,
+                  }),
+                  message: gt(
+                    "Everyone using {label} on this environment will lose access to this key.",
+                    { label: label },
+                  ),
+                  confirmText: gt("Remove key"),
                   destructive: true,
                   onConfirm: () => void commit(""),
                 })
@@ -518,7 +534,7 @@ function SpeechApiKeySheet({
           ) : null}
         </ListSection>
         <ListSection>
-          <ListActionRow label="Cancel" disabled={busy} onPress={close} />
+          <ListActionRow label={gt("Cancel")} disabled={busy} onPress={close} />
         </ListSection>
       </ScrollView>
     </Sheet>
@@ -526,6 +542,7 @@ function SpeechApiKeySheet({
 }
 
 function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const gt = useGT();
   const config = environment.serverConfig?.settings.speechOutput;
   const catalog = useElevenLabsVoices(environment.environmentId);
   const { destination, selectVoice, canManage } = useSpeechOutputDestination();
@@ -545,21 +562,21 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
           : undefined;
   return (
     <>
-      <SettingsSection title="ElevenLabs voice" footer={status}>
+      <SettingsSection title={gt("ElevenLabs voice")} footer={status}>
         <ListActionRow
-          label="Voice"
-          detail={selected?.name ?? "Current voice"}
+          label={gt("Voice")}
+          detail={selected?.name ?? gt("Current voice")}
           disabled={!canManage || !catalog.connected || catalog.voices.length === 0}
           onPress={() => setChoosing(true)}
         />
         <ListActionRow
-          label={catalog.failed ? "Try again" : "Refresh voices"}
+          label={catalog.failed ? gt("Try again") : gt("Refresh voices")}
           disabled={!catalog.connected || catalog.loading}
           onPress={catalog.refresh}
         />
       </SettingsSection>
       {choosing ? (
-        <Sheet title="ElevenLabs voice" onClose={() => setChoosing(false)}>
+        <Sheet title={gt("ElevenLabs voice")} onClose={() => setChoosing(false)}>
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="gap-3 p-4 pb-10"
@@ -580,13 +597,13 @@ function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPres
               ))}
               {catalog.hasMore ? (
                 <ListActionRow
-                  label="Load more voices"
+                  label={gt("Load more voices")}
                   disabled={catalog.loading}
                   onPress={catalog.loadMore}
                 />
               ) : null}
               {catalog.failed ? (
-                <ListActionRow label="Try again" onPress={catalog.refresh} />
+                <ListActionRow label={gt("Try again")} onPress={catalog.refresh} />
               ) : null}
             </ListSection>
           </ScrollView>

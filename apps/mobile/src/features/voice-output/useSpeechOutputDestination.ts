@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { createContext, useContext } from "react";
@@ -24,6 +25,7 @@ export const SpeechPlaybackSettingsContext = createContext<SpeechPlaybackControl
 export function useSpeechOutputDestination(
   threadRef: ScopedThreadRef | null = null,
 ): SpeechPlaybackControls {
+  const gt = useGT();
   const scoped = useContext(SpeechPlaybackSettingsContext);
   const thread = useQuietThreadShell(threadRef);
   const { presentation } = useEnvironmentPresentation(threadRef?.environmentId ?? null);
@@ -75,8 +77,8 @@ export function useSpeechOutputDestination(
     if (persist({ speechPlaybackDestination: destination })) return;
     void save({ speechOutputDestination: destination }).catch(() => {
       Dialog.alert(
-        "Could not save speech output choice",
-        "Your previous destination is still selected. Please try again.",
+        gt("Could not save speech output choice"),
+        gt("Your previous destination is still selected. Please try again."),
       );
     });
   };
