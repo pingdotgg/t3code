@@ -87,6 +87,7 @@ export interface ProjectThreadAwarenessV2Input {
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
+    | "goal"
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
@@ -175,6 +176,8 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
+      // A goal stays blocked through ordinary replies, so it asks only once no run is active.
+      if (thread.goal?.status === "blocked") return "waiting_for_input";
       return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
         monitorHoldsWakeCompletion(thread)
         ? "running"

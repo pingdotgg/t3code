@@ -231,6 +231,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
   | "pendingGuestMessageCount"
+  | "goal"
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
@@ -8506,6 +8507,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     hasActiveRun: false,
                     pullRequests: thread.pullRequests,
                   }),
+                  goal: activeProviderGoalForShell(
+                    providerThreadsByThreadId.get(thread.id) ?? [],
+                    thread.activeProviderThreadId,
+                  ),
                 } satisfies ProjectionSettlementCandidate;
               }),
             );
